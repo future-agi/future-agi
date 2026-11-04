@@ -91,6 +91,17 @@ def test_a_call_where_every_sub_goal_was_not_applicable_has_no_score():
         == "passed"
     )
     assert receipt_outcome_status({"status": "skipped", "sub_goals": []}) == "skipped"
+    # An evaluation that decided the call is a pass or fail of its own.
+    assert (
+        receipt_outcome_status(
+            {
+                "status": "passed",
+                "sub_goals": [_GOALS[1]],
+                "evaluations": [{"kind": "code", "name": "e", "passed": True}],
+            }
+        )
+        == "passed"
+    )
 
 
 def test_a_pass_rate_leaves_out_what_was_neither_a_pass_nor_a_fail():
@@ -131,3 +142,19 @@ def test_a_call_with_no_pass_or_fail_has_no_score_and_an_error_stays_an_error(
     status, goals, outcome
 ):
     assert receipt_outcome_status({"status": status, "sub_goals": goals}) == outcome
+
+
+def test_an_agent_fix_check_leaves_out_a_sub_goal_that_did_not_apply():
+    from simulate.selectors.agent_fix import judged_sub_goals
+
+    receipt = {
+        "sub_goals": [
+            {"name": "skipped", "held": True, "verdict": "not_applicable"},
+            {"name": "unsure", "held": None, "verdict": "inconclusive"},
+            {"name": "kept", "held": True, "verdict": "pass"},
+        ]
+    }
+    assert judged_sub_goals(receipt) == {"kept": True}
+    assert judged_sub_goals({**receipt, "failure": {"domain": "agent"}}) == {
+        "kept": True
+    }

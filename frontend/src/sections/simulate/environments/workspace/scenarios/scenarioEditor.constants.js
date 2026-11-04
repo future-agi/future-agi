@@ -29,9 +29,6 @@ export const TONE_OPTIONS = [
 export const STYLE_OPTIONS = ["concise", "verbose", "formal", "casual", "chatty", "terse"];
 export const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
 export const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
-// The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
-// Fields whose values the server names in `level_labels`: noise beds, sub-goals and coverage levels.
-// Sub-actors carry their own `choice_labels`: their "none" is not the attack axis's "none".
 // Each sub-actor choice also says how many scenarios include it.
 const withCounts = (labels = {}, counts = {}) =>
   Object.fromEntries(
@@ -41,6 +38,9 @@ const withCounts = (labels = {}, counts = {}) =>
     ]),
   );
 
+// The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
+// Fields whose values the server names in `level_labels`: noise beds, sub-goals and coverage levels.
+// Sub-actors carry their own `choice_labels`: their "none" is not the attack axis's "none".
 export const withServedLabels = (fields = [], levelLabels = {}) =>
   fields.map((field) => {
     if (field.value === "sub_actors")

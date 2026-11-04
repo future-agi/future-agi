@@ -38,8 +38,12 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
-from simulate.services.harness_scenarios import sub_actor_entries
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
+from simulate.services.harness_scenarios import (
+    sub_actor_choice_labels,
+    sub_actor_entries,
+)
+from simulate.types import ContractSubActor
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -856,7 +860,12 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
     return goals
 
 
-def _sub_actor_list(listing: Any, scenario_docs: Any) -> list[dict[str, Any]]:
+def sub_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
+    """How the scenario filter names each of the environment's sub-actors."""
+    return sub_actor_choice_labels(_stage_output(job, "sub_actors"))
+
+
+def _sub_actor_list(listing: object, scenario_docs: object) -> list[ContractSubActor]:
     """The environment's sub-actors, each with how many scenarios include it."""
     included: dict[str, int] = {}
     for doc in scenario_docs if isinstance(scenario_docs, list) else []:

@@ -252,10 +252,9 @@ const ConfigureStepTTSItem = ({
               variant="outlined"
               startIcon={
                 <SvgColor
+                  width={20}
                   sx={{
                     color: "text.secondary",
-                    height: 20,
-                    width: 20,
                   }}
                   src={"/assets/icons/ic_add.svg"}
                 />
@@ -265,7 +264,6 @@ const ConfigureStepTTSItem = ({
                 "& .MuiButton-icon > svg": { marginRight: 0 },
                 minWidth: "unset",
                 borderColor: "divider",
-                height: 40,
                 ml: "auto",
               }}
             >

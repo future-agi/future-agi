@@ -58,7 +58,10 @@ from simulate.tests.test_harness_versioning_backfill import (
 from simulate.tests.test_harness_versioning_picks import _ready, _second_agent
 from simulate.tests.test_harness_versioning_record import _authoring
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("moves_without_validation"),
+]
 
 BASE = "/simulate/api/harness-environments"
 URL = "wss://lk.example.test"

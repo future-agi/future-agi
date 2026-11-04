@@ -43,7 +43,8 @@ const DeleteConfirmation = ({
       onClose={onClose}
       aria-labelledby="delete-dialog"
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
     >
       <DialogTitle
         id="delete-dialog"
@@ -69,12 +70,12 @@ const DeleteConfirmation = ({
             }}
           >
             <Iconify icon="solar:trash-bin-trash-bold" width={24} height={24} />
-            <Typography color={"text.primary"} fontWeight={700} fontSize="18px">
+            <Typography color={"text.primary"} fontWeight={600} fontSize="16px">
               {`Delete Task${deleteCount > 1 ? "s" : ""}`}
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

@@ -22342,6 +22342,7 @@ export const ModelHubEvalTemplatesCreateCompositeCreateResponse = zod.object({
 Supports the new scoring fields (pass_threshold, choice_scores, output_type_normalized).
  * @summary POST /model-hub/eval-templates/create-v2/
  */
+export const modelHubEvalTemplatesCreateV2CreateBodyMultiChoiceDefault = false;
 export const modelHubEvalTemplatesCreateV2CreateBodyNameMax = 255;
 
 export const modelHubEvalTemplatesCreateV2CreateBodyIsDraftDefault = false;
@@ -22364,6 +22365,11 @@ export const modelHubEvalTemplatesCreateV2CreateBodyErrorLocalizerEnabledDefault
 export const modelHubEvalTemplatesCreateV2CreateBodyTemplateFormatDefault = `mustache`;
 
 export const ModelHubEvalTemplatesCreateV2CreateBody = zod.object({
+  jev_mapping: zod.object({}).passthrough().optional(),
+  multi_choice: zod
+    .boolean()
+    .default(modelHubEvalTemplatesCreateV2CreateBodyMultiChoiceDefault),
+  input_data_types: zod.object({}).passthrough().optional(),
   name: zod
     .string()
     .max(modelHubEvalTemplatesCreateV2CreateBodyNameMax)
@@ -22535,6 +22541,8 @@ export const ModelHubEvalTemplatesListCreateResponse = zod.object({
   result: zod.object({
     items: zod.array(
       zod.object({
+        jev_mapping: zod.object({}).passthrough().optional(),
+        model: zod.string().optional(),
         id: zod.string().uuid(),
         name: zod.string().min(1),
         template_type: zod.string().min(1),
@@ -22773,6 +22781,7 @@ export const ModelHubEvalTemplatesDetailListParams = zod.object({
 export const ModelHubEvalTemplatesDetailListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    jev_mapping: zod.object({}).passthrough().optional(),
     id: zod.string().uuid(),
     name: zod.string().min(1),
     description: zod.string().optional(),
@@ -22988,6 +22997,8 @@ export const modelHubEvalTemplatesUpdateUpdateBodyPassThresholdMin = 0;
 export const modelHubEvalTemplatesUpdateUpdateBodyPassThresholdMax = 1;
 
 export const ModelHubEvalTemplatesUpdateUpdateBody = zod.object({
+  jev_mapping: zod.object({}).passthrough().optional(),
+  input_data_types: zod.object({}).passthrough().optional(),
   name: zod
     .string()
     .min(1)
@@ -23261,6 +23272,7 @@ export const ModelHubEvalTemplatesVersionsListResponse = zod.object({
     template_id: zod.string().uuid(),
     versions: zod.array(
       zod.object({
+        jev_mapping: zod.object({}).passthrough().optional(),
         id: zod.string().uuid(),
         version_number: zod.number(),
         is_default: zod.boolean(),
@@ -23284,6 +23296,7 @@ export const ModelHubEvalTemplatesVersionsCreateCreateParams = zod.object({
 });
 
 export const ModelHubEvalTemplatesVersionsCreateCreateBody = zod.object({
+  jev_mapping: zod.object({}).passthrough().optional(),
   criteria: zod.string().optional(),
   model: zod.string().optional(),
   config_snapshot: zod.object({}).passthrough().optional(),
@@ -36829,7 +36842,18 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         name: zod.string().min(1),
         role: zod.string(),
         channel: zod.string().min(1),
-        persona: zod.record(zod.string(), zod.string()),
+        persona: zod.object({
+          name: zod.string().optional(),
+          gender: zod.string().optional(),
+          age_group: zod.string().optional(),
+          occupation: zod.string().optional(),
+          location: zod.string().optional(),
+          personality: zod.string().optional(),
+          communication_style: zod.string().optional(),
+          initial_message: zod.string().optional(),
+          languages: zod.array(zod.string().min(1)).optional(),
+          accent: zod.string().optional(),
+        }),
         loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
@@ -36897,7 +36921,14 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           instruction: zod.string(),
-          trigger: zod.record(zod.string(), zod.string()),
+          trigger: zod.object({
+            kind: zod.string().min(1).optional(),
+            turn: zod.number().optional(),
+            tool: zod.string().optional(),
+            on_call: zod.number().optional(),
+            words: zod.array(zod.string().min(1)).optional(),
+            p: zod.number().optional(),
+          }),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -37056,7 +37087,18 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         name: zod.string().min(1),
         role: zod.string(),
         channel: zod.string().min(1),
-        persona: zod.record(zod.string(), zod.string()),
+        persona: zod.object({
+          name: zod.string().optional(),
+          gender: zod.string().optional(),
+          age_group: zod.string().optional(),
+          occupation: zod.string().optional(),
+          location: zod.string().optional(),
+          personality: zod.string().optional(),
+          communication_style: zod.string().optional(),
+          initial_message: zod.string().optional(),
+          languages: zod.array(zod.string().min(1)).optional(),
+          accent: zod.string().optional(),
+        }),
         loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
@@ -37124,7 +37166,14 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           instruction: zod.string(),
-          trigger: zod.record(zod.string(), zod.string()),
+          trigger: zod.object({
+            kind: zod.string().min(1).optional(),
+            turn: zod.number().optional(),
+            tool: zod.string().optional(),
+            on_call: zod.number().optional(),
+            words: zod.array(zod.string().min(1)).optional(),
+            p: zod.number().optional(),
+          }),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -37206,9 +37255,8 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
- * What this environment was shown to support with an agent version (its own when none is named), one status
-per capability, computed now from its build's evidence; Stale once the environment version moved on or the
-agent is another version. No writes.
+ * The run readiness of an agent, environment and suite pairing, computed now;
+an absent id is the environment's default. No writes.
  */
 export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
   id: zod.string(),
@@ -37219,22 +37267,67 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
     agent_version_id: zod.string().uuid().optional(),
     environment_version_id: zod.string().uuid().optional(),
     suite_version_id: zod.string().uuid().optional(),
-    keys: zod.array(zod.string().min(1)).optional(),
   },
 );
 
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
-  evidence_unreadable: zod
-    .boolean()
-    .describe("The build's evidence could not be read; all is Untested."),
-  environment_version_id: zod.string().min(1),
-  agent_version_id: zod.string().min(1),
-  catalog_version: zod.string().min(1),
-  checked_at: zod.string().min(1),
-  capabilities: zod.array(
+  pairing: zod.object({
+    agent_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    environment_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    suite_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    evidence: zod
+      .enum(["pair_certificate", "build_certificate", "none"])
+      .describe(
+        "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+      ),
+  }),
+  validation: zod.object({
+    state: zod
+      .enum([
+        "not_run",
+        "validating",
+        "ready",
+        "failed",
+        "retry",
+        "unavailable",
+      ])
+      .describe(
+        "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+      ),
+    job_id: zod.string().uuid(),
+    purpose: zod.enum(["save", "agent_move", "recheck"]),
+    finished_at: zod.string().datetime({ offset: true }),
+    error: zod.record(zod.string(), zod.string()),
+  }),
+  answer: zod.object({
+    kind: zod.enum(["ready", "blocked", "stale", "unchecked", "validating"]),
+    worst: zod
+      .enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ])
+      .describe("The worst measured row."),
+    reason_code: zod
+      .string()
+      .min(1)
+      .describe("pair_failed: a check failed without naming an action."),
+  }),
+  areas: zod.array(
     zod.object({
       id: zod.string().min(1),
-      label: zod.string().min(1),
       status: zod.enum([
         "supported",
         "partial",
@@ -37243,59 +37336,88 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "untested",
         "stale",
       ]),
-      finding: zod.string().min(1),
-      checks: zod.array(zod.record(zod.string(), zod.string())),
-      blocked_by: zod.string().min(1),
-      stale_because: zod.string().min(1),
-      reason_code: zod.string().min(1),
-      reason: zod.string().min(1),
-      fix: zod.object({
-        type: zod.string().min(1),
-        text: zod.string(),
-        target: zod
-          .array(zod.string().min(1))
-          .describe("The tools, fields or checks it names."),
-        repair: zod
-          .string()
-          .min(1)
-          .describe("The screen that repairs it: agent.tools, agent.source..."),
-        flips_when: zod.string().min(1),
-        recheck: zod.object({
-          scope: zod.enum(["agent", "world"]),
-          check: zod.string().min(1),
-          available: zod
-            .boolean()
-            .describe(
-              "False for the world: a rebuild reads it again until a check-only job exists.",
-            ),
-        }),
-        available: zod.boolean(),
-      }),
-      fix_type: zod.string().min(1),
-      needed_by: zod.number(),
-      affected: zod.number(),
-      affected_scenarios: zod.array(zod.string().min(1)),
+      rows: zod.array(zod.string().min(1)),
     }),
   ),
-  selection: zod.object({
-    requested: zod.number(),
-    eligible: zod.number(),
-    blocked: zod.number(),
-    untested: zod.number(),
-    requirements_recorded: zod.boolean(),
-    dropped: zod
-      .array(zod.record(zod.string(), zod.string()))
-      .describe(
-        "Scenarios no longer in the suite; counted in none of the others.",
+  rows: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      label: zod.string().min(1),
+      area: zod.string().min(1),
+      status: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      measured: zod.boolean(),
+      finding: zod.enum([
+        "passed",
+        "failed",
+        "limited",
+        "not_applicable",
+        "not_run",
+      ]),
+      reason_code: zod.string().min(1),
+      reason: zod.string().min(1),
+      targets: zod.array(
+        zod.object({
+          kind: zod.enum(["tool", "action", "check"]),
+          name: zod.string().min(1),
+          result: zod.string().min(1),
+        }),
       ),
+      blocked_by: zod.string().min(1),
+      stale_because: zod.string().min(1),
+      was: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      evidence: zod.array(
+        zod.object({
+          check: zod.string().min(1),
+          result: zod
+            .string()
+            .min(1)
+            .describe("A check status, or a ratio such as 3/4."),
+        }),
+      ),
+      checked_at: zod.string().min(1),
+      fix: zod.object({
+        type: zod.string().min(1),
+        target: zod.string().min(1),
+        action: zod.string().min(1),
+        would: zod.string().min(1),
+        recheck: zod.object({
+          scope: zod.enum(["agent", "pair"]),
+          method: zod.enum(["POST"]),
+          path: zod.string().min(1),
+        }),
+      }),
+    }),
+  ),
+  counts: zod.object({
+    supported: zod.number(),
+    partial: zod.number(),
+    blocked: zod.number(),
+    unavailable: zod.number(),
+    untested: zod.number(),
+    stale: zod.number(),
   }),
+  catalog_version: zod.string().min(1),
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
 });
 
 /**
- * Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
-world is checked again only by a new build for now. Starts no run.
+ * Validate a pairing again with a run-less check; moves no default. An absent
+id is the environment's default.
  */
 export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams =
   zod.object({
@@ -37304,45 +37426,9 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams
 
 export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesBody =
   zod.object({
-    scope: zod.enum(["agent", "world", "all"]),
-    check: zod.string().min(1).optional(),
-  });
-
-export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse =
-  zod.object({
-    scope: zod.string().min(1),
-    agent_version_id: zod.string().min(1),
-    state: zod
-      .string()
-      .min(1)
-      .describe(
-        "started (the agent preflight runs again), not_needed (it passed), or rechecked (read again now)",
-      ),
-    needs_rebuild: zod
-      .array(zod.string().min(1))
-      .describe(
-        "World capabilities a build measured; only a new build reads them again.",
-      ),
-    selection: zod.object({
-      requested: zod.number(),
-      eligible: zod.number(),
-      blocked: zod.number(),
-      untested: zod.number(),
-      requirements_recorded: zod.boolean(),
-      dropped: zod
-        .array(zod.record(zod.string(), zod.string()))
-        .describe(
-          "Scenarios no longer in the suite; counted in none of the others.",
-        ),
-    }),
-    capabilities: zod.array(
-      zod.object({
-        id: zod.string().min(1),
-        status: zod.string().min(1),
-        affected: zod.number(),
-        affected_scenarios: zod.array(zod.string().min(1)),
-      }),
-    ),
+    agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
   });
 
 /**
@@ -38330,7 +38416,18 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           name: zod.string().min(1),
           role: zod.string(),
           channel: zod.string().min(1),
-          persona: zod.record(zod.string(), zod.string()),
+          persona: zod.object({
+            name: zod.string().optional(),
+            gender: zod.string().optional(),
+            age_group: zod.string().optional(),
+            occupation: zod.string().optional(),
+            location: zod.string().optional(),
+            personality: zod.string().optional(),
+            communication_style: zod.string().optional(),
+            initial_message: zod.string().optional(),
+            languages: zod.array(zod.string().min(1)).optional(),
+            accent: zod.string().optional(),
+          }),
           loudness_ratio: zod.number().optional(),
           scenarios_count: zod.number(),
         }),
@@ -38398,7 +38495,14 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           zod.object({
             id: zod.string().min(1),
             instruction: zod.string(),
-            trigger: zod.record(zod.string(), zod.string()),
+            trigger: zod.object({
+              kind: zod.string().min(1).optional(),
+              turn: zod.number().optional(),
+              tool: zod.string().optional(),
+              on_call: zod.number().optional(),
+              words: zod.array(zod.string().min(1)).optional(),
+              p: zod.number().optional(),
+            }),
           }),
         ),
         persona: zod.record(zod.string(), zod.string()),
@@ -39908,7 +40012,7 @@ export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultParams =
   zod.object({
@@ -51403,6 +51507,20 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       start_time_ms: zod.number().optional(),
     }),
   ),
+  sub_actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .optional()
+        .describe("The sub-actor's id in the environment."),
+      name: zod.string().optional().describe("The name the transcript shows."),
+      role: zod.string().optional().describe("Who they are to the caller."),
+      channel: zod
+        .string()
+        .optional()
+        .describe("The channel id they joined the call on."),
+    }),
+  ),
   scoring_status: zod.enum([
     "not_applicable",
     "pending",
@@ -51635,6 +51753,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
     ),
     run_health: zod.object({
@@ -51670,6 +51789,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
     }),
     measured: zod.number(),
     pass_rate: zod.number(),
@@ -51727,6 +51847,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -51808,6 +51929,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
         scenario: zod.string().min(1),
         scenario_key: zod.string().min(1),
         runs: zod.number(),
@@ -51826,6 +51948,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
       turn_count: zod.number(),
     }),
   ),
@@ -51930,6 +52053,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -51988,6 +52112,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -52046,6 +52171,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -52155,6 +52281,7 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
+
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -52202,6 +52329,158 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .default(
         simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault,
       ),
+    capability_snapshot: zod
+      .object({
+        pairing: zod.object({
+          agent_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          environment_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          suite_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          evidence: zod
+            .enum(["pair_certificate", "build_certificate", "none"])
+            .describe(
+              "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+            ),
+        }),
+        validation: zod.object({
+          state: zod
+            .enum([
+              "not_run",
+              "validating",
+              "ready",
+              "failed",
+              "retry",
+              "unavailable",
+            ])
+            .describe(
+              "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+            ),
+          job_id: zod.string().uuid(),
+          purpose: zod.enum(["save", "agent_move", "recheck"]),
+          finished_at: zod.string().datetime({ offset: true }),
+          error: zod.record(zod.string(), zod.string()),
+        }),
+        answer: zod.object({
+          kind: zod.enum([
+            "ready",
+            "blocked",
+            "stale",
+            "unchecked",
+            "validating",
+          ]),
+          worst: zod
+            .enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ])
+            .describe("The worst measured row."),
+          reason_code: zod
+            .string()
+            .min(1)
+            .describe("pair_failed: a check failed without naming an action."),
+        }),
+        areas: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            status: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            rows: zod.array(zod.string().min(1)),
+          }),
+        ),
+        rows: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            label: zod.string().min(1),
+            area: zod.string().min(1),
+            status: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            measured: zod.boolean(),
+            finding: zod.enum([
+              "passed",
+              "failed",
+              "limited",
+              "not_applicable",
+              "not_run",
+            ]),
+            reason_code: zod.string().min(1),
+            reason: zod.string().min(1),
+            targets: zod.array(
+              zod.object({
+                kind: zod.enum(["tool", "action", "check"]),
+                name: zod.string().min(1),
+                result: zod.string().min(1),
+              }),
+            ),
+            blocked_by: zod.string().min(1),
+            stale_because: zod.string().min(1),
+            was: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            evidence: zod.array(
+              zod.object({
+                check: zod.string().min(1),
+                result: zod
+                  .string()
+                  .min(1)
+                  .describe("A check status, or a ratio such as 3/4."),
+              }),
+            ),
+            checked_at: zod.string().min(1),
+            fix: zod.object({
+              type: zod.string().min(1),
+              target: zod.string().min(1),
+              action: zod.string().min(1),
+              would: zod.string().min(1),
+              recheck: zod.object({
+                scope: zod.enum(["agent", "pair"]),
+                method: zod.enum(["POST"]),
+                path: zod.string().min(1),
+              }),
+            }),
+          }),
+        ),
+        counts: zod.object({
+          supported: zod.number(),
+          partial: zod.number(),
+          blocked: zod.number(),
+          unavailable: zod.number(),
+          untested: zod.number(),
+          stale: zod.number(),
+        }),
+        catalog_version: zod.string().min(1),
+        rules_version: zod.string().min(1),
+        computed_at: zod.string().min(1),
+      })
+      .optional(),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
       .default(
@@ -52221,6 +52500,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -52277,6 +52557,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
     }),
     measured: zod.number(),
     pass_rate: zod.number(),
@@ -52456,6 +52737,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -52561,6 +52843,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     failed: zod.number(),
     error: zod.number(),
     inconclusive: zod.number(),
+    no_score: zod.number(),
   }),
   evaluation_columns: zod.array(
     zod.object({
@@ -52648,6 +52931,7 @@ export const SimulateV3TestExecutionReliabilityResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
       scenario: zod.string().min(1),
       scenario_key: zod.string().min(1),
       runs: zod.number(),
@@ -58017,6 +58301,7 @@ export const TracerEvalTaskListEvalTasksResponse = zod.object({
         project_name: zod.string().min(1).optional(),
         status: zod.string().min(1),
         run_type: zod.string().min(1),
+        row_type: zod.string().min(1),
         filters_applied: zod.object({}).passthrough(),
         created_at: zod.string().datetime({ offset: true }),
         evals_applied: zod.array(zod.string().min(1)),
@@ -58089,6 +58374,7 @@ export const TracerEvalTaskListEvalTasksWithProjectNameResponse = zod.object({
         project_name: zod.string().min(1).optional(),
         status: zod.string().min(1),
         run_type: zod.string().min(1),
+        row_type: zod.string().min(1),
         filters_applied: zod.object({}).passthrough(),
         created_at: zod.string().datetime({ offset: true }),
         evals_applied: zod.array(zod.string().min(1)),
@@ -60333,6 +60619,1897 @@ export const TracerImagineAnalysisCreateResponse = zod.object({
         error: zod.string().optional(),
       }),
     ),
+  }),
+});
+
+/**
+ * Saved Insights reports of a project, newest first, with their latest run.
+ */
+export const TracerInsightsConfigsListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+});
+
+export const tracerInsightsConfigsListResponseStatusDefault = true;
+
+export const TracerInsightsConfigsListResponse = zod.object({
+  status: zod.boolean().default(tracerInsightsConfigsListResponseStatusDefault),
+  result: zod.object({
+    configs: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+        unit: zod.string().min(1),
+        lens: zod.string().min(1),
+        question: zod.string().min(1),
+        agent_description: zod.string(),
+        instructions: zod.string(),
+        attributes: zod.array(zod.object({}).passthrough()),
+        sample_size: zod.number(),
+        scope: zod.object({}).passthrough(),
+        has_taxonomy: zod.boolean(),
+        taxonomy: zod.object({}).passthrough(),
+        created_at: zod.string().datetime({ offset: true }),
+        latest_run: zod.object({
+          id: zod.string().uuid(),
+          status: zod.string().min(1),
+          stage: zod.string().min(1),
+          created_at: zod.string().datetime({ offset: true }),
+          finished_at: zod.string().datetime({ offset: true }),
+          population_size: zod.number(),
+          sample_size: zod.number(),
+          analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
+          skipped_count: zod.number(),
+          taxonomy_mode: zod.string().min(1),
+          distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
+          error_code: zod.string(),
+          scope: zod.object({}).passthrough(),
+        }),
+        runs: zod
+          .array(
+            zod.object({
+              id: zod.string().uuid(),
+              status: zod.string().min(1),
+              stage: zod.string().min(1),
+              created_at: zod.string().datetime({ offset: true }),
+              finished_at: zod.string().datetime({ offset: true }),
+              population_size: zod.number(),
+              sample_size: zod.number(),
+              analysed_count: zod.number(),
+              excluded_count: zod.number(),
+              failed_count: zod.number(),
+              skipped_count: zod.number(),
+              taxonomy_mode: zod.string().min(1),
+              distribution: zod.array(zod.object({}).passthrough()),
+              error: zod.string(),
+              error_code: zod.string(),
+              scope: zod.object({}).passthrough(),
+            }),
+          )
+          .optional(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * One saved report with every run, for the trend chart and run pager.
+ */
+export const TracerInsightsConfigsReadParams = zod.object({
+  config_id: zod.string(),
+});
+
+export const tracerInsightsConfigsReadResponseStatusDefault = true;
+
+export const TracerInsightsConfigsReadResponse = zod.object({
+  status: zod.boolean().default(tracerInsightsConfigsReadResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    unit: zod.string().min(1),
+    lens: zod.string().min(1),
+    question: zod.string().min(1),
+    agent_description: zod.string(),
+    instructions: zod.string(),
+    attributes: zod.array(zod.object({}).passthrough()),
+    sample_size: zod.number(),
+    scope: zod.object({}).passthrough(),
+    has_taxonomy: zod.boolean(),
+    taxonomy: zod.object({}).passthrough(),
+    created_at: zod.string().datetime({ offset: true }),
+    latest_run: zod.object({
+      id: zod.string().uuid(),
+      status: zod.string().min(1),
+      stage: zod.string().min(1),
+      created_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      population_size: zod.number(),
+      sample_size: zod.number(),
+      analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
+      skipped_count: zod.number(),
+      taxonomy_mode: zod.string().min(1),
+      distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
+      error_code: zod.string(),
+      scope: zod.object({}).passthrough(),
+    }),
+    runs: zod
+      .array(
+        zod.object({
+          id: zod.string().uuid(),
+          status: zod.string().min(1),
+          stage: zod.string().min(1),
+          created_at: zod.string().datetime({ offset: true }),
+          finished_at: zod.string().datetime({ offset: true }),
+          population_size: zod.number(),
+          sample_size: zod.number(),
+          analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
+          skipped_count: zod.number(),
+          taxonomy_mode: zod.string().min(1),
+          distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
+          error_code: zod.string(),
+          scope: zod.object({}).passthrough(),
+        }),
+      )
+      .optional(),
+  }),
+});
+
+/**
+ * Edit a report's setup, or forget its saved categories so the next
+run discovers afresh. Changing the question or lens changes what the
+categories mean, so it resets them too. Applies from the next run.
+ */
+export const TracerInsightsConfigsPartialUpdateParams = zod.object({
+  config_id: zod.string(),
+});
+
+export const tracerInsightsConfigsPartialUpdateBodyNameMax = 255;
+
+export const tracerInsightsConfigsPartialUpdateBodyResetTaxonomyDefault = false;
+export const tracerInsightsConfigsPartialUpdateBodyQuestionMax = 500;
+
+export const tracerInsightsConfigsPartialUpdateBodyAgentDescriptionMax = 500;
+
+export const tracerInsightsConfigsPartialUpdateBodyInstructionsMax = 1000;
+
+export const tracerInsightsConfigsPartialUpdateBodyAttributesItemKeyMax = 60;
+
+export const tracerInsightsConfigsPartialUpdateBodyAttributesItemDescriptionMax = 300;
+
+export const tracerInsightsConfigsPartialUpdateBodyAttributesItemFilterByDefault =
+  false;
+export const tracerInsightsConfigsPartialUpdateBodySampleSizeMin = 10;
+export const tracerInsightsConfigsPartialUpdateBodySampleSizeMax = 1000;
+
+export const tracerInsightsConfigsPartialUpdateBodyScopeLabelMax = 300;
+
+export const tracerInsightsConfigsPartialUpdateBodyScopePresetMax = 16;
+
+export const tracerInsightsConfigsPartialUpdateBodyScopeWindowItemMax = 64;
+
+export const tracerInsightsConfigsPartialUpdateBodyScopeWindowMax = 2;
+
+export const tracerInsightsConfigsPartialUpdateBodyScopeSearchMax = 200;
+
+export const TracerInsightsConfigsPartialUpdateBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerInsightsConfigsPartialUpdateBodyNameMax)
+    .optional(),
+  reset_taxonomy: zod
+    .boolean()
+    .default(tracerInsightsConfigsPartialUpdateBodyResetTaxonomyDefault),
+  question: zod
+    .string()
+    .min(1)
+    .max(tracerInsightsConfigsPartialUpdateBodyQuestionMax)
+    .optional(),
+  lens: zod
+    .enum(["usage", "failures", "experience", "personas", "custom"])
+    .optional(),
+  agent_description: zod
+    .string()
+    .max(tracerInsightsConfigsPartialUpdateBodyAgentDescriptionMax)
+    .optional(),
+  instructions: zod
+    .string()
+    .max(tracerInsightsConfigsPartialUpdateBodyInstructionsMax)
+    .optional(),
+  attributes: zod
+    .array(
+      zod.object({
+        key: zod
+          .string()
+          .min(1)
+          .max(tracerInsightsConfigsPartialUpdateBodyAttributesItemKeyMax),
+        type: zod.enum(["boolean", "number", "string"]),
+        description: zod
+          .string()
+          .max(
+            tracerInsightsConfigsPartialUpdateBodyAttributesItemDescriptionMax,
+          )
+          .optional(),
+        filter_by: zod
+          .boolean()
+          .default(
+            tracerInsightsConfigsPartialUpdateBodyAttributesItemFilterByDefault,
+          ),
+      }),
+    )
+    .optional(),
+  sample_size: zod
+    .number()
+    .min(tracerInsightsConfigsPartialUpdateBodySampleSizeMin)
+    .max(tracerInsightsConfigsPartialUpdateBodySampleSizeMax)
+    .optional(),
+  scope: zod
+    .object({
+      filters: zod.array(zod.object({}).passthrough()).optional(),
+      label: zod
+        .string()
+        .max(tracerInsightsConfigsPartialUpdateBodyScopeLabelMax)
+        .optional(),
+      preset: zod
+        .string()
+        .max(tracerInsightsConfigsPartialUpdateBodyScopePresetMax)
+        .optional(),
+      window: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(tracerInsightsConfigsPartialUpdateBodyScopeWindowItemMax),
+        )
+        .max(tracerInsightsConfigsPartialUpdateBodyScopeWindowMax)
+        .optional(),
+      search: zod
+        .string()
+        .max(tracerInsightsConfigsPartialUpdateBodyScopeSearchMax)
+        .optional(),
+    })
+    .optional(),
+});
+
+export const tracerInsightsConfigsPartialUpdateResponseStatusDefault = true;
+
+export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsConfigsPartialUpdateResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    unit: zod.string().min(1),
+    lens: zod.string().min(1),
+    question: zod.string().min(1),
+    agent_description: zod.string(),
+    instructions: zod.string(),
+    attributes: zod.array(zod.object({}).passthrough()),
+    sample_size: zod.number(),
+    scope: zod.object({}).passthrough(),
+    has_taxonomy: zod.boolean(),
+    taxonomy: zod.object({}).passthrough(),
+    created_at: zod.string().datetime({ offset: true }),
+    latest_run: zod.object({
+      id: zod.string().uuid(),
+      status: zod.string().min(1),
+      stage: zod.string().min(1),
+      created_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      population_size: zod.number(),
+      sample_size: zod.number(),
+      analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
+      skipped_count: zod.number(),
+      taxonomy_mode: zod.string().min(1),
+      distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
+      error_code: zod.string(),
+      scope: zod.object({}).passthrough(),
+    }),
+    runs: zod
+      .array(
+        zod.object({
+          id: zod.string().uuid(),
+          status: zod.string().min(1),
+          stage: zod.string().min(1),
+          created_at: zod.string().datetime({ offset: true }),
+          finished_at: zod.string().datetime({ offset: true }),
+          population_size: zod.number(),
+          sample_size: zod.number(),
+          analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
+          skipped_count: zod.number(),
+          taxonomy_mode: zod.string().min(1),
+          distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
+          error_code: zod.string(),
+          scope: zod.object({}).passthrough(),
+        }),
+      )
+      .optional(),
+  }),
+});
+
+/**
+ * Delete a saved report and hide its runs.
+ */
+export const TracerInsightsConfigsDeleteParams = zod.object({
+  config_id: zod.string(),
+});
+
+export const tracerInsightsConfigsDeleteResponseStatusDefault = true;
+
+export const TracerInsightsConfigsDeleteResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsConfigsDeleteResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    unit: zod.string().min(1),
+    lens: zod.string().min(1),
+    question: zod.string().min(1),
+    agent_description: zod.string(),
+    instructions: zod.string(),
+    attributes: zod.array(zod.object({}).passthrough()),
+    sample_size: zod.number(),
+    scope: zod.object({}).passthrough(),
+    has_taxonomy: zod.boolean(),
+    taxonomy: zod.object({}).passthrough(),
+    created_at: zod.string().datetime({ offset: true }),
+    latest_run: zod.object({
+      id: zod.string().uuid(),
+      status: zod.string().min(1),
+      stage: zod.string().min(1),
+      created_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      population_size: zod.number(),
+      sample_size: zod.number(),
+      analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
+      skipped_count: zod.number(),
+      taxonomy_mode: zod.string().min(1),
+      distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
+      error_code: zod.string(),
+      scope: zod.object({}).passthrough(),
+    }),
+    runs: zod
+      .array(
+        zod.object({
+          id: zod.string().uuid(),
+          status: zod.string().min(1),
+          stage: zod.string().min(1),
+          created_at: zod.string().datetime({ offset: true }),
+          finished_at: zod.string().datetime({ offset: true }),
+          population_size: zod.number(),
+          sample_size: zod.number(),
+          analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
+          skipped_count: zod.number(),
+          taxonomy_mode: zod.string().min(1),
+          distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
+          error_code: zod.string(),
+          scope: zod.object({}).passthrough(),
+        }),
+      )
+      .optional(),
+  }),
+});
+
+/**
+ * Read a few real units and draft a report setup for the team's goal.
+ */
+export const tracerInsightsDraftCreateBodyGoalMax = 500;
+
+export const tracerInsightsDraftCreateBodyAgentDescriptionMax = 500;
+
+export const tracerInsightsDraftCreateBodySampleIdsItemMax = 255;
+
+export const tracerInsightsDraftCreateBodySampleIdsMax = 5;
+
+export const TracerInsightsDraftCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "sessions", "users"]),
+  lens: zod.enum(["usage", "failures", "experience", "personas", "custom"]),
+  goal: zod.string().max(tracerInsightsDraftCreateBodyGoalMax).optional(),
+  agent_description: zod
+    .string()
+    .max(tracerInsightsDraftCreateBodyAgentDescriptionMax)
+    .optional(),
+  sample_ids: zod
+    .array(
+      zod.string().min(1).max(tracerInsightsDraftCreateBodySampleIdsItemMax),
+    )
+    .min(1)
+    .max(tracerInsightsDraftCreateBodySampleIdsMax),
+});
+
+export const tracerInsightsDraftCreateResponseStatusDefault = true;
+
+export const TracerInsightsDraftCreateResponse = zod.object({
+  status: zod.boolean().default(tracerInsightsDraftCreateResponseStatusDefault),
+  result: zod.object({
+    name: zod.string().min(1),
+    question: zod.string().min(1),
+    agent_description: zod.string(),
+    instructions: zod.string(),
+    attributes: zod.array(zod.object({}).passthrough()),
+    examples_read: zod.number(),
+  }),
+});
+
+/**
+ * How many units a scope holds, and how many a report on it reads.
+Rows handed over by id are only sized: they have no window to count.
+ */
+export const tracerInsightsEstimateCreateBodyActionDefault = `run`;
+export const tracerInsightsEstimateCreateBodyScopeLabelMax = 300;
+
+export const tracerInsightsEstimateCreateBodyScopePresetMax = 16;
+
+export const tracerInsightsEstimateCreateBodyScopeWindowItemMax = 64;
+
+export const tracerInsightsEstimateCreateBodyScopeWindowMax = 2;
+
+export const tracerInsightsEstimateCreateBodyScopeSearchMax = 200;
+
+export const tracerInsightsEstimateCreateBodySampleSizeMin = 10;
+export const tracerInsightsEstimateCreateBodySampleSizeMax = 1000;
+
+export const TracerInsightsEstimateCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  action: zod
+    .enum(["run", "ask", "draft", "preview"])
+    .default(tracerInsightsEstimateCreateBodyActionDefault),
+  unit: zod.enum(["traces", "sessions", "users"]).optional(),
+  scope: zod
+    .object({
+      filters: zod.array(zod.object({}).passthrough()).optional(),
+      label: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopeLabelMax)
+        .optional(),
+      preset: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopePresetMax)
+        .optional(),
+      window: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(tracerInsightsEstimateCreateBodyScopeWindowItemMax),
+        )
+        .max(tracerInsightsEstimateCreateBodyScopeWindowMax)
+        .optional(),
+      search: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopeSearchMax)
+        .optional(),
+    })
+    .optional(),
+  population_size: zod.number().min(1).optional(),
+  sample_size: zod
+    .number()
+    .min(tracerInsightsEstimateCreateBodySampleSizeMin)
+    .max(tracerInsightsEstimateCreateBodySampleSizeMax)
+    .optional(),
+});
+
+export const tracerInsightsEstimateCreateResponseStatusDefault = true;
+
+export const TracerInsightsEstimateCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsEstimateCreateResponseStatusDefault),
+  result: zod.object({
+    population: zod.number(),
+    population_is_lower_bound: zod.boolean(),
+    sample_size: zod.number(),
+    window: zod.object({}).passthrough(),
+    sample_ids: zod.array(zod.string().min(1)),
+    credits_estimate: zod.number(),
+    credit_limited: zod.boolean(),
+    credit_check_unavailable: zod.boolean().optional(),
+    credits_left: zod.number(),
+    credit_max_sample: zod.number(),
+    credit_message: zod.string().min(1),
+  }),
+});
+
+/**
+ * Show what the report will read from up to three units before running it.
+ */
+export const tracerInsightsPreviewCreateBodyConfigNameMax = 255;
+
+export const tracerInsightsPreviewCreateBodyConfigQuestionMax = 500;
+
+export const tracerInsightsPreviewCreateBodyConfigAgentDescriptionMax = 500;
+
+export const tracerInsightsPreviewCreateBodyConfigInstructionsMax = 1000;
+
+export const tracerInsightsPreviewCreateBodyConfigAttributesItemKeyMax = 60;
+
+export const tracerInsightsPreviewCreateBodyConfigAttributesItemDescriptionMax = 300;
+
+export const tracerInsightsPreviewCreateBodyConfigAttributesItemFilterByDefault =
+  false;
+export const tracerInsightsPreviewCreateBodyConfigSampleSizeMin = 10;
+export const tracerInsightsPreviewCreateBodyConfigSampleSizeMax = 1000;
+
+export const tracerInsightsPreviewCreateBodyUnitIdsItemMax = 255;
+
+export const tracerInsightsPreviewCreateBodyUnitIdsMax = 3;
+
+export const TracerInsightsPreviewCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  config: zod.object({
+    name: zod.string().min(1).max(tracerInsightsPreviewCreateBodyConfigNameMax),
+    unit: zod.enum(["traces", "sessions", "users"]),
+    lens: zod.enum(["usage", "failures", "experience", "personas", "custom"]),
+    question: zod
+      .string()
+      .min(1)
+      .max(tracerInsightsPreviewCreateBodyConfigQuestionMax),
+    agent_description: zod
+      .string()
+      .max(tracerInsightsPreviewCreateBodyConfigAgentDescriptionMax)
+      .optional(),
+    instructions: zod
+      .string()
+      .max(tracerInsightsPreviewCreateBodyConfigInstructionsMax)
+      .optional(),
+    attributes: zod
+      .array(
+        zod.object({
+          key: zod
+            .string()
+            .min(1)
+            .max(tracerInsightsPreviewCreateBodyConfigAttributesItemKeyMax),
+          type: zod.enum(["boolean", "number", "string"]),
+          description: zod
+            .string()
+            .max(
+              tracerInsightsPreviewCreateBodyConfigAttributesItemDescriptionMax,
+            )
+            .optional(),
+          filter_by: zod
+            .boolean()
+            .default(
+              tracerInsightsPreviewCreateBodyConfigAttributesItemFilterByDefault,
+            ),
+        }),
+      )
+      .optional(),
+    sample_size: zod
+      .number()
+      .min(tracerInsightsPreviewCreateBodyConfigSampleSizeMin)
+      .max(tracerInsightsPreviewCreateBodyConfigSampleSizeMax)
+      .optional(),
+  }),
+  unit_ids: zod
+    .array(
+      zod.string().min(1).max(tracerInsightsPreviewCreateBodyUnitIdsItemMax),
+    )
+    .min(1)
+    .max(tracerInsightsPreviewCreateBodyUnitIdsMax),
+});
+
+export const tracerInsightsPreviewCreateResponseStatusDefault = true;
+
+export const TracerInsightsPreviewCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsPreviewCreateResponseStatusDefault),
+  result: zod.object({
+    units: zod.array(zod.object({}).passthrough()),
+  }),
+});
+
+/**
+ * Start a report run over a sample of its scope (or the rows handed
+over); creates the report when new.
+ */
+export const tracerInsightsRunsCreateBodyConfigNameMax = 255;
+
+export const tracerInsightsRunsCreateBodyConfigQuestionMax = 500;
+
+export const tracerInsightsRunsCreateBodyConfigAgentDescriptionMax = 500;
+
+export const tracerInsightsRunsCreateBodyConfigInstructionsMax = 1000;
+
+export const tracerInsightsRunsCreateBodyConfigAttributesItemKeyMax = 60;
+
+export const tracerInsightsRunsCreateBodyConfigAttributesItemDescriptionMax = 300;
+
+export const tracerInsightsRunsCreateBodyConfigAttributesItemFilterByDefault =
+  false;
+export const tracerInsightsRunsCreateBodyConfigSampleSizeMin = 10;
+export const tracerInsightsRunsCreateBodyConfigSampleSizeMax = 1000;
+
+export const tracerInsightsRunsCreateBodyScopeLabelMax = 300;
+
+export const tracerInsightsRunsCreateBodyScopePresetMax = 16;
+
+export const tracerInsightsRunsCreateBodyScopeWindowItemMax = 64;
+
+export const tracerInsightsRunsCreateBodyScopeWindowMax = 2;
+
+export const tracerInsightsRunsCreateBodyScopeSearchMax = 200;
+
+export const tracerInsightsRunsCreateBodyPopulationItemIdMax = 255;
+
+export const tracerInsightsRunsCreateBodyPopulationItemTimeMax = 64;
+
+export const tracerInsightsRunsCreateBodyPopulationItemUserIdMax = 255;
+
+export const tracerInsightsRunsCreateBodySampleSizeMin = 10;
+export const tracerInsightsRunsCreateBodySampleSizeMax = 1000;
+
+export const tracerInsightsRunsCreateBodyResetTaxonomyDefault = false;
+
+export const TracerInsightsRunsCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  config_id: zod.string().uuid().optional(),
+  config: zod
+    .object({
+      name: zod.string().min(1).max(tracerInsightsRunsCreateBodyConfigNameMax),
+      unit: zod.enum(["traces", "sessions", "users"]),
+      lens: zod.enum(["usage", "failures", "experience", "personas", "custom"]),
+      question: zod
+        .string()
+        .min(1)
+        .max(tracerInsightsRunsCreateBodyConfigQuestionMax),
+      agent_description: zod
+        .string()
+        .max(tracerInsightsRunsCreateBodyConfigAgentDescriptionMax)
+        .optional(),
+      instructions: zod
+        .string()
+        .max(tracerInsightsRunsCreateBodyConfigInstructionsMax)
+        .optional(),
+      attributes: zod
+        .array(
+          zod.object({
+            key: zod
+              .string()
+              .min(1)
+              .max(tracerInsightsRunsCreateBodyConfigAttributesItemKeyMax),
+            type: zod.enum(["boolean", "number", "string"]),
+            description: zod
+              .string()
+              .max(
+                tracerInsightsRunsCreateBodyConfigAttributesItemDescriptionMax,
+              )
+              .optional(),
+            filter_by: zod
+              .boolean()
+              .default(
+                tracerInsightsRunsCreateBodyConfigAttributesItemFilterByDefault,
+              ),
+          }),
+        )
+        .optional(),
+      sample_size: zod
+        .number()
+        .min(tracerInsightsRunsCreateBodyConfigSampleSizeMin)
+        .max(tracerInsightsRunsCreateBodyConfigSampleSizeMax)
+        .optional(),
+    })
+    .optional(),
+  scope: zod
+    .object({
+      filters: zod.array(zod.object({}).passthrough()).optional(),
+      label: zod
+        .string()
+        .max(tracerInsightsRunsCreateBodyScopeLabelMax)
+        .optional(),
+      preset: zod
+        .string()
+        .max(tracerInsightsRunsCreateBodyScopePresetMax)
+        .optional(),
+      window: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(tracerInsightsRunsCreateBodyScopeWindowItemMax),
+        )
+        .max(tracerInsightsRunsCreateBodyScopeWindowMax)
+        .optional(),
+      search: zod
+        .string()
+        .max(tracerInsightsRunsCreateBodyScopeSearchMax)
+        .optional(),
+    })
+    .optional(),
+  population: zod
+    .array(
+      zod.object({
+        id: zod
+          .string()
+          .min(1)
+          .max(tracerInsightsRunsCreateBodyPopulationItemIdMax),
+        time: zod
+          .string()
+          .max(tracerInsightsRunsCreateBodyPopulationItemTimeMax)
+          .optional(),
+        user_id: zod
+          .string()
+          .max(tracerInsightsRunsCreateBodyPopulationItemUserIdMax)
+          .optional(),
+      }),
+    )
+    .optional(),
+  sample_size: zod
+    .number()
+    .min(tracerInsightsRunsCreateBodySampleSizeMin)
+    .max(tracerInsightsRunsCreateBodySampleSizeMax)
+    .optional(),
+  reset_taxonomy: zod
+    .boolean()
+    .default(tracerInsightsRunsCreateBodyResetTaxonomyDefault),
+});
+
+export const tracerInsightsRunsCreateResponseStatusDefault = true;
+
+export const TracerInsightsRunsCreateResponse = zod.object({
+  status: zod.boolean().default(tracerInsightsRunsCreateResponseStatusDefault),
+  result: zod.object({
+    run_id: zod.string().uuid(),
+    config_id: zod.string().uuid(),
+  }),
+});
+
+/**
+ * A run's progress while it works, and its full report once complete.
+ */
+export const TracerInsightsRunsReadParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const tracerInsightsRunsReadResponseStatusDefault = true;
+
+export const TracerInsightsRunsReadResponse = zod.object({
+  status: zod.boolean().default(tracerInsightsRunsReadResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    config_id: zod.string().uuid(),
+    project_id: zod.string().uuid(),
+    status: zod.string().min(1),
+    stage: zod.string().min(1),
+    progress: zod.object({}).passthrough(),
+    unit: zod.string().min(1),
+    scope: zod.object({}).passthrough(),
+    settings: zod.object({}).passthrough(),
+    population_size: zod.number(),
+    sample_size: zod.number(),
+    analysed_count: zod.number(),
+    excluded_count: zod.number(),
+    failed_count: zod.number(),
+    skipped_count: zod.number(),
+    taxonomy_mode: zod.string().min(1),
+    result: zod.object({}).passthrough(),
+    models_used: zod.object({}).passthrough(),
+    cost_usd: zod.number(),
+    error: zod.string(),
+    error_code: zod.string(),
+    created_at: zod.string().datetime({ offset: true }),
+    started_at: zod.string().datetime({ offset: true }),
+    finished_at: zod.string().datetime({ offset: true }),
+    previous_run_id: zod.string().uuid(),
+    next_run_id: zod.string().uuid(),
+  }),
+});
+
+/**
+ * Answer a follow-up question about a completed report, citing its examples.
+ */
+export const TracerInsightsRunsAskCreateParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const tracerInsightsRunsAskCreateBodyQuestionMax = 500;
+
+export const tracerInsightsRunsAskCreateBodyHistoryItemContentMax = 4000;
+
+export const TracerInsightsRunsAskCreateBody = zod.object({
+  question: zod.string().min(1).max(tracerInsightsRunsAskCreateBodyQuestionMax),
+  history: zod
+    .array(
+      zod.object({
+        role: zod.enum(["user", "assistant"]),
+        content: zod
+          .string()
+          .max(tracerInsightsRunsAskCreateBodyHistoryItemContentMax),
+      }),
+    )
+    .optional(),
+});
+
+export const tracerInsightsRunsAskCreateResponseStatusDefault = true;
+
+export const TracerInsightsRunsAskCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsRunsAskCreateResponseStatusDefault),
+  result: zod.object({
+    answer: zod.array(
+      zod.object({
+        text: zod.string().min(1),
+        unit_ids: zod.array(zod.string().min(1)),
+        category_ids: zod.array(zod.string().min(1)),
+        evidence: zod.array(
+          zod.object({
+            unit_id: zod.string().min(1),
+            quote: zod.string(),
+            evidence_id: zod.string().optional(),
+          }),
+        ),
+      }),
+    ),
+    follow_ups: zod.array(zod.string().min(1)),
+    dropped: zod.number(),
+    unverified_answer: zod
+      .array(
+        zod.object({
+          text: zod.string().min(1),
+          unit_ids: zod.array(zod.string().min(1)),
+          category_ids: zod.array(zod.string().min(1)),
+          evidence: zod.array(
+            zod.object({
+              unit_id: zod.string().min(1),
+              quote: zod.string(),
+              evidence_id: zod.string().optional(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    verification: zod.object({}).passthrough().optional(),
+  }),
+});
+
+/**
+ * An image an analysed unit's evidence cites, as the agent viewed it
+(at most 1,568 px on its longest side and 5 MiB), for the example
+panel. Only a unit of this organization's run that the report kept,
+and only media its evidence names.
+ */
+export const TracerInsightsRunsMediaListParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const tracerInsightsRunsMediaListQueryUnitIdMax = 255;
+
+export const tracerInsightsRunsMediaListQueryMediaRegExp = new RegExp(
+  "^m\\d{1,6}$",
+);
+
+export const TracerInsightsRunsMediaListQueryParams = zod.object({
+  unit_id: zod.string().min(1).max(tracerInsightsRunsMediaListQueryUnitIdMax),
+  media: zod.string().min(1).regex(tracerInsightsRunsMediaListQueryMediaRegExp),
+});
+
+export const TracerInsightsRunsMediaListResponse = zod.instanceof(File);
+
+/**
+ * Stop a run in flight: it reads nothing more and isn't written. The
+work finished before the stop is charged, and its counts are final:
+what calls under way read is dropped. Stopping it again answers the
+same.
+ */
+export const TracerInsightsRunsStopCreateParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const TracerInsightsRunsStopCreateBody = zod.object({});
+
+export const tracerInsightsRunsStopCreateResponseStatusDefault = true;
+
+export const TracerInsightsRunsStopCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsRunsStopCreateResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+    error: zod.string(),
+    error_code: zod.string(),
+  }),
+});
+
+/**
+ * Analysed units of a run, optionally one category's, oldest first.
+ */
+export const TracerInsightsRunsUnitsListParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const tracerInsightsRunsUnitsListQueryCategoryIdMax = 64;
+
+export const tracerInsightsRunsUnitsListQuerySubCategoryIdMax = 64;
+
+export const tracerInsightsRunsUnitsListQueryUnitIdsMax = 4000;
+
+export const tracerInsightsRunsUnitsListQueryOffsetDefault = 0;
+export const tracerInsightsRunsUnitsListQueryOffsetMin = 0;
+export const tracerInsightsRunsUnitsListQueryOffsetMax = 1000;
+
+export const tracerInsightsRunsUnitsListQueryLimitDefault = 50;
+export const tracerInsightsRunsUnitsListQueryLimitMax = 200;
+
+export const tracerInsightsRunsUnitsListQueryIncludeContentDefault = false;
+
+export const TracerInsightsRunsUnitsListQueryParams = zod.object({
+  category_id: zod
+    .string()
+    .max(tracerInsightsRunsUnitsListQueryCategoryIdMax)
+    .optional(),
+  sub_category_id: zod
+    .string()
+    .max(tracerInsightsRunsUnitsListQuerySubCategoryIdMax)
+    .optional(),
+  unit_ids: zod
+    .string()
+    .max(tracerInsightsRunsUnitsListQueryUnitIdsMax)
+    .optional(),
+  offset: zod
+    .number()
+    .min(tracerInsightsRunsUnitsListQueryOffsetMin)
+    .max(tracerInsightsRunsUnitsListQueryOffsetMax)
+    .default(tracerInsightsRunsUnitsListQueryOffsetDefault),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerInsightsRunsUnitsListQueryLimitMax)
+    .default(tracerInsightsRunsUnitsListQueryLimitDefault),
+  include_content: zod
+    .boolean()
+    .default(tracerInsightsRunsUnitsListQueryIncludeContentDefault),
+});
+
+export const tracerInsightsRunsUnitsListResponseStatusDefault = true;
+
+export const TracerInsightsRunsUnitsListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsRunsUnitsListResponseStatusDefault),
+  result: zod.object({
+    units: zod.array(
+      zod.object({
+        unit_id: zod.string().min(1),
+        label: zod.string(),
+        user_id: zod.string(),
+        session_id: zod.string(),
+        time: zod.string().datetime({ offset: true }),
+        excerpt: zod.string(),
+        summary: zod.string(),
+        lens_answer: zod.string(),
+        facets: zod.object({}).passthrough(),
+        metrics: zod.object({}).passthrough(),
+        category_id: zod.string(),
+        sub_category_id: zod.string(),
+        content: zod.string().optional(),
+      }),
+    ),
+    total: zod.number(),
+  }),
+});
+
+/**
+ * Pause, resume or cancel a run, retry the rows Jev failed on, or
+read more of a sample. Resuming, retrying and reading more count
+against the organization's runs in flight.
+ */
+
+export const tracerInstantEvalControlCreateBodyConfirmDefault = false;
+
+export const TracerInstantEvalControlCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  action: zod.enum(["pause", "resume", "cancel", "retry_failed", "read_more"]),
+  more: zod.number().min(1).optional(),
+  confirm: zod
+    .boolean()
+    .default(tracerInstantEvalControlCreateBodyConfirmDefault),
+});
+
+export const tracerInstantEvalControlCreateResponseStatusDefault = true;
+
+export const TracerInstantEvalControlCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInstantEvalControlCreateResponseStatusDefault),
+  result: zod.object({
+    status: zod.string().min(1),
+    message: zod.string().min(1),
+    rows_requested: zod.number().optional(),
+    retried: zod.number().optional(),
+  }),
+});
+
+/**
+ * How many rows a view holds, and what a sample or all of it costs.
+ */
+export const tracerInstantEvalEstimateCreateBodyFiltersDefault = [];
+export const tracerInstantEvalEstimateCreateBodyIdsItemMax = 255;
+
+export const tracerInstantEvalEstimateCreateBodyIdsMax = 5000;
+
+export const tracerInstantEvalEstimateCreateBodyLabelMax = 300;
+
+export const tracerInstantEvalEstimateCreateBodySearchMax = 200;
+
+export const tracerInstantEvalEstimateCreateBodyQuestionsDefault = 1;
+export const tracerInstantEvalEstimateCreateBodyQuestionsMax = 5;
+
+export const TracerInstantEvalEstimateCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .default(tracerInstantEvalEstimateCreateBodyFiltersDefault),
+  ids: zod
+    .array(
+      zod.string().min(1).max(tracerInstantEvalEstimateCreateBodyIdsItemMax),
+    )
+    .max(tracerInstantEvalEstimateCreateBodyIdsMax)
+    .optional(),
+  sample_size: zod.number().min(1).optional(),
+  date_preset: zod
+    .enum(["Today", "Yesterday", "7D", "30D", "3M", "6M", "12M", "Custom"])
+    .optional(),
+  label: zod
+    .string()
+    .max(tracerInstantEvalEstimateCreateBodyLabelMax)
+    .optional(),
+  search: zod
+    .string()
+    .max(tracerInstantEvalEstimateCreateBodySearchMax)
+    .optional(),
+  questions: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalEstimateCreateBodyQuestionsMax)
+    .default(tracerInstantEvalEstimateCreateBodyQuestionsDefault),
+});
+
+export const tracerInstantEvalEstimateCreateResponseStatusDefault = true;
+
+export const TracerInstantEvalEstimateCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInstantEvalEstimateCreateResponseStatusDefault),
+  result: zod.object({
+    population: zod.number(),
+    population_is_lower_bound: zod.boolean(),
+    rows_to_read: zod.number(),
+    questions: zod.number(),
+    credits_estimate: zod.number(),
+    credits_per_answer: zod.number(),
+    seconds_estimate: zod.number(),
+    needs_confirm: zod.boolean(),
+    max_rows: zod.number(),
+    confirm_rows: zod.number(),
+    default_sample_size: zod.number(),
+    sessions_per_user: zod.number(),
+    choices: zod.array(
+      zod.object({
+        sample_size: zod.number(),
+        rows_to_read: zod.number(),
+        credits_estimate: zod.number(),
+        seconds_estimate: zod.number(),
+        needs_confirm: zod.boolean(),
+        allowed: zod.boolean(),
+        credit_limited: zod.boolean(),
+      }),
+    ),
+    credit_check: zod.object({
+      allowed: zod.boolean(),
+      error_code: zod.string().min(1),
+      current_usage: zod.number(),
+      limit: zod.number(),
+      credits_left: zod.number(),
+      blocked: zod.boolean(),
+      message: zod.string().min(1),
+    }),
+    credit_max_sample: zod.number(),
+    window: zod.object({}).passthrough(),
+    sample_error: zod.object({
+      error_code: zod.string().min(1),
+      message: zod.string().min(1),
+      sample_size: zod.number(),
+    }),
+  }),
+});
+
+/**
+ * Every row the filter selects, with each question's answer,
+confidence and explanation, streamed as CSV. A user question writes
+a line per user (their rolled-up answers and the sessions behind
+them), or with ``sessions`` a line per session of those users.
+ */
+export const tracerInstantEvalExportListQueryConfigIdsMax = 2000;
+
+export const tracerInstantEvalExportListQueryTzDefault = `UTC`;
+export const tracerInstantEvalExportListQueryTzMax = 64;
+
+export const tracerInstantEvalExportListQueryAnswerMax = 500;
+
+export const tracerInstantEvalExportListQueryAnswersMax = 4000;
+
+export const tracerInstantEvalExportListQueryTimeFromMax = 64;
+
+export const tracerInstantEvalExportListQueryTimeToMax = 64;
+
+export const tracerInstantEvalExportListQueryGroupItemMax = 300;
+
+export const tracerInstantEvalExportListQueryGroupMax = 100000;
+
+export const tracerInstantEvalExportListQueryUserMax = 255;
+
+export const tracerInstantEvalExportListQueryModelMax = 255;
+
+export const tracerInstantEvalExportListQueryUnsureDefault = false;
+export const tracerInstantEvalExportListQueryQMax = 200;
+
+export const tracerInstantEvalExportListQueryCursorMax = 500;
+
+export const tracerInstantEvalExportListQueryPageSizeDefault = 50;
+export const tracerInstantEvalExportListQueryPageSizeMax = 1500;
+
+export const tracerInstantEvalExportListQueryCompactDefault = false;
+export const tracerInstantEvalExportListQuerySortDefault = `-time`;
+export const tracerInstantEvalExportListQuerySessionsDefault = false;
+
+export const TracerInstantEvalExportListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalExportListQueryConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryTzMax)
+    .default(tracerInstantEvalExportListQueryTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryTimeToMax)
+    .optional(),
+  group: zod
+    .array(
+      zod.string().min(1).max(tracerInstantEvalExportListQueryGroupItemMax),
+    )
+    .max(tracerInstantEvalExportListQueryGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalExportListQueryUnsureDefault),
+  q: zod.string().max(tracerInstantEvalExportListQueryQMax).optional(),
+  cursor: zod
+    .string()
+    .max(tracerInstantEvalExportListQueryCursorMax)
+    .optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalExportListQueryPageSizeMax)
+    .default(tracerInstantEvalExportListQueryPageSizeDefault),
+  compact: zod
+    .boolean()
+    .default(tracerInstantEvalExportListQueryCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalExportListQuerySortDefault),
+  sessions: zod
+    .boolean()
+    .default(tracerInstantEvalExportListQuerySessionsDefault),
+});
+
+export const TracerInstantEvalExportListResponse = zod.string();
+
+/**
+ * Every row the filter selects, with each question's answer,
+confidence and explanation, streamed as CSV. A user question writes
+a line per user (their rolled-up answers and the sessions behind
+them), or with ``sessions`` a line per session of those users.
+ */
+export const tracerInstantEvalExportCreateBodyConfigIdsMax = 2000;
+
+export const tracerInstantEvalExportCreateBodyTzDefault = `UTC`;
+export const tracerInstantEvalExportCreateBodyTzMax = 64;
+
+export const tracerInstantEvalExportCreateBodyAnswerMax = 500;
+
+export const tracerInstantEvalExportCreateBodyAnswersMax = 4000;
+
+export const tracerInstantEvalExportCreateBodyTimeFromMax = 64;
+
+export const tracerInstantEvalExportCreateBodyTimeToMax = 64;
+
+export const tracerInstantEvalExportCreateBodyGroupItemMax = 300;
+
+export const tracerInstantEvalExportCreateBodyGroupMax = 100000;
+
+export const tracerInstantEvalExportCreateBodyUserMax = 255;
+
+export const tracerInstantEvalExportCreateBodyModelMax = 255;
+
+export const tracerInstantEvalExportCreateBodyUnsureDefault = false;
+export const tracerInstantEvalExportCreateBodyQMax = 200;
+
+export const tracerInstantEvalExportCreateBodyCursorMax = 500;
+
+export const tracerInstantEvalExportCreateBodyPageSizeDefault = 50;
+export const tracerInstantEvalExportCreateBodyPageSizeMax = 1500;
+
+export const tracerInstantEvalExportCreateBodyCompactDefault = false;
+export const tracerInstantEvalExportCreateBodySortDefault = `-time`;
+export const tracerInstantEvalExportCreateBodySessionsDefault = false;
+
+export const TracerInstantEvalExportCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalExportCreateBodyConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTzMax)
+    .default(tracerInstantEvalExportCreateBodyTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTimeToMax)
+    .optional(),
+  group: zod
+    .array(
+      zod.string().min(1).max(tracerInstantEvalExportCreateBodyGroupItemMax),
+    )
+    .max(tracerInstantEvalExportCreateBodyGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalExportCreateBodyUnsureDefault),
+  q: zod.string().max(tracerInstantEvalExportCreateBodyQMax).optional(),
+  cursor: zod
+    .string()
+    .max(tracerInstantEvalExportCreateBodyCursorMax)
+    .optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyPageSizeMax)
+    .default(tracerInstantEvalExportCreateBodyPageSizeDefault),
+  compact: zod
+    .boolean()
+    .default(tracerInstantEvalExportCreateBodyCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalExportCreateBodySortDefault),
+  sessions: zod
+    .boolean()
+    .default(tracerInstantEvalExportCreateBodySessionsDefault),
+});
+
+export const TracerInstantEvalExportCreateResponse =
+  TracerInstantEvalExportListResponse;
+
+export const tracerInstantEvalRowsListQueryConfigIdsMax = 2000;
+
+export const tracerInstantEvalRowsListQueryTzDefault = `UTC`;
+export const tracerInstantEvalRowsListQueryTzMax = 64;
+
+export const tracerInstantEvalRowsListQueryAnswerMax = 500;
+
+export const tracerInstantEvalRowsListQueryAnswersMax = 4000;
+
+export const tracerInstantEvalRowsListQueryTimeFromMax = 64;
+
+export const tracerInstantEvalRowsListQueryTimeToMax = 64;
+
+export const tracerInstantEvalRowsListQueryGroupItemMax = 300;
+
+export const tracerInstantEvalRowsListQueryGroupMax = 100000;
+
+export const tracerInstantEvalRowsListQueryUserMax = 255;
+
+export const tracerInstantEvalRowsListQueryModelMax = 255;
+
+export const tracerInstantEvalRowsListQueryUnsureDefault = false;
+export const tracerInstantEvalRowsListQueryQMax = 200;
+
+export const tracerInstantEvalRowsListQueryCursorMax = 500;
+
+export const tracerInstantEvalRowsListQueryPageSizeDefault = 50;
+export const tracerInstantEvalRowsListQueryPageSizeMax = 1500;
+
+export const tracerInstantEvalRowsListQueryCompactDefault = false;
+export const tracerInstantEvalRowsListQuerySortDefault = `-time`;
+
+export const TracerInstantEvalRowsListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalRowsListQueryConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryTzMax)
+    .default(tracerInstantEvalRowsListQueryTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryTimeToMax)
+    .optional(),
+  group: zod
+    .array(zod.string().min(1).max(tracerInstantEvalRowsListQueryGroupItemMax))
+    .max(tracerInstantEvalRowsListQueryGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalRowsListQueryUnsureDefault),
+  q: zod.string().max(tracerInstantEvalRowsListQueryQMax).optional(),
+  cursor: zod.string().max(tracerInstantEvalRowsListQueryCursorMax).optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalRowsListQueryPageSizeMax)
+    .default(tracerInstantEvalRowsListQueryPageSizeDefault),
+  compact: zod.boolean().default(tracerInstantEvalRowsListQueryCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalRowsListQuerySortDefault),
+});
+
+export const tracerInstantEvalRowsListResponseStatusDefault = true;
+
+export const TracerInstantEvalRowsListResponse = zod.object({
+  status: zod.boolean().default(tracerInstantEvalRowsListResponseStatusDefault),
+  result: zod.object({
+    rows: zod.array(zod.object({}).passthrough()),
+    next_cursor: zod.string().min(1),
+    total: zod.number(),
+  }),
+});
+
+/**
+ * One page of a run's rows with their answers, filtered by what the
+charts select: an answer, a time range, a group, unsure answers or text.
+ */
+export const tracerInstantEvalRowsCreateBodyConfigIdsMax = 2000;
+
+export const tracerInstantEvalRowsCreateBodyTzDefault = `UTC`;
+export const tracerInstantEvalRowsCreateBodyTzMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyAnswerMax = 500;
+
+export const tracerInstantEvalRowsCreateBodyAnswersMax = 4000;
+
+export const tracerInstantEvalRowsCreateBodyTimeFromMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyTimeToMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyGroupItemMax = 300;
+
+export const tracerInstantEvalRowsCreateBodyGroupMax = 100000;
+
+export const tracerInstantEvalRowsCreateBodyUserMax = 255;
+
+export const tracerInstantEvalRowsCreateBodyModelMax = 255;
+
+export const tracerInstantEvalRowsCreateBodyUnsureDefault = false;
+export const tracerInstantEvalRowsCreateBodyQMax = 200;
+
+export const tracerInstantEvalRowsCreateBodyCursorMax = 500;
+
+export const tracerInstantEvalRowsCreateBodyPageSizeDefault = 50;
+export const tracerInstantEvalRowsCreateBodyPageSizeMax = 1500;
+
+export const tracerInstantEvalRowsCreateBodyCompactDefault = false;
+export const tracerInstantEvalRowsCreateBodySortDefault = `-time`;
+
+export const TracerInstantEvalRowsCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalRowsCreateBodyConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTzMax)
+    .default(tracerInstantEvalRowsCreateBodyTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTimeToMax)
+    .optional(),
+  group: zod
+    .array(zod.string().min(1).max(tracerInstantEvalRowsCreateBodyGroupItemMax))
+    .max(tracerInstantEvalRowsCreateBodyGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalRowsCreateBodyUnsureDefault),
+  q: zod.string().max(tracerInstantEvalRowsCreateBodyQMax).optional(),
+  cursor: zod.string().max(tracerInstantEvalRowsCreateBodyCursorMax).optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyPageSizeMax)
+    .default(tracerInstantEvalRowsCreateBodyPageSizeDefault),
+  compact: zod.boolean().default(tracerInstantEvalRowsCreateBodyCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalRowsCreateBodySortDefault),
+});
+
+export const tracerInstantEvalRowsCreateResponseStatusDefault = true;
+
+export const TracerInstantEvalRowsCreateResponse =
+  TracerInstantEvalRowsListResponse;
+
+export const tracerInstantEvalRunsListQuerySearchMax = 200;
+
+export const tracerInstantEvalRunsListQueryPageNumberDefault = 0;
+export const tracerInstantEvalRunsListQueryPageNumberMin = 0;
+
+export const tracerInstantEvalRunsListQueryPageSizeDefault = 20;
+export const tracerInstantEvalRunsListQueryPageSizeMax = 50;
+
+export const TracerInstantEvalRunsListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  search: zod.string().max(tracerInstantEvalRunsListQuerySearchMax).optional(),
+  task_id: zod.string().uuid().optional(),
+  page_number: zod
+    .number()
+    .min(tracerInstantEvalRunsListQueryPageNumberMin)
+    .default(tracerInstantEvalRunsListQueryPageNumberDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalRunsListQueryPageSizeMax)
+    .default(tracerInstantEvalRunsListQueryPageSizeDefault),
+});
+
+export const tracerInstantEvalRunsListResponseStatusDefault = true;
+
+export const TracerInstantEvalRunsListResponse = zod.object({
+  status: zod.boolean().default(tracerInstantEvalRunsListResponseStatusDefault),
+  result: zod.object({
+    runs: zod.array(
+      zod.object({
+        task_id: zod.string().min(1),
+        name: zod.string(),
+        created_at: zod.string().min(1),
+        status: zod.string().min(1),
+        run_type: zod.string().min(1),
+        unit: zod.string().min(1),
+        reads: zod.string(),
+        rows: zod.number(),
+        config_ids: zod.array(zod.string().min(1)),
+        questions: zod.array(zod.string().min(1)),
+        counts: zod.record(
+          zod.string(),
+          zod.record(zod.string(), zod.number()),
+        ),
+        answered: zod.number(),
+        pending: zod.number(),
+        finished_at: zod.string().min(1).optional(),
+        last_activity_at: zod.string().min(1).optional(),
+        created_by: zod.string().min(1).optional(),
+        credits_estimate: zod.number().optional(),
+        population: zod.number().optional(),
+        is_sample: zod.boolean().optional(),
+        date_preset: zod.string().min(1).optional(),
+        label: zod.string().optional(),
+        window: zod.object({}).passthrough().optional(),
+        sessions: zod.number().optional(),
+      }),
+    ),
+    has_more: zod.boolean(),
+  }),
+});
+
+/**
+ * Start a run: the server resolves the view's rows (or reads the rows
+handed over), enforces the size and concurrency limits, and starts the
+eval task. The rows are picked by the task's first step.
+ */
+export const tracerInstantEvalStartCreateBodyFiltersDefault = [];
+export const tracerInstantEvalStartCreateBodyIdsItemMax = 255;
+
+export const tracerInstantEvalStartCreateBodyIdsMax = 5000;
+
+export const tracerInstantEvalStartCreateBodyLabelMax = 300;
+
+export const tracerInstantEvalStartCreateBodySearchMax = 200;
+
+export const tracerInstantEvalStartCreateBodyConfigIdsMax = 5;
+
+export const tracerInstantEvalStartCreateBodyConfirmDefault = false;
+export const tracerInstantEvalStartCreateBodyConfirmedRowsMin = 0;
+
+export const TracerInstantEvalStartCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .default(tracerInstantEvalStartCreateBodyFiltersDefault),
+  ids: zod
+    .array(zod.string().min(1).max(tracerInstantEvalStartCreateBodyIdsItemMax))
+    .max(tracerInstantEvalStartCreateBodyIdsMax)
+    .optional(),
+  sample_size: zod.number().min(1).optional(),
+  date_preset: zod
+    .enum(["Today", "Yesterday", "7D", "30D", "3M", "6M", "12M", "Custom"])
+    .optional(),
+  label: zod.string().max(tracerInstantEvalStartCreateBodyLabelMax).optional(),
+  search: zod
+    .string()
+    .max(tracerInstantEvalStartCreateBodySearchMax)
+    .optional(),
+  config_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(tracerInstantEvalStartCreateBodyConfigIdsMax),
+  confirm: zod
+    .boolean()
+    .default(tracerInstantEvalStartCreateBodyConfirmDefault),
+  confirmed_rows: zod
+    .number()
+    .min(tracerInstantEvalStartCreateBodyConfirmedRowsMin)
+    .optional(),
+});
+
+export const tracerInstantEvalStartCreateResponseStatusDefault = true;
+
+export const TracerInstantEvalStartCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInstantEvalStartCreateResponseStatusDefault),
+  result: zod.object({
+    task_id: zod.string().min(1),
+    unit: zod.string().min(1),
+    population: zod.number(),
+    rows_requested: zod.number(),
+    is_sample: zod.boolean(),
+    credits_estimate: zod.number(),
+    date_preset: zod.string().min(1),
+    label: zod.string(),
+  }),
+});
+
+/**
+ * Everything the Ask page's charts draw for one run, as counts:
+progress, answer totals, a timeline in the viewer's time zone, and the
+counts per day, hour, user, model, turns and error.
+ */
+export const tracerInstantEvalSummaryListQueryConfigIdsMax = 2000;
+
+export const tracerInstantEvalSummaryListQueryTzDefault = `UTC`;
+export const tracerInstantEvalSummaryListQueryTzMax = 64;
+
+export const TracerInstantEvalSummaryListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalSummaryListQueryConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalSummaryListQueryTzMax)
+    .default(tracerInstantEvalSummaryListQueryTzDefault),
+});
+
+export const tracerInstantEvalSummaryListResponseStatusDefault = true;
+
+export const TracerInstantEvalSummaryListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInstantEvalSummaryListResponseStatusDefault),
+  result: zod.object({
+    status: zod.string().min(1),
+    unit: zod.string().min(1),
+    preparing: zod.boolean(),
+    total: zod.number(),
+    answered: zod.number(),
+    failed: zod.number(),
+    pending: zod.number(),
+    not_read: zod.number(),
+    started_at: zod.string().min(1),
+    finished_at: zod.string().min(1),
+    rate_per_min: zod.number(),
+    eta_s: zod.number(),
+    created_by: zod.object({
+      id: zod.string().min(1),
+      name: zod.string(),
+      email: zod.string(),
+    }),
+    credits_estimate: zod.number(),
+    credits_used: zod.number(),
+    in_flight: zod.number(),
+    waiting_s: zod.number(),
+    failure: zod
+      .object({
+        message: zod.string().min(1),
+        every: zod.boolean(),
+        ai_providers: zod.boolean(),
+      })
+      .optional(),
+    active_s: zod.number(),
+    idle_s: zod.number(),
+    sample: zod.object({
+      population: zod.number(),
+      population_is_lower_bound: zod.boolean(),
+      requested: zod.number(),
+      read: zod.number(),
+      is_sample: zod.boolean(),
+      can_extend: zod.boolean(),
+      next_size: zod.number(),
+    }),
+    window: zod.object({}).passthrough(),
+    scope: zod.object({}).passthrough(),
+    questions: zod.array(
+      zod.object({
+        config_id: zod.string().min(1),
+        question: zod.string(),
+        answer_type: zod.string().min(1),
+        labels: zod.array(zod.string().min(1)),
+      }),
+    ),
+    counts: zod.object({}).passthrough(),
+    unsure: zod.object({}).passthrough(),
+    timeline: zod.object({}).passthrough(),
+    groups: zod.object({}).passthrough(),
+    cross: zod.object({}).passthrough(),
+    sessions_read: zod.number().optional(),
   }),
 });
 
@@ -63012,6 +65189,11 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
 });
 
 export const tracerObservationSpanGetGraphMethodsResponseStatusDefault = true;
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerObservationSpanGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -63053,6 +65235,35 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -65633,6 +67844,11 @@ export const TracerProjectGetGraphDataQueryParams = zod.object({
 });
 
 export const tracerProjectGetGraphDataResponseStatusDefault = true;
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetGraphDataResponse = zod.object({
   status: zod.boolean().default(tracerProjectGetGraphDataResponseStatusDefault),
@@ -65641,6 +67857,38 @@ export const TracerProjectGetGraphDataResponse = zod.object({
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     system_metric_statistics: zod
       .record(zod.string(), zod.enum(["count", "sum", "mean", "percentage"]))
       .optional()
@@ -65727,12 +67975,49 @@ export const TracerProjectGetUserGraphDataBody = zod.object({
 });
 
 export const tracerProjectGetUserGraphDataResponseStatusDefault = true;
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetUserGraphDataResponse = zod.object({
   status: zod
     .boolean()
     .default(tracerProjectGetUserGraphDataResponseStatusDefault),
   result: zod.object({
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     session: zod.array(
       zod.record(
         zod.string(),
@@ -65960,6 +68245,11 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
 
 export const tracerProjectGetUsersAggregateGraphDataResponseStatusDefault =
   true;
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerProjectGetUsersAggregateGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -66001,6 +68291,35 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -68192,6 +70511,14 @@ export const TracerSharedTracesReadParams = zod.object({
 
 export const tracerSharedTracesReadResponseStatusDefault = true;
 
+export const tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerSharedTracesReadResponse = zod.object({
   status: zod.boolean().default(tracerSharedTracesReadResponseStatusDefault),
   result: zod.object({
@@ -68250,6 +70577,52 @@ export const TracerSharedTracesReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -68637,6 +71010,11 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
 });
 
 export const tracerTraceSessionGetSessionGraphDataResponseStatusDefault = true;
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceSessionGetSessionGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -68678,6 +71056,35 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -68915,6 +71322,8 @@ export const TracerTraceSessionListSessionsQueryParams = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -68928,9 +71337,45 @@ export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFil
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFilterCountMin = 0;
 
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionListSessionsResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -68995,6 +71440,54 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           created_at: zod.string().datetime({ offset: true }).nullish(),
           duration: zod.number().nullish(),
           total_cost: zod.number().nullish(),
+          cost_coverage: zod
+            .object({
+              status: zod.enum(["complete", "partial", "unknown"]),
+              known_subtotal: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin,
+                )
+                .describe(
+                  "Sum in USD of known observed contributions, never an average.",
+                ),
+              known_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with known cost, including zero.",
+                ),
+              unknown_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with unknown cost, not missing requests.",
+                ),
+            })
+            .optional(),
+          capture_coverage: zod
+            .object({
+              scope: zod.enum(["observed_requests"]),
+              source_summary_present: zod.boolean(),
+              request_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin,
+                )
+                .describe(
+                  "Observed request spans only; never inferred from source summary totals.",
+                ),
+              coverage_unknown: zod
+                .boolean()
+                .describe(
+                  "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+                ),
+            })
+            .optional(),
           total_tokens: zod.number().nullish(),
           total_traces_count: zod.number().nullish(),
           first_message: jsonValueSchema
@@ -69103,6 +71596,8 @@ export const TracerTraceSessionListSessionsCreateBody = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -69115,6 +71610,14 @@ export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryResu
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionListSessionsCreateResponse =
   TracerTraceSessionListSessionsResponse;
@@ -69247,10 +71750,66 @@ export const TracerTraceSessionQueryQueryParams = zod.object({
     .default(tracerTraceSessionQueryQueryPageSizeDefault),
 });
 
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionQueryResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     session_metadata: zod.record(zod.string(), zod.unknown()),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin,
+          )
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     response: zod.array(zod.record(zod.string(), zod.unknown())),
     next: zod.boolean(),
   }),
@@ -69296,6 +71855,14 @@ export const TracerTraceSessionQueryCreateBody = zod.object({
     .max(tracerTraceSessionQueryCreateBodyPageSizeMax)
     .default(tracerTraceSessionQueryCreateBodyPageSizeDefault),
 });
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionQueryCreateResponse =
   TracerTraceSessionQueryResponse;
@@ -69398,6 +71965,12 @@ export const tracerTraceAgentGraphResponseResultNodesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTraceCountMin = 0;
@@ -69412,6 +71985,12 @@ export const tracerTraceAgentGraphResponseResultEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTraceCountMin = 0;
@@ -69423,6 +72002,12 @@ export const tracerTraceAgentGraphResponseResultPathEdgesItemAvgLatencyMsMin = 0
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -69456,6 +72041,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemErrorCountMin),
@@ -69487,6 +72101,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin),
@@ -69517,6 +72160,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin),
@@ -69589,6 +72261,12 @@ export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTraceCountMin = 0;
@@ -69603,6 +72281,12 @@ export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTraceCountMin = 0;
@@ -69614,6 +72298,12 @@ export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemAvgLatencyMsM
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -69848,6 +72538,11 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
 });
 
 export const tracerTraceGetGraphMethodsResponseStatusDefault = true;
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -69889,6 +72584,35 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -70388,6 +73112,8 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
   interval: zod.string().optional(),
 });
 
+export const tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceListTracesOfSessionResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -70404,6 +73130,34 @@ export const tracerTraceListTracesOfSessionResponseResultMetadataQueryAppliedFil
 export const TracerTraceListTracesOfSessionResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -70565,6 +73319,8 @@ export const TracerTraceListTracesOfSessionCreateBody = zod.object({
     ),
   interval: zod.string().optional(),
 });
+
+export const tracerTraceListTracesOfSessionCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
 
 export const tracerTraceListTracesOfSessionCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -70986,6 +73742,14 @@ export const TracerTraceReadQueryParams = zod.object({
 
 export const tracerTraceReadResponseStatusDefault = true;
 
+export const tracerTraceReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceReadResponse = zod.object({
   status: zod.boolean().default(tracerTraceReadResponseStatusDefault),
   result: zod.object({
@@ -71037,6 +73801,46 @@ export const TracerTraceReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageUnknownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCaptureCoverageRequestCountMin)
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -73198,6 +76002,11 @@ export const TracerUsersListQueryParams = zod.object({
 });
 
 export const tracerUsersListResponseStatusDefault = true;
+export const tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersListResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -73209,6 +76018,35 @@ export const TracerUsersListResponse = zod.object({
       zod.object({
         user_id: zod.string().min(1).optional(),
         total_cost: zod.number(),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         total_tokens: zod.number().optional(),
         input_tokens: zod.number().optional(),
         output_tokens: zod.number().optional(),
@@ -73323,6 +76161,11 @@ export const TracerUsersCreateBody = zod.object({
 });
 
 export const tracerUsersCreateResponseStatusDefault = true;
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersCreateResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -73662,6 +76505,7 @@ export const UsageApiCallTypeListResponse = zod.object({
         "protect_evaluator",
         "protect_flash_evaluator",
         "code_evaluator",
+        "jev_evaluator",
         "user_add",
         "observe_add",
         "prototype_add",

@@ -25,11 +25,12 @@ from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.runs import user_executions
+from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
-from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -52,9 +53,9 @@ from simulate.services.run_results_v3_queries import (
     run_call_rows_queryset,
     run_calls_queryset,
 )
-from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -140,6 +141,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -201,6 +206,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -246,6 +252,11 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    capability_snapshot = HarnessCapabilityReportSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The run readiness of the run's versions when it was created.",
+    )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -554,6 +565,27 @@ class FunctionCallSerializer(serializers.Serializer):
         ref_name = "SimulateRunV3FunctionCall"
 
 
+class CallSubActorSerializer(serializers.Serializer):
+    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
+
+    id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The sub-actor's id in the environment.",
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, help_text="The name the transcript shows."
+    )
+    role = serializers.CharField(
+        required=False, allow_blank=True, help_text="Who they are to the caller."
+    )
+    channel = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The channel id they joined the call on.",
+    )
+
+
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -567,6 +599,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    sub_actors = CallSubActorSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -586,6 +619,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "sub_actors",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -611,7 +645,9 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    pinned = (
+        run_version_labels([execution.id], readiness=True).get(str(execution.id)) or {}
+    )
     ordinal = (
         user_executions()
         .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
@@ -630,6 +666,7 @@ def _execution_payload(
         "suite_version": pinned.get("suite_version"),
         "pinned_agent_version": pinned.get("agent_version"),
         "agent_differs": bool(pinned.get("agent_differs")),
+        "capability_snapshot": pinned.get("capability_snapshot"),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -801,6 +838,21 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
+def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's sub-actors is and how they were heard."""
+    record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
+    resolved = record.get("resolved") if isinstance(record, dict) else None
+    return [
+        {
+            key: one[key]
+            for key in ("id", "name", "role", "channel")
+            if isinstance(one.get(key), str)
+        }
+        for one in resolved or []
+        if isinstance(one, dict)
+    ]
+
+
 def build_call_execution_detail(
     call: CallExecution, request=None, workspace=None
 ) -> dict[str, Any]:
@@ -846,6 +898,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "sub_actors": _call_sub_actors(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

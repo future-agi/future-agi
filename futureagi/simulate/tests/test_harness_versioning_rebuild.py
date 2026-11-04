@@ -46,7 +46,10 @@ from simulate.tests.test_hosted_harness_conversation import (
     _put_conversation_checkpoint,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("moves_without_validation"),
+]
 
 BASE = "/simulate/api/harness-environments"
 GUEST = "/simulate/api/harness/conversations"

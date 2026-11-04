@@ -22,7 +22,7 @@ HARNESS_ERROR = ("error", "errored", "cancelled", "canceled")
 HARNESS_FAILED = ("failed", "fail", "failure")
 HARNESS_INCONCLUSIVE = ("inconclusive", "unknown", "skipped")
 HARNESS_PASSED = ("passed", "pass", "success", "successful")
-# Every sub-goal was not applicable: nothing the call was meant to test happened in it.
+# No pass or fail: sub-goals not applicable or inconclusive, and no eval decided.
 HARNESS_NO_SCORE = ("no_score",)
 QUEUED_CALL_STATUSES = ("pending", "queued")
 IN_PROGRESS_CALL_STATUSES = ("ongoing", "analyzing")

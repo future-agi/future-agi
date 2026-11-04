@@ -48,7 +48,9 @@ export default function StretchOptions({ value, onChange }) {
       >
         <Iconify
           icon={
-            value ? "eva:arrow-ios-back-fill" : "eva:arrow-ios-forward-fill"
+            value
+              ? "solar:alt-arrow-left-linear"
+              : "solar:alt-arrow-right-linear"
           }
           sx={{
             color: (theme) =>
@@ -60,7 +62,9 @@ export default function StretchOptions({ value, onChange }) {
 
         <Iconify
           icon={
-            value ? "eva:arrow-ios-forward-fill" : "eva:arrow-ios-back-fill"
+            value
+              ? "solar:alt-arrow-right-linear"
+              : "solar:alt-arrow-left-linear"
           }
           sx={{
             color: (theme) =>

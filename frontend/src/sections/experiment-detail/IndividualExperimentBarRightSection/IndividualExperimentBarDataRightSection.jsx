@@ -15,10 +15,6 @@ const IndividualExperimentBarDataRightSection = () => {
         color="primary"
         variant="contained"
         size="small"
-        sx={{
-          paddingX: "16px",
-          paddingY: "16px",
-        }}
         onClick={() => {
           setModalOpen(true);
           trackEvent(Events.addAsNewDatasetClicked);

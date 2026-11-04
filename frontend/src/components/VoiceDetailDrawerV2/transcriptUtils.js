@@ -2,6 +2,8 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
+import { OTHER_PARTY_FALLBACK, SUB_ACTOR_CHANNEL_LABELS } from "./constants";
+
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
   const s = Math.max(0, Math.floor(seconds));
@@ -19,9 +21,27 @@ export const normalizeRole = (role) => {
   return r || "unknown";
 };
 
-// A sub-actor is someone on the person's side who is not the person.
-export const subActorLabel = (name) =>
-  `${name || "Someone else"} (not the customer)`;
+// Roles of anyone on the call other than the agent and the customer.
+const OTHER_ROLES = new Set(["sub_actor"]);
+export const isOtherRole = (role) => OTHER_ROLES.has(role);
+
+// `Name · role`; a call stored before roles were kept shows just the name.
+export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
+  [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
+
+// How a sub-actor was heard, in the actor editor's own words; none for an unknown channel.
+export const channelLabel = (channel) =>
+  SUB_ACTOR_CHANNEL_LABELS[channel] || "";
+
+// Everyone other than the agent and the customer, once each, in the order they first appear.
+export const otherParties = (turns = []) => {
+  const seen = new Map();
+  for (const turn of turns) {
+    const key = `${turn.role}:${turn.speakerName}`;
+    if (isOtherRole(turn.role) && !seen.has(key)) seen.set(key, turn);
+  }
+  return [...seen.values()];
+};
 
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
@@ -119,6 +139,8 @@ export const enrichTurns = (
       role,
       rawRole: item.speaker_role || item.role,
       speakerName: item.speaker_name || item.speakerName || "",
+      actorRole: item.actor_role || item.actorRole || "",
+      channel: item.channel || "",
       content: getContent(item),
       toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
@@ -239,7 +261,8 @@ export const computeTotals = (turns) => {
   let total = 0;
   for (const t of turns) {
     if (t.duration == null) continue;
-    byRole[t.role] = (byRole[t.role] || 0) + t.duration;
+    const key = isOtherRole(t.role) ? "others" : t.role;
+    byRole[key] = (byRole[key] || 0) + t.duration;
     total += t.duration;
   }
   return { byRole, total };

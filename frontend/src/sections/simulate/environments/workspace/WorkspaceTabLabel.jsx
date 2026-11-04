@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 
 // A tab's label: its name, an optional item count, and — when the tab owns a
 // blocking setup gap — an amber attention dot. The count is hidden while the
@@ -11,7 +10,7 @@ export default function WorkspaceTabLabel({ label, count, gaps }) {
 
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
-      <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>
+      <Typography component="span" sx={{ typography: "s1", color: "inherit" }}>
         {label}
       </Typography>
       {count != null && count > 0 && (
@@ -32,7 +31,7 @@ export default function WorkspaceTabLabel({ label, count, gaps }) {
             height: 7,
             borderRadius: "50%",
             flexShrink: 0,
-            bgcolor: BUILD_TONES.amber,
+            bgcolor: "status.warning.solid",
           }}
         />
       )}

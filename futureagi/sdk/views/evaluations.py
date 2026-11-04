@@ -436,6 +436,13 @@ class StandaloneEvalView_v2(APIView):
             return self._gm.success_response(output_entries)
 
         except StandaloneEvaluationError as e:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            # A failed Jev run carries its typed code (JEV_MODEL_UNKNOWN,
+            # JEV_KEY_INVALID, ...) and fixed text, not the generic "invalid".
+            jev_error = jev_error_response(e)
+            if jev_error is not None:
+                return jev_error
             return self._gm.bad_request(str(e))
 
         except Exception as e:
@@ -542,6 +549,17 @@ class ConfigureEvaluationsView(APIView):
             eval_template = EvalTemplate.objects.get(
                 name=serializer.validated_data.get("eval_templates")
             )
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            # Rejected here, as the dataset run path does, rather than
+            # accepted and then failed by the background run.
+            jev_error = validate_jev_binding(
+                eval_template,
+                model=serializer.validated_data.get("model_name"),
+                runtime_config=serializer.validated_data.get("config", {}),
+            )
+            if jev_error is not None:
+                return jev_error
 
             ExternalEvalConfig.objects.create(
                 organization=user_organization,

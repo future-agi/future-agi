@@ -31,7 +31,7 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 from temporalio import activity
 
-from simulate.models.test_execution import CallExecution
+from simulate.models.test_execution import CallExecution, CallTranscript
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
@@ -301,7 +301,7 @@ def _build_transcript_data(call_execution):
                 for transcript in transcripts:
                     if not transcript.content.strip():
                         continue
-                    if transcript.speaker_role == "sub_actor":
+                    if transcript.speaker_role == CallTranscript.SpeakerRole.SUB_ACTOR:
                         speaker = sub_actor_label(transcript.speaker_name)
                         transcript_text.append(f"{speaker}: {transcript.content}")
                         continue
