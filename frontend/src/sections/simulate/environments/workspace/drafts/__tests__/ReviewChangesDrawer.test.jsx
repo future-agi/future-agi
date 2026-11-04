@@ -59,7 +59,7 @@ const renderDrawer = (props = {}) => {
   const onSaved = vi.fn();
   const onClose = vi.fn();
   const onOpenTab = vi.fn();
-  render(
+  const drawer = () => (
     <ReviewChangesDrawer
       open
       env={{ id: "env-1", versioning: { enabled: true } }}
@@ -67,9 +67,15 @@ const renderDrawer = (props = {}) => {
       onSaved={onSaved}
       onOpenTab={onOpenTab}
       {...props}
-    />,
+    />
   );
-  return { onSaved, onClose, onOpenTab };
+  const { rerender } = render(drawer());
+  return {
+    onSaved,
+    onClose,
+    onOpenTab,
+    rerenderDrawer: () => rerender(drawer()),
+  };
 };
 
 describe("ReviewChangesDrawer", () => {
@@ -80,25 +86,72 @@ describe("ReviewChangesDrawer", () => {
     state.query = {};
   });
 
-  it("undo sends a rejection for that change", async () => {
+  it("sends each decision for that change", async () => {
     const user = userEvent.setup();
     state.review = review([change()]);
     renderDrawer();
-    await user.click(screen.getByRole("button", { name: "Undo" }));
-    expect(decide).toHaveBeenCalledWith([
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    expect(decide).toHaveBeenLastCalledWith([
+      { id: "tool:refund", decision: "accepted" },
+    ]);
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    expect(decide).toHaveBeenLastCalledWith([
       { id: "tool:refund", decision: "rejected" },
     ]);
   });
 
-  it("an undone change leaves, and undoing all leaves nothing to save", () => {
+  it("keeps a rejected change listed, to restore until the save", async () => {
+    const user = userEvent.setup();
     state.review = review([change({ decision: "rejected" })]);
     renderDrawer();
-    expect(screen.queryByText("Change refund")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
-    expect(screen.getByText(/Nothing waiting/)).toBeInTheDocument();
+    expect(screen.getByText("Change refund")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing waiting/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+    expect(decide).toHaveBeenCalledWith([
+      { id: "tool:refund", decision: null },
+    ]);
   });
 
-  it("holds Undo while a kept change needs this one", () => {
+  it("lets an accepted change go back to undecided", async () => {
+    const user = userEvent.setup();
+    state.review = review([change({ decision: "accepted" })]);
+    renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    expect(decide).toHaveBeenCalledWith([
+      { id: "tool:refund", decision: null },
+    ]);
+  });
+
+  it("holds Save until every change is decided, and one is accepted", async () => {
+    const user = userEvent.setup();
+    const save = () => screen.getByRole("button", { name: /^Save/ });
+    state.review = review([
+      change({ id: "tool:a", decision: "accepted" }),
+      change({ id: "tool:b" }),
+    ]);
+    const { rerenderDrawer } = renderDrawer();
+    expect(save()).toHaveAttribute("aria-disabled", "true");
+    await user.click(
+      screen.getByRole("button", { name: "Accept all remaining" }),
+    );
+    expect(decide).toHaveBeenCalledWith([
+      { remaining: true, decision: "accepted" },
+    ]);
+
+    state.review = review([
+      change({ id: "tool:a", decision: "accepted" }),
+      change({ id: "tool:b", decision: "rejected" }),
+    ]);
+    rerenderDrawer();
+    expect(save()).not.toHaveAttribute("aria-disabled");
+
+    state.review = review([change({ decision: "rejected" })]);
+    rerenderDrawer();
+    expect(save()).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Discard all" })).toBeEnabled();
+  });
+
+  it("holds Reject while a kept change needs this one", () => {
     state.review = review([
       change({ id: "actor:a", kind: "actor", summary: "Added a" }),
       change({
@@ -109,12 +162,12 @@ describe("ReviewChangesDrawer", () => {
       }),
     ]);
     renderDrawer();
-    const [needed, free] = screen.getAllByRole("button", { name: /^Undo/ });
+    const [needed, free] = screen.getAllByRole("button", { name: /^Reject/ });
     expect(needed).toHaveAttribute("aria-disabled", "true");
     expect(free).not.toHaveAttribute("aria-disabled");
   });
 
-  it("keeps a held Undo reachable by keyboard, and it does nothing", async () => {
+  it("keeps a held Reject reachable by keyboard, and it does nothing", async () => {
     const user = userEvent.setup();
     state.review = review([
       change({ id: "actor:a", kind: "actor", summary: "Added a" }),
@@ -126,24 +179,21 @@ describe("ReviewChangesDrawer", () => {
       }),
     ]);
     renderDrawer();
-    const held = screen.getByRole("button", { name: /^Undo\. .*Change s/ });
+    const held = screen.getByRole("button", { name: /^Reject\. .*Change s/ });
     act(() => held.focus());
     expect(held).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(decide).not.toHaveBeenCalled();
   });
 
-  it("hands focus to the next Undo when a row leaves", async () => {
+  it("moves focus to the outcome when a decision lands", async () => {
     const user = userEvent.setup();
-    const first = change({ id: "tool:a", summary: "Change a" });
-    const second = change({ id: "tool:b", summary: "Change b" });
-    state.review = review([first, second]);
-    const props = { open: true, env: { id: "env-1" } };
-    const { rerender } = render(<ReviewChangesDrawer {...props} />);
-    await user.click(screen.getAllByRole("button", { name: "Undo" })[0]);
-    state.review = review([{ ...first, decision: "rejected" }, second]);
-    rerender(<ReviewChangesDrawer {...props} />);
-    expect(screen.getByRole("button", { name: "Undo" })).toHaveFocus();
+    state.review = review([change()]);
+    const { rerenderDrawer } = renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    state.review = review([change({ decision: "accepted" })]);
+    rerenderDrawer();
+    expect(screen.getByRole("button", { name: "Change" })).toHaveFocus();
   });
 
   it("names the version of what the edits change", async () => {
@@ -185,7 +235,7 @@ describe("ReviewChangesDrawer", () => {
 
   it("hands over the version name, without touching the real draft", async () => {
     const user = userEvent.setup();
-    state.review = review([change()]);
+    state.review = review([change({ decision: "accepted" })]);
     const { onSaved } = renderDrawer();
     await user.type(screen.getByLabelText(/Name this version/), "Q3 orders");
     await user.click(screen.getByRole("button", { name: /^Save/ }));
@@ -195,16 +245,17 @@ describe("ReviewChangesDrawer", () => {
 
   it("flags a name over the limit and holds Save", async () => {
     const user = userEvent.setup();
-    state.review = review([change()]);
+    state.review = review([change({ decision: "accepted" })]);
     renderDrawer();
     const field = screen.getByLabelText(/Name this version/);
     await user.click(field);
     await user.paste("x".repeat(80));
     expect(field).toBeValid();
-    expect(screen.getByRole("button", { name: /^Save/ })).toBeEnabled();
+    const save = () => screen.getByRole("button", { name: /^Save/ });
+    expect(save()).not.toHaveAttribute("aria-disabled");
     await user.keyboard("x");
     expect(field).toBeInvalid();
-    expect(screen.getByRole("button", { name: /^Save/ })).toBeDisabled();
+    expect(save()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("offers a read-only viewer no way to act on a failed change", () => {
@@ -226,22 +277,25 @@ describe("ReviewChangesDrawer", () => {
     expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
   });
 
-  it("dismisses a change that couldn't apply", async () => {
+  it("sets a failed change aside, and brings it back", async () => {
     const user = userEvent.setup();
-    state.review = review(
-      [],
-      [
-        {
-          id: "failed:a",
-          detail: "Missing table",
-          reason: "Why",
-          source_id: null,
-          scenarios: [],
-        },
-      ],
-    );
-    renderDrawer();
+    const failed = {
+      id: "failed:a",
+      detail: "Missing table",
+      reason: "Why",
+      source_id: null,
+      scenarios: [],
+    };
+    state.review = review([], [failed]);
+    const { rerenderDrawer } = renderDrawer();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(dismiss).toHaveBeenCalledWith("failed:a");
+
+    state.review = review([change()], [{ ...failed, dismissed: true }]);
+    rerenderDrawer();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    await user.click(screen.getByRole("button", { name: "Bring back" }));
+    expect(dismiss).toHaveBeenCalledWith("failed:a", false);
   });
 });

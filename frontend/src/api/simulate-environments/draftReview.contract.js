@@ -110,6 +110,7 @@ const FailedChangeSchema = z.object({
   reason: z.string().min(1),
   source_id: z.string().nullable(),
   scenarios: z.array(z.string()),
+  dismissed: z.boolean().optional(),
 });
 
 export const DraftReviewSchema = z
@@ -156,7 +157,9 @@ export const ReviewDecisionSchema = z.object({
   id: z.string().min(1).optional(),
   kind: z.enum(KINDS).optional(),
   remaining: z.boolean().optional(),
-  decision: z.enum(DECISIONS),
+  // Null clears a decision, for Restore and Change. Proposed: the backend only
+  // takes accepted or rejected so far.
+  decision: z.enum(DECISIONS).nullable(),
 });
 
 export const ReviewDecisionsBodySchema = z.object({

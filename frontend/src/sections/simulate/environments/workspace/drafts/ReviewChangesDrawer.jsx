@@ -17,13 +17,16 @@ import SideDrawer from "../../components/SideDrawer";
 import MockBadge from "../../components/MockBadge";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 import ChangeRow from "./ChangeRow";
-import FailedChange from "./FailedChange";
+import FailedChange, { DismissedChanges } from "./FailedChange";
+import HeldButton from "./HeldButton";
 import RecheckCard from "./RecheckCard";
 import {
   comparabilityLine,
   groupChanges,
   keptChanges,
+  pieceOf,
   recheckedKeys,
+  reviewCounts,
   saveLine,
 } from "./reviewView";
 
@@ -59,8 +62,9 @@ GroupHeading.propTypes = { children: PropTypes.node };
 
 /**
  * Every unsaved change, grouped by what it changes: where it came from, its
- * before and after, and its Undo. Keeping a change accepts it; Undo rejects it.
- * Changes that couldn't apply say why. Save makes the rest a named version.
+ * before and after, and its Accept or Reject. A rejected change stays listed, to
+ * restore until the save. Changes that couldn't apply say why. Save waits until
+ * every change is decided, then makes the accepted ones a named version.
  */
 export default function ReviewChangesDrawer({
   open,
@@ -88,15 +92,21 @@ export default function ReviewChangesDrawer({
   const [announced, setAnnounced] = useState("");
   const bodyRef = useRef(null);
   const titleRef = useRef(null);
+  const saveRef = useRef(null);
   const focusAfterRemoval = useRef(null);
+  const focusSave = useRef(false);
 
   const changes = review?.changes || [];
-  const failed = review?.failed || [];
+  const allFailed = review?.failed || [];
+  const failed = allFailed.filter((one) => !one.dismissed);
+  const dismissed = allFailed.filter((one) => one.dismissed);
   const kept = keptChanges(changes);
   const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
   const line = saveLine(changes, versions);
-  const savedLabel = versions?.defaults?.[line.piece]?.label || "";
+  const counts = reviewCounts(changes);
+  const piece = pieceOf(changes);
+  const savedLabel = versions?.defaults?.[piece]?.label || "";
   const compared = comparabilityLine(
     names.length,
     review?.sample_scenario_total ?? names.length,
@@ -115,14 +125,37 @@ export default function ReviewChangesDrawer({
     focusAfterRemoval.current = at < 0 ? null : at;
     setAnnounced(message);
   };
-  const rowCount = kept.length + failed.length;
   useEffect(() => {
     const at = focusAfterRemoval.current;
     if (at === null) return;
     focusAfterRemoval.current = null;
     const targets = focusTargets();
     (targets[Math.min(at, targets.length - 1)] || titleRef.current)?.focus();
-  }, [rowCount]);
+  }, [failed.length]);
+  // Accept all goes away once it's done; what's left to do is Save.
+  useEffect(() => {
+    if (!focusSave.current || counts.undecided) return;
+    focusSave.current = false;
+    saveRef.current?.focus();
+  }, [counts.undecided]);
+
+  const decideChange = (change, decision) => {
+    let said = COPY.announced.undecided;
+    if (decision) said = COPY.announced[decision];
+    else if (change.decision === "rejected") said = COPY.announced.restored;
+    setAnnounced(said(change.summary));
+    decide.mutate([{ id: change.id, decision }]);
+  };
+  const acceptRemaining = () => {
+    focusSave.current = Boolean(document.activeElement?.closest("button"));
+    setAnnounced(COPY.allAccepted);
+    decide.mutate([{ remaining: true, decision: "accepted" }]);
+  };
+
+  let saveReason = null;
+  if (nameTooLong) saveReason = COPY.nameTooLong(NAME_LIMIT);
+  else if (counts.undecided) saveReason = COPY.saveWaiting(counts.undecided);
+  else if (!counts.accepted) saveReason = COPY.saveAllRejected;
 
   const goTab = (tab) => {
     onClose?.();
@@ -153,7 +186,7 @@ export default function ReviewChangesDrawer({
         />
       );
     }
-    if (!kept.length && !failed.length) {
+    if (!changes.length && !failed.length) {
       return (
         <EmptyState
           variant="no-results"
@@ -185,7 +218,14 @@ export default function ReviewChangesDrawer({
             </Box>
           </Box>
         )}
-        {groupChanges(kept).map((group) => (
+        {dismissed.length > 0 && (
+          <DismissedChanges
+            dismissed={dismissed}
+            canEdit={canEdit}
+            onBringBack={(id) => dismiss(id, false)}
+          />
+        )}
+        {groupChanges(changes).map((group) => (
           <Box key={group.id} component="section" aria-label={group.label}>
             <GroupHeading>
               {COPY.groupTitle(group.label, group.changes.length)}
@@ -197,10 +237,7 @@ export default function ReviewChangesDrawer({
                   change={change}
                   changes={changes}
                   canEdit={canEdit}
-                  onUndo={() => {
-                    beforeRemoval(COPY.undone(change.summary));
-                    decide.mutate([{ id: change.id, decision: "rejected" }]);
-                  }}
+                  onDecide={(decision) => decideChange(change, decision)}
                   onOpen={(link) =>
                     link.kind === "chat" ? onClose?.() : goTab(group.tab)
                   }
@@ -251,9 +288,9 @@ export default function ReviewChangesDrawer({
             </Typography>
             {review?.is_sample && <MockBadge />}
           </Stack>
-          {review && (
+          {changes.length > 0 && (
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {COPY.subtitle(kept.length, line.piece, savedLabel)}
+              {COPY.subtitle(kept.length, counts.rejected, piece, savedLabel)}
             </Typography>
           )}
         </Box>
@@ -268,7 +305,7 @@ export default function ReviewChangesDrawer({
           {body()}
         </Box>
 
-        {canEdit && kept.length > 0 && (
+        {canEdit && changes.length > 0 && (
           <Stack
             spacing={1}
             sx={{
@@ -292,6 +329,29 @@ export default function ReviewChangesDrawer({
               }
               inputProps={{ maxLength: NAME_LIMIT + 1 }}
             />
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: counts.undecided ? "text.secondary" : "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {COPY.progress(counts)}
+              </Typography>
+              {counts.undecided > 0 && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={acceptRemaining}
+                  sx={{ color: "text.secondary" }}
+                >
+                  {counts.undecided === counts.total
+                    ? COPY.acceptAll
+                    : COPY.acceptRemaining}
+                </Button>
+              )}
+            </Stack>
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Button
                 size="small"
@@ -310,18 +370,19 @@ export default function ReviewChangesDrawer({
                     minWidth: 0,
                   }}
                 >
-                  {COPY.saveLine(line)}
+                  {kept.length > 0 && COPY.saveLine(line)}
                 </Typography>
               </OverflowTooltip>
-              <Button
+              <HeldButton
+                ref={saveRef}
                 size="small"
                 variant="contained"
                 color="primary"
-                disabled={nameTooLong}
+                reason={saveReason}
                 onClick={save}
               >
-                {COPY.save(line.next)}
-              </Button>
+                {COPY.save(kept.length ? line.next : null)}
+              </HeldButton>
             </Stack>
           </Stack>
         )}
@@ -329,8 +390,8 @@ export default function ReviewChangesDrawer({
       <ConfirmDialog
         open={discarding}
         onClose={() => setDiscarding(false)}
-        title={COPY.discardTitle(kept.length)}
-        content={COPY.discardBody(line.piece, savedLabel)}
+        title={COPY.discardTitle(changes.length)}
+        content={COPY.discardBody(piece, savedLabel)}
         action={
           <Button
             size="small"

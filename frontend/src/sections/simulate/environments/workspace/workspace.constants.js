@@ -466,13 +466,19 @@ const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
 const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
 export const REVIEW_COPY = {
   title: "Review changes",
-  subtitle: (n, piece, label) =>
-    `${n} unsaved edit${n === 1 ? "" : "s"} since ${label ? `${SAVE_TARGET[piece]} ${label}` : "the saved version"}. Keep or undo each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
+  subtitle: (n, rejected, piece, label) =>
+    `${n} unsaved edit${n === 1 ? "" : "s"}${rejected ? ` · ${rejected} rejected` : ""} since ${label ? `${SAVE_TARGET[piece]} ${label}` : "the saved version"}. Accept or reject each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
   emptyTitle: "Nothing waiting",
   emptyBody: "Every edit is saved.",
   loadError: "Couldn't load the changes",
   loadErrorBody: "Your edits are still there. Try again in a moment.",
-  undone: (summary) => `Undone: ${summary}`,
+  announced: {
+    accepted: (summary) => `Accepted: ${summary}`,
+    rejected: (summary) => `Rejected: ${summary}`,
+    restored: (summary) => `Restored: ${summary}`,
+    undecided: (summary) => `Undecided: ${summary}`,
+  },
+  allAccepted: "Accepted all remaining changes",
   dismissed: (detail) => `Dismissed: ${detail}`,
   groupTitle: (label, n) => `${label} · ${n}`,
   failed: "Couldn't apply",
@@ -502,8 +508,34 @@ export const REVIEW_COPY = {
   openInChat: "Open in chat",
   openFile: (name) => `Open ${name}`,
   open: "Open",
-  undo: "Undo",
-  undoBlocked: (title) => `"${title}" needs this. Undo that one first.`,
+  accept: "Accept",
+  reject: "Reject",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  change: "Change",
+  restore: "Restore",
+  rejectBlocked: (title) => `"${title}" needs this. Reject that one first.`,
+  restoreBlocked: (title) =>
+    `This needs "${title}", which is rejected. Restore that one first.`,
+  acceptAll: "Accept all",
+  acceptRemaining: "Accept all remaining",
+  progress: ({ total, accepted, rejected, undecided }) =>
+    [
+      `${total - undecided} of ${total} decided`,
+      accepted && `${accepted} accepted`,
+      rejected && `${rejected} rejected`,
+      rejected && "restore any until you save",
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  saveWaiting: (n) =>
+    `Accept or reject the ${n} change${n === 1 ? "" : "s"} still waiting first.`,
+  saveAllRejected: "Every change is rejected. Discard all puts the world back.",
+  reviewAndSave: "Review and save",
+  dismissedCount: (n) => `${n} dismissed`,
+  show: "Show",
+  bringBack: "Bring back",
+  rejectedEdits: (n) => `${n} rejected edit${n === 1 ? "" : "s"}`,
   showChange: "Show the change",
   hideChange: "Hide the change",
   andMore: (n) => `and ${n} more`,

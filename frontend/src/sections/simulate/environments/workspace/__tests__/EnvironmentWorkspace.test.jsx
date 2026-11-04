@@ -909,7 +909,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
       );
     });
   const saveButton = () =>
-    screen.findByRole("button", { name: /^Save version/ });
+    screen.findByRole("button", { name: /^Review and save/ });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();

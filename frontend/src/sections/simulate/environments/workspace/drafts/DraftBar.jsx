@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
@@ -12,7 +13,7 @@ import {
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
-import { keptChanges, saveLine } from "./reviewView";
+import { keptChanges, reviewCounts, saveLine } from "./reviewView";
 
 // The piece a stale refusal names, else the first stale one.
 const staleText = (drafts, piece) => {
@@ -72,22 +73,36 @@ export default function DraftBar({
   if (!enabled || !drafts?.any) return null;
 
   const kept = keptChanges(review?.changes);
-  const failedCount = review?.failed?.length || 0;
+  const counts = reviewCounts(review?.changes);
+  const failedCount = (review?.failed || []).filter(
+    (one) => !one.dismissed,
+  ).length;
   // A review that won't load doesn't mean the draft is gone: keep the way in,
   // where the drawer offers a retry, and the save.
   const uncounted = reviewFailed && !review;
-  if (!uncounted && !kept.length && !failedCount) return null;
+  if (!uncounted && !counts.total && !failedCount) return null;
 
   const line = saveLine(review?.changes, versions);
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 
-  const shortLabel = uncounted
-    ? REVIEW_COPY.unsavedEditsUncounted
-    : REVIEW_COPY.couldntApply(failedCount);
+  const needsReview = counts.undecided > 0;
+  let shortLabel = REVIEW_COPY.couldntApply(failedCount);
+  if (uncounted) shortLabel = REVIEW_COPY.unsavedEditsUncounted;
+  else if (counts.rejected)
+    shortLabel = REVIEW_COPY.rejectedEdits(counts.rejected);
 
-  const onSave = () =>
+  let saveText = REVIEW_COPY.save(uncounted ? null : line.next);
+  if (needsReview) saveText = REVIEW_COPY.reviewAndSave;
+  if (save.isPending) saveText = COPY.saving;
+
+  const onSave = () => {
+    // Sample decisions aren't on the real draft, so saving it would ignore them.
+    if (review?.is_sample) {
+      enqueueSnackbar(REVIEW_COPY.sampleSaved, { variant: "info" });
+      return;
+    }
     save.mutate(
       drafts.pieces.map((piece) => ({
         piece,
@@ -95,6 +110,7 @@ export default function DraftBar({
         revision: drafts[piece].revision,
       })),
     );
+  };
 
   return (
     <>
@@ -169,12 +185,10 @@ export default function DraftBar({
             color="inherit"
             disabled={saveReasons.length > 0 || save.isPending}
             aria-describedby={saveReasons.join(" ") || undefined}
-            onClick={onSave}
+            onClick={needsReview ? onReview : onSave}
             sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
-            {save.isPending
-              ? COPY.saving
-              : REVIEW_COPY.save(uncounted ? null : line.next)}
+            {saveText}
           </Button>
         )}
       </Stack>

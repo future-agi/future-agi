@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
@@ -71,6 +72,68 @@ export default function FailedChange({ failed, canEdit, onFix, onDismiss }) {
     </Stack>
   );
 }
+
+/** Failed changes set aside, behind a count, each of which can come back. */
+export function DismissedChanges({ dismissed, canEdit, onBringBack }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <Box>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {COPY.dismissedCount(dismissed.length)}
+        </Typography>
+        <Button
+          size="small"
+          color="inherit"
+          aria-expanded={shown}
+          onClick={() => setShown((now) => !now)}
+          sx={{ color: "text.tertiary" }}
+        >
+          {shown ? COPY.hide : COPY.show}
+        </Button>
+      </Stack>
+      <Collapse in={shown} unmountOnExit>
+        <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+          {dismissed.map((one) => (
+            <Stack key={one.id} direction="row" alignItems="center" spacing={1}>
+              <OverflowTooltip title={one.detail}>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {one.detail}
+                </Typography>
+              </OverflowTooltip>
+              {canEdit && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => onBringBack(one.id)}
+                  sx={{ flexShrink: 0, color: "text.secondary" }}
+                >
+                  {COPY.bringBack}
+                </Button>
+              )}
+            </Stack>
+          ))}
+        </Stack>
+      </Collapse>
+    </Box>
+  );
+}
+
+DismissedChanges.propTypes = {
+  dismissed: PropTypes.arrayOf(
+    PropTypes.shape({ id: PropTypes.string, detail: PropTypes.string }),
+  ).isRequired,
+  canEdit: PropTypes.bool,
+  onBringBack: PropTypes.func,
+};
 
 FailedChange.propTypes = {
   failed: PropTypes.shape({

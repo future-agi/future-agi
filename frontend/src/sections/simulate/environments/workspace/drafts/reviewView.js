@@ -119,13 +119,38 @@ export const recheckedKeys = (changes = []) => [
   ...new Set(keptChanges(changes).flatMap((one) => one.revalidate || [])),
 ];
 
-/** The kept change that needs this one, so undoing it would break the save. */
-export const undoBlock = (change, changes = []) => {
+/** The kept change that needs this one, so rejecting it would break the save. */
+export const rejectBlock = (change, changes = []) => {
   const needs = keptChanges(changes).find((one) =>
     (one.depends_on || []).includes(change.id),
   );
   return needs ? { by: needs.summary } : null;
 };
+
+/** The rejected change this one needs, so restoring it would break the save. */
+export const restoreBlock = (change, changes = []) => {
+  const needed = changes.find(
+    (one) =>
+      one.decision === "rejected" && (change.depends_on || []).includes(one.id),
+  );
+  return needed ? { by: needed.summary } : null;
+};
+
+/** How far the review has got. */
+export const reviewCounts = (changes = []) => {
+  const accepted = changes.filter((one) => one.decision === "accepted").length;
+  const rejected = changes.filter((one) => one.decision === "rejected").length;
+  return {
+    total: changes.length,
+    accepted,
+    rejected,
+    undecided: changes.length - accepted - rejected,
+  };
+};
+
+/** The saved version these changes sit on: the environment's if any touch it. */
+export const pieceOf = (changes = []) =>
+  changes.some((one) => one.piece === "environment") ? "environment" : "suite";
 
 const fileOf = (source) =>
   (source?.used || []).find((one) => one.kind === "source");
