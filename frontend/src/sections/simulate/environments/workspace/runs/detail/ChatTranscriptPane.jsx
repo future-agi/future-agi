@@ -6,7 +6,11 @@ import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipants";
 import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
-import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+import {
+  DEFAULT_ROLE_LABELS,
+  OTHER_PARTY_SERIES,
+} from "src/components/VoiceDetailDrawerV2/constants";
+import { seriesColor } from "src/theme/data-colors";
 import {
   isOtherRole,
   otherParties,
@@ -117,13 +121,13 @@ export default function ChatTranscriptPane({ turns, customerName }) {
                   ? t.palette.text.secondary
                   : s.role === "tool"
                     ? t.palette.warning.main
-                    : s.role === "sub_actor"
-                      ? t.palette.data?.[2] || t.palette.text.disabled
+                    : isOtherRole(s.role)
+                      ? seriesColor(t, OTHER_PARTY_SERIES)
                       : t.palette.text.disabled,
               bgcolor:
                 s.role === "agent"
                   ? "action.hover"
-                  : s.role === "tool" || s.role === "sub_actor"
+                  : s.role === "tool" || isOtherRole(s.role)
                     ? "transparent"
                     : "background.neutral",
               px: 1.75,
