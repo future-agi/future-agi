@@ -63,8 +63,12 @@ describe("buildColorOrder", () => {
     expect(colorFor("x", order, "dark")).toBe(CATEGORY_PALETTE.dark[0]);
   });
 
-  it("gives no hue past the eighth slot", () => {
+  it("does not cycle hues beyond the three all-pairs-distinct system slots", () => {
     const order = Array.from({ length: 9 }, (_, i) => `c${i}`);
+    expect(CATEGORY_PALETTE.light).toHaveLength(3);
+    expect(CATEGORY_PALETTE.dark).toEqual(CATEGORY_PALETTE.light);
+    expect(colorFor("c2", order)).toBe(CATEGORY_PALETTE.light[2]);
+    expect(colorFor("c3", order)).toBeNull();
     expect(colorFor("c8", order)).toBeNull();
   });
 });
@@ -82,11 +86,21 @@ describe("buildSegments", () => {
   it("orders by size, greys the unmatched bucket and sums to one", () => {
     const segments = buildSegments(items, { order });
     expect(segments.map((s) => s.id)).toEqual(["a", "b", "c", "d", "u"]);
+    expect(segments[3]).toMatchObject({
+      id: "d",
+      name: "D",
+      color: OTHER_COLOR.light,
+      count: 5,
+    });
     expect(segments.at(-1)).toMatchObject({
       name: "Other",
       color: OTHER_COLOR.light,
+      count: 5,
       muted: true,
     });
+    expect(segments.at(-1).members.map((member) => member.id)).toEqual(["u"]);
+    expect(segments.reduce((sum, segment) => sum + segment.count, 0)).toBe(100);
+    expect(items.map((item) => item.id)).toEqual(["a", "b", "c", "d", "u"]);
     expect(segments.reduce((sum, s) => sum + s.share, 0)).toBeCloseTo(1);
   });
 

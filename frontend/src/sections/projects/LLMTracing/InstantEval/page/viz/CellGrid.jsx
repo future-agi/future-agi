@@ -1,6 +1,7 @@
+import Section from "src/components/section";
 import React, { useId, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, Popper, Typography } from "@mui/material";
+import { Box, Popper, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 
 // A grid of cells drawn as a handful of SVG paths, one per fill, so a month
@@ -273,7 +274,7 @@ export default function CellGrid({
                 key={`col-${c}`}
                 x={xOf(c)}
                 y={colLabelAt === "top" ? topH - 5 : gridBottom + 12}
-                fontSize={10}
+                fontSize={theme.typography.s3.fontSize}
                 fill={theme.palette.text.disabled}
                 fontFamily={font}
               >
@@ -310,7 +311,7 @@ export default function CellGrid({
             x={t.x + cellW / 2}
             y={t.y + cellH / 2 + 3.5}
             textAnchor="middle"
-            fontSize={10}
+            fontSize={theme.typography.s3.fontSize}
             fontWeight={600}
             fill={t.ink || theme.palette.text.primary}
             fontFamily={font}
@@ -388,22 +389,23 @@ export default function CellGrid({
         modifiers={[{ name: "offset", options: { offset: [0, 6] } }]}
       >
         {shown && (
-          <Paper
-            elevation={0}
+          <Section
+            variant="panel"
             sx={{
+              bgcolor: "background.paper",
               maxWidth: 320,
               px: 1.25,
               py: 1,
-              border: "1px solid",
+
               borderColor: "divider",
-              borderRadius: 1,
+
               boxShadow: (t) => t.customShadows?.dropdown,
             }}
           >
             <Typography variant="body2" sx={{ fontSize: 12.5 }}>
               {words(shown)}
             </Typography>
-          </Paper>
+          </Section>
         )}
       </Popper>
     </Box>

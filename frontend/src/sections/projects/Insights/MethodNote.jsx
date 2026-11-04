@@ -136,7 +136,7 @@ export default function MethodNote({ run, config, open, onToggle }) {
             width={18}
           />
         }
-        sx={{ px: 0.75, ml: -0.75, fontSize: 14, fontWeight: 600 }}
+        sx={{ px: 0.75, ml: -0.75 }}
       >
         How this report was made
       </Button>

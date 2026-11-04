@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
+import { ClosableDialog } from "src/components/custom-dialog";
 import {
   Box,
   Button,
   ButtonBase,
-  Dialog,
   Drawer,
   IconButton,
   Skeleton,
@@ -279,27 +279,14 @@ function CitedImage({ runId, unitId, item }) {
           {item.supports && `Supports: ${item.supports}`}
         </Typography>
       )}
-      <Dialog
+      <ClosableDialog
+        closeLabel="Close image"
         open={open && Boolean(image.url)}
         onClose={() => setOpen(false)}
         maxWidth={false}
         PaperProps={{ "aria-label": IMAGE_ALT }}
       >
         <Box sx={{ position: "relative", p: 1.5 }}>
-          <IconButton
-            aria-label="Close image"
-            onClick={() => setOpen(false)}
-            size="small"
-            sx={{
-              position: "absolute",
-              top: 8,
-              right: 8,
-              bgcolor: "background.paper",
-              "&:hover": { bgcolor: "background.neutral" },
-            }}
-          >
-            <Iconify icon="mdi:close" width={18} />
-          </IconButton>
           <Box
             component="img"
             src={image.url || undefined}
@@ -320,7 +307,7 @@ function CitedImage({ runId, unitId, item }) {
             </Typography>
           )}
         </Box>
-      </Dialog>
+      </ClosableDialog>
     </Box>
   );
 }
@@ -478,8 +465,6 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                           sx={{
                             px: 0.75,
                             minWidth: 0,
-                            fontSize: 12,
-                            fontWeight: 500,
                           }}
                         >
                           {category.name}

@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React from "react";
 import PropTypes from "prop-types";
 import {
@@ -6,7 +7,6 @@ import {
   Button,
   Chip,
   Link,
-  Paper,
   Stack,
   Tooltip,
   Typography,
@@ -117,10 +117,10 @@ export function SectionCard({
   flush,
 }) {
   return (
-    <Paper
+    <Section
       id={id}
-      variant="outlined"
-      sx={{ p: flush ? 0 : 2.5, borderRadius: 1.5, overflow: "hidden", ...sx }}
+      variant="panel"
+      sx={{ p: flush ? 0 : 2.5, overflow: "hidden", ...sx }}
     >
       {(title || action) && (
         <Stack
@@ -146,7 +146,7 @@ export function SectionCard({
         </Stack>
       )}
       {children}
-    </Paper>
+    </Section>
   );
 }
 
@@ -257,11 +257,8 @@ export function ToneChip({ label, tone = "neutral", icon, title, sx }) {
       label={label}
       icon={icon ? <Iconify icon={icon} width={13} /> : undefined}
       sx={{
-        height: 22,
         maxWidth: "100%",
-        borderRadius: 0.75,
-        fontSize: 12,
-        fontWeight: 500,
+
         color,
         bgcolor: alpha(color, tone === "neutral" ? 0.08 : 0.1),
         "& .MuiChip-icon": { color, ml: 0.5, mr: -0.25 },

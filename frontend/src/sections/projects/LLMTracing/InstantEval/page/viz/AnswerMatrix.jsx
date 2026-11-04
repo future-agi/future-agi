@@ -1,6 +1,7 @@
+import Section from "src/components/section";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, Popper, Stack, Typography } from "@mui/material";
+import { Box, Popper, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { formatCount, formatShare } from "./askAnswers";
 import { MIN_DELTA_TABLE } from "./askStats";
@@ -26,22 +27,23 @@ function HoverTip({ hover }) {
       modifiers={[{ name: "offset", options: { offset: [0, 6] } }]}
     >
       {hover && (
-        <Paper
-          elevation={0}
+        <Section
+          variant="panel"
           sx={{
+            bgcolor: "background.paper",
             maxWidth: 320,
             px: 1.25,
             py: 1,
-            border: "1px solid",
+
             borderColor: "divider",
-            borderRadius: 1,
+
             boxShadow: (t) => t.customShadows?.dropdown,
           }}
         >
           <Typography variant="body2" sx={{ fontSize: 12.5 }}>
             {hover.text}
           </Typography>
-        </Paper>
+        </Section>
       )}
     </Popper>
   );
@@ -212,7 +214,7 @@ export default function AnswerMatrix({
         <Typography
           variant="caption"
           color="text.disabled"
-          sx={{ fontSize: 10, textAlign: "right", alignSelf: "end" }}
+          sx={{ typography: "s3", textAlign: "right", alignSelf: "end" }}
         >
           answered
         </Typography>

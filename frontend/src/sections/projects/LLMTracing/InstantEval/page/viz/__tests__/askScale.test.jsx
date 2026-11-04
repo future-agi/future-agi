@@ -428,16 +428,37 @@ describe("AskPatterns for a category question", () => {
 });
 
 describe("answer colours", () => {
-  it("keeps categories off Yes, No and failed, and greys a ninth label", () => {
-    [...CATEGORY_COLORS, ...CATEGORY_COLORS_DARK].forEach((hex) =>
-      expect([YES_COLOR, NO_COLOR, "#DB2F2D"]).not.toContain(hex),
+  it("reserves boolean/status hues and keeps later category labels neutral", () => {
+    const dark = createTheme({ palette: palette("dark"), typography });
+    const slots = [1, 4, 6];
+    expect(CATEGORY_COLORS).toEqual(
+      slots.map((slot) => theme.palette.data[slot]),
     );
+    expect(CATEGORY_COLORS_DARK).toEqual(CATEGORY_COLORS);
+    for (const current of [theme, dark]) {
+      const colors =
+        current.palette.mode === "dark"
+          ? CATEGORY_COLORS_DARK
+          : CATEGORY_COLORS;
+      colors.forEach((color) => {
+        expect([YES_COLOR, NO_COLOR, current.palette.error.main]).not.toContain(
+          color,
+        );
+      });
+    }
+    expect(YES_COLOR).toBe(theme.palette.data[0]);
+    expect(NO_COLOR).toBe(theme.palette.data[5]);
     const labels = Array.from({ length: 10 }, (_, i) => `L${i}`);
     const item = { answerType: "category", labels };
     expect(answerColor(item, "L0", theme)).toBe(CATEGORY_COLORS[0]);
+    expect(CATEGORY_COLORS).toHaveLength(3);
+    expect(answerColor(item, "L2", theme)).toBe(CATEGORY_COLORS[2]);
+    expect(answerColor(item, "L3", theme)).toBe(OTHER_CATEGORY_COLOR);
+    expect(answerColor(item, "L5", theme)).toBe(OTHER_CATEGORY_COLOR);
+    expect(answerColor(item, "L6", theme)).toBe(OTHER_CATEGORY_COLOR);
     expect(answerColor(item, "L8", theme)).toBe(OTHER_CATEGORY_COLOR);
-    const dark = createTheme({ palette: palette("dark"), typography });
     expect(answerColor(item, "L1", dark)).toBe(CATEGORY_COLORS_DARK[1]);
+    expect(item.labels).toEqual(labels);
   });
 });
 

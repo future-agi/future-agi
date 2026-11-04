@@ -58,7 +58,7 @@ describe("buildAreaSeries", () => {
     ]);
   });
 
-  it("folds categories past the palette into Other", () => {
+  it("preserves eight named identities with three hues before folding the tail", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({
       category_id: `c${i}`,
       name: `C${i}`,
@@ -69,7 +69,29 @@ describe("buildAreaSeries", () => {
       order,
     });
     expect(result.series).toHaveLength(9);
+    expect(result.series.map((entry) => entry.id)).toEqual([
+      "c0",
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+      "c5",
+      "c6",
+      "c7",
+      OTHER_ID,
+    ]);
+    expect(result.series.slice(3, 8).map((entry) => entry.color)).toEqual(
+      Array(5).fill(OTHER_COLOR.light),
+    );
+    expect(result.rows[0].counts.c3).toBe(1);
     expect(result.rows[0].counts[OTHER_ID]).toBe(2);
+    expect(
+      Object.values(result.rows[0].counts).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+    ).toBe(10);
+    expect(many.map((entry) => entry.category_id)).toEqual(order);
   });
 });
 

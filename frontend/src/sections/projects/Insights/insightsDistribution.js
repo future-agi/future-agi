@@ -1,36 +1,27 @@
-// Category colours and the stacked distributions built from them.
-//
-// Colour follows the category, never its rank: ids are given slots in the
-// order they first appear across the report's runs (oldest run first), so a
-// category keeps its colour on every run of the pager and in the trend. The
-// eight slots are a CVD-validated categorical palette (adjacent ΔE ≥ 8 in both
-// modes); anything past eight, and the "didn't fit" bucket, folds into a grey
-// "Other" rather than a generated ninth hue.
+import { dsPalette } from "src/theme/ds-tokens";
 
+// Category identities keep their slot across sorting, filters and run paging.
+// Three all-pairs-distinct system slots avoid boolean and neutral slots.
+// The darker (light-mode) data steps pass contrast and separation checks on
+// both chart surfaces; use those documented steps deliberately in both modes.
+// Hue and identity bounds are independent: the original eight named series
+// remain selectable; slots four through eight use neutral marks. Only the
+// original identity overflow and unmatched items fold into labelled Other.
+const CATEGORY_STEPS = [1, 4, 6].map((slot) => dsPalette("light").data[slot]);
 export const CATEGORY_PALETTE = {
-  light: [
-    "#2a78d6",
-    "#eb6834",
-    "#1baf7a",
-    "#eda100",
-    "#e87ba4",
-    "#008300",
-    "#6250d6",
-    "#e34948",
-  ],
-  dark: [
-    "#3987e5",
-    "#d95926",
-    "#199e70",
-    "#c98500",
-    "#d55181",
-    "#008300",
-    "#9085e9",
-    "#e66767",
-  ],
+  light: CATEGORY_STEPS,
+  dark: CATEGORY_STEPS,
 };
-export const OTHER_COLOR = { light: "#a3a29c", dark: "#6b6a65" };
+export const OTHER_COLOR = {
+  light: dsPalette("light").text.disabled,
+  dark: dsPalette("dark").text.disabled,
+};
 export const OTHER_ID = "__other__";
+const IDENTITY_SLOT_LIMIT = 8;
+const hasIdentitySlot = (id, order) => {
+  const slot = order.indexOf(id);
+  return slot >= 0 && slot < IDENTITY_SLOT_LIMIT;
+};
 
 export const categoryRowId = (id) => `insights-category-${id}`;
 
@@ -103,8 +94,14 @@ export function buildSegments(
   const colored = [];
   const other = { id: OTHER_ID, name: "Other", count: 0, members: [] };
   [...items].sort(byCountDesc).forEach((item) => {
-    const color = isMutedCategory(item) ? null : colorFor(item.id, order, mode);
-    if (color && (!max || colored.length < max - 1 || items.length <= max)) {
+    const identified =
+      !isMutedCategory(item) && hasIdentitySlot(item.id, order);
+    const color =
+      colorFor(item.id, order, mode) || OTHER_COLOR[mode] || OTHER_COLOR.light;
+    if (
+      identified &&
+      (!max || colored.length < max - 1 || items.length <= max)
+    ) {
       colored.push({ ...item, color });
     } else {
       other.count += item.count || 0;
@@ -268,7 +265,7 @@ export function sortCategoryTree(tree, key = "count", direction = "desc") {
 /**
  * Series for the trend chart: the share of each top-level category in every
  * completed run, oldest first. A category keeps its slot colour on every
- * run; one past the palette, or a muted one, folds into a grey "Other".
+ * run; one past the eight identity slots, or an unmatched one, folds into Other.
  *   {series: [{id, name, color}],
  *    rows: [{runId, time, n, shares, counts, fresh}]}
  * `shares` and `counts` are keyed by series id; shares of a run sum to 1.
@@ -291,10 +288,10 @@ export function buildAreaSeries(
     const shares = {};
     const counts = {};
     tops.forEach((item) => {
-      const colored =
-        !isMutedCategory(item) && colorFor(item.id, order, mode) !== null;
-      const key = colored ? item.id : OTHER_ID;
-      if (colored) {
+      const identified =
+        !isMutedCategory(item) && hasIdentitySlot(item.id, order);
+      const key = identified ? item.id : OTHER_ID;
+      if (identified) {
         names.set(item.id, item.name);
         used.add(item.id);
       } else otherUsed = true;
@@ -317,7 +314,8 @@ export function buildAreaSeries(
     .map((id) => ({
       id,
       name: names.get(id),
-      color: colorFor(id, order, mode),
+      color:
+        colorFor(id, order, mode) || OTHER_COLOR[mode] || OTHER_COLOR.light,
     }));
   if (otherUsed)
     series.push({

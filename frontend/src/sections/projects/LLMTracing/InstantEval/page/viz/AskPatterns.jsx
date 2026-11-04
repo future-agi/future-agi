@@ -192,7 +192,7 @@ function PatternRow({
         onClick={() => onSelect?.(pattern.select.filter, pattern.select.label)}
         sx={{
           flexShrink: 0,
-          fontSize: 12,
+
           py: dense ? 0 : 0.25,
           minWidth: 88,
           fontVariantNumeric: "tabular-nums",
@@ -276,7 +276,7 @@ function ConsistencyRow({ line, color, showSwatch, onSelect }) {
         onClick={() => onSelect?.(line.select.filter, line.select.label)}
         sx={{
           flexShrink: 0,
-          fontSize: 12,
+
           py: 0.25,
           minWidth: 88,
           fontVariantNumeric: "tabular-nums",
@@ -484,7 +484,7 @@ export default function AskPatterns({
                   aria-expanded={moreShown > 0}
                   onClick={() => setMoreShown((shown) => shown + MORE_PAGE)}
                   startIcon={<Iconify icon="mdi:chevron-down" width={16} />}
-                  sx={{ fontSize: 12, color: "text.secondary" }}
+                  sx={{ color: "text.secondary" }}
                 >
                   {moreShown === 0
                     ? `Show all ${formatCount(patterns.length + more.length)}`
@@ -497,7 +497,7 @@ export default function AskPatterns({
                   color="inherit"
                   onClick={() => setMoreShown(0)}
                   startIcon={<Iconify icon="mdi:chevron-up" width={16} />}
-                  sx={{ fontSize: 12, color: "text.secondary" }}
+                  sx={{ color: "text.secondary" }}
                 >
                   Top {formatCount(patterns.length)} only
                 </Button>
@@ -528,8 +528,6 @@ export default function AskPatterns({
                     onFocus?.({ configId: question.configId, answer: label })
                   }
                   sx={{
-                    fontSize: 12,
-                    fontWeight: active ? 600 : 400,
                     py: 0.25,
                     minWidth: 0,
                     px: 1,

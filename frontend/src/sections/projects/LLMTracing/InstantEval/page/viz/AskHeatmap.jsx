@@ -121,7 +121,9 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
   const { rows, columns, cells } = grid;
   const matchesOf = (cell) => cell?.byLabel.get(answer) || 0;
   const inkOn = (level, small) =>
-    !small && level >= 3 && getContrastRatio(ramp[level], "#fff") >= 3
+    !small &&
+    level >= 3 &&
+    getContrastRatio(ramp[level], theme.palette.common.white) >= 3
       ? theme.palette.common.white
       : theme.palette.text.primary;
   const overallShare = grid.overall.answered

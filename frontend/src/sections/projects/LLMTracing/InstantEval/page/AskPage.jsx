@@ -168,11 +168,7 @@ RunPane.propTypes = {
 function Welcome({ onNew }) {
   return (
     <Box sx={{ px: 3, pt: 6, maxWidth: 640, mx: "auto" }}>
-      <Typography
-        variant="h4"
-        component="h1"
-        sx={{ fontSize: 22, lineHeight: "30px", fontWeight: 600 }}
-      >
+      <Typography variant="m1" component="h1" sx={{ fontWeight: 600 }}>
         Ask Jev a question about each row
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -557,7 +553,7 @@ export default function AskPage() {
           sx={{ mb: 2.5 }}
         >
           {UNIT_CHOICES.map((choice) => (
-            <ToggleButton key={choice} value={choice} sx={{ px: 2 }}>
+            <ToggleButton key={choice} value={choice}>
               {UNITS[choice].title}
             </ToggleButton>
           ))}

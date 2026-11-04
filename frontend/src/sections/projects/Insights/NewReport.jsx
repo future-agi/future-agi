@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -8,7 +9,6 @@ import {
   IconButton,
   LinearProgress,
   MenuItem,
-  Paper,
   Stack,
   TextField,
   ToggleButton,
@@ -135,7 +135,7 @@ function autoName(draft, scopeText) {
 
 function Step({ number, title, subtitle, children, action }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 1.5 }}>
+    <Section variant="panel" sx={{ p: 2.5 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box
           aria-hidden
@@ -179,7 +179,7 @@ function Step({ number, title, subtitle, children, action }) {
           {children}
         </Box>
       </Stack>
-    </Paper>
+    </Section>
   );
 }
 
@@ -650,7 +650,7 @@ export default function NewReport({
                   disabled={fixed || busy}
                 >
                   {UNIT_ORDER.map((unit) => (
-                    <ToggleButton key={unit} value={unit} sx={{ px: 2 }}>
+                    <ToggleButton key={unit} value={unit}>
                       {UNITS[unit].title}
                     </ToggleButton>
                   ))}
@@ -667,12 +667,11 @@ export default function NewReport({
       <Step number={2} title="Which data">
         <Stack spacing={2}>
           {fixed ? (
-            <Paper
-              variant="outlined"
+            <Section
+              variant="plain"
               sx={{
                 p: 1.5,
-                borderRadius: 1,
-                bgcolor: "background.neutral",
+
                 display: "flex",
                 alignItems: "center",
                 gap: 1.25,
@@ -689,7 +688,7 @@ export default function NewReport({
                   ? ` · ${seed.label}`
                   : ""}
               </Typography>
-            </Paper>
+            </Section>
           ) : (
             <Box>
               <ScopeFilterBar
@@ -818,7 +817,7 @@ export default function NewReport({
         </Stack>
       </Step>
 
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 1.5 }}>
+      <Section variant="panel" sx={{ p: 2 }}>
         <NewReportTune
           open={tuneOpen}
           onToggle={() => setTuneOpen((value) => !value)}
@@ -902,9 +901,9 @@ export default function NewReport({
             ) : null
           }
         />
-      </Paper>
+      </Section>
 
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 1.5 }}>
+      <Section variant="panel" sx={{ p: 2 }}>
         <Stack
           direction="row"
           alignItems="center"
@@ -987,23 +986,22 @@ export default function NewReport({
             )}
           </Stack>
         )}
-      </Paper>
+      </Section>
 
-      <Paper
-        elevation={0}
+      <Section
+        variant="panel"
         sx={{
           position: "sticky",
+          bgcolor: "background.paper",
           bottom: 0,
           zIndex: 2,
           pl: 2,
           // Clear of the app's floating assistant buttons.
           pr: 9,
           py: 1.25,
-          border: "1px solid",
+
           borderColor: "divider",
-          borderRadius: 1,
-          bgcolor: "background.paper",
-          boxShadow: (theme) => theme.customShadows?.dropdown,
+
           mb: 2,
         }}
       >
@@ -1066,7 +1064,7 @@ export default function NewReport({
             Run report
           </Button>
         </Stack>
-      </Paper>
+      </Section>
     </Stack>
   );
 }

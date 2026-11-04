@@ -75,9 +75,6 @@ function HeaderChip({ label, icon, title }) {
       icon={icon ? <Iconify icon={icon} width={13} /> : undefined}
       label={label}
       sx={{
-        height: 22,
-        borderRadius: 0.75,
-        fontSize: 12,
         maxWidth: 320,
         color: "text.secondary",
         "& .MuiChip-icon": { color: "text.secondary", ml: 0.75 },
@@ -148,7 +145,7 @@ function InlineName({ config }) {
           inputProps={{ "aria-label": "Report name" }}
           disabled={saving.state.status === "busy"}
           sx={{
-            fontSize: 18,
+            typography: "m1",
             fontWeight: 600,
             px: 0.75,
             ml: -0.75,
@@ -311,7 +308,6 @@ function ReportHeader({
           startIcon={<Iconify icon="mdi:play-outline" width={16} />}
           onClick={onRunNow}
           disabled={busy || !canRun}
-          sx={{ fontSize: 13 }}
         >
           {busy ? "Running…" : "Run now"}
         </Button>
@@ -322,7 +318,6 @@ function ReportHeader({
           startIcon={<Iconify icon="mdi:cog-outline" width={16} />}
           onClick={onEdit}
           disabled={!canRun}
-          sx={{ fontSize: 13 }}
         >
           Edit
         </Button>
@@ -330,7 +325,7 @@ function ReportHeader({
           size="small"
           aria-label="More report actions"
           onClick={(event) => setAnchor(event.currentTarget)}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+          sx={{ border: "1px solid", borderColor: "divider" }}
         >
           <Iconify icon="mdi:dots-horizontal" width={18} />
         </IconButton>
@@ -364,7 +359,6 @@ function ReportHeader({
               setAnchor(null);
               onDelete();
             }}
-            sx={{ color: "error.main" }}
           >
             <ListItemIcon sx={{ color: "inherit" }}>
               <Iconify icon="mdi:trash-can-outline" width={18} />
@@ -412,11 +406,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
   return (
     <Stack spacing={3.5}>
       <Box>
-        <Typography
-          variant="h4"
-          component="h2"
-          sx={{ fontSize: 22, lineHeight: "30px", fontWeight: 600 }}
-        >
+        <Typography variant="m1" component="h2" sx={{ fontWeight: 600 }}>
           {run.settings?.question || config.question}
         </Typography>
         <Typography

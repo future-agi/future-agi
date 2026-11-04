@@ -64,6 +64,7 @@ const SORTABLE = new Set([
 ]);
 
 function ShareCell({ stats, color }) {
+  const theme = useTheme();
   const share = stats?.share || 0;
   const ci = stats?.share_ci;
   const bar = (
@@ -88,7 +89,7 @@ function ShareCell({ stats, color }) {
               top: -2,
               bottom: -2,
               borderRadius: 1,
-              bgcolor: alpha(color || "#999", 0.18),
+              bgcolor: alpha(color || theme.palette.status.neutral.solid, 0.18),
             }}
           />
         )}
@@ -144,9 +145,6 @@ function ChangeCell({ change }) {
         size="small"
         label="New"
         sx={{
-          height: 20,
-          fontSize: 11,
-          borderRadius: 0.75,
           color: "info.dark",
           bgcolor: "info.lighter",
         }}
@@ -398,9 +396,6 @@ function CategoryRow({
                     size="small"
                     label="New"
                     sx={{
-                      height: 18,
-                      fontSize: 10,
-                      borderRadius: 0.75,
                       color: "info.dark",
                       bgcolor: "info.lighter",
                     }}
@@ -464,7 +459,6 @@ function ColumnsMenu({ columns, prefs, onChange }) {
         startIcon={<Iconify icon="mdi:view-column-outline" width={16} />}
         onClick={(event) => setAnchor(event.currentTarget)}
         aria-haspopup="menu"
-        sx={{ fontSize: 13, fontWeight: 500 }}
       >
         Columns
       </Button>
@@ -603,7 +597,7 @@ export default function CategoryTable({ reportId, run, attributes }) {
             onClick={() =>
               setExpanded(allOpen ? new Set() : new Set(expandable))
             }
-            sx={{ fontSize: 13, fontWeight: 500, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           >
             {allOpen ? "Collapse all" : "Expand all"}
           </Button>

@@ -166,7 +166,6 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
             close();
             onDelete(config);
           }}
-          sx={{ color: "error.main" }}
         >
           <ListItemIcon sx={{ color: "inherit" }}>
             <Iconify icon="mdi:trash-can-outline" width={18} />

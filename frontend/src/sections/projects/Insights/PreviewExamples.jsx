@@ -1,6 +1,7 @@
+import Section from "src/components/section";
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { EvidenceQuote } from "./Citation";
 import { AttributePills, FacetChips } from "./parts";
@@ -33,12 +34,12 @@ export default function PreviewExamples({ units, lens, attributes = [] }) {
         const facets = unit.facets || {};
         const included = unit.included !== false;
         return (
-          <Paper
+          <Section
             key={unit.unit_id}
-            variant="outlined"
+            variant="plain"
             sx={{
               p: 1.75,
-              borderRadius: 1.5,
+
               opacity: included ? 1 : 0.8,
               display: "flex",
               flexDirection: "column",
@@ -102,7 +103,7 @@ export default function PreviewExamples({ units, lens, attributes = [] }) {
               ))}
             <FacetChips facets={facets} dense />
             <AttributePills attributes={facets.attributes} />
-          </Paper>
+          </Section>
         );
       })}
     </Box>

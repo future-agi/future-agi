@@ -1,6 +1,7 @@
+import Section from "src/components/section";
 import React, { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, Popper, Skeleton, Stack, Typography } from "@mui/material";
+import { Box, Popper, Skeleton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useRunUnit } from "./insightsApi";
 import { parseCitations } from "./insightsCitations";
@@ -235,23 +236,24 @@ export function CitationChip({ n, unitId }) {
         sx={{ zIndex: (theme) => theme.zIndex.modal + 1 }}
         modifiers={[{ name: "offset", options: { offset: [0, 6] } }]}
       >
-        <Paper
+        <Section
+          variant="panel"
           id={cardId}
           role="tooltip"
-          elevation={0}
           onMouseEnter={keep}
           onMouseLeave={scheduleClose}
           sx={{
+            bgcolor: "background.paper",
             width: 340,
             p: 1.75,
-            border: "1px solid",
+
             borderColor: "divider",
-            borderRadius: 1,
+
             boxShadow: (theme) => theme.customShadows?.dropdown,
           }}
         >
           {anchor && target && <CitationCard n={n} unitId={target} />}
-        </Paper>
+        </Section>
       </Popper>
     </>
   );

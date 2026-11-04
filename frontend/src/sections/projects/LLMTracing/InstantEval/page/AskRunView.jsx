@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -12,7 +13,6 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  Paper,
   Skeleton,
   Stack,
   Typography,
@@ -366,16 +366,15 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
     : null;
   const wide = bounds && bounds.share > UNANSWERED_BOUND_SHARE;
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         px: 2,
         py: 1.25,
-        borderRadius: 1.5,
+
         display: "flex",
         alignItems: "flex-start",
         gap: 1.5,
-        bgcolor: "background.neutral",
       }}
     >
       <Iconify
@@ -486,7 +485,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
           )}
         </Stack>
       </Box>
-    </Paper>
+    </Section>
   );
 }
 
@@ -510,7 +509,7 @@ function MoreMenu({ questions, onCopyLink }) {
         size="small"
         aria-label="More actions"
         onClick={(event) => setAnchor(event.currentTarget)}
-        sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+        sx={{ border: "1px solid", borderColor: "divider" }}
       >
         <Iconify icon="mdi:dots-horizontal" width={18} />
       </IconButton>
@@ -571,18 +570,19 @@ function SelectionBar({
 }) {
   const meta = unitMeta(unit);
   return (
-    <Paper
-      elevation={8}
+    <Section
+      variant="panel"
       role="region"
       aria-label="Selected rows"
       sx={{
         position: "sticky",
+        bgcolor: "background.paper",
         bottom: 16,
         zIndex: 2,
         mx: "auto",
         px: 2,
         py: 1.25,
-        borderRadius: 1.5,
+
         display: "flex",
         alignItems: "center",
         gap: 1.5,
@@ -655,7 +655,7 @@ function SelectionBar({
           {notice}
         </Typography>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -1101,10 +1101,10 @@ export default function AskRunView({
               }}
             >
               <Typography
-                variant="h4"
+                variant="m1"
                 component="h1"
                 title={question?.fullQuestion || undefined}
-                sx={{ fontSize: 22, lineHeight: "30px", fontWeight: 600 }}
+                sx={{ fontWeight: 600 }}
               >
                 {question?.question ||
                   (run.status !== "error" && (

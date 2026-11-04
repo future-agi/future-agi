@@ -463,7 +463,7 @@ export default function AskPanel({ run, lens }) {
                 setThread([]);
                 setOpen(false);
               }}
-              sx={{ fontSize: 12, fontWeight: 500, color: "text.secondary" }}
+              sx={{ color: "text.secondary" }}
             >
               Clear
             </Button>
@@ -574,8 +574,6 @@ export default function AskPanel({ run, lens }) {
               color="inherit"
               onClick={() => setOpen(true)}
               sx={{
-                fontSize: 12,
-                fontWeight: 500,
                 color: "text.secondary",
                 flexShrink: 0,
               }}

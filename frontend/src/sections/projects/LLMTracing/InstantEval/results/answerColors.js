@@ -1,51 +1,35 @@
 import { alpha } from "@mui/material/styles";
+import { dsPalette } from "src/theme/ds-tokens";
 import { ANSWER_TYPES } from "../instantEvalPayloads";
 import { ERROR_ANSWER, SKIPPED_ANSWER } from "../instantEvalAnswers";
 
-// Category hues, by the label's position in the question. None is purple,
-// orange or red: those mean Yes, No and failed. Blue, pink, lime, jade, cyan
-// and olive tell apart as any pair, for colour-blind readers too (the data-viz
-// palette check, all pairs: CVD ΔE ≥ 8.8, normal ΔE ≥ 15.4); plum and green
-// are told apart from their neighbours only. The dark steps are the same hues
-// for the dark surface, and pass the same check against it.
-export const CATEGORY_COLORS = [
-  "#2A78D6",
-  "#E87BA4",
-  "#84CC16",
-  "#038660",
-  "#06B6D4",
-  "#9A8C00",
-  "#8B036F",
-  "#05A92E",
-];
-export const CATEGORY_COLORS_DARK = [
-  "#0160C1",
-  "#E0609A",
-  "#73A40A",
-  "#0F825E",
-  "#16A2C1",
-  "#877403",
-  "#BC0B97",
-  "#02721C",
-];
-// The catch-all answer ("Something else", "Other") is the rest, so it is a
-// quiet neutral rather than a hue; it still tells apart from the first five
-// hues as any pair.
-export const CATCH_ALL_COLOR = "#C3C2B7";
-export const CATCH_ALL_COLOR_DARK = "#B5B3AC";
+// Stable slots follow the authored label order, not the current count/rank.
+// The canonical data palette owns both modes; labels and legends still carry
+// identity. Never cycle overflow labels onto an earlier categorical slot.
+const lightPalette = dsPalette("light");
+const darkPalette = dsPalette("dark");
+const CATEGORY_SLOTS = [1, 4, 6];
+export const CATEGORY_COLORS = CATEGORY_SLOTS.map(
+  (slot) => lightPalette.data[slot],
+);
+// These canonical darker data steps validate on both the light and dark chart
+// surfaces; the brighter dark UI steps do not separate enough for dense plots.
+export const CATEGORY_COLORS_DARK = CATEGORY_COLORS;
+// The catch-all answer stays neutral and explicitly named.
+export const CATCH_ALL_COLOR = lightPalette.text.disabled;
+export const CATCH_ALL_COLOR_DARK = darkPalette.text.disabled;
 const CATCH_ALL =
   /^(something else|anything else|other|others|other reason|none|none of (these|the above)|n\/a|unknown|unclear|not sure|misc(ellaneous)?)$/i;
 export const isCatchAll = (label) => CATCH_ALL.test(String(label ?? "").trim());
-// A ninth and tenth label are not given a hue of their own: a generated hue
-// would pass for one of the eight. They share a grey and are told apart by
-// name (the legend, the tooltip, one panel each in the small multiples).
-export const OTHER_CATEGORY_COLOR = "#898781";
+// Keep the three all-pairs-distinct chromatic slots. Labels beyond those slots
+// share neutral marks, never another category's hue; names, tooltips and small
+// multiples still expose each label separately with unchanged counts/actions.
+export const OTHER_CATEGORY_COLOR = lightPalette.text.disabled;
 
-// Yes and No get two strong hues that judge neither: the brand purple and an
-// amber. Not red (that means failed) and not green ("No" is not always bad:
-// "Did the customer ask for a human?").
-export const YES_COLOR = "#7857FC";
-export const NO_COLOR = "#F97316";
+// Boolean answers use two fixed nominal data slots, not success/failure
+// colours: "No" is not necessarily bad ("Did the user ask for a human?").
+export const YES_COLOR = lightPalette.data[0];
+export const NO_COLOR = lightPalette.data[5];
 
 /**
  * The hue of the label at `index` (0-based), for a light or dark surface; a
@@ -57,7 +41,9 @@ export function categoryColor(index, mode = "light", label) {
   const colors = mode === "dark" ? CATEGORY_COLORS_DARK : CATEGORY_COLORS;
   return index >= 0 && index < colors.length
     ? colors[index]
-    : OTHER_CATEGORY_COLOR;
+    : mode === "dark"
+      ? darkPalette.text.disabled
+      : OTHER_CATEGORY_COLOR;
 }
 
 // One answer's color: Yes in purple, No in amber, categories by position,

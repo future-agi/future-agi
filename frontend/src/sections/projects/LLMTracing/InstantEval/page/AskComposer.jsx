@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -8,7 +9,6 @@ import {
   CircularProgress,
   Link,
   MenuItem,
-  Paper,
   Skeleton,
   Stack,
   TextField,
@@ -75,16 +75,14 @@ function ChoiceCard({
   // choice can't run (in full contrast) and hold the way forward (a smaller
   // sample, billing), which stays usable when the choice is not.
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         flex: 1,
         minWidth: 240,
         p: 1.5,
-        borderRadius: 1.5,
+
         borderColor: selected ? "primary.main" : "divider",
-        boxShadow: (theme) =>
-          selected ? `inset 0 0 0 1px ${theme.palette.primary.main}` : "none",
       }}
     >
       <Box
@@ -167,7 +165,7 @@ function ChoiceCard({
           {note}
         </Typography>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -375,10 +373,7 @@ function ScopeCard({
       ? `${counted}, the newest in the ${sourceViewTitle(unit)} view`
       : `${counted} in the ${sourceViewTitle(unit)} view`;
   return (
-    <Paper
-      variant="outlined"
-      sx={{ p: 2, borderRadius: 1.5, bgcolor: "background.neutral" }}
-    >
+    <Section variant="panel" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Iconify
           icon="mdi:table-eye"
@@ -645,7 +640,7 @@ function ScopeCard({
           {sizeNotice}
         </Typography>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -947,11 +942,7 @@ export default function AskComposer({
   return (
     <Stack spacing={3} sx={{ maxWidth: 880 }}>
       <Box>
-        <Typography
-          variant="h4"
-          component="h1"
-          sx={{ fontSize: 22, lineHeight: "30px", fontWeight: 600 }}
-        >
+        <Typography variant="m1" component="h1" sx={{ fontWeight: 600 }}>
           Ask Jev about these {meta.plural}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -966,12 +957,7 @@ export default function AskComposer({
           severity="info"
           action={
             jev.settingsPath && (
-              <Button
-                size="small"
-                component={RouterLink}
-                to={jev.settingsPath}
-                sx={{ textTransform: "none" }}
-              >
+              <Button size="small" component={RouterLink} to={jev.settingsPath}>
                 Open AI Providers
               </Button>
             )
@@ -1065,12 +1051,9 @@ export default function AskComposer({
                 size="small"
                 variant="outlined"
                 label={example.question}
+                title={example.question}
                 onClick={() => addQuestion(example)}
-                sx={{
-                  maxWidth: "100%",
-                  height: "auto",
-                  "& .MuiChip-label": { whiteSpace: "normal", py: 0.5 },
-                }}
+                sx={{ maxWidth: "100%" }}
               />
             ))}
           </Stack>

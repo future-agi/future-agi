@@ -204,7 +204,7 @@ export default function ChangeCards({ changes }) {
           size="small"
           color="inherit"
           onClick={() => setAll((value) => !value)}
-          sx={{ mt: 0.5, fontWeight: 500, color: "text.secondary" }}
+          sx={{ mt: 0.5, color: "text.secondary" }}
         >
           {all ? "Show fewer" : `Show ${cards.length - visible} more`}
         </Button>

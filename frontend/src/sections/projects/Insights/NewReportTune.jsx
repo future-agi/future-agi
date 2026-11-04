@@ -196,7 +196,7 @@ export default function NewReportTune({
               width={18}
             />
           }
-          sx={{ px: 0.5, fontWeight: 600 }}
+          sx={{ px: 0.5 }}
         >
           Tune the report
         </Button>

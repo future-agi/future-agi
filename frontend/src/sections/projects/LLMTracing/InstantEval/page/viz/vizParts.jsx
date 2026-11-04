@@ -9,7 +9,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { alpha, darken, lighten, useTheme } from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
-import { NO_COLOR, answerColor } from "../../results/answerColors";
+import { answerColor } from "../../results/answerColors";
 import { formatCount, isYesNo } from "./askAnswers";
 import {
   SQUARES_MAX,
@@ -236,16 +236,9 @@ export function useAnswerColor() {
     );
 }
 
-/**
- * The strong end of an answer's hue: burnt orange for No, a darker shade
- * else; on a dark surface, a lighter one.
- */
+/** The strong end of the same nominal hue, adapted for the chart surface. */
 export const deepColor = (hue, mode = "light") =>
-  mode === "dark"
-    ? lighten(hue, 0.3)
-    : hue === NO_COLOR
-      ? "#C2410C"
-      : darken(hue, 0.3);
+  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.3);
 
 /**
  * An answer's hue in five steps for a share from 0% to the top of a scale:

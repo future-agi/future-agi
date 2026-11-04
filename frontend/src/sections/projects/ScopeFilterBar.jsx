@@ -122,7 +122,7 @@ export default function ScopeFilterBar({
           onClick={() => setPanelAnchor(filterButtonRef.current)}
           sx={{
             ...pillSx,
-            height: 28,
+
             bgcolor: panelAnchor ? "action.hover" : "background.paper",
           }}
         >

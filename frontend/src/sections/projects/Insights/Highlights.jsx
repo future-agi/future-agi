@@ -80,7 +80,6 @@ function HighlightCard({ highlight }) {
             color="inherit"
             onClick={() => report.openCategory(category.id)}
             sx={{
-              fontSize: 12,
               py: 0.25,
               px: 1,
               whiteSpace: "nowrap",
@@ -96,7 +95,6 @@ function HighlightCard({ highlight }) {
           color="inherit"
           onClick={() => report.openExample(highlight.unit_id)}
           sx={{
-            fontSize: 12,
             py: 0.25,
             px: 1,
             whiteSpace: "nowrap",
@@ -131,8 +129,7 @@ export default function Highlights({ highlights }) {
         sx={{
           px: 0.75,
           ml: -0.75,
-          fontSize: 13,
-          fontWeight: 500,
+
           color: "primary.main",
         }}
       >

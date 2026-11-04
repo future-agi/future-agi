@@ -68,7 +68,6 @@ export default function KeepAnswering({
           <Button
             size="small"
             onClick={() => navigate(`/dashboard/tasks/${state.taskId}`)}
-            sx={{ textTransform: "none" }}
           >
             View task
           </Button>
@@ -89,7 +88,6 @@ export default function KeepAnswering({
               size="small"
               disabled={state.step === "working"}
               onClick={() => setState({ step: "idle" })}
-              sx={{ textTransform: "none" }}
             >
               Cancel
             </Button>
@@ -98,7 +96,6 @@ export default function KeepAnswering({
               variant="contained"
               disabled={state.step === "working"}
               onClick={start}
-              sx={{ textTransform: "none" }}
             >
               Start
             </Button>
@@ -131,7 +128,6 @@ export default function KeepAnswering({
         startIcon={<Iconify icon="mdi:sync" width={16} />}
         disabled={disabled}
         onClick={() => setState({ step: "confirm" })}
-        sx={{ textTransform: "none" }}
       >
         Keep answering new {noun.plural}
       </Button>

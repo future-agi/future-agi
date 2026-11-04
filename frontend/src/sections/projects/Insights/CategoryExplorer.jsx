@@ -558,7 +558,7 @@ function CitedUnit({ unitId }) {
       size="small"
       color="inherit"
       onClick={() => report.openExample(unitId)}
-      sx={{ fontSize: 12, fontWeight: 500, flexShrink: 0, minWidth: 0 }}
+      sx={{ flexShrink: 0, minWidth: 0 }}
     >
       Open
     </Button>
@@ -871,7 +871,7 @@ function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
         aria-label="More actions for this category"
         onClick={(event) => setAnchor(event.currentTarget)}
         disabled={disabled}
-        sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+        sx={{ border: "1px solid", borderColor: "divider" }}
       >
         {busy ? (
           <CircularProgress size={16} thickness={5} />
@@ -1060,7 +1060,7 @@ export default function CategoryExplorer({
           color="inherit"
           onClick={onBack}
           startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
-          sx={{ mb: 1.5, fontWeight: 500, color: "text.secondary" }}
+          sx={{ mb: 1.5, color: "text.secondary" }}
         >
           Back to report
         </Button>
@@ -1229,18 +1229,8 @@ export default function CategoryExplorer({
             onChange={(_, value) => value && setView(value)}
             aria-label="Show"
           >
-            <ToggleButton
-              value="summaries"
-              sx={{ px: 1.5, py: 0.25, fontSize: 13 }}
-            >
-              Summaries
-            </ToggleButton>
-            <ToggleButton
-              value="items"
-              sx={{ px: 1.5, py: 0.25, fontSize: 13 }}
-            >
-              {humanizeKey(plural)}
-            </ToggleButton>
+            <ToggleButton value="summaries">Summaries</ToggleButton>
+            <ToggleButton value="items">{humanizeKey(plural)}</ToggleButton>
           </ToggleButtonGroup>
           <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
             {view === "summaries"
@@ -1262,7 +1252,6 @@ export default function CategoryExplorer({
               startIcon={<Iconify icon="mdi:creation-outline" width={16} />}
               endIcon={askDenied ? <EnterpriseMark compact /> : undefined}
               onClick={measure}
-              sx={{ fontSize: 13 }}
             >
               Measure with Jev
             </Button>

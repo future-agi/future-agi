@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React, {
   memo,
   useEffect,
@@ -10,7 +11,6 @@ import PropTypes from "prop-types";
 import {
   Box,
   MenuItem,
-  Paper,
   Popper,
   Stack,
   TextField,
@@ -296,7 +296,7 @@ function AxisLayer({ marks, dayTicks, colW, x0, baseY, theme }) {
             y={baseY + 16}
             textAnchor="middle"
             fill={theme.palette.text.disabled}
-            fontSize={10}
+            fontSize={theme.typography.s3.fontSize}
             fontFamily={theme.typography.fontFamily}
           >
             {hourLabel(tick.hour)}
@@ -1117,7 +1117,7 @@ function DensityPlot({
               y={TOP + VOLUME_H / 2 + 3.5}
               textAnchor="end"
               fill={theme.palette.text.disabled}
-              fontSize={10}
+              fontSize={theme.typography.s3.fontSize}
               fontFamily={theme.typography.fontFamily}
             >
               {compact(maxN)}
@@ -1139,7 +1139,7 @@ function DensityPlot({
                 y={yOf(tick) + 3.5}
                 textAnchor="end"
                 fill={theme.palette.text.disabled}
-                fontSize={10}
+                fontSize={theme.typography.s3.fontSize}
                 fontFamily={theme.typography.fontFamily}
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
@@ -1152,7 +1152,7 @@ function DensityPlot({
             y={baseY + 3.5}
             textAnchor="end"
             fill={theme.palette.text.disabled}
-            fontSize={10}
+            fontSize={theme.typography.s3.fontSize}
             fontFamily={theme.typography.fontFamily}
           >
             0
@@ -1294,19 +1294,20 @@ DensityPlot.propTypes = {
 
 function TipCard({ children, width = 280 }) {
   return (
-    <Paper
-      elevation={0}
+    <Section
+      variant="panel"
       sx={{
+        bgcolor: "background.paper",
         width,
         p: 1.5,
-        border: "1px solid",
+
         borderColor: "divider",
-        borderRadius: 1,
+
         boxShadow: (t) => t.customShadows?.dropdown,
       }}
     >
       {children}
-    </Paper>
+    </Section>
   );
 }
 
@@ -1660,18 +1661,8 @@ export default function AskTimeline({
               onChange={(_, value) => value && setScale(value)}
               aria-label="Column height"
             >
-              <ToggleButton
-                value="share"
-                sx={{ px: 1.25, py: 0.4, fontSize: 12 }}
-              >
-                Share
-              </ToggleButton>
-              <ToggleButton
-                value="count"
-                sx={{ px: 1.25, py: 0.4, fontSize: 12 }}
-              >
-                Count
-              </ToggleButton>
+              <ToggleButton value="share">Share</ToggleButton>
+              <ToggleButton value="count">Count</ToggleButton>
             </ToggleButtonGroup>
           )}
           {questions.length > 1 && (

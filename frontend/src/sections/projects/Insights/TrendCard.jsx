@@ -1,6 +1,7 @@
+import Section from "src/components/section";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { OTHER_ID, buildAreaSeries } from "./insightsDistribution";
@@ -33,14 +34,15 @@ function TrendTooltip({ row, series, afresh }) {
   const total = Object.values(row.counts).reduce((a, b) => a + b, 0) || 1;
   const items = [...series].reverse().filter((s) => row.counts?.[s.id] > 0);
   return (
-    <Paper
-      elevation={0}
+    <Section
+      variant="panel"
       sx={{
+        bgcolor: "background.paper",
         p: 1.25,
         width: TOOLTIP_WIDTH,
-        border: "1px solid",
+
         borderColor: "divider",
-        borderRadius: 1,
+
         boxShadow: (theme) => theme.customShadows?.dropdown,
         pointerEvents: "none",
       }}
@@ -95,7 +97,7 @@ function TrendTooltip({ row, series, afresh }) {
           </Stack>
         ))}
       </Stack>
-    </Paper>
+    </Section>
   );
 }
 
@@ -392,7 +394,7 @@ function RunPager({ runs, runId, onSelectRun }) {
         disabled={!older}
         onClick={() => onSelectRun(older.id)}
         startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
-        sx={{ fontWeight: 500, color: "text.secondary" }}
+        sx={{ color: "text.secondary" }}
       >
         Older
       </Button>
@@ -412,7 +414,7 @@ function RunPager({ runs, runId, onSelectRun }) {
         disabled={!newer}
         onClick={() => onSelectRun(newer.id)}
         endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
-        sx={{ fontWeight: 500, color: "text.secondary" }}
+        sx={{ color: "text.secondary" }}
       >
         Newer
       </Button>

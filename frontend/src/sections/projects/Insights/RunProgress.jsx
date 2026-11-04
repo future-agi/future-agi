@@ -1,3 +1,4 @@
+import Section from "src/components/section";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -5,7 +6,6 @@ import {
   Box,
   Button,
   LinearProgress,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
@@ -128,7 +128,6 @@ function StopRun({ run }) {
         startIcon={<Iconify icon="mdi:stop" width={16} />}
         onClick={() => setOpen(true)}
         disabled={!canRun}
-        sx={{ fontSize: 13 }}
       >
         Stop
       </Button>
@@ -203,7 +202,7 @@ export default function RunProgress({ run }) {
   const recent = [...(progress.recent || [])].reverse();
 
   return (
-    <Paper variant="outlined" sx={{ p: 3, borderRadius: 1.5 }}>
+    <Section variant="panel" sx={{ p: 3 }}>
       <Stack spacing={2.5}>
         <Stack
           direction="row"
@@ -276,7 +275,7 @@ export default function RunProgress({ run }) {
           {note.text}
         </Typography>
       </Stack>
-    </Paper>
+    </Section>
   );
 }
 

@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import { ClosableDialog } from "src/components/custom-dialog";
 import {
   Alert,
   Box,
   Button,
   Checkbox,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -353,7 +353,7 @@ RerunForm.propTypes = {
 
 export default function RerunDialog({ open, config, onClose, ...rest }) {
   return (
-    <Dialog
+    <ClosableDialog
       open={open && Boolean(config)}
       onClose={onClose}
       fullWidth
@@ -367,7 +367,7 @@ export default function RerunDialog({ open, config, onClose, ...rest }) {
           {...rest}
         />
       )}
-    </Dialog>
+    </ClosableDialog>
   );
 }
 
