@@ -1259,7 +1259,7 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
     const cta = screen.getByRole("button", { name: "Improve" });
     expect(cta).toBeEnabled();
-    expect(cta).not.toHaveTextContent("BETA");
+    expect(cta).not.toHaveTextContent("Beta");
   });
 
   it("keeps the Trials tab visible but disabled while self-improvement is in beta", () => {
@@ -1269,7 +1269,7 @@ describe("RunDetail", () => {
 
     const trialsTab = screen.getByRole("tab", { name: /Trials \(1\)/ });
     expect(trialsTab).toBeDisabled();
-    expect(trialsTab).toHaveTextContent("BETA");
+    expect(trialsTab).toHaveTextContent("Beta");
   });
 
   it("omits the Trials tab when there are no optimization runs", () => {

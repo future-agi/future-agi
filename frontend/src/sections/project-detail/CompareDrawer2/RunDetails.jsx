@@ -67,10 +67,6 @@ const RunDetails = ({ traceData }) => {
               sx={{
                 backgroundColor: "divider",
                 borderColor: "divider",
-                height: "22px",
-                borderRadius: commonBorder.borderRadius,
-                px: theme.spacing(1),
-                py: theme.spacing(0.5),
               }}
             />
           </Box>
@@ -87,15 +83,15 @@ const RunDetails = ({ traceData }) => {
                 </Typography>
               }
               icon={
-                <Iconify icon="stash:clock" width={15} color="text.disabled" />
+                <Iconify
+                  icon="solar:clock-circle-linear"
+                  width={16}
+                  color="text.disabled"
+                />
               }
               sx={{
                 backgroundColor: "divider",
                 borderColor: "divider",
-                borderRadius: commonBorder.borderRadius,
-                height: "22px",
-                px: theme.spacing(1),
-                py: theme.spacing(0.5),
               }}
             />
           </Box>
@@ -124,8 +120,8 @@ const RunDetails = ({ traceData }) => {
               height: "5px !important",
             },
             "&::-webkit-scrollbar-thumb": {
-              backgroundColor: "rgba(0, 0, 0, 0.3)",
-              borderRadius: "3px",
+              backgroundColor: "border.strong",
+              borderRadius: "4px",
             },
             "&::-webkit-scrollbar-track": {
               backgroundColor: "transparent",

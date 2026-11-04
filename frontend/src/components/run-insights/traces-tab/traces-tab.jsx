@@ -1,4 +1,4 @@
-import { Box, Button, Collapse } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
@@ -17,7 +17,10 @@ import {
 } from "./common";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import {
+  ComplexFilterPanel,
+  inventoryToCatalogProps,
+} from "src/components/filter";
 import { useDebounce } from "src/hooks/use-debounce";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
@@ -34,6 +37,8 @@ import {
   FILTER_VALUE_SEARCH_DEBOUNCE_MS,
   INTERACTIVE_TABLE_PAGE_SIZE,
 } from "src/config/runtime_limits";
+
+const FILTER_CATEGORY_LABELS = { attribute: "Attributes" };
 
 const defaultFilter = {
   column_id: "",
@@ -77,17 +82,9 @@ const TraceTab = React.forwardRef(
       { ...defaultFilter, id: getRandomId() },
     ]);
 
-    const {
-      attributeKeys: evalAttributes,
-      hasNextPage: hasNextAttributePage,
-      fetchNextPage: fetchNextAttributePage,
-      isFetchingNextPage: isFetchingNextAttributePage,
-      isError: isAttributeLoadError,
-      isFetchNextPageError: isNextAttributePageError,
-      cursorChainStopped: attributeCursorStopped,
-      retryCursorChain: retryAttributeCursor,
-      isRetryingCursorChain: isRetryingAttributeCursor,
-    } = useRunInsightAttributeKeys(projectId);
+    const { attributeKeys: evalAttributes, inventoryControlProps } =
+      useRunInsightAttributeKeys(projectId);
+    const [filterAnchorEl, setFilterAnchorEl] = useState(null);
 
     const [filterDefinition, setFilterDefinition] = useState(() => {
       return generateTraceFilterDefinition(columns, evalAttributes, filters);
@@ -127,13 +124,7 @@ const TraceTab = React.forwardRef(
     );
 
     useEffect(() => {
-      const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filter_config?.filter_value &&
-        Array.isArray(f.filter_config.filter_value)
-          ? f.filter_config.filter_value.length > 0
-          : f.filter_config.filter_value !== "",
-      );
-      setIsFilterApplied(hasActiveFilter);
+      setIsFilterApplied(debouncedValidatedFilters?.length || 0);
       trackEvent(Events.filterApplied);
     }, [debouncedValidatedFilters, setIsFilterApplied]);
 
@@ -306,70 +297,24 @@ const TraceTab = React.forwardRef(
 
     return (
       <>
-        <Collapse in={filterOpen}>
-          <Box sx={{ paddingX: "12px", paddingTop: "16px" }}>
-            <ComplexFilter
-              filters={filters}
-              defaultFilter={defaultFilter}
-              setFilters={setFilters}
-              filterDefinition={filterDefinition}
-              onClose={() => setFilterOpen(false)}
-              projectId={projectId}
-            />
-            {(attributeCursorStopped ||
-              isAttributeLoadError ||
-              isNextAttributePageError) && (
-              <Box
-                role="status"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 1,
-                  mt: 1,
-                }}
-              >
-                <Box sx={{ fontSize: 12, color: "warning.main" }}>
-                  {isAttributeLoadError
-                    ? "Attributes could not be loaded. Retry safely."
-                    : isNextAttributePageError
-                      ? "The next attribute page failed. Loaded attributes remain available."
-                      : "Attribute pagination stopped safely. Loaded attributes remain available."}
-                </Box>
-                <Button
-                  size="small"
-                  disabled={
-                    isRetryingAttributeCursor || isFetchingNextAttributePage
-                  }
-                  onClick={() =>
-                    void Promise.resolve(
-                      isNextAttributePageError && !attributeCursorStopped
-                        ? fetchNextAttributePage?.()
-                        : retryAttributeCursor?.(),
-                    ).catch(() => {})
-                  }
-                >
-                  {isRetryingAttributeCursor || isFetchingNextAttributePage
-                    ? "Retrying attributes…"
-                    : "Retry attributes"}
-                </Button>
-              </Box>
-            )}
-            {hasNextAttributePage && (
-              <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}>
-                <Button
-                  size="small"
-                  disabled={isFetchingNextAttributePage}
-                  onClick={() => fetchNextAttributePage()}
-                >
-                  {isFetchingNextAttributePage
-                    ? "Loading attributes…"
-                    : "Load more attributes"}
-                </Button>
-              </Box>
-            )}
-          </Box>
-        </Collapse>
+        <Box ref={setFilterAnchorEl} sx={{ height: 0 }} />
+        <ComplexFilterPanel
+          anchorEl={filterAnchorEl}
+          open={Boolean(filterOpen && filterAnchorEl)}
+          onClose={() => setFilterOpen(false)}
+          filters={filters}
+          setFilters={setFilters}
+          filterDefinition={filterDefinition}
+          defaultFilter={defaultFilter}
+          projectId={projectId}
+          // Values come from the traces vocabulary; custom attributes are read from
+          // the span attribute inventory, as the old filter did.
+          source="traces"
+          attributeSource="spans"
+          freeSoloValues
+          categoryLabels={FILTER_CATEGORY_LABELS}
+          {...inventoryToCatalogProps(inventoryControlProps)}
+        />
         <Box
           sx={{
             padding: "12px",

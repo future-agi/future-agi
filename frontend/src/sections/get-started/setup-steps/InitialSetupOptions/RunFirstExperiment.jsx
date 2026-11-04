@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React, { useState } from "react";
 import NewExperiment from "src/sections/project/NewProject/NewExperiment";
 import HeaderContent from "./HeaderContent";
@@ -31,15 +31,14 @@ const RunFirstExperiment = ({ setCurrentLabel }) => {
           title="Run your first experiment"
           description="This tour will guide you through the key features and functionalities"
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.disabled" }}
           onClick={() => setCurrentLabel("SetupObsabilityInApplication")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
       <Box sx={{ height: "330px", overflowY: "auto" }}>
         <VideoContent

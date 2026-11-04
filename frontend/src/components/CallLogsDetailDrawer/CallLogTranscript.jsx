@@ -15,7 +15,7 @@ const CallLogTranscript = ({ data }) => {
       flexGrow={1}
       border="1px solid"
       borderColor="divider"
-      borderRadius={0.5}
+      borderRadius="4px"
       width={"100%"}
       p={1}
     >
