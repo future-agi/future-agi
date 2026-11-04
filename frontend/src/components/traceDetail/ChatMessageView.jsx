@@ -88,8 +88,60 @@ function parseMessages(input) {
   return [];
 }
 
+const isRecord = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const isOptionalString = (value) => value == null || typeof value === "string";
+
+function hasValidMessageMetadata(message) {
+  if (!isRecord(message)) return false;
+  if (
+    ![message.name, message.tool_call_id, message.toolCallId].every(
+      isOptionalString,
+    )
+  )
+    return false;
+  return [message.tool_calls, message.toolCalls].every(
+    (calls) =>
+      calls == null ||
+      (Array.isArray(calls) &&
+        calls.every(
+          (call) =>
+            isRecord(call) &&
+            [call.id, call.name, call.type].every(isOptionalString) &&
+            (call.function == null ||
+              (isRecord(call.function) &&
+                isOptionalString(call.function.name))),
+        )),
+  );
+}
+
+function isSupportedMessage(message) {
+  return (
+    hasValidMessageMetadata(message) &&
+    typeof message.role === "string" &&
+    Object.hasOwn(ROLE_STYLES, message.role.toLowerCase()) &&
+    (message.content == null ||
+      typeof message.content === "string" ||
+      Array.isArray(message.content)) &&
+    (message.parts == null || Array.isArray(message.parts)) &&
+    ("content" in message ||
+      Array.isArray(message.parts) ||
+      Array.isArray(message.tool_calls) ||
+      Array.isArray(message.toolCalls))
+  );
+}
+
+const rawJsonMessage = (value) => ({
+  role: "assistant",
+  content: [`\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``],
+});
+
 /** Normalize a message to {role, content} format (handles Gemini parts) */
 function normalizeMessage(message) {
+  // Attribute/input paths can bypass output detection. Never forward malformed
+  // names, tool ids or tool calls to React children on those paths either.
+  if (isRecord(message) && !hasValidMessageMetadata(message))
+    return rawJsonMessage(message);
   const msg =
     Array.isArray(message?.parts) && message.parts.some((p) => p?.type)
       ? normalizeNativeGenAIMessage(message)
@@ -288,41 +340,31 @@ const ChatMessageView = ({
 
   // Native GenAI output is an array, including multiple messages/tool responses.
   const outputMessages = useMemo(() => {
-    if (attrOutputMessages?.length > 0) {
-      return attrOutputMessages.map(normalizeMessage);
-    }
-    if (!output) return [];
+    const attributeMessages =
+      attrOutputMessages?.length > 0
+        ? attrOutputMessages.map(normalizeMessage)
+        : [];
+    if (!output) return attributeMessages;
     let data = output;
     if (typeof data === "string") {
       try {
         data = JSON.parse(data);
       } catch {
-        return [{ role: "assistant", content: [output] }];
+        return attributeMessages.length > 0
+          ? attributeMessages
+          : [{ role: "assistant", content: [output] }];
       }
     }
+    // Validate the original array before using attribute messages: native parts
+    // may already have been normalized by getLlmData from this same column.
+    if (
+      Array.isArray(data) &&
+      !(data.length > 0 && data.every(isSupportedMessage))
+    )
+      return [rawJsonMessage(data)];
+    if (attributeMessages.length > 0) return attributeMessages;
     if (data === null || typeof data !== "object") return [];
-    if (Array.isArray(data)) {
-      // Output columns also hold arbitrary JSON. Only normalize complete message
-      // arrays; keep business records (including their role fields) intact.
-      const isMessageArray =
-        data.length > 0 &&
-        data.every(
-          (message) =>
-            typeof message?.role === "string" &&
-            ("content" in message ||
-              Array.isArray(message.parts) ||
-              Array.isArray(message.tool_calls) ||
-              Array.isArray(message.toolCalls)),
-        );
-      return isMessageArray
-        ? data.map(normalizeMessage)
-        : [
-            {
-              role: "assistant",
-              content: [`\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``],
-            },
-          ];
-    }
+    if (Array.isArray(data)) return data.map(normalizeMessage);
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
     if (data.content?.role) return [normalizeMessage(data.content)];
     if (data.role) return [normalizeMessage(data)];
