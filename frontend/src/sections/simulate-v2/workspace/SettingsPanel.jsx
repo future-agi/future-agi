@@ -84,6 +84,8 @@ import { envTurnLimitOf, TURN_LIMIT_RANGE } from "../_mock/runStream";
 import { useSimStore, useWorkspaceSettings } from "../store";
 import RollbackDialog from "./RollbackDialog";
 import ClosableDialog from "../components/ClosableDialog";
+import { openReviewChanges } from "./reviewChangesBus";
+import { reviewCountsOf } from "../_mock/editReview";
 
 /**
  * Environment settings.
@@ -223,7 +225,12 @@ export default function SettingsPanel({
                   <Button
                     size="small"
                     disabled={!pending.length}
-                    onClick={() => patch(saveEnvChangesPatch(env, envState))}
+                    onClick={() =>
+                      /* Changes still waiting for Accept or Reject go to the review first. */
+                      reviewCountsOf(pending).undecided
+                        ? openReviewChanges()
+                        : patch(saveEnvChangesPatch(env, envState))
+                    }
                     startIcon={
                       <Iconify icon="solar:add-circle-linear" width={16} />
                     }

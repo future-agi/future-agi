@@ -19,7 +19,7 @@
 */
 import {
   agentVersions, currentEnvVersion, editsLandInPlace, environmentVersions, isEnvDraft,
-  pendingEnvChanges, saveEnvChangesPatch,
+  allEnvChanges, pendingEnvChanges, saveEnvChangesPatch,
 } from "./versions";
 import { agentToolsFor, worldToolsFor } from "./toolFit";
 import { mcpNameOf, mcpServersOfAgent, worldToolFromMcp } from "./mcpServers";
@@ -115,7 +115,7 @@ export const addMcpToolsPlan = (env, envState, { server, picked, now = new Date(
     envPatch: null,
     statePatch: {
       toolEnv,
-      unsavedEnvChanges: [...pendingEnvChanges(envState), { kind: "tools-added", detail: note, addTools: added, at: now }],
+      unsavedEnvChanges: [...allEnvChanges(envState), { kind: "tools-added", detail: note, addTools: added, at: now }],
     },
   };
 };
@@ -143,8 +143,9 @@ export const removeWorldToolsPlan = (env, envState, { names, label, now = new Da
   /* Added and removed before either was saved: the add is undone, nothing recorded. */
   const pending = pendingEnvChanges(envState);
   const unsavedAdds = new Set(pending.flatMap((c) => (c.addTools || []).map((t) => t.name)));
-  const trimmed = pending
-    .map((c) => (c.addTools ? { ...c, addTools: c.addTools.filter((t) => !gone.has(t.name)) } : c))
+  /* Rejected edits stay listed as they are, so Review changes can still restore them. */
+  const trimmed = allEnvChanges(envState)
+    .map((c) => (c.addTools && c.decision !== "rejected" ? { ...c, addTools: c.addTools.filter((t) => !gone.has(t.name)) } : c))
     .filter((c) => !c.addTools || c.addTools.length);
   const saved = removed.filter((n) => !unsavedAdds.has(n));
   return {

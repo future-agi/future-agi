@@ -6,7 +6,12 @@ import { ChangedToolsNote, ToolList } from "../workspace/toolFitParts";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
-import { addAndSaveMcpToolsPatch, mcpRunGapOf } from "../_mock/worldTools";
+import {
+  addAndSaveMcpToolsPatch,
+  addMcpToolsPlan,
+  mcpRunGapOf,
+} from "../_mock/worldTools";
+import { reviewCountsOf } from "../_mock/editReview";
 import { gatewayServerForHost, gatewayServerTools } from "../_mock/gatewayMcp";
 import { pendingEnvChanges, saveEnvChangesPatch } from "../_mock/versions";
 import ClosableDialog from "../components/ClosableDialog";
@@ -29,6 +34,7 @@ export default function RunFitDialog({
   agent,
   onRun,
   locked = false,
+  onReviewFirst,
 }) {
   const rebuild = useRebuildForAgent(env, envState, patch);
   if (!open || !agent) return null;
@@ -42,6 +48,10 @@ export default function RunFitDialog({
   const allUnsaved =
     gap.missing.length > 0 && gap.unsaved.length === gap.missing.length;
   const waiting = pendingEnvChanges(envState).length;
+  /* Edits still waiting for Accept or Reject are never saved unseen: the
+     review opens first, and the run starts once it's saved (TH-8931). */
+  const undecided = reviewCountsOf(pendingEnvChanges(envState)).undecided;
+  const reviewFirst = !!onReviewFirst && undecided > 0;
   const latest = latestEnvVersion(env, envState);
   const latestFits =
     latest &&
@@ -76,6 +86,7 @@ export default function RunFitDialog({
   /* Add the agent's MCP tools — through the Gateway where it has the server —
      save them into the version, then run. Edits already waiting are saved with them. */
   const addGapAndRun = () => {
+    if (reviewFirst) return addGapAndReview();
     let es = envState;
     if (allUnsaved) {
       es = { ...es, ...saveEnvChangesPatch(env, es) };
@@ -102,6 +113,36 @@ export default function RunFitDialog({
     onClose();
     /* The run pins the version it finds when it opens — start it once the saved one is in. */
     setTimeout(onRun, 0);
+  };
+
+  /* Add the tools as unsaved edits — accepted, since this is the person
+     asking for them — then hand over to Review changes. */
+  const addGapAndReview = () => {
+    let es = envState;
+    if (!allUnsaved)
+      gap.groups.forEach(({ server, tools }) => {
+        const gw = gatewayServerForHost(server.host);
+        const viaGw = gw ? gatewayServerTools(gw.gateway.serverId) : null;
+        const names = new Set(tools.map((t) => t.name));
+        const src = viaGw?.ok
+          ? {
+              server: viaGw.server,
+              picked: viaGw.tools.filter((t) => names.has(t.name)),
+            }
+          : { server, picked: tools };
+        const before = (es.unsavedEnvChanges || []).length;
+        const plan = addMcpToolsPlan(env, es, src);
+        es = { ...es, ...plan.statePatch };
+        es.unsavedEnvChanges = (es.unsavedEnvChanges || []).map((c, k) =>
+          k >= before ? { ...c, decision: "accepted" } : c,
+        );
+      });
+    patch({
+      toolEnv: es.toolEnv,
+      unsavedEnvChanges: es.unsavedEnvChanges || [],
+    });
+    onClose();
+    onReviewFirst();
   };
 
   if (gapOnly) {
@@ -187,9 +228,13 @@ export default function RunFitDialog({
               onClick={addGapAndRun}
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
             >
-              {allUnsaved
-                ? "Save and run"
-                : `Add ${n === 1 ? "it" : "them"} and run`}
+              {reviewFirst
+                ? allUnsaved
+                  ? "Review the edits, then run"
+                  : `Add ${n === 1 ? "it" : "them"}, review, then run`
+                : allUnsaved
+                  ? "Save and run"
+                  : `Add ${n === 1 ? "it" : "them"} and run`}
             </Button>
           )}
         </Stack>
@@ -316,4 +361,6 @@ RunFitDialog.propTypes = {
   agent: PropTypes.string,
   onRun: PropTypes.func.isRequired,
   locked: PropTypes.bool,
+  /* Open Review changes first; the run starts after its save. */
+  onReviewFirst: PropTypes.func,
 };

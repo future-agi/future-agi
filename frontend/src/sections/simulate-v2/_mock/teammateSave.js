@@ -85,7 +85,7 @@ export const keepTheirsPatch = (env, envState, save) => {
  * Save both: their save is the next version, yours the one after it. Where
  * you both changed the same tool, `pick` says whose stays ("mine" | "theirs").
  */
-export const saveBothPatch = (env, envState, save, pick = "mine") => {
+export const saveBothPatch = (env, envState, save, pick = "mine", { note } = {}) => {
   const restore = discardEnvChangesPatch(env, envState) || {};
   const baseState = { ...envState, ...restore };
   const theirs = theirToolEnv(save, baseState.toolEnv || {});
@@ -114,7 +114,7 @@ export const saveBothPatch = (env, envState, save, pick = "mine") => {
         ...first,
         toolEnv: merged,
         unsavedEnvChanges: mine,
-      })
+      }, { note })
     : first;
   return { toolEnv: merged, ...second, teammateSaveResolved: true };
 };

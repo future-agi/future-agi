@@ -139,7 +139,11 @@ export const envChangeLabel = (id) => ENV_CHANGES.find((c) => c.id === id)?.labe
  * someone's result depends on — it's listed here until it's saved as the
  * next version.
  */
-export const pendingEnvChanges = (envState) => envState?.unsavedEnvChanges || [];
+/* The unsaved edits that count — a rejected one (TH-8931) is already taken
+   out of the world and stays listed only so Review changes can restore it. */
+export const allEnvChanges = (envState) => envState?.unsavedEnvChanges || [];
+export const pendingEnvChanges = (envState) =>
+  allEnvChanges(envState).filter((c) => c.decision !== "rejected");
 
 const pinnedByRun = (envState) => {
   const label = currentEnvVersion(null, envState)?.label;
@@ -171,15 +175,15 @@ export const applyPendingTools = (tools, envState) => pendingEnvChanges(envState
  * none was saved — so edits land in place. The first run makes it v1.
  */
 export const isEnvDraft = (envState) => !(envState?.runs || []).some((r) => !r.synthetic)
-  && (envState?.envVersions || []).length <= 1 && !pendingEnvChanges(envState).length;
+  && (envState?.envVersions || []).length <= 1 && !allEnvChanges(envState).length;
 
 /** Patch fragment that records one edit — `{}` while no run pins the version.
     The first edit after a save also keeps the world's settings as they were
     (`draftBase`), which is what Discard puts back. */
 export const envChangePatch = (envState, kind, detail) => (pinnedByRun(envState)
   ? {
-    unsavedEnvChanges: [...pendingEnvChanges(envState), { kind, detail, at: new Date().toISOString() }],
-    ...(!pendingEnvChanges(envState).length && { draftBase: worldConfigOf(envState) }),
+    unsavedEnvChanges: [...allEnvChanges(envState), { kind, detail, at: new Date().toISOString() }],
+    ...(!allEnvChanges(envState).length && { draftBase: worldConfigOf(envState) }),
   }
   : {});
 
@@ -191,7 +195,7 @@ export const envChangePatch = (envState, kind, detail) => (pinnedByRun(envState)
  */
 export const discardEnvChangesPatch = (env, envState) => {
   const base = envState?.draftBase || currentEnvVersion(env, envState)?.config;
-  if (!pendingEnvChanges(envState).length || !base) return null;
+  if (!allEnvChanges(envState).length || !base) return null;
   return {
     ...Object.fromEntries(WORLD_CONFIG_KEYS.map((k) => [k, base[k]])),
     unsavedEnvChanges: [],

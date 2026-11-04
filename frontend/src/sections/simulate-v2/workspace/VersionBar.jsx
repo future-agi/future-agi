@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import {
   currentEnvVersion,
   currentAgentVersion,
+  allEnvChanges,
   pendingEnvChanges,
   saveEnvChangesPatch,
   discardEnvChangesPatch,
@@ -15,6 +16,7 @@ import {
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
 import ReviewChangesDrawer from "./ReviewChangesDrawer";
 import { onOpenReviewChanges } from "./reviewChangesBus";
+import { reviewCountsOf } from "../_mock/editReview";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
@@ -45,6 +47,8 @@ export default function VersionBar({
   onOpenHistory,
   /* Saves the edits — the workspace checks for a teammate's save first. */
   onSave,
+  thenRun = false,
+  onReviewClose,
 }) {
   const { viewAs, clearViewAs } = useEnvViewAs(env, envState);
   const envV = currentEnvVersion(env, envState);
@@ -66,14 +70,19 @@ export default function VersionBar({
   const [historyAnchor, setHistoryAnchor] = useState(null);
   /* The unsaved edits, in Review changes; Discard asks first. */
   const [editsAnchor, setEditsAnchor] = useState(null);
-  const failedCount = (envState?.failedEnvChanges || []).length;
+  const failedCount = (envState?.failedEnvChanges || []).filter(
+    (f) => !f.dismissed,
+  ).length;
   /* Opened from elsewhere too — a file's proposal just added to the draft. */
   useEffect(() => onOpenReviewChanges(() => setEditsAnchor(true)), []);
   const [discarding, setDiscarding] = useState(false);
-  const discardPatch = pending.length
-    ? discardEnvChangesPatch(env, envState)
-    : null;
+  /* Every edit rejected: the world is back as saved, but they stay listed to restore. */
+  const rejectedOnly = !pending.length && allEnvChanges(envState).length;
+  const discardPatch = discardEnvChangesPatch(env, envState);
   const canEdit = !locked && !!patch && !viewAs;
+  /* A change still waiting for Accept or Reject sends Save to the review. */
+  const undecided = reviewCountsOf(pending).undecided;
+
   const strong = (t) => (
     <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
       {t}
@@ -178,65 +187,71 @@ export default function VersionBar({
         {/* Drift is said once, by the chip in the environment header. */}
         <Box flex={1} />
 
-        {(pending.length > 0 ||
-          (envState?.failedEnvChanges || []).length > 0) &&
-          !viewAs && (
-            <Stack direction="row" alignItems="center" spacing={0.75}>
+        {(pending.length > 0 || rejectedOnly || failedCount > 0) && !viewAs && (
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <Button
+              size="small"
+              onClick={() => setEditsAnchor(true)}
+              endIcon={
+                <Iconify icon="solar:alt-arrow-right-linear" width={14} />
+              }
+              sx={{
+                minWidth: 0,
+                color: "text.secondary",
+                typography: "s3",
+                fontWeight: 400,
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {pending.length ? (
+                <>
+                  {`${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} · `}
+                  <Box
+                    component="span"
+                    sx={{ color: "text.secondary", fontWeight: 600, ml: 0.5 }}
+                  >
+                    {cost?.text}
+                  </Box>
+                </>
+              ) : rejectedOnly ? (
+                `${allEnvChanges(envState).length} rejected edit${allEnvChanges(envState).length === 1 ? "" : "s"} · nothing to save`
+              ) : (
+                /* Saved, with a change that couldn't apply still waiting for a fix. */
+                `${failedCount} change${failedCount === 1 ? "" : "s"} couldn't apply`
+              )}
+            </Button>
+            {canEdit && pending.length > 0 && (
               <Button
                 size="small"
-                onClick={() => setEditsAnchor(true)}
-                endIcon={
-                  <Iconify icon="solar:alt-arrow-right-linear" width={14} />
+                variant="outlined"
+                onClick={() =>
+                  undecided
+                    ? setEditsAnchor(true)
+                    : onSave
+                      ? onSave()
+                      : patch(saveEnvChangesPatch(env, envState))
                 }
                 sx={{
                   minWidth: 0,
-                  color: "text.secondary",
-                  typography: "s3",
-                  fontWeight: 400,
-                  fontVariantNumeric: "tabular-nums",
+                  flexShrink: 0,
                   whiteSpace: "nowrap",
+                  color: "text.primary",
+                  borderColor: "divider",
                 }}
               >
-                {pending.length ? (
-                  <>
-                    {`${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} · `}
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", fontWeight: 600, ml: 0.5 }}
-                    >
-                      {cost?.text}
-                    </Box>
-                  </>
-                ) : (
-                  /* Saved, with a change that couldn't apply still waiting for a fix. */
-                  `${failedCount} change${failedCount === 1 ? "" : "s"} couldn't apply`
-                )}
+                {undecided ? "Review and save" : `Save release ${cost?.label}`}
               </Button>
-              {canEdit && pending.length > 0 && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() =>
-                    onSave
-                      ? onSave()
-                      : patch(saveEnvChangesPatch(env, envState))
-                  }
-                  sx={{
-                    minWidth: 0,
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                    color: "text.primary",
-                    borderColor: "divider",
-                  }}
-                >
-                  {`Save release ${cost?.label}`}
-                </Button>
-              )}
-            </Stack>
-          )}
+            )}
+          </Stack>
+        )}
         <ReviewChangesDrawer
           open={!!editsAnchor}
-          onClose={() => setEditsAnchor(null)}
+          onClose={() => {
+            setEditsAnchor(null);
+            onReviewClose?.();
+          }}
+          thenRun={thenRun}
           env={env}
           envState={envState}
           patch={patch}
@@ -345,4 +360,8 @@ VersionBar.propTypes = {
   locked: PropTypes.bool,
   onOpenHistory: PropTypes.func,
   onSave: PropTypes.func,
+  /* A run waits on the review's save. */
+  thenRun: PropTypes.bool,
+  /* The review closed without a save. */
+  onReviewClose: PropTypes.func,
 };

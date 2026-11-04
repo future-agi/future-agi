@@ -66,7 +66,8 @@ import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
 import VersionBuildStrip, { VersionChangeNote } from "./VersionBuildStrip";
-import { onFocusChat } from "./reviewChangesBus";
+import { onFocusChat, openReviewChanges } from "./reviewChangesBus";
+import { reviewCountsOf } from "../_mock/editReview";
 import { changedTabsOf } from "../_mock/versionBuild";
 import {
   addDesignFilesPatch,
@@ -371,11 +372,18 @@ export default function EnvironmentWorkspace() {
     [env, envState.envVersions, envState.activeEnvVersion],
   );
   /* Every new run asks first when the agent calls a tool the world can't answer. */
+  /* A run waiting on Review changes: it starts once the edits are saved,
+     and is dropped if the review closes without a save. */
+  const [runAfterSave, setRunAfterSave] = useState(null);
+  const reviewThenRun = (run) => {
+    setRunAfterSave(() => run);
+    openReviewChanges();
+  };
   const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(
     env,
     envState,
     patch,
-    { locked: readOnlyEnv },
+    { locked: readOnlyEnv, onReviewFirst: reviewThenRun },
   );
 
   // Opening an environment goes straight to it — a boot sequence on every entry
@@ -877,7 +885,7 @@ export default function EnvironmentWorkspace() {
      while these edits were being made — then both changes are shown first. */
   const clash = teammateSaveOf(env, envState);
   const requestSave = (after, note) => {
-    if (clash) return setClashReq({ after: after || null });
+    if (clash) return setClashReq({ after: after || null, note });
     /* The number Review changes showed on Save is the one the build names. */
     patch(
       saveEnvChangesPatch(env, envState, {
@@ -2868,7 +2876,11 @@ export default function EnvironmentWorkspace() {
                 also: req.also,
                 saved: true,
               });
-            if (saveFirst) requestSave(run);
+            /* Saving needs every change accepted or rejected first: the
+               review opens, and the run starts once it's saved. */
+            if (saveFirst && reviewCountsOf(pending).undecided)
+              reviewThenRun(run);
+            else if (saveFirst) requestSave(run);
             else run();
           };
           return (
@@ -2947,7 +2959,9 @@ export default function EnvironmentWorkspace() {
                     color="primary"
                     onClick={() => choose(true)}
                   >
-                    {`Save as ${cost?.label || "new version"} and run`}
+                    {reviewCountsOf(pending).undecided
+                      ? "Review the edits first"
+                      : `Save as ${cost?.label || "new version"} and run`}
                   </Button>
                 </>
               }
@@ -2998,7 +3012,11 @@ export default function EnvironmentWorkspace() {
           onSaveBoth={(pick) => {
             const after = clashReq?.after;
             setClashReq(null);
-            patch(saveBothPatch(env, envState, clash, pick));
+            patch(
+              saveBothPatch(env, envState, clash, pick, {
+                note: clashReq?.note,
+              }),
+            );
             after?.();
           }}
           onSaveCopy={() => {
@@ -3386,7 +3404,13 @@ export default function EnvironmentWorkspace() {
         patch={patch}
         locked={readOnlyEnv}
         onOpenHistory={() => go("history")}
-        onSave={(note) => requestSave(null, note)}
+        thenRun={!!runAfterSave}
+        onReviewClose={() => setRunAfterSave(null)}
+        onSave={(note) => {
+          const after = runAfterSave;
+          setRunAfterSave(null);
+          requestSave(after, note);
+        }}
       />
       {nextStep && (
         <Box sx={{ px: 3, pt: 1.5 }}>

@@ -1,7 +1,7 @@
 /*
   Review changes (roadmap builder.md Week 1): every unsaved world edit in one
   place, grouped by what it changes, with where it came from — and each one
-  undone on its own before the version is saved.
+  accepted or rejected before the version is saved.
 
   An edit is recorded by envChangePatch as { kind, detail, at } and applied
   in place. The store stamps it as it lands (stampEdit): `before` keeps the
@@ -191,7 +191,8 @@ export const diffOf = (c, envState, opts = {}) => {
     const field = FIELD_LABEL[k];
     if (!field) return;
     const now = envState?.[k];
-    const old = was === ABSENT ? undefined : was;
+    /* Never set before: it had its default (the environment's starting cast). */
+    const old = was === ABSENT ? opts.baseOf?.(k) ?? undefined : was;
 
     /* Rules: each entry says what happened to one rule. */
     if (k === "ruleChanges") {
@@ -412,5 +413,166 @@ export const undoEditPatch = (envState, i) => {
     ...restored,
     unsavedEnvChanges: rest,
     ...(!rest.length && { draftBase: undefined }),
+  };
+};
+
+/*
+  Accept or reject (data.md §3, TH-8931): every edit waits for a decision —
+  undecided, "accepted" or "rejected". Rejecting carries out at once — the
+  world goes back to what the edit replaced, so every count, run and save
+  already leaves it out — and keeps what the edit set (`after`), so Restore
+  puts it back until the version is saved. Edits to the same part go in
+  order: a later one is rejected before an earlier one, and an earlier one
+  restored before a later one.
+*/
+
+/* Write a kept snapshot ({ field: value | ABSENT | { __sub } }) back over the state. */
+const applySnapshot = (envState, snap) =>
+  Object.fromEntries(
+    Object.entries(snap || {}).map(([k, v]) => {
+      if (v === ABSENT) return [k, undefined];
+      if (!v?.__sub) return [k, v];
+      const cur = { ...(envState?.[k] || {}) };
+      Object.entries(v.__sub).forEach(([sk, val]) => {
+        if (val === ABSENT) delete cur[sk];
+        else cur[sk] = val;
+      });
+      return [k, cur];
+    }),
+  );
+
+/* What the parts in `before` hold now, kept the same way — what Restore writes back. */
+const currentOf = (envState, before) =>
+  Object.fromEntries(
+    Object.entries(before || {}).map(([k, v]) => {
+      if (!v?.__sub)
+        return [k, envState?.[k] === undefined ? ABSENT : envState[k]];
+      const cur = envState?.[k] || {};
+      return [
+        k,
+        {
+          __sub: Object.fromEntries(
+            Object.keys(v.__sub).map((sk) => [
+              sk,
+              cur[sk] === undefined ? ABSENT : cur[sk],
+            ]),
+          ),
+        },
+      ];
+    }),
+  );
+
+const laterOverlapping = (list, i) => {
+  const mine = partsOf(list[i]?.before);
+  return list.slice(i + 1).filter((l) => overlaps(partsOf(l.before), mine));
+};
+
+/** Edit `i`'s decision: null (undecided), "accepted" or "rejected". */
+export const decisionOf = (list, i) => list[i]?.decision || null;
+
+/** Whether edit `i` can be rejected now, and why not. */
+export const rejectableOf = (list, i) => {
+  if (!list[i]?.before)
+    return {
+      ok: false,
+      why: "Made before single edits could be taken out. Discard all puts it back.",
+    };
+  const later = laterOverlapping(list, i).find(
+    (l) => l.decision !== "rejected",
+  );
+  return later
+    ? {
+        ok: false,
+        why: `“${later.detail}” changed the same part later. Reject that one first.`,
+      }
+    : { ok: true };
+};
+
+/** Whether rejected edit `i` can be restored now, and why not. */
+export const restorableOf = (list, i) => {
+  const mine = partsOf(list[i]?.before);
+  const earlier = list
+    .slice(0, i)
+    .find(
+      (l) => l.decision === "rejected" && overlaps(partsOf(l.before), mine),
+    );
+  if (earlier)
+    return {
+      ok: false,
+      why: `“${earlier.detail}” changed the same part earlier and is rejected. Restore that one first.`,
+    };
+  const later = laterOverlapping(list, i).find(
+    (l) => l.decision !== "rejected",
+  );
+  return later
+    ? {
+        ok: false,
+        why: `“${later.detail}” changed the same part since. Reject that one first.`,
+      }
+    : { ok: true };
+};
+
+/** Mark edit `i` accepted, or back to undecided (null). */
+export const decidePatch = (envState, i, decision) => ({
+  unsavedEnvChanges: (envState?.unsavedEnvChanges || []).map((c, k) =>
+    k === i ? { ...c, decision: decision || undefined } : c,
+  ),
+});
+
+/** Reject edit `i`: put back what it replaced, keep what it set for Restore. */
+export const rejectEditPatch = (envState, i) => {
+  const list = envState?.unsavedEnvChanges || [];
+  const c = list[i];
+  if (!rejectableOf(list, i).ok) return null;
+  return {
+    ...applySnapshot(envState, c.before),
+    unsavedEnvChanges: list.map((x, k) =>
+      k === i
+        ? { ...x, decision: "rejected", after: currentOf(envState, x.before) }
+        : x,
+    ),
+  };
+};
+
+/** Restore rejected edit `i`: what it set comes back, undecided again. */
+export const restoreEditPatch = (envState, i) => {
+  const list = envState?.unsavedEnvChanges || [];
+  const c = list[i];
+  if (c?.decision !== "rejected" || !restorableOf(list, i).ok) return null;
+  return {
+    ...applySnapshot(envState, c.after),
+    unsavedEnvChanges: list.map((x, k) => {
+      if (k !== i) return x;
+      const { decision: _d, after: _a, ...rest } = x;
+      return rest;
+    }),
+  };
+};
+
+/** The state with rejected edit `c` shown as it was — for reading its diff. */
+export const withEditShown = (envState, c) =>
+  c?.decision === "rejected"
+    ? { ...envState, ...applySnapshot(envState, c.after) }
+    : envState;
+
+/** Accept every edit not yet decided. */
+export const acceptRestPatch = (envState) => {
+  const list = envState?.unsavedEnvChanges || [];
+  return {
+    unsavedEnvChanges: list.map((c, k) =>
+      decisionOf(list, k) ? c : { ...c, decision: "accepted" },
+    ),
+  };
+};
+
+export const reviewCountsOf = (list = []) => {
+  const ds = list.map((_, k) => decisionOf(list, k));
+  const accepted = ds.filter((d) => d === "accepted").length;
+  const rejected = ds.filter((d) => d === "rejected").length;
+  return {
+    total: list.length,
+    accepted,
+    rejected,
+    undecided: list.length - accepted - rejected,
   };
 };

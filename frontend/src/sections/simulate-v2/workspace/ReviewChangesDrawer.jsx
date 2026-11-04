@@ -20,11 +20,18 @@ import {
   diffOf,
   sourceLabelOf,
   sourceLinkOf,
-  undoEditPatch,
-  undoableOf,
+  acceptRestPatch,
+  decidePatch,
+  decisionOf,
+  rejectEditPatch,
+  rejectableOf,
+  restoreEditPatch,
+  restorableOf,
+  reviewCountsOf,
+  withEditShown,
 } from "../_mock/editReview";
 import { focusChatAt } from "./reviewChangesBus";
-import { getActor } from "../_mock/actors";
+import { castFor, getActor } from "../_mock/actors";
 import { toolSettingOf } from "../_mock/toolEnv";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -44,13 +51,98 @@ const SIGN_COLOR = {
   "~": "text.secondary",
 };
 
+/* One change's decision: Accept / Reject, then the outcome with a way back. */
+function Decision({ decision, rejectable, restorable, onDecide }) {
+  const quiet = { color: "text.primary", borderColor: "divider", minWidth: 0 };
+  if (decision === "accepted")
+    return (
+      <Stack direction="row" alignItems="center" spacing={0.5} flexShrink={0}>
+        <Iconify
+          icon="solar:check-circle-linear"
+          width={14}
+          sx={{ color: "status.success.fg" }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          Accepted
+        </Typography>
+        <Button
+          size="small"
+          color="inherit"
+          onClick={() => onDecide(null)}
+          sx={{ minWidth: 0, color: "text.tertiary" }}
+        >
+          Change
+        </Button>
+      </Stack>
+    );
+  if (decision === "rejected")
+    return (
+      <Stack direction="row" alignItems="center" spacing={0.5} flexShrink={0}>
+        <Iconify
+          icon="solar:close-circle-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          Rejected
+        </Typography>
+        <Tooltip arrow title={restorable.ok ? "" : restorable.why}>
+          <span>
+            <Button
+              size="small"
+              color="inherit"
+              disabled={!restorable.ok}
+              onClick={() => onDecide(null)}
+              sx={{ minWidth: 0, color: "text.tertiary" }}
+            >
+              Restore
+            </Button>
+          </span>
+        </Tooltip>
+      </Stack>
+    );
+  return (
+    <Stack direction="row" spacing={0.75} flexShrink={0}>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() => onDecide("accepted")}
+        sx={quiet}
+      >
+        Accept
+      </Button>
+      <Tooltip arrow title={rejectable.ok ? "" : rejectable.why}>
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!rejectable.ok}
+            onClick={() => onDecide("rejected")}
+            sx={quiet}
+          >
+            Reject
+          </Button>
+        </span>
+      </Tooltip>
+    </Stack>
+  );
+}
+Decision.propTypes = {
+  decision: PropTypes.oneOf(["accepted", "rejected", null]),
+  rejectable: PropTypes.object.isRequired,
+  restorable: PropTypes.object.isRequired,
+  onDecide: PropTypes.func.isRequired,
+};
+
 /**
  * Review changes (roadmap builder.md Week 1; TH-8931): the unsaved edits to
  * this environment — from the builder chat, from attached files or by hand —
  * grouped by what they change. Each reads as before → after, names where it
- * came from (the chat message, the file, the tab), and can be kept or undone
- * on its own. Changes that couldn't apply say why, with a fix. The scenarios
- * the save rechecks are named, and Save makes them a named version.
+ * came from (the chat message, the file, the tab), and is accepted or
+ * rejected on its own (data.md §3) — a rejection can be restored until the
+ * save. Save waits until every change is decided. Changes that couldn't
+ * apply say why, with a fix. The scenarios the save rechecks are named, and
+ * Save makes the accepted ones a named version.
  */
 export default function ReviewChangesDrawer({
   open,
@@ -64,14 +156,26 @@ export default function ReviewChangesDrawer({
   canDiscard,
   onDiscard,
   onSave,
+  thenRun = false,
 }) {
   const navigate = useNavigate();
   /* Rows open to their diff; several can be open to compare. */
   const [openRows, setOpenRows] = useState({});
   const [note, setNote] = useState("");
   const [showNames, setShowNames] = useState(false);
+  const [showDismissed, setShowDismissed] = useState(false);
   const list = envState?.unsavedEnvChanges || [];
-  const failed = envState?.failedEnvChanges || [];
+  const allFailed = envState?.failedEnvChanges || [];
+  /* Dismissed failures stay recoverable: hidden behind "N dismissed". */
+  const failed = allFailed.filter((f) => !f.dismissed);
+  const dismissed = allFailed.filter((f) => f.dismissed);
+  const setDismissed = (id, value) =>
+    patch({
+      failedEnvChanges: allFailed.map((x) =>
+        x.id === id ? { ...x, dismissed: value || undefined } : x,
+      ),
+    });
+  const counts = reviewCountsOf(list);
   if (!open) return <SideDrawer open={false} onClose={onClose} />;
   const groups = [
     ...EDIT_AREAS,
@@ -113,6 +217,7 @@ export default function ReviewChangesDrawer({
         : null,
     /* A tool never set before had its default tier — "Recorded → Simulated". */
     baseOf: (field, key) => {
+      if (field === "actors" && key === undefined) return castFor(env);
       if (field !== "toolEnv") return null;
       const tool = (env?.tools || []).find((t) => t.name === key) || {
         name: key,
@@ -141,7 +246,7 @@ export default function ReviewChangesDrawer({
               Review changes
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`${list.length} unsaved edit${list.length === 1 ? "" : "s"} since environment ${label}. Keep or undo each one, then save. Runs use ${label} until they're saved.`}
+              {`${list.length - counts.rejected} unsaved edit${list.length - counts.rejected === 1 ? "" : "s"}${counts.rejected ? ` · ${counts.rejected} rejected` : ""} since environment ${label}. Accept or reject each one, then save. Runs use ${label} until they're saved.`}
             </Typography>
           </Box>
           <IconButton size="small" aria-label="Close" onClick={onClose}>
@@ -241,13 +346,7 @@ export default function ReviewChangesDrawer({
                           <Button
                             size="small"
                             color="inherit"
-                            onClick={() =>
-                              patch({
-                                failedEnvChanges: failed.filter(
-                                  (x) => x.id !== f.id,
-                                ),
-                              })
-                            }
+                            onClick={() => setDismissed(f.id, true)}
                             sx={{ minWidth: 0, color: "text.secondary" }}
                           >
                             Dismiss
@@ -256,6 +355,53 @@ export default function ReviewChangesDrawer({
                       </Stack>
                     ))}
                   </Box>
+                </Box>
+              )}
+
+              {dismissed.length > 0 && (
+                <Box>
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={() => setShowDismissed((v) => !v)}
+                    sx={{ minWidth: 0, color: "text.tertiary", px: 0 }}
+                  >
+                    {`${dismissed.length} dismissed · ${showDismissed ? "Hide" : "Show"}`}
+                  </Button>
+                  <Collapse in={showDismissed} unmountOnExit>
+                    <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                      {dismissed.map((f) => (
+                        <Stack
+                          key={f.id}
+                          direction="row"
+                          alignItems="center"
+                          spacing={1}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              color: "text.tertiary",
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {f.detail}
+                          </Typography>
+                          {canEdit && (
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() => setDismissed(f.id, false)}
+                              sx={{ minWidth: 0, color: "text.secondary" }}
+                            >
+                              Bring back
+                            </Button>
+                          )}
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Collapse>
                 </Box>
               )}
 
@@ -274,10 +420,17 @@ export default function ReviewChangesDrawer({
                     }}
                   >
                     {g.items.map(({ c, i }) => {
-                      const u = undoableOf(list, i);
+                      const decision = decisionOf(list, i);
+                      const rj = rejectableOf(list, i);
+                      const rs = restorableOf(list, i);
                       const src = sourceLabelOf(c);
                       const link = sourceLinkOf(c, envState);
-                      const diff = diffOf(c, envState, diffOpts);
+                      /* A rejected edit is already out of the world: read its diff as it was. */
+                      const diff = diffOf(
+                        c,
+                        withEditShown(envState, c),
+                        diffOpts,
+                      );
                       const rowKey = `${c.at}-${i}`;
                       const expanded = !!openRows[rowKey];
                       return (
@@ -323,7 +476,14 @@ export default function ReviewChangesDrawer({
                             <Box flex={1} minWidth={0}>
                               <Typography
                                 noWrap
-                                sx={{ typography: "s2" }}
+                                sx={{
+                                  typography: "s2",
+                                  /* Rejected: still listed until the save, so it can come back. */
+                                  ...(decision === "rejected" && {
+                                    color: "text.tertiary",
+                                    textDecoration: "line-through",
+                                  }),
+                                }}
                                 title={c.detail}
                               >
                                 {c.detail || g.label}
@@ -353,27 +513,20 @@ export default function ReviewChangesDrawer({
                               {link.label}
                             </Button>
                             {canEdit && (
-                              <Tooltip arrow title={u.ok ? "" : u.why}>
-                                <span>
-                                  <Button
-                                    size="small"
-                                    color="inherit"
-                                    disabled={!u.ok}
-                                    startIcon={
-                                      <Iconify
-                                        icon="solar:undo-left-round-linear"
-                                        width={14}
-                                      />
-                                    }
-                                    onClick={() =>
-                                      patch(undoEditPatch(envState, i))
-                                    }
-                                    sx={{ minWidth: 0 }}
-                                  >
-                                    Undo
-                                  </Button>
-                                </span>
-                              </Tooltip>
+                              <Decision
+                                decision={decision}
+                                rejectable={rj}
+                                restorable={rs}
+                                onDecide={(d) =>
+                                  patch(
+                                    d === "rejected"
+                                      ? rejectEditPatch(envState, i)
+                                      : decision === "rejected"
+                                        ? restoreEditPatch(envState, i)
+                                        : decidePatch(envState, i, d),
+                                  )
+                                }
+                              />
                             )}
                           </Stack>
                           {/* Before → after, as the person would read it. */}
@@ -538,13 +691,44 @@ export default function ReviewChangesDrawer({
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
+            {/* Every change is decided before the save (data.md §3). */}
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: counts.undecided ? "text.secondary" : "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {[
+                  `${counts.total - counts.undecided} of ${counts.total} decided`,
+                  counts.accepted && `${counts.accepted} accepted`,
+                  counts.rejected &&
+                    `${counts.rejected} rejected — taken out of the world, restore any until you save`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Typography>
+              {counts.undecided > 0 && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => patch(acceptRestPatch(envState))}
+                  sx={{ minWidth: 0, color: "text.secondary", py: 0 }}
+                >
+                  {counts.undecided === counts.total
+                    ? "Accept all"
+                    : "Accept all remaining"}
+                </Button>
+              )}
+            </Stack>
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Tooltip
                 arrow
                 title={
                   canDiscard
                     ? ""
-                    : `Environment ${label} didn't keep its settings, so these can't be discarded in one step. Undo them one by one, or save them.`
+                    : `Environment ${label} didn't keep its settings, so these can't be discarded in one step. Reject them one by one, or save them.`
                 }
               >
                 <span>
@@ -569,17 +753,31 @@ export default function ReviewChangesDrawer({
               >
                 {cost?.text}
               </Typography>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={() => {
-                  onSave(note);
-                  setNote("");
-                }}
+              <Tooltip
+                arrow
+                title={
+                  counts.undecided
+                    ? `Accept or reject the ${counts.undecided} change${counts.undecided === 1 ? "" : "s"} still waiting first.`
+                    : !counts.accepted
+                      ? "Every change is rejected — Discard all puts the world back."
+                      : ""
+                }
               >
-                {`Save release ${cost?.label}`}
-              </Button>
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    disabled={!!counts.undecided || !counts.accepted}
+                    onClick={() => {
+                      onSave(note);
+                      setNote("");
+                    }}
+                  >
+                    {`${cost?.label ? `Save release ${cost.label}` : "Save"}${thenRun ? " and run" : ""}`}
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
           </Stack>
         )}
@@ -600,4 +798,6 @@ ReviewChangesDrawer.propTypes = {
   canDiscard: PropTypes.bool,
   onDiscard: PropTypes.func,
   onSave: PropTypes.func,
+  /* A run waits on this save: Save says it starts the run too. */
+  thenRun: PropTypes.bool,
 };

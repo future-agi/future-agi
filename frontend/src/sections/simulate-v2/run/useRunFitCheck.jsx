@@ -17,13 +17,22 @@ import RunFitDialog from "./RunFitDialog";
  * that change the world. A secret that failed its access check is said by the
  * run view itself, where every way of starting a run lands (LiveRunView).
  */
-export default function useRunFitCheck(env, envState, patch, { locked = false } = {}) {
+export default function useRunFitCheck(
+  env,
+  envState,
+  patch,
+  { locked = false, onReviewFirst } = {},
+) {
   const [pending, setPending] = useState(null);
 
   const check = (run, { agent } = {}) => {
     const label = agent || currentAgentVersion(envState)?.label;
     /* The agent's own MCP tools count too: a run gets no answer for those the world doesn't have. */
-    if (!env || (toolFit(env, envState, { agent: label }).fits && !mcpRunGapOf(env, envState).missing.length)) {
+    if (
+      !env ||
+      (toolFit(env, envState, { agent: label }).fits &&
+        !mcpRunGapOf(env, envState).missing.length)
+    ) {
       run();
       return;
     }
@@ -40,6 +49,7 @@ export default function useRunFitCheck(env, envState, patch, { locked = false } 
       agent={pending?.agent}
       locked={locked}
       onRun={() => pending?.run()}
+      onReviewFirst={onReviewFirst && (() => onReviewFirst(pending?.run))}
     />
   );
 
