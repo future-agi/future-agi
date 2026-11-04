@@ -309,6 +309,7 @@ export default function OverviewPanel({
           envState={envState}
           patch={viewAs || (locked && !envState.lockedRelease) ? null : patch}
           onCopy={onFork}
+          onGo={go}
         />
       )}
 

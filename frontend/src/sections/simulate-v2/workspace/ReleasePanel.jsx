@@ -6,6 +6,7 @@ import {
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -31,12 +32,27 @@ import { envLabelOf } from "../_mock/envVersionKinds";
   release can be locked: tasks, train/test splits and the scorer freeze so
   scores stay comparable, and only a locked release opens RL access.
 */
-export default function ReleasePanel({ env, envState, patch, onCopy }) {
+/* Where each check is fixed when it fails — the tab that holds what it tests. */
+const FIX_OF = {
+  starts: { label: "Open World & tools", tab: "world" },
+  resets: { label: "Open World & tools", tab: "world" },
+  reference: { label: "Add scenarios", tab: "scenarios" },
+  wrong: { label: "Open Evaluations", tab: "evals" },
+  leaks: { label: "Open Contract", tab: "contract" },
+};
+/* Why a check failed, when the result says. */
+const WHY_OF = {
+  reference: "There are no scenarios to run the reference answer against.",
+};
+
+export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
   const st = checksStateOf(env, envState);
   const locked = envState?.lockedRelease || null;
   /* Versions as the header names them, not the world's internal labels. */
   const shown = (label) => envLabelOf(env, envState, label);
-  const [running, setRunning] = useState(false);
+  const [runningHere, setRunning] = useState(false);
+  /* The environment page starts them by itself on a new version. */
+  const running = runningHere || envState?.releaseChecksRunning === st.version;
   const [confirmLock, setConfirmLock] = useState(false);
   const [split, setSplit] = useState("train");
   useEffect(() => {
@@ -46,7 +62,10 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
       setRunning(false);
     }, 1600);
     return () => clearTimeout(t);
-  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runningHere]); // eslint-disable-line react-hooks/exhaustive-deps
+  const failed = RELEASE_CHECKS.filter(
+    (c) => !running && st.results[c.id] === "failed",
+  );
 
   const status = locked
     ? { label: "Locked", role: "neutral" }
@@ -112,6 +131,33 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
                 </Box>
                 <Box component="td" sx={{ ...cell, color: "text.secondary" }}>
                   {c.proves}
+                  {r === "failed" && (
+                    <Box
+                      component="div"
+                      sx={{ color: "status.danger.fg", mt: 0.25 }}
+                    >
+                      {WHY_OF[c.id] || "It didn't hold on this version."}{" "}
+                      {onGo && FIX_OF[c.id] && (
+                        <Box
+                          component="button"
+                          type="button"
+                          onClick={() => onGo(FIX_OF[c.id].tab)}
+                          sx={{
+                            border: 0,
+                            p: 0,
+                            background: "none",
+                            cursor: "pointer",
+                            font: "inherit",
+                            fontWeight: 600,
+                            color: "text.primary",
+                            textDecoration: "underline",
+                          }}
+                        >
+                          {FIX_OF[c.id].label}
+                        </Box>
+                      )}
+                    </Box>
+                  )}
                 </Box>
                 <Box
                   component="td"
@@ -159,9 +205,13 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
             ? `Locked ${new Date(locked.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })} · train ${locked.splits.train.length} · test ${locked.splits.test.length} scenarios · scorer ${locked.rewardVersion}. A copy is editable and isn't comparable with these scores.`
             : st.stale
               ? `Checks last ran on ${shown(st.checkedVersion)}. This is ${shown(st.version)}, so they run again.`
-              : st.ready
-                ? "All five passed on this version. Lock it to freeze tasks, splits and the scorer."
-                : "Run the checks on this version. Nothing is shown as Ready until all five pass."}
+              : running
+                ? `Checking ${shown(st.version)} — this takes a few seconds and runs by itself for every new version.`
+                : st.ready
+                  ? "All five passed on this version. Lock it to freeze tasks, splits and the scorer."
+                  : failed.length
+                    ? `${failed.length} check${failed.length === 1 ? "" : "s"} failed — fix ${failed.length === 1 ? "it" : "them"}, then run the checks again.`
+                    : "The checks run by themselves once this version is built. Nothing is shown as Ready until all five pass."}
         </Typography>
         {locked ? (
           onCopy && (
@@ -194,19 +244,33 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
             >
               {st.checkedVersion ? "Run checks again" : "Run checks"}
             </Button>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              disabled={!patch || !st.ready || running}
-              onClick={() => setConfirmLock(true)}
-              startIcon={
-                <Iconify icon="solar:lock-keyhole-linear" width={14} />
+            {/* Disabled says why: a release locks only once all five pass. */}
+            <Tooltip
+              arrow
+              title={
+                !st.ready && !running
+                  ? st.stale
+                    ? `The checks passed on ${shown(st.checkedVersion)}, not this version. Run them again — all five must pass before this release can be locked.`
+                    : "Run the checks first — all five must pass before this release can be locked."
+                  : ""
               }
-              sx={{ flexShrink: 0 }}
             >
-              Lock this release
-            </Button>
+              <span>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  disabled={!patch || !st.ready || running}
+                  onClick={() => setConfirmLock(true)}
+                  startIcon={
+                    <Iconify icon="solar:lock-keyhole-linear" width={14} />
+                  }
+                  sx={{ flexShrink: 0 }}
+                >
+                  Lock this release
+                </Button>
+              </span>
+            </Tooltip>
           </>
         )}
       </Stack>
@@ -268,6 +332,8 @@ ReleasePanel.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func,
   onCopy: PropTypes.func,
+  /* Opens the tab that fixes a failed check. */
+  onGo: PropTypes.func,
 };
 
 /* A trainer's way in: a split, an API key, the calls, and what it ran. */

@@ -153,6 +153,7 @@ import { finishBuildPatch } from "../_mock/quickBuild";
 import PrivateUpdateBanner from "./PrivateUpdateBanner";
 import { privateUpdateOf } from "../_mock/envCopy";
 import DesignReview from "../environments/DesignReview";
+import { checksStateOf, runChecksPatch } from "../_mock/release";
 import SaveFirstRelease from "../environments/SaveFirstRelease";
 import { applyScratchAnswer } from "../_mock/scratchDesign";
 import { DESIGN_PARK_MS } from "../_mock/builder";
@@ -544,6 +545,33 @@ export default function EnvironmentWorkspace() {
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
   const { enqueueSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
+
+  /* Release checks run by themselves, once per environment version, as soon
+     as it's built — nobody has to know to press Run checks before Lock works.
+     They're the environment's own checks, so they cost the person nothing;
+     Run checks again stays for a re-run after a fix. */
+  const checksVersion = env ? checksStateOf(env, envState).version : null;
+  const checksNeeded =
+    !!env &&
+    state.hydrated &&
+    /* Built: seeded environments carry no status, only builds in flight do. */
+    !["building", "awaiting_approval"].includes(env.buildStatus) &&
+    !readOnlyEnv &&
+    !viewingOlder &&
+    gates.canEdit &&
+    (!envState.releaseChecks ||
+      envState.releaseChecks.version !== checksVersion);
+  useEffect(() => {
+    if (!checksNeeded) return undefined;
+    storePatch({ releaseChecksRunning: checksVersion });
+    const t = setTimeout(() => {
+      storePatch({
+        ...runChecksPatch(env, latestEnvState.current),
+        releaseChecksRunning: null,
+      });
+    }, 1600);
+    return () => clearTimeout(t);
+  }, [checksNeeded, checksVersion, env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(
     () => subscribeGapsInbox((focus) => setInbox({ open: true, focus })),
     [],
