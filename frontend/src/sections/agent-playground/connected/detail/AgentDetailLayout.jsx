@@ -3,7 +3,6 @@ import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
 import {
   Box,
-  CircularProgress,
   IconButton,
   Stack,
   Tab,
@@ -12,7 +11,6 @@ import {
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
-import { ENV_TABS_SX } from "src/sections/simulate/environments/environmentOptions";
 import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
 import AgentDetailHeader, {
   AgentDetailHeaderSkeleton,
@@ -25,6 +23,7 @@ import {
   agentDetailPath,
 } from "./agentDetailTabs";
 import useAgentRoute from "./useAgentRoute";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const errorText = (error) =>
   error?.message || error?.detail || "Couldn't load this agent";
@@ -50,7 +49,7 @@ export default function AgentDetailLayout() {
     return (
       <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: 2 }}>
         <IconButton size="small" onClick={back} aria-label="Back">
-          <Iconify icon="eva:arrow-ios-back-fill" width={18} />
+          <Iconify icon="solar:alt-arrow-left-linear" width={18} />
         </IconButton>
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {errorText(query.error)}
@@ -113,13 +112,13 @@ export default function AgentDetailLayout() {
           }}
         >
           <CustomTabs
+            sx={{ boxShadow: "none" }}
             value={DETAIL_TABS.some((t) => t.id === tab) ? tab : false}
             onChange={(_, v) =>
               navigate(`${agentDetailPath(agentId, v)}${search}`)
             }
             variant="scrollable"
             scrollButtons={false}
-            sx={ENV_TABS_SX}
           >
             {DETAIL_TABS.map((t) => (
               <Tab key={t.id} value={t.id} label={tabLabel(t)} disableRipple />
@@ -143,7 +142,7 @@ export default function AgentDetailLayout() {
         <Suspense
           fallback={
             <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
-              <CircularProgress size={24} />
+              <ContentSkeleton variant="panel" />
             </Box>
           }
         >

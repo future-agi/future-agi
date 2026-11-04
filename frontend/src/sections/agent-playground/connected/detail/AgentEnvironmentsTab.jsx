@@ -8,10 +8,10 @@ import {
   useSetEnvironmentPolicy,
 } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
+import EmptyContent from "src/components/empty-content";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import EmptyState from "src/sections/simulate/environments/components/EmptyState";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
 import BuildEnvironmentButton from "./BuildEnvironmentButton";
 import { isBehind, policyLabel } from "./environmentPolicy";
@@ -87,13 +87,15 @@ export default function AgentEnvironmentsTab() {
 
   if (!isLoading && !isError && !envs?.length) {
     return (
-      <EmptyState
-        icon="solar:box-linear"
+      <EmptyContent
+        filled
+        icon="solar:globe-linear"
         title="Not used in any environment yet"
-        body="An environment gives this agent a world to act in: tools, seeded data, rules and scenarios to run."
+        description="An environment gives this agent a world to act in: tools, seeded data, rules and scenarios to run."
         action={
           <BuildEnvironmentButton agent={agent} canEdit={canEdit} primary />
         }
+        sx={{ height: "auto", flexGrow: 0, py: 5 }}
       />
     );
   }
@@ -102,7 +104,7 @@ export default function AgentEnvironmentsTab() {
   if (isError && !envs) {
     body = (
       <Typography
-        sx={{ px: 2, py: 1.5, typography: "s2_1", color: "text.secondary" }}
+        sx={{ px: 1.5, py: 1.5, typography: "s1", color: "text.secondary" }}
       >
         {error?.message || "Couldn't load environments"}
       </Typography>
@@ -129,7 +131,7 @@ export default function AgentEnvironmentsTab() {
                 variant="rounded"
                 width={62}
                 height={24}
-                sx={{ borderRadius: 999 }}
+                sx={{ borderRadius: "4px" }}
               />,
               <Skeleton key="open" variant="rounded" width={56} height={24} />,
             ]}

@@ -322,6 +322,9 @@ describe("AgentEnvironmentsTab", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Build environment" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
     ).toBeDisabled();
   });
 

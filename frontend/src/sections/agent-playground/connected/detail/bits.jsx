@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // Small pieces shared by the agent detail tabs, from the designer prototype.
 
@@ -11,7 +12,7 @@ export function Pill({ children, tone = "neutral" }) {
         height: 20,
         display: "inline-flex",
         alignItems: "center",
-        borderRadius: 0.75,
+        borderRadius: "4px",
         bgcolor: "action.selected",
         flexShrink: 0,
       }}
@@ -39,7 +40,7 @@ export function Card({ title, action, children, sx }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         overflow: "hidden",
         minWidth: 0,
@@ -53,15 +54,15 @@ export function Card({ title, action, children, sx }) {
         alignItems="center"
         spacing={1}
         sx={{
-          px: 2,
-          py: 1.5,
+          px: 1.5,
+          minHeight: 36,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
       >
         <Typography
           component="div"
-          sx={{ typography: "s2_1", fontWeight: 500, flex: 1 }}
+          sx={{ typography: "m3", fontWeight: 500, flex: 1 }}
         >
           {title}
         </Typography>
@@ -105,8 +106,8 @@ export function Row({ cells, header = false, onClick, template }) {
         gridTemplateColumns:
           template ?? `repeat(${cells.length}, minmax(0, 1fr))`,
         gap: 1.5,
-        px: 2,
-        py: header ? 0.75 : 1,
+        px: 1.5,
+        minHeight: header ? 28 : ROW_HEIGHT.default,
         alignItems: "center",
         // A header row sits right under its card's title, which already
         // draws that line.
@@ -127,7 +128,7 @@ export function Row({ cells, header = false, onClick, template }) {
           component="div"
           noWrap
           sx={{
-            typography: "s2_1",
+            typography: "s1",
             fontWeight: header ? 500 : 400,
             color: header ? "text.secondary" : "text.primary",
           }}
@@ -153,8 +154,8 @@ export function QuietTag({ children }) {
         display: "inline-flex",
         alignItems: "center",
         px: 0.75,
-        height: 20,
-        borderRadius: 0.75,
+        height: 18,
+        borderRadius: "4px",
         flexShrink: 0,
         bgcolor: "action.selected",
         typography: "s2",

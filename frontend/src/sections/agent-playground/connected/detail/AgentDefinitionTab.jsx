@@ -38,7 +38,7 @@ function DefinitionRow({ row }) {
       alignItems="flex-start"
       spacing={2}
       sx={{
-        px: 2,
+        px: 1.5,
         py: 1,
         borderTop: "1px solid",
         borderColor: "divider",
@@ -47,7 +47,7 @@ function DefinitionRow({ row }) {
     >
       <Typography
         sx={{
-          typography: "s2",
+          typography: "s1",
           color: "text.subtitle",
           width: 150,
           flexShrink: 0,
@@ -67,7 +67,7 @@ function DefinitionRow({ row }) {
                   height: 24,
                   display: "inline-flex",
                   alignItems: "center",
-                  borderRadius: 0.75,
+                  borderRadius: "4px",
                   bgcolor: "action.selected",
                 }}
               >
@@ -75,6 +75,7 @@ function DefinitionRow({ row }) {
                   sx={{
                     typography: "s2",
                     fontWeight: 500,
+                    color: "text.secondary",
                     fontFamily: row.mono ? MONO : undefined,
                   }}
                 >
@@ -91,7 +92,7 @@ function DefinitionRow({ row }) {
               noWrap={!row.multiline}
               title={row.multiline ? undefined : String(row.value)}
               sx={{
-                typography: "s2",
+                typography: "s1",
                 lineHeight: "24px",
                 fontFamily: row.mono ? MONO : undefined,
                 ...(row.multiline && {
@@ -135,7 +136,7 @@ function DefinitionRowSkeleton({ value }) {
       direction="row"
       spacing={2}
       sx={{
-        px: 2,
+        px: 1.5,
         py: 1,
         borderTop: "1px solid",
         borderColor: "divider",
@@ -143,11 +144,11 @@ function DefinitionRowSkeleton({ value }) {
       }}
     >
       <Typography
-        sx={{ typography: "s2", lineHeight: "24px", width: 150, flexShrink: 0 }}
+        sx={{ typography: "s1", lineHeight: "24px", width: 150, flexShrink: 0 }}
       >
         <LineSkeleton width={80} />
       </Typography>
-      <Typography sx={{ typography: "s2", lineHeight: "24px", flex: 1 }}>
+      <Typography sx={{ typography: "s1", lineHeight: "24px", flex: 1 }}>
         <LineSkeleton width={value} />
       </Typography>
     </Stack>
@@ -161,13 +162,13 @@ DefinitionRowSkeleton.propTypes = {
 const Note = ({ children, tone }) => (
   <Typography
     sx={{
-      px: 2,
+      px: 1.5,
       py: 1,
       // A line only between items; under the card title, which already
       // draws one, there's none.
       "* + &": { borderTop: "1px solid", borderColor: "divider" },
-      typography: "s2",
-      color: tone === "warning" ? "warning.main" : "text.secondary",
+      typography: "s3",
+      color: tone === "warning" ? "status.warning.fg" : "text.subtitle",
     }}
   >
     {children}

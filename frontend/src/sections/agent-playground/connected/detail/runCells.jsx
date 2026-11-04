@@ -57,14 +57,14 @@ export function PassRateCell({ run }) {
               rate == null
                 ? "transparent"
                 : rate < 50
-                  ? "error.main"
-                  : "text.disabled",
+                  ? "status.danger.solid"
+                  : "status.neutral.solid",
           }}
         />
       </Box>
       <Typography
         sx={{
-          typography: "s2",
+          typography: "s3",
           fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
           width: 76,

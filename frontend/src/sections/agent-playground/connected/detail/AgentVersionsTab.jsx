@@ -60,10 +60,10 @@ function VersionSkeleton() {
         <Box sx={{ width: 1.5, flex: 1, mt: 0.5, bgcolor: "divider" }} />
       </Stack>
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2" }}>
+        <Typography sx={{ typography: "s1" }}>
           <LineSkeleton width={36} />
         </Typography>
-        <Typography sx={{ typography: "s2", mt: 0.375 }}>
+        <Typography sx={{ typography: "s3", mt: 0.5 }}>
           <LineSkeleton width="80%" />
         </Typography>
         <Typography sx={{ typography: "s2", mt: 0.25 }}>
@@ -227,8 +227,8 @@ export default function AgentVersionsTab() {
           ref={scrollRef}
           data-testid="versions-scroll"
           sx={{
-            px: 2,
-            py: 1.75,
+            px: 1.5,
+            py: 1.5,
             flex: 1,
             minHeight: 0,
             overflowY: "auto",
@@ -253,7 +253,7 @@ export default function AgentVersionsTab() {
           )}
           {isLoading && skeletons(3)}
           {loaded && versions.length === 0 && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               No versions yet
             </Typography>
           )}
@@ -284,9 +284,9 @@ export default function AgentVersionsTab() {
                       width: 10,
                       height: 10,
                       borderRadius: "50%",
-                      bgcolor: selected ? "primary.main" : "transparent",
+                      bgcolor: selected ? "text.primary" : "transparent",
                       border: "2px solid",
-                      borderColor: selected ? "primary.main" : "text.disabled",
+                      borderColor: selected ? "text.primary" : "text.disabled",
                     }}
                   />
                   {i < versions.length - 1 && (
@@ -310,7 +310,7 @@ export default function AgentVersionsTab() {
                       aria-pressed={selected}
                       onClick={() => selectVersion(v.id)}
                       sx={{
-                        typography: "s2",
+                        typography: "s1",
                         fontWeight: 500,
                         fontFamily: MONO,
                         background: "none",
@@ -339,9 +339,9 @@ export default function AgentVersionsTab() {
                   {v.commitMessage && (
                     <Typography
                       sx={{
-                        typography: "s2",
+                        typography: "s1",
                         color: "text.secondary",
-                        mt: 0.375,
+                        mt: 0.5,
                       }}
                     >
                       {v.commitMessage}

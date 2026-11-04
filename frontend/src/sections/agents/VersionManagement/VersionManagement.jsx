@@ -68,21 +68,13 @@ const VersionManagement = ({
           variant="contained"
           size="small"
           fullWidth
-          sx={{
-            px: "24px",
-            borderRadius: "4px",
-            height: "30px",
-            backgroundColor: "primary.main",
-            "&:hover": { backgroundColor: "primary.main" },
-            textTransform: "none",
-          }}
           startIcon={
             <Iconify
               icon={
-                connected ? "solar:arrow-right-up-linear" : "octicon:plus-24"
+                connected ? "solar:arrow-right-up-linear" : "solar:add-linear"
               }
               color="background.paper"
-              sx={{ width: 20, height: 20 }}
+              width={20}
             />
           }
           onClick={() =>

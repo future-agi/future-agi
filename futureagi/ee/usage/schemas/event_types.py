@@ -35,6 +35,8 @@ class BillingEventType(str, Enum):  # noqa: UP042 - StrEnum changes str() of eve
     EVAL_EXPLANATION = "eval_explanation"
     FALCON_AI_CHAT = "falcon_ai_chat"
     HARNESS_AUTHORING = "harness_authoring"
+    JEV_EVALUATOR = "jev_evaluator"
+    INSIGHTS_REPORT = "insights_report"
     AGENT_FIX = "agent_fix"
 
     # ── Storage ──

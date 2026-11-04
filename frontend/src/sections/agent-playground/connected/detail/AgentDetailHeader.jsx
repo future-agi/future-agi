@@ -183,7 +183,7 @@ export default function AgentDetailHeader({
           <Typography
             component="h1"
             noWrap
-            sx={{ typography: "s1_2", fontWeight: 600 }}
+            sx={{ typography: "m3", fontWeight: 600 }}
           >
             {agent.name}
           </Typography>

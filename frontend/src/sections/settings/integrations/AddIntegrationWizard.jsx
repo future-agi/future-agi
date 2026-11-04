@@ -24,6 +24,7 @@ import {
   SKIP_PROJECT_MAPPING_PLATFORMS,
   SKIP_SYNC_SETTINGS_PLATFORMS,
 } from "./constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const FULL_STEPS = ["Platform", "Credentials", "Project", "Sync Settings"];
 const SHORT_STEPS = ["Platform", "Credentials", "Sync Settings"];
@@ -97,8 +98,12 @@ function WizardContent({ onClose, initialPlatform, onSelectInstall }) {
         <Typography fontSize={16} fontWeight={600}>
           {isSuccess ? "" : "Add Integration"}
         </Typography>
-        <IconButton onClick={onClose} sx={{ p: 0, color: "text.primary" }}>
-          <Icon icon="mingcute:close-line" />
+        <IconButton
+          size="small"
+          onClick={onClose}
+          sx={{ color: "text.primary" }}
+        >
+          <Icon icon="solar:close-linear" />
         </IconButton>
       </Box>
 
@@ -190,7 +195,6 @@ function WizardContent({ onClose, initialPlatform, onSelectInstall }) {
                       ),
                     );
                   }}
-                  sx={{ fontWeight: 500 }}
                 >
                   View Integration
                 </Button>
@@ -204,7 +208,6 @@ function WizardContent({ onClose, initialPlatform, onSelectInstall }) {
                   if (skipSyncSettings) return; // just close the drawer
                   navigate(paths.dashboard.observe);
                 }}
-                sx={{ fontWeight: 500 }}
               >
                 {skipSyncSettings ? "Done" : "Go to Project"}
               </Button>
@@ -230,8 +233,11 @@ export default function AddIntegrationWizard({
 }) {
   const theme = useTheme();
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
@@ -239,7 +245,7 @@ export default function AddIntegrationWizard({
       PaperProps={{
         sx: {
           height: "100vh",
-          width: 520,
+          width: 480,
           position: "fixed",
           zIndex: 10,
           boxShadow: theme.customShadows?.drawer || "-10px 0px 100px #00000035",

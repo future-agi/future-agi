@@ -36,10 +36,10 @@ const text = (typography, width, props) => (
   </Typography>
 );
 const SKELETON_CELLS = {
-  run: text("s2_1", 44, { "data-testid": "run-row-skeleton" }),
+  run: text("s1", 44, { "data-testid": "run-row-skeleton" }),
   status: <Skeleton variant="rounded" width={88} height={22} />,
-  environment: text("s2_1", 120),
-  pair: text("s2", 160),
+  environment: text("s1", 120),
+  pair: text("s1", 160),
   passRate: (
     <Stack
       direction="row"
@@ -51,7 +51,7 @@ const SKELETON_CELLS = {
       <LineSkeleton width={56} />
     </Stack>
   ),
-  when: text("s2", 48),
+  when: text("s1", 48),
 };
 const SKELETON_DATA = Array.from({ length: SKELETON_ROWS }, (_, i) => ({
   testExecutionId: `skeleton-${i}`,
@@ -98,7 +98,7 @@ export default function AgentOverviewTab() {
             sx={{ minWidth: 0 }}
             data-testid={`run-cell-${r.testExecutionId}`}
           >
-            <Typography noWrap sx={{ typography: "s2_1", fontWeight: 500 }}>
+            <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
               {`Run ${r.runNumber}`}
             </Typography>
             {!isRunning(r) && r.partial && (
@@ -141,7 +141,7 @@ export default function AgentOverviewTab() {
               spacing={0.75}
               sx={{ minWidth: 0 }}
             >
-              <Typography noWrap title={name} sx={{ typography: "s2_1" }}>
+              <Typography noWrap title={name} sx={{ typography: "s1" }}>
                 {name || "—"}
               </Typography>
               {r.kind === "simulate" && <QuietTag>Simulate</QuietTag>}
@@ -157,7 +157,7 @@ export default function AgentOverviewTab() {
           <Typography
             noWrap
             title={pairLabel(r) ?? undefined}
-            sx={{ typography: "s2", fontFamily: MONO }}
+            sx={{ typography: "s1", fontFamily: MONO }}
           >
             {pairLabel(r) ?? "—"}
           </Typography>
@@ -174,7 +174,7 @@ export default function AgentOverviewTab() {
         header: "When",
         size: 120,
         cell: ({ row: { original: r } }) => (
-          <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+          <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
             {r.completedAt ? ago(r.completedAt) : `started ${ago(r.startedAt)}`}
           </Typography>
         ),
@@ -252,7 +252,7 @@ export default function AgentOverviewTab() {
         />
       )}
       <Stack spacing={1}>
-        <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
+        <Typography sx={{ typography: "m3", fontWeight: 500 }}>
           Recent runs
         </Typography>
         {body}

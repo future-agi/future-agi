@@ -1,9 +1,8 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
 import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
@@ -37,8 +36,8 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
     <Box
       sx={{
         my: 2,
-        p: 2,
-        borderRadius: 1.5,
+        p: 1.5,
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
       }}
@@ -46,16 +45,12 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
       <Stack direction="row" spacing={2} alignItems="center">
         <Box
           sx={{
-            width: 34,
-            height: 34,
+            width: 28,
+            height: 28,
             borderRadius: 1,
             display: "grid",
             placeItems: "center",
-            bgcolor: (t) =>
-              alpha(
-                t.palette.text.primary,
-                t.palette.mode === "dark" ? 0.06 : 0.04,
-              ),
+            bgcolor: "action.selected",
             color: "text.secondary",
             flexShrink: 0,
           }}
@@ -68,39 +63,21 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
               sx={{
                 typography: "s3",
                 color: "text.subtitle",
-                fontWeight: "fontWeightBold",
-                textTransform: "uppercase",
-                letterSpacing: 0.4,
+                fontWeight: "fontWeightMedium",
               }}
             >
               {AGENT_SUMMARY_COPY.label}
             </Typography>
             {subject && (
-              <Box
-                sx={{
-                  height: 18,
-                  px: 0.75,
-                  borderRadius: 0.75,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  bgcolor: (t) =>
-                    alpha(
-                      BUILD_TONES.green,
-                      t.palette.mode === "dark" ? 0.16 : 0.1,
-                    ),
-                  color: BUILD_TONES.green,
-                }}
-              >
-                <Typography
-                  sx={{ typography: "s3", fontWeight: "fontWeightBold" }}
-                >
-                  {AGENT_SUMMARY_COPY.connected}
-                </Typography>
-              </Box>
+              <StatusBadge
+                status="connected"
+                label={AGENT_SUMMARY_COPY.connected}
+                size="sm"
+              />
             )}
           </Stack>
           <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightBold", mt: 0.25 }}
+            sx={{ typography: "s1", fontWeight: "fontWeightMedium", mt: 0.25 }}
           >
             {title}
           </Typography>
@@ -138,11 +115,7 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
             size="small"
             color="inherit"
             onClick={onManageVersions}
-            sx={{
-              typography: "s2",
-              fontWeight: "fontWeightBold",
-              flexShrink: 0,
-            }}
+            sx={{ flexShrink: 0 }}
           >
             {AGENT_SUMMARY_COPY.manage}
           </Button>

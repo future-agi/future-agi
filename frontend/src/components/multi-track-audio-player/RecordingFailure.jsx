@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 
 import Iconify from "../iconify";
 import { UNAVAILABLE, LOAD_FAILED } from "./failureVariants";
@@ -48,10 +47,10 @@ const RecordingFailure = ({ variant, onRetry }) => {
         width={20}
         sx={{ color: "warning.main", mb: 0.25 }}
       />
-      <Typography fontWeight={600} sx={{ fontSize: "13px" }}>
+      <Typography variant="m3" fontWeight={500}>
         {title}
       </Typography>
-      <Typography color="text.secondary" sx={{ fontSize: "11px" }}>
+      <Typography variant="s2" color="text.secondary">
         {detail}
       </Typography>
       {variant === LOAD_FAILED && (
@@ -60,19 +59,7 @@ const RecordingFailure = ({ variant, onRetry }) => {
           variant="outlined"
           color="inherit"
           onClick={onRetry}
-          sx={(t) => ({
-            mt: 0.75,
-            minWidth: 0,
-            px: 1.25,
-            py: 0.25,
-            fontSize: "11px",
-            borderColor: alpha(t.palette.warning.main, 0.5),
-            color: "text.primary",
-            "&:hover": {
-              borderColor: "warning.main",
-              bgcolor: alpha(t.palette.warning.main, 0.08),
-            },
-          })}
+          sx={{ mt: 0.75 }}
         >
           Retry
         </Button>
