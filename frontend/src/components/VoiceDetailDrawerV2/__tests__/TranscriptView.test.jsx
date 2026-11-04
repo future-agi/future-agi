@@ -163,7 +163,7 @@ describe("sub-actors in voice transcripts", () => {
     // The chip and the line's customer, with no persona name to show.
     expect(screen.getAllByText("Customer")).toHaveLength(2);
     expect(screen.queryByText("Heard nearby")).toBeNull();
-    expect(screen.queryByText(/undefined| · $/)).toBeNull();
+    expect(screen.queryByText(/undefined| ·$/)).toBeNull();
   });
 
   it("filters to the others on the call", async () => {

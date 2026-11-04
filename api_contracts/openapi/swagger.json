@@ -141913,19 +141913,22 @@
             "properties": {
                 "id": {
                     "title": "Id",
-                    "type": "string",
-                    "minLength": 1
+                    "description": "The sub-actor's id in the environment.",
+                    "type": "string"
                 },
                 "name": {
                     "title": "Name",
+                    "description": "The name the transcript shows.",
                     "type": "string"
                 },
                 "role": {
                     "title": "Role",
+                    "description": "Who they are to the caller.",
                     "type": "string"
                 },
                 "channel": {
                     "title": "Channel",
+                    "description": "The channel id they joined the call on.",
                     "type": "string"
                 }
             }
