@@ -4,13 +4,27 @@ import { channelLabel, otherPartyLabel } from "./transcriptUtils";
 
 export default function OtherPartyName({ party, color = "text.primary" }) {
   const tag = channelLabel(party.channel);
+  const label = otherPartyLabel(party);
   return (
     <Box
       component="span"
-      sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
     >
-      <Typography component="span" variant="s3" sx={{ color, fontWeight: 600 }}>
-        {otherPartyLabel(party)}
+      {/* A role can be a whole sentence; keep it to one line and show it in full on hover. */}
+      <Typography
+        component="span"
+        variant="s3"
+        title={label}
+        noWrap
+        sx={{ color, fontWeight: 600, maxWidth: 320 }}
+      >
+        {label}
       </Typography>
       {tag && (
         <Typography
@@ -22,6 +36,8 @@ export default function OtherPartyName({ party, color = "text.primary" }) {
             borderColor: "divider",
             borderRadius: "4px",
             color: "text.secondary",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
           {tag}
