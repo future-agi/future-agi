@@ -3,15 +3,30 @@ simulate.services.agent_version_steps, where the decisions live."""
 
 from __future__ import annotations
 
+from asgiref.sync import sync_to_async
+from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.temporal.activities.hosted_runner import _run_db
 from simulate.temporal.types.agent_version import (
     AgentVersionFailure,
     AgentVersionInput,
     AgentVersionStep,
 )
 from tfc.temporal.common.heartbeat import Heartbeater
+
+
+async def _run_db(fn, *args):
+    """Run a step on a thread of its own: a reading holds its call for up to half
+    an hour, and the shared thread would hold every other activity behind it."""
+
+    def _call():
+        close_old_connections()
+        try:
+            return fn(*args)
+        finally:
+            close_old_connections()
+
+    return await sync_to_async(_call, thread_sensitive=False)()
 
 
 def _step(outcome) -> AgentVersionStep:
