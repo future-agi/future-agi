@@ -39,8 +39,8 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     id: 'EVAL-E2E-020', area: 'evals',
     userGoal: 'Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance',
     steps: ['seed two sessions with two traces and two spans per trace',
-      'choose the project and preview incoming conversation shares',
-      'switch to historical count one, preview, configure an echo judge and create the task',
+      'choose the project, set a past live start and preview incoming conversation shares',
+      'choose the historical schedule, confirm count one, preview, configure an echo judge and create the task',
       'verify the independently hash-ranked contact is the exact evaluated set',
       'ingest late traces and Edit & Re-run to expand only the frozen sampled contact',
       'reload the saved count, edit it to two, preview and explicitly Delete & rerun',
@@ -116,8 +116,15 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     await page.getByRole('option', { name: projectName, exact: true }).click();
     await page.getByRole('radio', { name: 'New incoming data', exact: true }).check();
     await page.getByRole('radio', { name: 'Pick whole groups of spans', exact: true }).check();
-    await page.getByRole('combobox', { name: 'Pick:', exact: true }).click();
+    // SamplingPolicyEditor includes the selected level in the Pick: combobox's accessible name.
+    await page.getByRole('combobox', { name: /^Pick:/ }).click();
     await page.getByRole('option', { name: 'Conversations', exact: true }).click();
+    // The live policy starts at activation by default; move its UTC start before
+    // the sendTrace eventMs so the incoming preview includes the seeded contacts.
+    // "Change time window" and "UTC window start" are SamplingPolicyEditor labels.
+    await page.getByText('Change time window', { exact: true }).click();
+    await page.getByLabel('UTC window start', { exact: true })
+      .fill(new Date(eventMs - 60_000).toISOString().slice(0, 16));
     await page.getByRole('spinbutton', { name: 'What share of new conversations? (%)', exact: true }).fill('100');
     const liveResponse = page.waitForResponse(r => r.url().endsWith(PREVIEW) && r.request().method() === 'POST', { timeout: UI_READY });
     await page.getByRole('button', { name: 'Preview sample', exact: true }).click();
@@ -127,8 +134,11 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       sampling_policy: { mode: 'live', default: { rate: 100 }, window: { end: null } },
     });
     expect((await livePreview.json() as Preview).result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 2, selected_rows: 8 });
-    await page.getByRole('radio', { name: 'Historical data', exact: true }).check();
-    await page.getByRole('button', { name: 'Use historical counts', exact: true }).click();
+    // TaskSchedulingSection opens its conversion dialog from the historical
+    // schedule radio; click (not check) because it stays unselected until confirmation.
+    await page.getByRole('radio', { name: 'Historical data', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Use counts for historical data?' })
+      .getByRole('button', { name: 'Use historical counts', exact: true }).click();
     await page.getByRole('spinbutton', { name: 'How many conversations?', exact: true }).fill('1');
     await testInfo.attach('ui-policy-editor', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
 

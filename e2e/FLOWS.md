@@ -967,7 +967,7 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
 5. click the final Create task button
@@ -1010,8 +1010,8 @@
 **User steps:**
 
 1. seed two sessions with two traces and two spans per trace
-2. choose the project and preview incoming conversation shares
-3. switch to historical count one, preview, configure an echo judge and create the task
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
 4. verify the independently hash-ranked contact is the exact evaluated set
 5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
 6. reload the saved count, edit it to two, preview and explicitly Delete & rerun

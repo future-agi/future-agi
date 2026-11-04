@@ -36,7 +36,7 @@ test('EVAL-E2E-005: browser task submit retains a custom attribute predicate and
     id: 'EVAL-E2E-005', area: 'evals',
     userGoal: 'Create an evaluation task from the browser for exactly the selected custom attribute value',
     steps: ['seed two differently attributed spans in an isolated project',
-      'select the project, custom property and value on the task create page',
+      'select the project, All sampling preset, custom property and value on the task create page',
       'verify the exact matching preview', 'select and configure an echo judge',
       'click the final Create task button', 'verify task and result inclusion and exclusion'],
     backendChecks: ['managed mock routing attested before model calls',
@@ -165,6 +165,8 @@ test('EVAL-E2E-005: browser task submit retains a custom attribute predicate and
         .toEqual([...seeded.spanIds].sort());
       expect(unfilteredPages.at(-1)!.body.result.metadata.total_rows_exact).toBe(2);
       await json('unfiltered-preview-pages.json', unfilteredPages);
+      // SamplingRateField exposes the 100% preset as "All"; the create page defaults to 50%.
+      await page.getByRole('button', { name: 'All', exact: true }).click();
       await page.getByRole('button', { name: 'Add filter', exact: true }).click();
       await snapshot('filter-open');
       await page.getByText('Property', { exact: true }).click();
