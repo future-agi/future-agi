@@ -13,6 +13,7 @@
 import { sideEffectOf, toolSettingOf } from "./toolEnv";
 import { castOf } from "./actors";
 import { currentUser } from "./scenarioProvenance";
+import { schemaFor } from "./envInternals";
 
 const now = () => new Date().toISOString();
 
@@ -53,17 +54,97 @@ const ORDER_ROWS = [
   },
 ];
 
-/** The world's records at the start: from imported data, else from its tools. */
+/* Sample rows for one of the world's tables, from its columns: ids that
+   other tables point at, dates, amounts, statuses. Steady per table. */
+const ID_PREFIX = {
+  customers: "C",
+  accounts: "A",
+  orders: "O",
+  transactions: "T",
+  invoices: "INV",
+  cards: "CARD",
+  disputes: "D",
+  refunds: "RF",
+  payments: "P",
+  returns: "R",
+  bookings: "B",
+  drivers: "DR",
+};
+const singular = (t) => t.replace(/ies$/, "y").replace(/s$/, "");
+const prefixOf = (table) => ID_PREFIX[table] || table.slice(0, 2).toUpperCase();
+const idsOf = (table) =>
+  table === "customers"
+    ? ["C-114", "C-203", "C-881", "C-412"]
+    : [0, 1, 2, 3].map((i) => `${prefixOf(table)}-${101 + i}`);
+const STATUSES = ["open", "pending", "closed", "active"];
+const NAMES = [
+  "Jamal Carter",
+  "Priya Shah",
+  "Alan Whitfield",
+  "Diane Sullivan",
+];
+
+const rowsFor = (t, names) => {
+  const cols = t.cols?.length ? t.cols : [{ name: "id", pk: true }];
+  const pk = cols.find((c) => c.pk) || cols[0];
+  return idsOf(t.name).map((id, i) =>
+    Object.fromEntries(
+      cols.map((c) => {
+        const n = c.name.toLowerCase();
+        if (c === pk) return [c.name, id];
+        /* A key into another table: one of that table's ids. */
+        const ref = n.endsWith("_id") ? n.slice(0, -3) : null;
+        const target = ref && names.find((x) => singular(x) === ref);
+        if (ref)
+          return [
+            c.name,
+            target || ref === "customer"
+              ? idsOf(target || "customers")[i % 4]
+              : `${ref.toUpperCase().slice(0, 2)}-${101 + i}`,
+          ];
+        if (/^past|overdue|^is_|^has_|_sla$|flag|frozen|lost|joint/.test(n))
+          return [c.name, i % 2 === 0];
+        if (/last_?4/.test(n))
+          return [c.name, ["4242", "1881", "0005", "3714"][i]];
+        if (/reason/.test(n))
+          return [c.name, ["fraud", "duplicate", "not received", "damaged"][i]];
+        if (/kind|type|category/.test(n))
+          return [c.name, ["debit", "credit", "refund", "fee"][i]];
+        if (/holder|owner|person/.test(n)) return [c.name, NAMES[i]];
+        if (/_at$|date|day/.test(n))
+          return [c.name, `2026-10-${String(2 + i * 6).padStart(2, "0")}`];
+        if (/cents/.test(n)) return [c.name, [2599, 64900, 1250, 4599][i]];
+        if (/amount|total|balance|price|limit/.test(n))
+          return [c.name, [25.99, 649, 12.5, 45.99][i]];
+        if (/email/.test(n)) return [c.name, `customer${i + 1}@sandbox.test`];
+        if (/status|state/.test(n)) return [c.name, STATUSES[i]];
+        if (/name/.test(n)) return [c.name, NAMES[i]];
+        if (/^(is_|has_)|flag|frozen|lost|joint/.test(n))
+          return [c.name, i % 2 === 0];
+        if (/int|num|count/.test(String(c.type || "").toLowerCase()))
+          return [c.name, i + 1];
+        return [c.name, `${n.replace(/_/g, " ")} ${i + 1}`];
+      }),
+    ),
+  );
+};
+
+/** The world's records at the start: a few rows of each of its tables. */
 const seedTablesOf = (env, envState) => {
-  const names = (env?.tools || []).map((t) => t.name).join(" ");
+  const schema = schemaFor(env, envState);
+  const toolNames = (env?.tools || []).map((t) => t.name).join(" ");
+  const names = schema.map((t) => t.name);
   const tables = {};
-  if (
-    /order|refund|return|shipment/.test(names) ||
-    (envState?.dataImports || []).some((d) => d.name === "orders")
-  )
+  schema.forEach((t) => {
+    tables[t.name] =
+      t.name === "orders" ? clone(ORDER_ROWS) : rowsFor(t, names);
+  });
+  /* Tools that act on orders and refunds get those tables even when the
+     schema doesn't list them. */
+  if (!tables.orders && /order|refund|return|shipment/.test(toolNames))
     tables.orders = clone(ORDER_ROWS);
   if (
-    /refund/.test(names) ||
+    /refund/.test(toolNames) ||
     (envState?.dataImports || []).some((d) => d.name === "refunds")
   )
     tables.refunds = /RF-7/.test(JSON.stringify(envState?.startingState || ""))
@@ -75,7 +156,8 @@ const seedTablesOf = (env, envState) => {
             status: "committed",
           },
         ]
-      : [];
+      : /* No refund exists yet, so a first refund is the one the test makes. */
+        [];
   if (!Object.keys(tables).length)
     tables.records = [
       { id: "R-1", name: "Sample record", status: "open" },
@@ -89,8 +171,8 @@ export const startingPointsOf = (env, envState) => [
   {
     id: "seed",
     label: envState?.startingState
-      ? `Starting state of the environment · ${envState.startingState.facts.length} fact${envState.startingState.facts.length === 1 ? "" : "s"} from records`
-      : "Seed of the environment",
+      ? `Starting data · from ${(envState.sources || []).find((x) => x.id === envState.startingState.sourceId)?.name || "your records"}`
+      : "Starting data of the environment",
     tables: seedTablesOf(env, envState),
   },
   ...(envState?.previewSnapshots || []).map((s) => ({
@@ -144,7 +226,9 @@ export const startPreview = (p) =>
   log(
     { ...p, status: "running", startedAt: p.startedAt || now() },
     "Sandbox",
-    p.startedAt ? "Resumed" : "Started on the chosen starting state",
+    p.log.length
+      ? "Resumed — what changed before you stopped is kept"
+      : "Started on the chosen starting data",
   );
 
 export const stopPreview = (p) =>
@@ -164,24 +248,47 @@ export const stopPreview = (p) =>
   );
 
 /** A plausible request for the tool, from its argument names. */
-export const sampleArgsOf = (tool) => {
+export const sampleArgsOf = (tool, tables = null) => {
   const args = (tool?.args || [])
     .map((a) => (typeof a === "string" ? a : a.name))
     .filter(Boolean);
-  const value = (a) =>
-    /order/.test(a)
+  /* An id that exists in the starting data, so the first try finds it. */
+  const idIn = (ref) => {
+    const t = tables && Object.keys(tables).find((x) => singular(x) === ref);
+    const row = t && tables[t][tables[t].length > 3 ? 3 : 0];
+    return row ? Object.values(row)[0] : null;
+  };
+  const value = (a) => {
+    const n = a.toLowerCase();
+    if (n.endsWith("_id")) {
+      const ref = n.slice(0, -3);
+      const hit = idIn(ref);
+      if (hit) return hit;
+    }
+    return /order/.test(n)
       ? "O-104"
-      : /customer|user/.test(a)
+      : /customer|user/.test(n)
         ? "C-881"
-        : /cents/.test(a)
+        : /cents/.test(n)
           ? 4599
-          : /amount/.test(a)
+          : /amount/.test(n)
             ? 45.99
-            : /confirm/.test(a)
-              ? true
-              : /reason/.test(a)
-                ? "damaged"
-                : "example";
+            : /email/.test(n)
+              ? "customer1@sandbox.test"
+              : /^from$|start|since/.test(n)
+                ? "2026-10-01"
+                : /^to$|end|until/.test(n)
+                  ? "2026-10-31"
+                  : /date|_at$|birth/.test(n)
+                    ? "1990-04-12"
+                    : /confirm/.test(n)
+                      ? true
+                      : /reason/.test(n)
+                        ? "damaged"
+                        : /query|search|q$/.test(n)
+                          ? "refund"
+                          : `${n.replace(/_/g, " ")} 1`;
+  };
   return Object.fromEntries(
     (args.length ? args : ["order_id"]).map((a) => [a, value(a)]),
   );
@@ -200,7 +307,30 @@ const findRow = (tables, key) => {
  * changes the state; faults fire as the tool is set; an approval the tool
  * waits for brings in its approver; Live tools aren't called from here.
  */
-export const callToolPatch = (p, { env, envState, tool, args }) => {
+/* One tool call: the world's answer as a log line, carrying the call itself
+   (tool, arguments, read or write, status, time) so the log can show it the
+   way a run's Tool calls do. */
+export const callToolPatch = (p, opts) => {
+  const next = callToolInner(p, opts);
+  const req =
+    next.network.length > p.network.length
+      ? next.network[next.network.length - 1]
+      : null;
+  const effect = sideEffectOf(opts.tool);
+  const last = next.log[next.log.length - 1];
+  if (!last) return next;
+  const call = {
+    tool: opts.tool.name,
+    args: opts.args,
+    wrote: !(effect === "read" || effect === "fresh"),
+    status: req?.status ?? null,
+    ms: req?.ms ?? null,
+    response: req?.response ?? null,
+  };
+  return { ...next, log: [...next.log.slice(0, -1), { ...last, call }] };
+};
+
+const callToolInner = (p, { env, envState, tool, args }) => {
   const setting = toolSettingOf(tool, envState);
   const effect = sideEffectOf(tool);
   const n = p.calls + 1;

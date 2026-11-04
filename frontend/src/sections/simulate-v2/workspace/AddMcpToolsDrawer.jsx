@@ -9,6 +9,7 @@ import {
   Chip,
   CircularProgress,
   IconButton,
+  Radio,
   Stack,
   Tooltip,
   Typography,
@@ -583,7 +584,8 @@ function GatewayServerRow({ server, first, on, onPick }) {
     <ButtonBase
       disabled={down}
       onClick={onPick}
-      aria-pressed={on}
+      role="radio"
+      aria-checked={on}
       sx={{
         ...focusRing,
         width: "100%",
@@ -600,10 +602,13 @@ function GatewayServerRow({ server, first, on, onPick }) {
         "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, 0.04) },
       }}
     >
-      <Iconify
-        icon={on ? "solar:check-circle-bold" : "solar:plug-circle-linear"}
-        width={16}
-        sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }}
+      {/* One server at a time: a radio says it's a choice. */}
+      <Radio
+        size="small"
+        checked={on}
+        disabled={down}
+        tabIndex={-1}
+        sx={{ p: 0, flexShrink: 0 }}
       />
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="baseline" spacing={1}>

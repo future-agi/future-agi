@@ -4,34 +4,18 @@ import { Box, Button, Stack, TextField, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { sideEffectOf, tierOf, toolSettingOf } from "../_mock/toolEnv";
+import { sampleArgsOf, startingPointsOf } from "../_mock/sandboxPreview";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
-/* A plausible request for the tool, from its argument names. */
-const sampleInput = (tool) => {
-  const args = (tool.args || [])
-    .map((a) => (typeof a === "string" ? a : a.name))
-    .filter(Boolean);
-  const value = (a) =>
-    /order/.test(a)
-      ? "O-104"
-      : /customer|user/.test(a)
-        ? "C-881"
-        : /amount|cents/.test(a)
-          ? 4599
-          : /email/.test(a)
-            ? "customer1@sandbox.test"
-            : /date|at$/.test(a)
-              ? "2026-10-30"
-              : "example";
-  return JSON.stringify(
-    Object.fromEntries(
-      (args.length ? args : ["order_id"]).map((a) => [a, value(a)]),
-    ),
+/* A plausible request for the tool: the same values the sandbox fills in,
+   taken from the environment's starting data. */
+const sampleInput = (tool, env, envState) =>
+  JSON.stringify(
+    sampleArgsOf(tool, startingPointsOf(env, envState)[0]?.tables),
     null,
     2,
   );
-};
 
 /**
  * Try one request against the tool in a preview world (roadmap actors.md
@@ -42,7 +26,7 @@ const sampleInput = (tool) => {
 export default function ToolTryPanel({ tool, env, envState }) {
   const setting = toolSettingOf(tool, envState);
   const effect = sideEffectOf(tool);
-  const [input, setInput] = useState(() => sampleInput(tool));
+  const [input, setInput] = useState(() => sampleInput(tool, env, envState));
   const [log, setLog] = useState([]);
   const [writes, setWrites] = useState(0);
 

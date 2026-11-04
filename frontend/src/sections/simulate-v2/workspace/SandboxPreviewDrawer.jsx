@@ -91,7 +91,7 @@ export default function SandboxPreviewDrawer({
   const tools = env?.tools || [];
   const [toolName, setToolName] = useState(tools[0]?.name || "");
   const [args, setArgs] = useState(() =>
-    JSON.stringify(sampleArgsOf(tools[0]), null, 2),
+    JSON.stringify(sampleArgsOf(tools[0], p.tables), null, 2),
   );
   const [say, setSay] = useState("");
   const [argsError, setArgsError] = useState(null);
@@ -120,6 +120,14 @@ export default function SandboxPreviewDrawer({
   const persona = (envState?.scenarios || []).find((s) => s.persona?.name)
     ?.persona?.name;
   const tool = tools.find((t) => t.name === toolName);
+  /* Why Snapshot is off, in the words the hover shows — null when it's on. */
+  const snapWhy = !snap.ok
+    ? snap.why
+    : locked || !patch
+      ? "This environment is read-only — make a copy to save snapshots."
+      : !p.changed.length
+        ? "Change something first — a snapshot saves the world after your changes."
+        : null;
   const dirty = p.changed.length > 0 || p.log.some((l) => l.who !== "Sandbox");
 
   if (!open) return <SideDrawer open={false} onClose={onClose} />;
@@ -127,10 +135,25 @@ export default function SandboxPreviewDrawer({
   const pickTool = (name) => {
     setToolName(name);
     setArgs(
-      JSON.stringify(sampleArgsOf(tools.find((t) => t.name === name)), null, 2),
+      JSON.stringify(
+        sampleArgsOf(
+          tools.find((t) => t.name === name),
+          p.tables,
+        ),
+        null,
+        2,
+      ),
     );
     setArgsError(null);
   };
+  /* Sending while stopped starts the preview first — one click, not two. */
+  const live = (cur) => (cur.status === "running" ? cur : startPreview(cur));
+  const sendLabel =
+    p.status === "running"
+      ? "Send"
+      : p.log.length
+        ? "Resume and send"
+        : "Start and send";
   const send = () => {
     let body;
     try {
@@ -140,7 +163,9 @@ export default function SandboxPreviewDrawer({
       return;
     }
     setArgsError(null);
-    setP((cur) => callToolPatch(cur, { env, envState, tool, args: body }));
+    setP((cur) =>
+      callToolPatch(live(cur), { env, envState, tool, args: body }),
+    );
   };
   const reset = (pointId) => setP(newPreview(env, envState, pointId));
   const askReset = (pointId) =>
@@ -221,10 +246,12 @@ export default function SandboxPreviewDrawer({
               Stop
             </Button>
           ) : (
+            /* Outlined: sending is the main action, and it starts the
+               preview on its own. */
             <Button
               size="small"
-              variant="contained"
-              color="primary"
+              variant="outlined"
+              color="inherit"
               onClick={() => setP(startPreview)}
               startIcon={<Iconify icon="solar:play-linear" width={14} />}
             >
@@ -242,14 +269,14 @@ export default function SandboxPreviewDrawer({
           </Button>
           <Tooltip
             arrow
-            title={snap.ok ? "Save this state as a starting point" : snap.why}
+            title={snapWhy || "Save this state as a starting point"}
           >
             <span>
               <Button
                 size="small"
                 variant="outlined"
                 color="inherit"
-                disabled={!snap.ok || locked || !patch || !p.changed.length}
+                disabled={!!snapWhy}
                 onClick={() => {
                   const name = `after ${p.changed[p.changed.length - 1]?.key || "preview"}`;
                   patch(snapshotPatch(envState, p, name));
@@ -298,9 +325,12 @@ export default function SandboxPreviewDrawer({
                 spacing={1}
                 sx={{ mb: 1 }}
               >
-                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
-                  Act as the agent
-                </Typography>
+                {/* The person plays the agent: the world is what's checked here. */}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    You play the agent
+                  </Typography>
+                </Box>
                 <ToggleButtonGroup
                   exclusive
                   size="small"
@@ -312,6 +342,17 @@ export default function SandboxPreviewDrawer({
                   <ToggleButton value="say">Say something</ToggleButton>
                 </ToggleButtonGroup>
               </Stack>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  mt: -0.5,
+                  mb: 1,
+                }}
+              >
+                Your agent isn&apos;t running — this checks the world. To test
+                your agent, use Run simulation.
+              </Typography>
               {mode === "tool" ? (
                 <Stack spacing={1}>
                   <Select
@@ -345,10 +386,10 @@ export default function SandboxPreviewDrawer({
                       size="small"
                       variant="contained"
                       color="primary"
-                      disabled={p.status !== "running" || !tool}
+                      disabled={!tool}
                       onClick={send}
                     >
-                      Send request
+                      {p.status === "running" ? "Send request" : sendLabel}
                     </Button>
                     {p.pending && p.pending.tool === toolName && (
                       <Button
@@ -370,13 +411,6 @@ export default function SandboxPreviewDrawer({
                         Add the approval
                       </Button>
                     )}
-                    {p.status !== "running" && (
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        Start the preview first
-                      </Typography>
-                    )}
                   </Stack>
                 </Stack>
               ) : (
@@ -392,16 +426,16 @@ export default function SandboxPreviewDrawer({
                     size="small"
                     variant="contained"
                     color="primary"
-                    disabled={p.status !== "running" || !say.trim()}
+                    disabled={!say.trim()}
                     onClick={() => {
                       setP((cur) =>
-                        sayPatch(cur, { text: say.trim(), persona }),
+                        sayPatch(live(cur), { text: say.trim(), persona }),
                       );
                       setSay("");
                     }}
                     sx={{ alignSelf: "flex-start" }}
                   >
-                    Send
+                    {sendLabel}
                   </Button>
                 </Stack>
               )}
@@ -409,38 +443,43 @@ export default function SandboxPreviewDrawer({
             <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 1.5 }}>
               {!p.log.length ? (
                 <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  Start the preview, then call a tool or say something. What the
-                  world does shows here and on the right.
+                  Call a tool or say something — the preview starts if it
+                  isn&apos;t running. What the world does shows here and on the
+                  right.
                 </Typography>
               ) : (
                 <Stack spacing={1}>
-                  {p.log.map((l, i) => (
-                    <Box key={i}>
-                      <Typography
-                        sx={{
-                          typography: "s3",
-                          color:
-                            l.tone === "actor"
-                              ? "text.primary"
-                              : "text.tertiary",
-                          fontWeight: l.tone === "actor" ? 600 : 400,
-                        }}
-                      >
-                        {`${l.who} · ${time(l.at)}`}
-                      </Typography>
-                      <Typography
-                        sx={{
-                          typography: "s2",
-                          color:
-                            l.tone === "warn"
-                              ? "warning.dark"
-                              : "text.secondary",
-                        }}
-                      >
-                        {l.text}
-                      </Typography>
-                    </Box>
-                  ))}
+                  {p.log.map((l, i) =>
+                    l.call ? (
+                      <CallRow key={i} entry={l} />
+                    ) : (
+                      <Box key={i}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color:
+                              l.tone === "actor"
+                                ? "text.primary"
+                                : "text.tertiary",
+                            fontWeight: l.tone === "actor" ? 600 : 400,
+                          }}
+                        >
+                          {`${l.who} · ${time(l.at)}`}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            color:
+                              l.tone === "warn"
+                                ? "warning.dark"
+                                : "text.secondary",
+                          }}
+                        >
+                          {l.text}
+                        </Typography>
+                      </Box>
+                    ),
+                  )}
                 </Stack>
               )}
             </Box>
@@ -767,3 +806,70 @@ SandboxPreviewDrawer.propTypes = {
   patch: PropTypes.func,
   locked: PropTypes.bool,
 };
+
+/* A tool call in the log, the way a run's Tool calls show it: the call with
+   its arguments, whether it read or wrote, how long it took — then what the
+   world answered. */
+function CallRow({ entry }) {
+  const { call } = entry;
+  const failed = entry.tone === "warn";
+  return (
+    <Stack direction="row" spacing={1.25} alignItems="flex-start">
+      <Iconify
+        icon={call.wrote ? "solar:pen-new-square-linear" : "solar:eye-linear"}
+        width={16}
+        sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
+      />
+      <Box flex={1} minWidth={0}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            fontFamily: MONO,
+            wordBreak: "break-word",
+          }}
+        >
+          {`${call.tool}(${Object.entries(call.args || {})
+            .map(
+              ([k, v]) =>
+                `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
+            )
+            .join(", ")})`}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {[
+            call.wrote ? "writes to the world" : "read only",
+            call.status === "skipped" ? "not called" : call.status,
+            call.ms != null && call.status !== "skipped" && `${call.ms}ms`,
+            time(entry.at),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: failed ? "warning.dark" : "text.secondary",
+          }}
+        >
+          {entry.text}
+        </Typography>
+        {/* What came back, short — the full response is on Network. */}
+        {call.response && (
+          <Typography
+            noWrap
+            title={JSON.stringify(call.response)}
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontFamily: MONO,
+            }}
+          >
+            {`returned ${JSON.stringify(call.response)}`}
+          </Typography>
+        )}
+      </Box>
+    </Stack>
+  );
+}
+CallRow.propTypes = { entry: PropTypes.object.isRequired };
