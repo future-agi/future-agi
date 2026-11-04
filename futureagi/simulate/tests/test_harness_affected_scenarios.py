@@ -20,6 +20,7 @@ from simulate.tests.test_harness_readiness import (
     _environment,
     _pairing,
     _rows,
+    _with_a2,
 )
 from simulate.tests.test_harness_readiness import (
     readiness_on as readiness_on,  # noqa: F401 - fixture
@@ -83,16 +84,16 @@ def _ten():
     ] + [_doc(key, solution=(LOOKUP,)) for key in LOOKUP_KEYS]
 
 
-def _suite(environment, documents, *, members=True, numbers=None):
+def _suite(environment, documents, *, members=True, numbers=None, sub_goals=SUB_GOALS):
     """Give the default suite version these scenarios and the default environment
-    version the sub-goal catalogue; ``numbers`` renumbers the members."""
+    version this sub-goal catalogue; ``numbers`` renumbers the members."""
     suite = environment.suite_version
     HarnessSuiteVersion.no_workspace_objects.filter(id=suite.id).update(
         documents={**(suite.documents or {}), "scenarios": documents}
     )
     target = environment.environment_version
     HarnessEnvironmentVersion.no_workspace_objects.filter(id=target.id).update(
-        documents={**(target.documents or {}), "sub_goals": SUB_GOALS}
+        documents={**(target.documents or {}), "sub_goals": sub_goals}
     )
     HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite).delete()
     if members:
@@ -253,13 +254,19 @@ class TestBuckets:
         chosen = _select(environment, [LOOKUP_KEYS[0], LOOKUP_KEYS[1]])["selection"]
 
         assert chosen["dropped"] == [
-            {"key": LOOKUP_KEYS[0], "reason": "dropped when the pair was certified"}
+            {
+                "key": LOOKUP_KEYS[0],
+                "code": "scenario_dropped",
+                "reason": "dropped when the pair was certified",
+            }
         ]
         assert (chosen["requested"], chosen["eligible"]) == (1, 1)
 
-    def test_reset_needed_for_more_than_one_case_or_trial(
+    def test_reset_needed_by_every_case_of_a_seeded_world_run(
         self, user, workspace, storage
     ):
+        """A case whose checks read only calls still meets what an earlier case left
+        in the seeded world, through its tools."""
         environment = _ten_certified(
             user,
             workspace,
@@ -268,13 +275,30 @@ class TestBuckets:
             checks={**PASSED, "reset_equivalence": "failed"},
         )
 
-        alone = _select(environment, [REFUND_KEYS[0]])["selection"]
-        twice = _select(environment, [REFUND_KEYS[0]], trials=2)["selection"]
+        alone = _select(environment, [LOOKUP_KEYS[0]])["selection"]
+        twice = _select(environment, [LOOKUP_KEYS[0]], trials=2)["selection"]
         suite = _select(environment)["selection"]
 
         assert (alone["eligible"], twice["blocked"]) == (1, 1)
-        assert suite["lists"]["blocked"]["keys"] == REFUND_KEYS
-        assert suite["lists"]["eligible"]["keys"] == LOOKUP_KEYS
+        assert suite["lists"]["blocked"]["keys"] == REFUND_KEYS + LOOKUP_KEYS
+
+    def test_no_seeded_world_needs_no_reset(self, user, workspace, storage):
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "as-reset-none",
+            checks={
+                **PASSED,
+                "reset_equivalence": "not_applicable",
+                "world_isolation": "not_applicable",
+            },
+        )
+
+        report = _select(environment)
+
+        assert _rows(report)["reset"]["status"] == "unavailable"
+        assert report["selection"]["eligible"] == 10
 
     def test_grading_needs_readable_checks_and_supported_evidence(
         self, user, workspace, storage
@@ -296,6 +320,7 @@ class TestBuckets:
                 ),
                 {"key": LOOKUP_KEYS[-1], "reason": "check_unreadable"},
             ],
+            "truncated": False,
         }
 
     def test_unmeasured_row_holds_no_case(self, user, workspace, storage):
@@ -337,3 +362,148 @@ class TestBuckets:
         assert message["needed_by"] == 0
         assert message["affected"]["count"] == 0
         assert report["selection"]["eligible"] == 10
+
+
+class TestRunRefusals:
+    def test_failed_validation_blocks_every_case_as_runs_are_refused(
+        self, user, workspace, storage
+    ):
+        """A validation failure naming no action leaves every row Supported, but runs
+        of the pairing are refused: every case is blocked by it."""
+        environment = _ten_certified(user, workspace, storage, "as-pair-failed")
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="failed",
+            object_key=None,
+            error={"code": "certify_incomplete", "source": "validation"},
+        )
+        _built(environment)
+        pairing = _pairing(environment)
+
+        report = _select(environment, pairing=pairing)
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket="blocked", row=None, cursor=None
+        )
+
+        assert report["answer"]["reason_code"] == "pair_failed"
+        assert (report["selection"]["blocked"], report["selection"]["requested"]) == (
+            10,
+            10,
+        )
+        assert {tuple(one["by"]) for one in page["items"]} == {("pair_failed",)}
+
+    def test_a_pairing_an_ordinary_run_failed_blocks_no_case(
+        self, user, workspace, storage
+    ):
+        """Runs are refused only after a validation failed, so cases are too."""
+        environment = _ten_certified(user, workspace, storage, "as-run-failed")
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="failed", object_key=None, error={"code": "certify_incomplete"}
+        )
+        _built(environment)
+
+        assert _select(environment)["selection"]["blocked"] == 0
+
+    def test_case_grading_no_sub_goal_is_excluded_as_the_run_refuses_it(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "as-ungradable")
+        for key, sub_goals in ((LOOKUP_KEYS[0], []), (LOOKUP_KEYS[1], ["unwritten"])):
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version=environment.suite_version, scenario_key=key
+            ).update(content={"name": key, "sub_goals": sub_goals})
+        cache.clear()
+
+        chosen = _select(environment)["selection"]
+
+        reason = "grades no sub-goal of this environment version"
+        assert chosen["dropped"] == [
+            {"key": LOOKUP_KEYS[0], "code": "scenario_ungradable", "reason": reason},
+            {"key": LOOKUP_KEYS[1], "code": "scenario_ungradable", "reason": reason},
+        ]
+        assert (chosen["requested"], chosen["eligible"]) == (8, 8)
+        assert chosen["lists"]["eligible"]["keys"] == REFUND_KEYS + LOOKUP_KEYS[2:]
+
+
+class TestListsAndCounts:
+    def test_lists_past_the_limit_are_cut_and_flagged(
+        self, user, workspace, storage, monkeypatch
+    ):
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "as-capped",
+            checks={**PASSED, "schema_and_seed": "failed"},
+        )
+        monkeypatch.setattr(selection, "LIST_LIMIT", 3)
+
+        report = _select(environment)
+
+        chosen = report["selection"]
+        # The failed seed leaves reset unchecked, which every case of the run needs.
+        assert (chosen["blocked"], chosen["untested"]) == (4, 6)
+        assert chosen["lists"]["blocked"] == {
+            "keys": REFUND_KEYS[:3],
+            "truncated": True,
+        }
+        assert chosen["lists"]["untested"] == {
+            "keys": LOOKUP_KEYS[:3],
+            "truncated": True,
+        }
+        assert chosen["lists"]["stale"] == {"keys": [], "truncated": False}
+        assert _rows(report)["state"]["affected"] == {
+            "count": 4,
+            "of": 10,
+            "keys": REFUND_KEYS[:3],
+            "truncated": True,
+        }
+        assert len(chosen["grading"]["not_gradable"]) == 3
+        assert chosen["grading"]["truncated"] is True
+
+    def test_a_member_with_no_document_is_untested_and_unrecorded(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "as-unrecorded")
+        documents = _ten()
+        _suite(environment, documents)
+        suite = environment.suite_version
+        HarnessSuiteVersion.no_workspace_objects.filter(id=suite.id).update(
+            documents={**suite.documents, "scenarios": documents[:-1]}
+        )
+        _certify(environment, storage)
+        cache.clear()
+
+        everything = _select(environment)["selection"]
+        recorded = _select(environment, LOOKUP_KEYS[:2])["selection"]
+
+        assert everything["requirements_recorded"] is False
+        assert everything["lists"]["untested"]["keys"] == [LOOKUP_KEYS[-1]]
+        assert recorded["requirements_recorded"] is True
+
+    def test_an_untested_row_counts_the_cases_it_holds(self, user, workspace, storage):
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "as-untested-row",
+            checks={**PASSED, "chat_ingress": "not_run"},
+        )
+
+        report = _select(environment)
+
+        message = _rows(report)["message"]
+        assert message["status"] == "untested"
+        assert message["affected"]["count"] == 10
+        assert report["selection"]["untested"] == 10
+
+    def test_a_stale_row_counts_the_cases_it_holds(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "as-stale-row")
+        _suite(environment, _ten())
+        _built(environment)
+
+        report = _select(environment, pairing=_pairing(environment, a2))
+
+        start = _rows(report)["start"]
+        assert start["status"] == "stale"
+        assert start["affected"]["count"] == 10
+        assert report["selection"]["stale"] == 10

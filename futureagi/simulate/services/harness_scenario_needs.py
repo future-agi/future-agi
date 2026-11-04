@@ -7,7 +7,6 @@ checks are read with Python's ``ast``. Never estimated from text.
 
 from __future__ import annotations
 
-import ast
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -20,23 +19,19 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteVersion,
 )
+from simulate.services.harness_check_reading import CheckReading, read_check
+from simulate.services.hosted_harness import grades_nothing
 
 logger = structlog.get_logger(__name__)
 
-NEEDS_VERSION = "1"
+NEEDS_VERSION = "2"
 TOOL_ROWS = ("tool_discovery", "tool_routing")
 # ALK's default when a scenario does not say.
 _DEFAULT_MAX_TURNS = 10
+# Both versions are immutable; the key carries what else the answer reads.
+_CACHE_SECONDS = 7 * 24 * 60 * 60
 
 GradingGap = Literal["check_unreadable", "no_checks"]
-
-
-@dataclass(frozen=True)
-class CheckReading:
-    """What one sub-goal's check reads: the world, and the tools it names."""
-
-    world: bool
-    tools: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -47,7 +42,9 @@ class CaseNeeds:
     more than one case or trial). ``tools`` are the tools on every solution path.
     ``unknown`` marks a need that cannot be read: a sub-goal missing from the
     catalogue, a check that cannot be read, no stored document, or a connect-only
-    scenario whose checks name no tool.
+    scenario whose checks name no tool or name one in a way that cannot be read.
+    ``ungradable`` marks a scenario the run route refuses: it grades no sub-goal of
+    the environment version.
     """
 
     key: str
@@ -59,6 +56,7 @@ class CaseNeeds:
     unknown: bool
     recorded: bool
     grading_gap: GradingGap | None
+    ungradable: bool = False
 
 
 def affected_by_tool(case: CaseNeeds, tool: str) -> bool:
@@ -74,25 +72,29 @@ def case_needs(
     """The suite version's scenarios in number order, each with what it needs.
 
     A suite without members numbers its scenarios in document order. Cached per
-    version pair with no timeout: both versions are immutable.
+    version pair and connect-only reading (the environment's, not the version's).
     """
+    from simulate.services.harness_versioning.versions import _provider_agent
+
+    # A connected agent's scenarios carry no solution: nothing local can replay it.
+    connect_only = _provider_agent(environment_version.job.payload or {})
     cache_key = (
         f"harness-scenario-needs:{NEEDS_VERSION}:"
-        f"{environment_version.id}:{suite_version.id}"
+        f"{environment_version.id}:{suite_version.id}:{int(connect_only)}"
     )
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    found = _compute(environment_version, suite_version)
-    cache.set(cache_key, found, timeout=None)
+    found = _compute(environment_version, suite_version, connect_only)
+    cache.set(cache_key, found, timeout=_CACHE_SECONDS)
     return found
 
 
 def _compute(
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
+    connect_only: bool,
 ) -> list[CaseNeeds]:
-    from simulate.services.harness_versioning.versions import _provider_agent
     from simulate.services.hosted_harness_gateway import _scenario_token
 
     documents = [
@@ -101,8 +103,6 @@ def _compute(
         if isinstance(one, Mapping)
     ]
     catalogue = _catalogue(environment_version)
-    # A connected agent's scenarios carry no solution: nothing local can replay it.
-    connect_only = _provider_agent(environment_version.job.payload or {})
     members = list(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version)
         .order_by("number", "scenario_key")
@@ -168,6 +168,7 @@ def _needs(
     connect_only: bool,
 ) -> CaseNeeds:
     rows = {"start", "message"}
+    ungradable = grades_nothing(shown.get("sub_goals"), catalogue)
     if document is None:
         return CaseNeeds(
             key=key,
@@ -179,6 +180,7 @@ def _needs(
             unknown=True,
             recorded=False,
             grading_gap="check_unreadable",
+            ungradable=ungradable,
         )
     readings, unreadable = _checks(_sub_goal_names(document), catalogue)
     if any(one.world for one in readings):
@@ -188,8 +190,10 @@ def _needs(
     tools = _path_tools(document)
     unknown = unreadable
     if tools is None and connect_only:
+        # A tool a check names only to forbid a call to it is not needed.
         tools = frozenset(name for one in readings for name in one.tools)
-        unknown = unknown or not tools
+        named = any(one.named for one in readings)
+        unknown = unknown or not named or not all(one.clear for one in readings)
     tools = tools or frozenset()
     if tools:
         rows.update(TOOL_ROWS)
@@ -208,6 +212,7 @@ def _needs(
         unknown=unknown,
         recorded=True,
         grading_gap=gap,
+        ungradable=ungradable,
     )
 
 
@@ -273,51 +278,3 @@ def _checks(
         else:
             unreadable = True
     return readings, unreadable
-
-
-def read_check(source: str) -> CheckReading | None:
-    """What ``def check(world, calls[, reference])`` in ``source`` reads; ``None``
-    when the source does not parse or defines no such function."""
-    if not source.strip():
-        return None
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return None
-    check = next(
-        (
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-            and node.name == "check"
-            and len(node.args.args) >= 2
-        ),
-        None,
-    )
-    if check is None:
-        return None
-    world = check.args.args[0].arg
-    return CheckReading(
-        world=any(
-            isinstance(node, ast.Name) and node.id == world for node in ast.walk(check)
-        ),
-        tools=frozenset(_compared_names(tree)),
-    )
-
-
-def _compared_names(tree: ast.AST) -> Iterable[str]:
-    """The tool names compared with a call's ``name``: ``c.name == "<tool>"``."""
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            continue
-        if not isinstance(node.ops[0], ast.Eq):
-            continue
-        sides = (node.left, node.comparators[0])
-        for one, other in (sides, sides[::-1]):
-            if (
-                isinstance(one, ast.Attribute)
-                and one.attr == "name"
-                and isinstance(other, ast.Constant)
-                and isinstance(other.value, str)
-            ):
-                yield other.value

@@ -34,6 +34,7 @@ BUCKETS: tuple[Bucket, ...] = ("eligible", "blocked", "stale", "untested")
 LIST_LIMIT = 200
 PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
+UNGRADABLE_REASON = "grades no sub-goal of this environment version"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
 _MEASURED = tuple(one.id for one in CATALOGUE if one.measured)
@@ -46,6 +47,7 @@ class CaseList(TypedDict):
 
 class DroppedCase(TypedDict):
     key: str
+    code: Literal["scenario_dropped", "scenario_ungradable"]
     reason: str
 
 
@@ -57,6 +59,7 @@ class NotGradable(TypedDict):
 class Grading(TypedDict):
     gradable: int
     not_gradable: list[NotGradable]
+    truncated: bool
 
 
 class SelectionView(TypedDict):
@@ -112,7 +115,8 @@ class CasePage(TypedDict):
 @dataclass(frozen=True)
 class Placed:
     """A requested case, its bucket and what put it there (row ids, or
-    ``not_proved_here`` / ``unknown_need``), and the rows holding it."""
+    ``pair_failed`` / ``not_proved_here`` / ``unknown_need``), and the rows holding
+    it."""
 
     case: CaseNeeds
     bucket: Bucket
@@ -168,6 +172,7 @@ def selection_report(
             "grading": {
                 "gradable": requested - len(not_gradable),
                 "not_gradable": not_gradable[:LIST_LIMIT],
+                "truncated": len(not_gradable) > LIST_LIMIT,
             },
             "requirements_recorded": placement.recorded,
         },
@@ -231,14 +236,28 @@ def _place_all(
     selected = _selected(cases, keys)
     bundle = pair_bundle(pairing)
     dropped_tokens = _dropped_tokens(bundle)
-    kept = [one for one in selected if _scenario_token(one.key) not in dropped_tokens]
-    dropped: list[DroppedCase] = [
-        {"key": one.key, "reason": DROPPED_REASON}
-        for one in selected
-        if _scenario_token(one.key) in dropped_tokens
-    ]
+    kept: list[CaseNeeds] = []
+    dropped: list[DroppedCase] = []
+    for one in selected:
+        if _scenario_token(one.key) in dropped_tokens:
+            dropped.append(
+                {"key": one.key, "code": "scenario_dropped", "reason": DROPPED_REASON}
+            )
+        elif one.ungradable:
+            # The run route refuses it: it could not score it.
+            dropped.append(
+                {
+                    "key": one.key,
+                    "code": "scenario_ungradable",
+                    "reason": UNGRADABLE_REASON,
+                }
+            )
+        else:
+            kept.append(one)
     proved = _proved_tokens(pairing)
     ready = certified(bundle)
+    # A run of a pairing a validation failed is refused, whatever its rows say.
+    pair_failed = validation.failed_check(bundle)
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
     many = len(kept) > 1 or trials > 1
@@ -249,6 +268,7 @@ def _place_all(
             proved=ready or _scenario_token(case.key) in proved,
             voice=voice,
             many=many,
+            pair_failed=pair_failed,
         )
         for case in kept
     ]
@@ -342,14 +362,16 @@ def _place(
     proved: bool,
     voice: bool,
     many: bool,
+    pair_failed: bool,
 ) -> Placed:
     needed = set(case.rows)
     if voice:
         # A voice case reaches the agent by audio, not by a test chat message.
         needed.discard("message")
         needed.add("audio")
-    if many and "state" in needed:
-        # Cases that read the world are graded on what an earlier case left in it.
+    reset = rows.get("reset")
+    if many and reset is not None and reset["finding"] != "not_applicable":
+        # In a seeded world each case starts from what an earlier one left behind.
         needed.add("reset")
     statuses = {
         one: _status_for(rows[one], case)
@@ -360,6 +382,8 @@ def _place(
     blocked = [
         one for one, status in statuses.items() if status in ("blocked", "unavailable")
     ]
+    if pair_failed:
+        blocked.append("pair_failed")
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")

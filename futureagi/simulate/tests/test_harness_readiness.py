@@ -683,7 +683,11 @@ class TestApi:
             "stale",
             "untested",
         }
-        assert set(body["selection"]["grading"]) == {"gradable", "not_gradable"}
+        assert set(body["selection"]["grading"]) == {
+            "gradable",
+            "not_gradable",
+            "truncated",
+        }
         assert set(body["pairing"]) == {
             "agent_version",
             "environment_version",
@@ -734,8 +738,12 @@ class TestApi:
         assert {frozenset(row["affected"]) for row in body["rows"]} == {
             frozenset({"count", "of", "keys", "truncated"})
         }
-        assert HarnessCapabilityCasesQuerySerializer().fields["row"].choices == {
+        cases_query = HarnessCapabilityCasesQuerySerializer().fields
+        assert cases_query["row"].choices == {
             one.id: one.id for one in harness_readiness.CATALOGUE
+        }
+        assert cases_query["bucket"].choices == {
+            one: one for one in harness_readiness.BUCKETS
         }
         assert len(body["rows"]) == 16
         assert sum(body["counts"].values()) == 16
