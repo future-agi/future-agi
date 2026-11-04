@@ -4,6 +4,13 @@ import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/mat
 
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipants";
+import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
+import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+import {
+  isOtherRole,
+  otherParties,
+} from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
 
@@ -46,18 +53,29 @@ ToolCall.propTypes = { call: PropTypes.any };
 // The left pane: the conversation, in order, filterable by speaker and text.
 // Tool calls hang under the turn that issued them so a "said, not done" gap is
 // visible in the transcript itself rather than buried in a side tab.
-export default function ChatTranscriptPane({ turns }) {
+export default function ChatTranscriptPane({ turns, customerName }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const others = otherParties(turns);
 
   const shown = turns.filter((s) => {
-    if (roleFilter !== "all" && s.role !== roleFilter) return false;
+    if (
+      roleFilter === "others"
+        ? !isOtherRole(s.role)
+        : roleFilter !== "all" && s.role !== roleFilter
+    )
+      return false;
     if (query && !s.text?.toLowerCase().includes(query.toLowerCase())) return false;
     return true;
   });
 
   return (
     <>
+      {others.length > 0 && (
+        <Box sx={{ px: 2, pt: 1.25 }}>
+          <CallParticipants others={others} customerName={customerName} />
+        </Box>
+      )}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25 }}>
         <TextField
           size="small"
@@ -77,6 +95,9 @@ export default function ChatTranscriptPane({ turns }) {
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
           <Tab value="customer" label="Customer" />
+          {others.length > 0 && (
+            <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
+          )}
         </SegmentedTabs>
       </Stack>
 
@@ -95,7 +116,12 @@ export default function ChatTranscriptPane({ turns }) {
             <Typography
               sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}
             >
-              {turnStamp(s, i)} · {ROLE_LABEL[s.role] || s.role}
+              {turnStamp(s, i)} ·{" "}
+              {isOtherRole(s.role) ? (
+                <OtherPartyName party={s} color="text.subtitle" />
+              ) : (
+                ROLE_LABEL[s.role] || s.role
+              )}
             </Typography>
             {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
             {Array.isArray(s.toolCalls) &&
@@ -112,9 +138,13 @@ export default function ChatTranscriptPane({ turns }) {
   );
 }
 ChatTranscriptPane.propTypes = {
+  customerName: PropTypes.string,
   turns: PropTypes.arrayOf(
     PropTypes.shape({
       role: PropTypes.string,
+      speakerName: PropTypes.string,
+      actorRole: PropTypes.string,
+      channel: PropTypes.string,
       text: PropTypes.string,
       toolCalls: PropTypes.any,
     }),

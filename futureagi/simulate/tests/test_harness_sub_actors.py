@@ -528,6 +528,28 @@ def test_stored_sub_actor_shapes_keep_only_well_formed_entries():
     assert _sub_actor_record(["x"]) is None
 
 
+def test_the_call_detail_serves_who_each_sub_actor_is_and_an_older_call_what_it_kept():
+    from simulate.views.run_results_v3 import _call_sub_actors
+
+    resolved = [
+        {
+            "id": "friend",
+            "name": "Rowan",
+            "role": "roommate",
+            "channel": "audio_mix",
+            "persona": {},
+        },
+        {"id": "kid", "name": "Sam"},
+        "x",
+    ]
+    assert _call_sub_actors({"harness_sub_actors": {"resolved": resolved}}) == [
+        {"id": "friend", "name": "Rowan", "role": "roommate", "channel": "audio_mix"},
+        {"id": "kid", "name": "Sam"},
+    ]
+    assert _call_sub_actors({"harness_sub_actors": {"summary": []}}) == []
+    assert _call_sub_actors(None) == []
+
+
 @pytest.mark.django_db
 def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
     from simulate.models.test_execution import CallExecutionSnapshot

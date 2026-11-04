@@ -25,10 +25,13 @@ import {
   computeTotals,
   enrichTurns,
   formatClock,
-  subActorLabel,
+  isOtherRole,
+  otherParties,
 } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
+import OtherPartyName from "./OtherPartyName";
+import CallParticipants from "./CallParticipants";
 import { statusColors } from "src/utils/runStatus";
 
 // Highlight query matches in a string — returns React nodes.
@@ -83,6 +86,7 @@ const useSpeakerColors = () => {
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
       sub_actor: theme.palette.data?.[2] || theme.palette.text.secondary,
+      others: theme.palette.data?.[2] || theme.palette.text.secondary,
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -326,7 +330,7 @@ const TurnRow = React.forwardRef(
               ? "action.hover"
               : isFunctionCall
                 ? "background.neutral"
-                : turn.role === "sub_actor"
+                : isOtherRole(turn.role)
                   ? alpha(color, 0.08)
                   : "transparent",
           transition: "background-color 80ms",
@@ -371,10 +375,8 @@ const TurnRow = React.forwardRef(
             </Typography>
           )}
 
-          {turn.role === "sub_actor" && (
-            <Typography variant="s3" sx={{ color, fontWeight: 600 }}>
-              {subActorLabel(turn.speakerName)}
-            </Typography>
+          {isOtherRole(turn.role) && (
+            <OtherPartyName party={turn} color={color} />
           )}
 
           {showTemporalMetadata &&
@@ -562,6 +564,7 @@ const FILTERS = [
 
 const TranscriptView = ({
   transcript,
+  customerName,
   onAnnotate,
   embedded = false,
   // Header-row customization hooks used by the chat drawer to repurpose
@@ -608,12 +611,18 @@ const TranscriptView = ({
   );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
+  const others = useMemo(() => otherParties(turns), [turns]);
+  // A call with no one else on it keeps the original three filters.
+  const filters = others.length
+    ? [...FILTERS, { id: "others", label: DEFAULT_ROLE_LABELS.others }]
+    : FILTERS;
 
   const filteredTurns = useMemo(() => {
     const q = query.trim().toLowerCase();
     return turns.filter((t) => {
       if (filter === "assistant" && t.role !== "assistant") return false;
       if (filter === "user" && t.role !== "user") return false;
+      if (filter === "others" && !isOtherRole(t.role)) return false;
       if (t.role === "system") return false;
       if (q && !t.content.toLowerCase().includes(q)) return false;
       return true;
@@ -818,6 +827,7 @@ const TranscriptView = ({
           Chat drawer hides the timeline strip (no audio-backed speaker
           timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
+        <CallParticipants others={others} customerName={customerName} />
         <TalkRatioBar
           totals={totals}
           colors={colors}
@@ -903,7 +913,7 @@ const TranscriptView = ({
             bgcolor: "background.paper",
           }}
         >
-          {FILTERS.map((f) => (
+          {filters.map((f) => (
             <ButtonBase
               key={f.id}
               onClick={() => setFilter(f.id)}
@@ -916,7 +926,7 @@ const TranscriptView = ({
                 bgcolor: filter === f.id ? "background.neutral" : "transparent",
                 "&:hover": { bgcolor: "action.hover" },
                 borderRight:
-                  f.id !== FILTERS[FILTERS.length - 1].id
+                  f.id !== filters[filters.length - 1].id
                     ? "1px solid"
                     : "none",
                 borderColor: "divider",
@@ -1036,6 +1046,7 @@ const TranscriptView = ({
 };
 
 TranscriptView.propTypes = {
+  customerName: PropTypes.string,
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
   hideTimelineStrip: PropTypes.bool,
