@@ -1273,6 +1273,14 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
     }
 
 
+def _rebased(value: dict[str, Any], base_time: float | None) -> dict[str, Any]:
+    """A row with an epoch `at` placed on the transcript's clock as `start_time_ms`."""
+    at = value.get("at")
+    if base_time is not None and isinstance(at, (int, float)) and at > 0:
+        value["start_time_ms"] = int(round((at - base_time) * 1000))
+    return value
+
+
 def _read_hosted_tool_trace(
     artifact: HostedHarnessArtifact, base_time: float | None
 ) -> list[dict[str, Any]]:
@@ -1296,10 +1304,7 @@ def _read_hosted_tool_trace(
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
-                at = value.get("at")
-                if base_time is not None and isinstance(at, (int, float)) and at > 0:
-                    value["start_time_ms"] = int(round((at - base_time) * 1000))
-                calls.append(value)
+                calls.append(_rebased(value, base_time))
         return calls
     finally:
         if response is not None:
@@ -1346,6 +1351,10 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
+# Where a call keeps its world actors' actions, sealed in the transcript beside the sub-actors.
+WORLD_ACTIONS_KEY = "harness_world_actions"
+
+
 def _sub_actor_record(raw: object) -> CallSubActors | None:
     """The transcript's sub-actor record, keeping only the entries of its three lists."""
     if not isinstance(raw, dict):
@@ -1355,6 +1364,15 @@ def _sub_actor_record(raw: object) -> CallSubActors | None:
         if isinstance(raw.get(key), list):
             record[key] = [one for one in raw[key] if isinstance(one, dict)]
     return record or None
+
+
+def _placed_world_actions(
+    metadata: dict[str, Any] | None, base_time: float | None
+) -> float | None:
+    """The world actors' actions put on the transcript's clock; returns that clock's base."""
+    for action in (metadata or {}).get(WORLD_ACTIONS_KEY) or []:
+        _rebased(action, base_time)
+    return base_time
 
 
 def _ingest_hosted_transcript(
@@ -1389,6 +1407,14 @@ def _ingest_hosted_transcript(
                 metadata["harness_sub_actors"] = record
             else:
                 metadata.pop("harness_sub_actors", None)
+            # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
+            world = payload.get("world_actors") if isinstance(payload, dict) else None
+            actions = world.get("actions") if isinstance(world, dict) else None
+            actions = [one for one in actions or [] if isinstance(one, dict)]
+            if actions:
+                metadata[WORLD_ACTIONS_KEY] = actions
+            else:
+                metadata.pop(WORLD_ACTIONS_KEY, None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
@@ -1455,7 +1481,7 @@ def _ingest_hosted_transcript(
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return base_time
+            return _placed_world_actions(metadata, base_time)
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
@@ -1551,7 +1577,7 @@ def _ingest_hosted_transcript(
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)
-        return base_time
+        return _placed_world_actions(metadata, base_time)
     finally:
         if response is not None:
             response.close()

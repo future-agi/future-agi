@@ -24267,14 +24267,25 @@ export interface SimulateRunV3FunctionCallApi {
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
   start_time_ms?: number;
+  ok?: boolean;
+  error?: string;
+  refused?: boolean;
+  at?: number;
+  /** @minLength 1 */
+  action_id?: string;
+  /** @minLength 1 */
+  outcome?: string;
   /** @minLength 1 */
   actor_id?: string;
   /** @minLength 1 */
   actor_name?: string;
-  refused?: boolean;
+  actor_role?: string;
   /** @minLength 1 */
-  outcome?: string;
-  error?: string;
+  refusal_code?: string;
+  /** @minLength 1 */
+  parent_event_id?: string;
+  /** @minLength 1 */
+  on_behalf_of?: string;
 }
 
 export interface CallExecutionV3DetailResponseApi {

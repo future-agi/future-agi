@@ -90385,6 +90385,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Start time ms",
           type: "integer",
         },
+        ok: {
+          title: "Ok",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        refused: {
+          title: "Refused",
+          type: "boolean",
+        },
+        at: {
+          title: "At",
+          type: "number",
+        },
+        action_id: {
+          title: "Action id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         actor_id: {
           title: "Actor id",
           type: "string",
@@ -90395,18 +90423,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
-        refused: {
-          title: "Refused",
-          type: "boolean",
+        actor_role: {
+          title: "Actor role",
+          type: "string",
         },
-        outcome: {
-          title: "Outcome",
+        refusal_code: {
+          title: "Refusal code",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
         },
-        error: {
-          title: "Error",
+        parent_event_id: {
+          title: "Parent event id",
           type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        on_behalf_of: {
+          title: "On behalf of",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
