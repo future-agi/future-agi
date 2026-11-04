@@ -131974,7 +131974,7 @@
             "properties": {
                 "state": {
                     "title": "State",
-                    "description": "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+                    "description": "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
                     "type": "string",
                     "enum": [
                         "not_run",
@@ -131995,7 +131995,6 @@
                     "title": "Purpose",
                     "type": "string",
                     "enum": [
-                        "save",
                         "agent_move",
                         "recheck"
                     ],
@@ -132143,6 +132142,7 @@
             }
         },
         "HarnessCapabilityFixRecheck": {
+            "description": "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
             "required": [
                 "scope",
                 "method",
@@ -132170,7 +132170,8 @@
                     "type": "string",
                     "minLength": 1
                 }
-            }
+            },
+            "x-nullable": true
         },
         "HarnessCapabilityFix": {
             "required": [

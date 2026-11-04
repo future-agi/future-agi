@@ -30,6 +30,7 @@ from simulate.services.hosted_harness_conversation import (
 )
 from simulate.tasks import harness_nudges as nudge_tasks
 from simulate.tasks import hosted_harness_conversation as conversation_tasks
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -50,10 +51,7 @@ from simulate.tests.test_hosted_harness_conversation import (
     _put_conversation_checkpoint,
 )
 
-pytestmark = [
-    pytest.mark.django_db,
-    pytest.mark.usefixtures("moves_without_validation"),
-]
+pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
 GUEST = "/simulate/api/harness/conversations"
@@ -2550,9 +2548,13 @@ class TestAgentDefault:
         nudge = _turn(environment, nudge, storage)
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
+        # The draft lands for A2; A3 follows once its pairing with it validates.
+        assert nudge.summary["agent_default_moved"] is False
+        assert nudge.summary["agent_not_moved"] == "validating"
+        settle_validations(environment)
+        environment.refresh_from_db()
         assert environment.agent_version_id == a3.id
         assert environment.environment_version.agent_version_id == a3.id
-        assert nudge.summary["agent_default_moved"] is True
         assert environment.payload["metadata"][HAND_MOVE_KEY]["to"] == str(a3.id)
 
     def test_an_agent_not_prepared_for_lands_for_the_current_one(

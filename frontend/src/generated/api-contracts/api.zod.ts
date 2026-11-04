@@ -37500,10 +37500,10 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesReadResponse =
           "unavailable",
         ])
         .describe(
-          "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+          "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
         ),
       job_id: zod.string().uuid(),
-      purpose: zod.enum(["save", "agent_move", "recheck"]),
+      purpose: zod.enum(["agent_move", "recheck"]),
       finished_at: zod.string().datetime({ offset: true }),
       error: zod.record(zod.string(), zod.string()),
     }),
@@ -37593,11 +37593,15 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesReadResponse =
           target: zod.string().min(1),
           action: zod.string().min(1),
           would: zod.string().min(1),
-          recheck: zod.object({
-            scope: zod.enum(["agent", "pair"]),
-            method: zod.enum(["POST"]),
-            path: zod.string().min(1),
-          }),
+          recheck: zod
+            .object({
+              scope: zod.enum(["agent", "pair"]),
+              method: zod.enum(["POST"]),
+              path: zod.string().min(1),
+            })
+            .describe(
+              "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+            ),
         }),
         needed_by: zod
           .number()
@@ -37795,10 +37799,10 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           "unavailable",
         ])
         .describe(
-          "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+          "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
         ),
       job_id: zod.string().uuid(),
-      purpose: zod.enum(["save", "agent_move", "recheck"]),
+      purpose: zod.enum(["agent_move", "recheck"]),
       finished_at: zod.string().datetime({ offset: true }),
       error: zod.record(zod.string(), zod.string()),
     }),
@@ -37888,11 +37892,15 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           target: zod.string().min(1),
           action: zod.string().min(1),
           would: zod.string().min(1),
-          recheck: zod.object({
-            scope: zod.enum(["agent", "pair"]),
-            method: zod.enum(["POST"]),
-            path: zod.string().min(1),
-          }),
+          recheck: zod
+            .object({
+              scope: zod.enum(["agent", "pair"]),
+              method: zod.enum(["POST"]),
+              path: zod.string().min(1),
+            })
+            .describe(
+              "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+            ),
         }),
         needed_by: zod
           .number()
@@ -53651,10 +53659,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               "unavailable",
             ])
             .describe(
-              "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+              "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
             ),
           job_id: zod.string().uuid(),
-          purpose: zod.enum(["save", "agent_move", "recheck"]),
+          purpose: zod.enum(["agent_move", "recheck"]),
           finished_at: zod.string().datetime({ offset: true }),
           error: zod.record(zod.string(), zod.string()),
         }),
@@ -53750,11 +53758,15 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               target: zod.string().min(1),
               action: zod.string().min(1),
               would: zod.string().min(1),
-              recheck: zod.object({
-                scope: zod.enum(["agent", "pair"]),
-                method: zod.enum(["POST"]),
-                path: zod.string().min(1),
-              }),
+              recheck: zod
+                .object({
+                  scope: zod.enum(["agent", "pair"]),
+                  method: zod.enum(["POST"]),
+                  path: zod.string().min(1),
+                })
+                .describe(
+                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                ),
             }),
           }),
         ),

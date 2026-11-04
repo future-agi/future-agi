@@ -18676,7 +18676,7 @@ export interface HarnessCapabilityPairingApi {
 }
 
 /**
- * ready: certified together; failed: a check failed; retry: the last validation ended before its check did.
+ * ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.
  */
 export type HarnessPairValidationApiState =
   (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
@@ -18694,7 +18694,6 @@ export type HarnessPairValidationApiPurpose =
   (typeof HarnessPairValidationApiPurpose)[keyof typeof HarnessPairValidationApiPurpose];
 
 export const HarnessPairValidationApiPurpose = {
-  save: "save",
   agent_move: "agent_move",
   recheck: "recheck",
 } as const;
@@ -18702,7 +18701,7 @@ export const HarnessPairValidationApiPurpose = {
 export type HarnessPairValidationApiError = { [key: string]: string };
 
 export interface HarnessPairValidationApi {
-  /** ready: certified together; failed: a check failed; retry: the last validation ended before its check did. */
+  /** ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing. */
   state: HarnessPairValidationApiState;
   job_id: string;
   purpose: HarnessPairValidationApiPurpose;
@@ -18843,6 +18842,9 @@ export const HarnessCapabilityFixRecheckApiMethod = {
   POST: "POST",
 } as const;
 
+/**
+ * How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.
+ */
 export interface HarnessCapabilityFixRecheckApi {
   scope: HarnessCapabilityFixRecheckApiScope;
   method: HarnessCapabilityFixRecheckApiMethod;

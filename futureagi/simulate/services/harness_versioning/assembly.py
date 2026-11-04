@@ -1003,7 +1003,8 @@ def certify_failed_actions(sandbox: Any) -> list[dict[str, str]] | None:
                 ACTION_CERTIFICATION_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
             )
         )
-    except Exception:  # noqa: BLE001 - a certify can stop before it probes actions
+    except Exception as exc:  # noqa: BLE001 - a certify can stop before it probes actions
+        logger.info("harness_certify_action_report_unread", error=type(exc).__name__)
         return None
     actions = (report or {}).get("actions")
     if not isinstance(actions, list):

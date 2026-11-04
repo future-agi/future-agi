@@ -3,6 +3,7 @@
 The job certifies the pairing's bundle as a pinned run's miss does, but makes no
 TestExecution and places no call. Only a check that ran fails a pairing: an exit 78 or a
 certify that ended without a bundle. Any other ending leaves the pairing pending.
+A newer move of the environment's default agent replaces any move still waiting.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from simulate.services.hosted_harness import (
 
 logger = structlog.get_logger(__name__)
 
-Purpose = Literal["save", "agent_move", "recheck"]
+Purpose = Literal["agent_move", "recheck"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
 # The endings that are a check's verdict on the pairing; any other one is retried.
@@ -48,6 +49,8 @@ CHECK_FAILURES = frozenset(
     {"authoring_runtime_validation_failed", "certify_incomplete"}
 )
 FAILURE_SOURCE = "validation"
+# A move whose validation ended before a check did is validated this many times more.
+MOVE_RESTARTS = 1
 _LIVE_STATES = frozenset(
     set(HostedHarnessJob.State)
     - {
@@ -68,6 +71,10 @@ class AgentMove(TypedDict):
     nudge_id: str | None
     explicit: bool
     revalidated: bool
+    restarts: int
+    # A landing's default environment version before it landed, put back if the
+    # move fails.
+    from_environment_version_id: str | None
 
 
 class ValidationView(TypedDict):
@@ -152,6 +159,7 @@ def agent_move(
     user: Any = None,
     nudge: HarnessNudge | None = None,
     explicit: bool = False,
+    from_environment_version_id: Any = None,
 ) -> AgentMove:
     """The move to make once the pairing of ``version`` with the defaults validates."""
     return {
@@ -164,6 +172,10 @@ def agent_move(
         "nudge_id": str(nudge.id) if nudge is not None else None,
         "explicit": explicit,
         "revalidated": False,
+        "restarts": 0,
+        "from_environment_version_id": (
+            str(from_environment_version_id) if from_environment_version_id else None
+        ),
     }
 
 
@@ -180,8 +192,8 @@ def start_validation(
 
     Returns ``None`` when it cannot be validated (see ``can_validate``). A failed bundle
     is reset to pending; a validation already certifying the bundle is returned, carrying
-    ``move`` from now on. Takes the environment's lock; the job's workflow starts on
-    commit.
+    ``move`` from now on. A ``move`` replaces every other move still waiting on this
+    environment. Takes the environment's lock; the job's workflow starts on commit.
     """
     from simulate.services.harness_versioning.backfill import effective_runtime
     from simulate.services.harness_versioning.versions import lock_environment
@@ -190,6 +202,8 @@ def start_validation(
         return None
     with transaction.atomic():
         locked = lock_environment(environment)
+        if move is not None:
+            drop_waiting_moves(locked, move["agent_version_id"])
         runtime = effective_runtime(
             locked,
             HarnessAgentVersionRuntime.no_workspace_objects.filter(
@@ -213,9 +227,7 @@ def start_validation(
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
         job = live_validation(bundle.id)
-        if job is not None:
-            if move is not None:
-                _carry_move(job, move)
+        if job is not None and (move is None or _carry_move(job, move)):
             return Validation("validating", bundle, purpose, job)
         job = _create_job(
             locked,
@@ -239,12 +251,47 @@ def start_validation(
     return Validation("validating", bundle, purpose, job)
 
 
-def _carry_move(job: HostedHarnessJob, move: AgentMove) -> None:
+def _carry_move(job: HostedHarnessJob, move: AgentMove) -> bool:
+    """Give a running validation ``move``; ``False`` when it settled meanwhile."""
     locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job.id)
-    payload = dict(locked.payload or {})
+    metadata = (locked.payload or {}).get("metadata") or {}
+    if locked.state not in _LIVE_STATES or metadata.get("validation_outcome"):
+        return False
+    _set_move(locked, move)
+    return True
+
+
+def _set_move(job: HostedHarnessJob, move: AgentMove | None) -> None:
+    payload = dict(job.payload or {})
     payload["metadata"] = {**(payload.get("metadata") or {}), "validation_move": move}
-    locked.payload = payload
-    locked.save(update_fields=["payload", "updated_at"])
+    job.payload = payload
+    job.save(update_fields=["payload", "updated_at"])
+
+
+def drop_waiting_moves(locked: HostedHarnessJob, agent_version_id: Any) -> None:
+    """A move to ``agent_version_id`` was asked for on the locked environment: every
+    move to another version still waiting on a validation never lands."""
+    from simulate.services.harness_agent_versions import _record_activation
+
+    waiting = HostedHarnessJob.no_workspace_objects.select_for_update().filter(
+        environment_id=locked.id,
+        state__in=_LIVE_STATES,
+        payload__metadata__certify_only=True,
+        payload__metadata__validation_move__isnull=False,
+    )
+    for job in waiting:
+        dropped = (job.payload.get("metadata") or {}).get("validation_move")
+        if not dropped or dropped["agent_version_id"] == str(agent_version_id):
+            continue
+        _set_move(job, None)
+        _record_activation(dropped["agent_version_id"], {str(locked.id): "superseded"})
+        logger.info(
+            "harness_pair_validation_move_dropped",
+            environment_id=str(locked.id),
+            job_id=str(job.id),
+            agent_version_id=dropped["agent_version_id"],
+            by_agent_version_id=str(agent_version_id),
+        )
 
 
 def _create_job(
@@ -413,21 +460,31 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
 def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) -> None:
     from simulate.services.harness_agent_versions import _record_activation
 
-    if outcome == "ready":
-        environment = HostedHarnessJob.no_workspace_objects.filter(
-            id=job.environment_id
-        ).first()
-        result = (
-            complete_move(
+    environment = HostedHarnessJob.no_workspace_objects.filter(
+        id=job.environment_id
+    ).first()
+    if environment is None:
+        result = "environment_gone"
+    elif outcome == "ready":
+        try:
+            result = complete_move(
                 environment,
                 move,
                 pair=(job.environment_version_id, job.suite_version_id),
             )
-            if environment is not None
-            else "environment_gone"
-        )
+        except Exception:  # noqa: BLE001 - recorded, as an activation's failure is
+            logger.exception(
+                "harness_pair_validation_move_failed",
+                environment_id=str(job.environment_id),
+                agent_version_id=move["agent_version_id"],
+            )
+            result = "failed"
+    elif outcome == "retry" and move.get("restarts", 0) < MOVE_RESTARTS:
+        result = _restart(environment, job, move)
     else:
         result = "pair_failed" if outcome == "failed" else "validation_retry"
+        if move["caller"] == "land":
+            _put_back_landing(environment, job, move)
     if result != "activated":
         # A move's own replayed steps record its activation.
         _record_activation(move["agent_version_id"], {str(job.environment_id): result})
@@ -440,6 +497,65 @@ def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) 
     )
 
 
+def _restart(
+    environment: HostedHarnessJob, job: HostedHarnessJob, move: AgentMove
+) -> str:
+    """Validate a move's pairing once more after an ending that was not a check."""
+    version = AgentVersion.no_workspace_objects.filter(
+        id=move["agent_version_id"]
+    ).first()
+    if version is None:
+        return "discarded"
+    again: AgentMove = {**move, "restarts": move.get("restarts", 0) + 1}
+    started = start_validation(
+        environment,
+        version,
+        job.environment_version,
+        job.suite_version,
+        purpose="agent_move",
+        move=again,
+    )
+    if started is None:
+        return "validation_retry"
+    if started.ready:
+        return complete_move(
+            environment, again, pair=(job.environment_version_id, job.suite_version_id)
+        )
+    return "validating"
+
+
+def _put_back_landing(
+    environment: HostedHarnessJob, job: HostedHarnessJob, move: AgentMove
+) -> None:
+    """A landing whose agent will not move: its environment version was built for that
+    agent, so the default environment version goes back to the one before it."""
+    from simulate.services.harness_versioning.versions import move_default
+
+    before = move.get("from_environment_version_id")
+    if not before:
+        return
+    try:
+        move_default(
+            environment,
+            "environment",
+            before,
+            expected_default_id=job.environment_version_id,
+        )
+    except HostedHarnessError as exc:
+        logger.info(
+            "harness_pair_validation_landing_kept",
+            environment_id=str(environment.id),
+            environment_version_id=str(job.environment_version_id),
+            reason=exc.code,
+        )
+        return
+    logger.info(
+        "harness_pair_validation_landing_put_back",
+        environment_id=str(environment.id),
+        environment_version_id=before,
+    )
+
+
 def complete_move(
     environment: HostedHarnessJob,
     move: AgentMove,
@@ -449,11 +565,17 @@ def complete_move(
     """Make the validated agent version the default, then replay its caller's steps.
 
     ``pair`` is the environment and suite versions validated with it. Re-checks what an
-    activation checks, and that the agent, environment and suite defaults are still the
-    ones validated. When they moved, one validation of
-    the same agent version against the new defaults starts. Returns the outcome.
+    activation checks. A default agent that moved meanwhile was a newer choice, which
+    stands: ``superseded``. When only the environment or suite default moved, one
+    validation of the same agent version against the new defaults starts. Returns the
+    outcome.
     """
-    from simulate.services.harness_agent_versions import _busy, hand_move
+    from simulate.services.harness_agent_versions import (
+        _busy,
+        _side_row,
+        _turned_down,
+        hand_move,
+    )
     from simulate.services.harness_versioning.versions import (
         lock_environment,
         move_agent,
@@ -473,20 +595,31 @@ def complete_move(
             return "discarded"
         if _busy(locked):
             return "environment_busy"
-        defaults = (
-            str(locked.agent_version_id) if locked.agent_version_id else None,
-            locked.environment_version_id,
-            locked.suite_version_id,
-        )
-        if defaults != (move["from_agent_version_id"], *pair):
+        current = str(locked.agent_version_id) if locked.agent_version_id else None
+        if current != move["from_agent_version_id"]:
+            return "superseded"
+        if move["caller"] == "activation" and not move["explicit"]:
+            runtime = _side_row(version.id)
+            reason = (
+                _turned_down(locked, version, runtime) if runtime is not None else None
+            )
+            if reason is not None:
+                return reason
+        if (locked.environment_version_id, locked.suite_version_id) != tuple(pair):
             return _revalidate(locked, version, move)
         outgoing = locked.agent_version_id
         hand = move["caller"] in ("hand", "no_change") or move["explicit"]
-        move_agent(
-            locked,
-            version,
-            moved=hand_move(_user(move["user_id"]), version.id) if hand else None,
-        )
+        try:
+            with transaction.atomic():
+                move_agent(
+                    locked,
+                    version,
+                    moved=(
+                        hand_move(_user(move["user_id"]), version.id) if hand else None
+                    ),
+                )
+        except HostedHarnessError as exc:
+            return exc.code
         _replay_after_move(locked, version, move, outgoing=outgoing)
     return "activated"
 
@@ -494,16 +627,11 @@ def complete_move(
 def _revalidate(
     locked: HostedHarnessJob, version: AgentVersion, move: AgentMove
 ) -> str:
-    """The defaults moved while validating: validate once more against the new ones."""
+    """The environment or suite default moved while validating: validate once more
+    against the new ones."""
     if move["revalidated"]:
         return "superseded"
-    again: AgentMove = {
-        **move,
-        "from_agent_version_id": (
-            str(locked.agent_version_id) if locked.agent_version_id else None
-        ),
-        "revalidated": True,
-    }
+    again: AgentMove = {**move, "revalidated": True}
     validation = start_validation(
         locked,
         version,
@@ -560,6 +688,16 @@ def _user(user_id: str | None) -> Any:
     return get_user_model().objects.filter(id=user_id).first()
 
 
+def failed_check(bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether a validation failed the pairing: runs of it are refused until it is
+    checked again."""
+    return (
+        bundle is not None
+        and bundle.state == HarnessAssembledBundle.State.FAILED
+        and (bundle.error or {}).get("source") == FAILURE_SOURCE
+    )
+
+
 def require_pair_runnable(
     environment: HostedHarnessJob, resolved: ResolvedPins
 ) -> None:
@@ -583,10 +721,7 @@ def require_pair_runnable(
             "These versions are being checked together; run them when the check ends",
             status_code=409,
         )
-    if (
-        bundle.state == HarnessAssembledBundle.State.FAILED
-        and (bundle.error or {}).get("source") == FAILURE_SOURCE
-    ):
+    if failed_check(bundle):
         raise HostedHarnessError(
             "pair_failed",
             "These versions failed their check together; fix them and check again",

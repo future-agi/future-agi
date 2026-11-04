@@ -1709,6 +1709,7 @@ def _activate_on(
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
         agent_move,
+        drop_waiting_moves,
         start_validation,
     )
     from simulate.services.harness_versioning.versions import move_agent
@@ -1726,6 +1727,7 @@ def _activate_on(
             if explicit:
                 # Asked for again by hand: an earlier request never replaces it.
                 record_hand_move(locked, user, version.id)
+                drop_waiting_moves(locked, version.id)
             return "already_default"
         # Locked, so a discard waits until this move is visible to its in-use check.
         runtime = _side_row(version.id, lock=True)
