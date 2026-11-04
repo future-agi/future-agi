@@ -67364,15 +67364,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessJobRead: {
-      required: [
-        "job",
-        "status",
-        "events",
-        "stage_outputs",
-        "scenarios",
-        "receipts",
-        "platform",
-      ],
+      required: ["job", "status", "receipts", "platform"],
       type: "object",
       properties: {
         job: {
@@ -100645,7 +100637,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "job_id",
         "run_id",
-        "source",
         "metadata",
         "run_test_id",
         "test_execution_id",

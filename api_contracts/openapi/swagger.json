@@ -133177,7 +133177,6 @@
             "required": [
                 "job_id",
                 "run_id",
-                "source",
                 "metadata",
                 "run_test_id",
                 "test_execution_id"
@@ -133833,9 +133832,6 @@
             "required": [
                 "job",
                 "status",
-                "events",
-                "stage_outputs",
-                "scenarios",
                 "receipts",
                 "platform"
             ],

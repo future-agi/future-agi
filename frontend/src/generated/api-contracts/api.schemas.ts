@@ -19411,7 +19411,7 @@ export type HarnessJobInfoApiRuntime = { [key: string]: string };
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
-  source: HarnessJobInfoApiSource;
+  source?: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
   runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
@@ -19626,9 +19626,9 @@ export interface HarnessVersioningFlagsApi {
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
-  events: HarnessJobEventApi[];
-  stage_outputs: HarnessStageOutputApi[];
-  scenarios: HarnessScenarioApi[];
+  events?: HarnessJobEventApi[];
+  stage_outputs?: HarnessStageOutputApi[];
+  scenarios?: HarnessScenarioApi[];
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
