@@ -96,6 +96,7 @@ const TAB_TO_ROUTE = {
   sessions: { route: "sessions", params: {} },
   users: { route: "users", params: {} },
   query: { route: "query", params: {} },
+  insights: { route: "insights", params: {} },
 };
 
 const ObservePage = React.memo(() => {
@@ -149,6 +150,8 @@ const ObservePage = React.memo(() => {
       setActiveTab("sessions");
     } else if (currentRouteSegment === "users") {
       setActiveTab("users");
+    } else if (currentRouteSegment === "insights") {
+      setActiveTab("insights");
     } else if (currentRouteSegment === "llm-tracing") {
       const selectedTab = params.get("selectedTab");
       if (selectedTab === "spans") {
@@ -391,6 +394,8 @@ const ObservePage = React.memo(() => {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           projectSource={projectDetail?.source}
+          // The Ask page (Instant eval) has no list config to save as a view.
+          canSaveView={currentRouteSegment !== "ask"}
         />
       </Paper>
 

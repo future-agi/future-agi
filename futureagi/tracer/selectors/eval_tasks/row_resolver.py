@@ -551,6 +551,66 @@ def iter_desired_rows(
     yield from _iter_id_batches(list(resolved.matched_ids), batch_size=batch_size)
 
 
+# Filter keys that may accompany an explicit id list; anything else means the
+# task is a real filter query and takes the bounded proof below. A
+# date_range is not one: this read doesn't apply it, so a task with ids and a
+# range keeps the bounded proof, which does.
+_EXPLICIT_ID_COMPANIONS = frozenset({"project_id"})
+
+
+def _explicit_id_rows(
+    task: EvalTask, *, limit: int | None, sampling_rate: float
+) -> ResolvedRowSet | None:
+    """Rows of a historical task that names its sessions or traces outright
+    (Instant eval asks about exactly the rows a person picked) or spans. One ClickHouse
+    read confirms the ids belong to the project; the time-sliced bounded proof,
+    which exists to page through filter matches, would only add latency here
+    and its 30-day default window would drop older rows the person chose."""
+    if task.run_type != RunType.HISTORICAL or sampling_rate < 100:
+        return None
+    filters = task.filters or {}
+    key = {
+        RowType.SESSIONS: "session_id",
+        RowType.TRACES: "trace_id",
+        RowType.SPANS: "span_id",
+    }.get(task.row_type)
+    if key is None:
+        return None
+    raw = filters.get(key)
+    if not isinstance(raw, list | tuple) or not raw:
+        return None
+    others = {k for k, v in filters.items() if v not in (None, "", [], {})} - {key}
+    if others - _EXPLICIT_ID_COMPANIONS:
+        return None
+    wanted = list(dict.fromkeys(str(v) for v in raw if v not in (None, "")))
+    project_id = str(task.project_id)
+    with get_reader() as reader:
+        if task.row_type == RowType.SESSIONS:
+            # Only these sessions (and their remap groups) are read, never the
+            # project's spans; each comes back under the id it was asked by.
+            present = {
+                str(root.trace_session_id)
+                for root in reader.roots_by_session_ids(wanted, project_id=project_id)
+            }
+        elif task.row_type == RowType.TRACES:
+            present = set(
+                reader.root_ids_by_trace_ids(wanted, project_ids=[project_id])
+            )
+        else:
+            present = {
+                str(row["id"])
+                for row in reader.list_by_ids(
+                    wanted, include_heavy=False, project_id=project_id, columns=["id"]
+                )
+            }
+    ids = tuple(i for i in wanted if i in present)
+    # The limit counts rows that exist: cutting before the presence check
+    # returned fewer than `limit` when some ids were gone.
+    if limit:
+        ids = ids[: int(limit)]
+    return ResolvedRowSet(ids, ids, True)
+
+
 def resolve_desired_rows(
     task: EvalTask, *, ceiling: datetime | None = None
 ) -> ResolvedRowSet:
@@ -567,6 +627,14 @@ def resolve_desired_rows(
             sampling_rate=float(sampling_rate),
         )
 
+    # An Instant eval run picked its rows (a hash-ordered sample of a view, or
+    # rows handed over) and stored them with their facets; it reads those.
+    from tracer.services.instant_eval_rows import resolve_instant_rows
+
+    instant = resolve_instant_rows(task)
+    if instant is not None:
+        return ResolvedRowSet(instant, instant, True)
+
     # A strict datetime complement can make the requested interval provably
     # empty (for example ``is_null`` on non-nullable start_time). Preserve the
     # compatibility SQL for non-empty requests, but do zero CH reads when the
@@ -580,6 +648,10 @@ def resolve_desired_rows(
         historical_ui_filters, strict=True
     ).empty:
         return ResolvedRowSet((), (), True)
+
+    explicit = _explicit_id_rows(task, limit=limit, sampling_rate=float(sampling_rate))
+    if explicit is not None:
+        return explicit
 
     if (
         task.row_type
