@@ -1671,6 +1671,15 @@ def land_nudge_result(
         )
         setattr(nudge, f"result_{nudge.target}_version", version)
         nudge.save(update_fields=[f"result_{nudge.target}_version", "updated_at"])
+        if nudge.target == Target.ENVIRONMENT:
+            from simulate.services.agent_contracts import (
+                store_environment_version_contract,
+            )
+
+            # The agent version the world was rebuilt for keeps its contract.
+            transaction.on_commit(
+                partial(store_environment_version_contract, version.id)
+            )
     logger.info("harness_nudge_landed nudge=%s version=%s", nudge.id, version.id)
     return nudge
 

@@ -1,5 +1,6 @@
 import io
 import json
+import tarfile
 import uuid
 from typing import Any
 from uuid import UUID
@@ -16,6 +17,7 @@ from tfc.utils.storage_client import ensure_bucket, get_storage_client
 logger = structlog.get_logger(__name__)
 
 _STORAGE_ERRORS = (S3Error, HTTPError)
+_CONTRACT_MAX_BYTES = 5 * 1_048_576
 
 
 def contract_object_key(
@@ -165,6 +167,55 @@ def store_build_contract(
             "agent_contract_not_stored",
             job_id=str(job.id),
             agent_version_id=str(agent_version_id),
+            exc_info=True,
+        )
+        return False
+
+
+def store_environment_version_contract(environment_version_id: UUID) -> bool:
+    """Keep the contract a rebuilt environment version carries on the agent version
+    it was built for, so a version made outside a build (a provider Sync, a prompt
+    edit) gets the contract its first build wrote. Written once, like any other."""
+    from simulate.models import HarnessEnvironmentVersion
+    from simulate.services.harness_versioning.archives import (
+        get_archive,
+        read_members,
+    )
+
+    environment_version = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(id=environment_version_id)
+        .values("organization_id", "agent_version_id", "archive_object_key")
+        .first()
+    )
+    if (
+        environment_version is None
+        or not environment_version["agent_version_id"]
+        or not environment_version["archive_object_key"]
+    ):
+        return False
+    try:
+        body = get_archive(environment_version["archive_object_key"])
+        members = read_members(body, {"contract.json"}, _CONTRACT_MAX_BYTES)
+        contract = json.loads(members["contract.json"])
+    except (*_STORAGE_ERRORS, tarfile.TarError, KeyError, ValueError) as error:
+        logger.warning(
+            "environment_contract_unreadable",
+            environment_version_id=str(environment_version_id),
+            error=type(error).__name__,
+        )
+        return False
+    if not isinstance(contract, dict):
+        return False
+    try:
+        return store_version_contract(
+            organization_id=environment_version["organization_id"],
+            agent_version_id=environment_version["agent_version_id"],
+            contract=contract,
+        )
+    except DatabaseError:
+        logger.warning(
+            "agent_contract_not_stored",
+            environment_version_id=str(environment_version_id),
             exc_info=True,
         )
         return False
