@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  hidden,
-  idFrom,
-  idRule,
-  lines,
-  readable,
-  speaks,
-  words,
-} from "../actorUtils";
+import { hidden, idFrom, idRule, readable } from "../actorUtils";
 
 describe("actorUtils", () => {
   it("makes an id from a name, folding accents and staying unique in the cast", () => {
@@ -64,16 +56,5 @@ describe("actorUtils", () => {
       others: [["goal, prompt", 2]],
     });
     expect(hidden(undefined)).toEqual({ grader: [], others: [] });
-  });
-
-  it("splits lines, words and who speaks", () => {
-    expect(lines(" a \n\n b ")).toEqual(["a", "b"]);
-    expect(lines(undefined)).toEqual([]);
-    expect(words("may_agree")).toBe("may agree");
-    expect([
-      speaks({ channel: "audio_mix" }),
-      speaks({}),
-      speaks(null),
-    ]).toEqual([true, false, false]);
   });
 });

@@ -60,6 +60,8 @@ export default function WorldActorsPanel({
     edit.mutate({ op: "delete", actorId: actor.id, revision });
   };
   const actionIds = context.actions.map((one) => one.action);
+  // A new person on the caller's side starts on the first channel the rules list.
+  const firstChannel = Object.keys(context.channels)[0];
   const rows = (group) =>
     group.map((actor) => (
       <ActorRow
@@ -108,9 +110,9 @@ export default function WorldActorsPanel({
             title={C.callerSide}
             about={C.callerSideAbout}
             empty={C.callerSideEmpty}
-            locked={locked}
+            locked={locked || !firstChannel}
             addLabel={C.addCallerSide}
-            onAdd={() => setEditing({ channel: "audio_mix" })}
+            onAdd={() => setEditing({ channel: firstChannel })}
           >
             {rows(caller)}
           </Group>

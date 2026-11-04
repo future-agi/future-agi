@@ -124,10 +124,8 @@ export default function ActorForm({
   const rule = idRule(context.records);
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
   const nameMissing = !value("name", actor?.name || "").trim();
-  // The channels with a loudness, and the range a call draws from when none is set, as the rules give them.
-  const loud = (one) =>
-    (context.loudness.channels || []).includes(one) &&
-    context.loudness.automatic?.length === 2;
+  // The channels with a loudness, as the rules give them.
+  const loud = (one) => (context.loudness.channels || []).includes(one);
   const save = () => {
     const base = {
       ...actor,
@@ -337,7 +335,7 @@ export default function ActorForm({
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                 {F.voiceHelp}
               </Typography>
-              {loud(channel) && (
+              {loud(channel) && context.loudness.automatic && (
                 <Loudness
                   value={value("loudness_ratio", actor.loudness_ratio ?? null)}
                   automatic={context.loudness.automatic}
