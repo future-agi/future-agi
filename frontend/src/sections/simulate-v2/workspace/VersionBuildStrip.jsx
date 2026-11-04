@@ -1,11 +1,16 @@
 import PropTypes from "prop-types";
-import { createElement, useEffect, useRef, useState } from "react";
+import { Fragment, createElement, useEffect, useRef, useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import BuildStreamNote from "../environments/BuildStreamNote";
-import { versionBuildProgress } from "../_mock/versionBuild";
+import {
+  stepLabel,
+  versionBuildProgress,
+  versionNewsOf,
+} from "../_mock/versionBuild";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import useVersionChange from "./useVersionChange";
 
 /*
   A new environment version building after approved changes: what it's doing,
@@ -30,25 +35,38 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
   useEffect(() => {
     if (!build || !prog?.done || finished.current === build.at) return;
     finished.current = build.at;
-    patch?.({ versionBuild: null });
+    /* What changed keeps a "New in vN" label until its tab is looked at. */
+    patch?.({ versionBuild: null, versionNews: versionNewsOf(build) });
     enqueueSnackbar(`Environment ${label} is ready`, {
       variant: "success",
       autoHideDuration: 8000,
-      ...(build.scenarios > 0 && {
-        action: (snack) =>
+      action: (snack) => {
+        const btn = (text, tab) =>
           createElement(
             Button,
             {
+              key: tab,
               size: "small",
               color: "inherit",
               onClick: () => {
                 closeSnackbar(snack);
-                onGo?.("scenarios");
+                onGo?.(tab);
               },
             },
-            `Review ${build.scenarios} scenario${build.scenarios === 1 ? "" : "s"}`,
-          ),
-      }),
+            text,
+          );
+        /* What changed between the versions is on History. */
+        return createElement(
+          Fragment,
+          null,
+          build.scenarios > 0 &&
+            btn(
+              `Review ${build.scenarios} scenario${build.scenarios === 1 ? "" : "s"}`,
+              "scenarios",
+            ),
+          btn("See what changed", "history"),
+        );
+      },
     });
   }, [build, prog?.done, label, patch, enqueueSnackbar, closeSnackbar, onGo]);
 
@@ -78,7 +96,8 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
           </Typography>
         </Stack>
         <Stack spacing={0.5} sx={{ mt: 1, pl: 0.5 }}>
-          {build.steps.map((s, i) => {
+          {build.steps.map((step, i) => {
+            const s = stepLabel(step);
             const state =
               i < prog.step ? "done" : i === prog.step ? "now" : "next";
             return (
@@ -123,4 +142,34 @@ VersionBuildStrip.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func,
   onGo: PropTypes.func,
+};
+
+/* The one line a tab shows while a new version writes its part — the
+   first build's note, for the part that's new. */
+const NOTE_WORDS = {
+  scenarios: [
+    "Scenarios from your files are written next",
+    "Writing and checking scenarios from your files",
+  ],
+};
+export function VersionChangeNote({ env, envState, kind }) {
+  const { live } = useVersionChange(envState, kind);
+  if (!live) return null;
+  const [next, now] = NOTE_WORDS[kind];
+  const label = envLabelOf(env, envState, live.label);
+  return (
+    <Box sx={{ px: 2, pt: 2 }}>
+      <BuildStreamNote
+        waiting={live.state === "next"}
+        label={`${live.state === "next" ? next : now} — ${label}`}
+        {...(live.state !== "next" && { count: live.shown, total: live.total })}
+        sx={{ mb: 0 }}
+      />
+    </Box>
+  );
+}
+VersionChangeNote.propTypes = {
+  env: PropTypes.object.isRequired,
+  envState: PropTypes.object.isRequired,
+  kind: PropTypes.oneOf(["scenarios"]).isRequired,
 };

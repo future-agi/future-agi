@@ -162,6 +162,7 @@ import { clickable, focusRing } from "../components/clickable";
 import TraceReviewDrawer from "./scenarios/TraceReviewDrawer";
 import { contractUseCasesOf } from "../_mock/rlContract";
 import { sendToBuilder } from "../_mock/builderPromptBus";
+import useVersionChange from "./useVersionChange";
 
 /**
  * Scenarios.
@@ -360,6 +361,11 @@ export default function ScenariosStep({
     () => envState?.scenarios || [],
     [envState?.scenarios],
   );
+  /* A new version writing scenarios from a file: rows appear as they're
+     written (display only — the stored list is untouched). */
+  const scenarioChange = useVersionChange(envState, "scenarios");
+  const liveScn = scenarioChange.live;
+  const pendingScn = liveScn ? new Set(liveScn.ids.slice(liveScn.shown)) : null;
 
   /* What each row is checked against: the pinned environment version and
      the tools its world answers. One status per row, read by the chips and
@@ -678,6 +684,7 @@ export default function ScenariosStep({
   );
 
   const shown = selected.filter((r) => {
+    if (pendingScn?.has(r.id)) return false;
     if (!matchesFilters(r)) return false;
     if (!q) return true;
     const hay =

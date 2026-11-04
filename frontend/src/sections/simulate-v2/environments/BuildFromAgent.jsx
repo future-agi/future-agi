@@ -20,7 +20,7 @@ import {
   Chip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useSnackbar } from "notistack";
+import { enqueueSnackbar, useSnackbar } from "notistack";
 import { buildCreditsCheck } from "../_mock/metering";
 import useCreditBalance from "../usage/useCreditBalance";
 import { paths } from "src/routes/paths";
@@ -75,6 +75,12 @@ import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import AgentReadReceipt from "./AgentReadReceipt";
 import DesignReview from "./DesignReview";
+import {
+  addDesignFilesPatch,
+  addDesignOrgPatch,
+  designSourcesPatch,
+  designSourcesSummary,
+} from "../_mock/designSources";
 import { getBuilderMode, subscribeBuilderMode } from "../_mock/builderModeBus";
 
 import { clickable, focusRing } from "../components/clickable";
@@ -593,11 +599,53 @@ export default function BuildFromAgent() {
       trials,
     );
 
-  const onSend = (text) => {
+  /* Files for the design (plan: attach a policy and optional CSV before the
+     build). Added while it waits for approval; after that they make the
+     next version, from World & tools → Sources. */
+  const addDesignFiles = (files) => {
+    if (!files?.length || !envPatch) return;
+    envPatch(addDesignFilesPatch(envState, files));
+  };
+  const addDesignOrg = (o) => {
+    const p = envPatch ? addDesignOrgPatch(envState, o) : null;
+    if (p) envPatch(p);
+    else
+      enqueueSnackbar(
+        `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+        { variant: "info" },
+      );
+  };
+  const onSend = (text, files = []) => {
     setTurns((prev) => [
       ...prev,
-      { id: `u-${Date.now()}`, role: "user", text },
+      {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: text || files.map((f) => f.name).join(", "),
+      },
     ]);
+    /* Never drop a file: while the design waits it joins the design; once
+       the build is running, it says where to add it instead. */
+    if (files.length) {
+      const toDesign = !!awaitApproval && !!envPatch;
+      if (toDesign) addDesignFiles(files);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [
+            {
+              kind: "note",
+              text: toDesign
+                ? `Added ${files.map((f) => f.name).join(", ")} to the design — Review design above shows what ${files.length === 1 ? "it adds" : "they add"}. Nothing is built until you approve.`
+                : `${files.map((f) => f.name).join(", ")} ${files.length === 1 ? "wasn't" : "weren't"} added: the build is already running. Add ${files.length === 1 ? "it" : "them"} from World & tools → Sources once it's ready — that makes the next version.`,
+            },
+          ],
+        },
+      ]);
+      if (!text) return;
+    }
     /* Recognise "add N scenarios" here too, while the environment is still
        being built. Mirrors the intent detect in EnvironmentWorkspace.sendChat. */
     const intent = detectAddScenariosIntent(text);
@@ -1444,7 +1492,19 @@ export default function BuildFromAgent() {
                     parked,
                     since: awaitApproval?.at,
                     autoMode,
+                    sources:
+                      awaitApproval && env
+                        ? designSourcesSummary(env, envState)
+                        : null,
+                    onAddFiles:
+                      awaitApproval && envPatch ? addDesignFiles : null,
+                    onAddOrg: awaitApproval && envPatch ? addDesignOrg : null,
                     onApprove: () => {
+                      /* Files added to the design join this first build. */
+                      const fromFiles = env
+                        ? designSourcesPatch(env, envState)
+                        : null;
+                      if (fromFiles && envPatch) envPatch(fromFiles);
                       setAwaitApproval(null);
                       runStage("build");
                     },

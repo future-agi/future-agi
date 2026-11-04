@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import AddSourceMenu from "../workspace/data/AddSourceMenu";
 
 /*
   Builder → Review design (builder.md). The proposal — world, data, tools,
@@ -19,14 +21,56 @@ export default function DesignReview({
   onApprove,
   onContinue,
   framed = false,
+  sources = null,
+  onAddFiles,
+  onAddOrg,
 }) {
+  const [anchor, setAnchor] = useState(null);
+  /* Files before the build (plan: "Attach a policy and optional CSV"):
+     they shape this design and join the first version. */
+  const canAdd = !!(onAddFiles && onAddOrg);
+  const files = sources?.sources || [];
+  const sourcesValue = (
+    <>
+      {files.length
+        ? `${files.map((f) => f.name).join(", ")} · adds ${
+            [
+              sources.rules &&
+                `${sources.rules} rule${sources.rules === 1 ? "" : "s"}`,
+              sources.records &&
+                `${sources.records.toLocaleString()} seeded records`,
+            ]
+              .filter(Boolean)
+              .join(" and ") || "reference material"
+          }${sources.needsInput ? ` · ${sources.needsInput} to answer after the build` : ""}`
+        : "None — the world is built from the agent alone."}
+      {canAdd && (
+        <ButtonBase
+          onClick={(e) => setAnchor(e.currentTarget)}
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            textDecoration: "underline",
+            ml: 1,
+            verticalAlign: "baseline",
+          }}
+        >
+          {files.length ? "Add another" : "Add a policy or records"}
+        </ButtonBase>
+      )}
+    </>
+  );
   const rows = [
+    ...(canAdd || files.length ? [["Sources", sourcesValue]] : []),
     [
       "World",
       `${(env?.seed?.tables || []).length} tables · ${(env?.seed?.tables || []).reduce((n, t) => n + (t.rows || 0), 0).toLocaleString()} seeded rows`,
     ],
     ["Tools", `${(env?.tools || []).length} the world answers`],
-    ["Rules", `${(env?.rules || []).length} graded on every run`],
+    [
+      "Rules",
+      `${(env?.rules || []).length} graded on every run${sources?.rules ? `, plus ${sources.rules} from your files` : ""}`,
+    ],
     [
       "People",
       `${(env?.actors || []).length || "No"} simulated ${(env?.actors || []).length === 1 ? "person" : "people"} besides the caller`,
@@ -58,6 +102,9 @@ export default function DesignReview({
             autoMode={autoMode}
             onApprove={onApprove}
             onContinue={onContinue}
+            sources={sources}
+            onAddFiles={onAddFiles}
+            onAddOrg={onAddOrg}
           />
         </Box>
       </Box>
@@ -145,6 +192,18 @@ export default function DesignReview({
             ? "Auto mode: approved steps run without stopping. It never approves a design for you."
             : "Manual: each approved step waits for you to start it."}
         </Typography>
+        {canAdd && (
+          <AddSourceMenu
+            anchorEl={anchor}
+            onClose={() => setAnchor(null)}
+            onAddFiles={(f) => onAddFiles(f)}
+            onAddOrg={(o) => {
+              setAnchor(null);
+              onAddOrg(o);
+            }}
+            added={files.filter((f) => f.kb).map((f) => f.name)}
+          />
+        )}
         {parked ? (
           <Button
             size="small"
@@ -183,4 +242,7 @@ DesignReview.propTypes = {
   onApprove: PropTypes.func,
   onContinue: PropTypes.func,
   framed: PropTypes.bool,
+  sources: PropTypes.object,
+  onAddFiles: PropTypes.func,
+  onAddOrg: PropTypes.func,
 };

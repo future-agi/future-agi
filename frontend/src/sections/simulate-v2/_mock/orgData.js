@@ -780,7 +780,7 @@ export const acceptDataPatch = (
   envState,
   proposal,
   picked,
-  { conflictPick, scenarioRows, edits = {}, cast = [] } = {},
+  { conflictPick, scenarioRows, edits = {}, cast = [], inVersion = null } = {},
 ) => {
   const now = new Date().toISOString();
   const take = proposal.items.filter(
@@ -802,23 +802,32 @@ export const acceptDataPatch = (
     ...take.filter((i) => i.kind === "rule").map((i) => edits[i.id] ?? i.rule),
     ...(chosen ? [chosen.rule] : []),
   ];
+  /* The file each rule was read from, in the same order. */
+  const ruleSources = [
+    ...take.filter((i) => i.kind === "rule").map((i) => i.cite?.sourceId),
+    ...(chosen ? [chosen.sourceId] : []),
+  ];
   const tables = take.filter((i) => i.kind === "table");
   const actorItems = take.filter((i) => i.kind === "actor");
   const toolItems = take.filter((i) => i.kind === "tool");
   const stateItem = take.find((i) => i.kind === "state");
-  const minted = nextEnvVersion(env, envState, {
-    changed: [
-      rules.length && "rules",
-      (tables.length || stateItem) && "seed",
-      actorItems.length && "actors",
-      toolItems.length && "toolbehaviour",
-    ].filter(Boolean),
-    note: `From ${[...usedSources]
-      .map((id) => (envState.sources || []).find((s) => s.id === id)?.name)
-      .filter(Boolean)
-      .join(", ")}`,
-    now,
-  });
+  /* Files added before the first build join that build's version; files
+     added later make the next version. */
+  const minted = inVersion
+    ? { label: inVersion }
+    : nextEnvVersion(env, envState, {
+        changed: [
+          rules.length && "rules",
+          (tables.length || stateItem) && "seed",
+          actorItems.length && "actors",
+          toolItems.length && "toolbehaviour",
+        ].filter(Boolean),
+        note: `From ${[...usedSources]
+          .map((id) => (envState.sources || []).find((s) => s.id === id)?.name)
+          .filter(Boolean)
+          .join(", ")}`,
+        now,
+      });
   const snapshot = `data-${minted.label}`;
   const ruleChanges = rules.map((text, n) => ({
     id: nextRuleNumber(env, envState, n),
@@ -828,6 +837,9 @@ export const acceptDataPatch = (
     at: now,
     scenarios: [],
     fromSource: true,
+    sourceName:
+      (envState?.sources || []).find((s) => s.id === ruleSources[n])?.name ||
+      null,
   }));
   const newScenarios = scenarioRows
     ? scenarioRows(take.filter((i) => i.kind === "scenario"))
@@ -835,19 +847,24 @@ export const acceptDataPatch = (
   const nameOf = (id) =>
     (envState?.sources || []).find((s) => s.id === id)?.name;
   return {
-    envVersions: [...list, minted],
-    activeEnvVersion: minted.label,
-    /* The new version builds before it's ready; runs wait for it. */
-    versionBuild: versionBuildOf({
-      label: minted.label,
-      from: envState?.activeEnvVersion || list[list.length - 1]?.label || null,
-      rules: rules.length,
-      tables: [
-        ...new Set(tables.map((i) => nameOf(i.cite?.sourceId)).filter(Boolean)),
-      ],
-      scenarios: newScenarios.length,
+    ...(!inVersion && {
+      envVersions: [...list, minted],
+      activeEnvVersion: minted.label,
+      unsavedEnvChanges: [],
+      /* The new version builds before it's ready; runs wait for it. */
+      versionBuild: versionBuildOf({
+        label: minted.label,
+        from:
+          envState?.activeEnvVersion || list[list.length - 1]?.label || null,
+        rules: ruleChanges.map((r) => r.id),
+        tables: tables.map((i) => ({
+          name: i.table.name,
+          rows: i.table.rows,
+          source: nameOf(i.cite?.sourceId),
+        })),
+        scenarios: newScenarios.map((r) => r.id),
+      }),
     }),
-    unsavedEnvChanges: [],
     ruleChanges: [...(envState?.ruleChanges || []), ...ruleChanges],
     dataImports: [
       ...(envState?.dataImports || []),

@@ -54,6 +54,7 @@ import { useSimStore } from "../store";
 import { clickable, focusRing } from "../components/clickable";
 import ToolTryPanel from "./ToolTryPanel";
 import CopyCommandButton from "../components/CopyCommandButton";
+import useVersionChange from "./useVersionChange";
 
 /**
  * World internals on the World tab.
@@ -75,6 +76,8 @@ export default function WorldInternalsSection({
   onMcp,
 }) {
   const schema = schemaFor(env, envState);
+  /* A new version seeding tables from a file: those rows count up. */
+  const tableChange = useVersionChange(envState, "tables");
   /* The world being edited: the pinned version, plus tools added or removed since. */
   const tools = worldToolsFor(env, envState);
   const { dispatch } = useSimStore();
@@ -113,7 +116,11 @@ export default function WorldInternalsSection({
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
       {schema.length > 0 && (
-        <SchemaCard schema={schema} totalRows={totalRows} />
+        <SchemaCard
+          schema={schema}
+          totalRows={totalRows}
+          change={tableChange}
+        />
       )}
       {agentServers.map(({ server, tools: missing }) => (
         <AgentMcpNotice
@@ -187,8 +194,10 @@ WorldInternalsSection.propTypes = {
 
 /* ── DB schema ────────────────────────────────────────────────────────── */
 
-function SchemaCard({ schema, totalRows }) {
+function SchemaCard({ schema, totalRows, change = null }) {
   const [openTable, setOpenTable] = useState(null);
+  const live = change?.live;
+  const fresh = change?.fresh;
   return (
     <SectionCard
       title="World state · database schema"
@@ -253,6 +262,9 @@ function SchemaCard({ schema, totalRows }) {
                 >
                   {t.name}
                 </Typography>
+                {fresh?.ids.includes(t.name) && (
+                  <QuietChip>{`New in ${fresh.label}`}</QuietChip>
+                )}
                 <Typography
                   sx={{
                     typography: "s3",
@@ -267,12 +279,18 @@ function SchemaCard({ schema, totalRows }) {
                 <Typography
                   sx={{
                     typography: "s3",
-                    color: "text.tertiary",
+                    color: live?.ids.includes(t.name)
+                      ? "text.primary"
+                      : "text.tertiary",
                     fontVariantNumeric: "tabular-nums",
                     flexShrink: 0,
                   }}
                 >
-                  {(t.rows || 0).toLocaleString()} rows
+                  {live?.ids.includes(t.name)
+                    ? live.state === "next"
+                      ? `Seeds in ${live.label}`
+                      : `Seeding · ${live.rowsOf(t.name).toLocaleString()} of ${(t.rows || 0).toLocaleString()} rows`
+                    : `${(t.rows || 0).toLocaleString()} rows`}
                 </Typography>
               </Stack>
               <Collapse in={open}>
@@ -306,7 +324,11 @@ function SchemaCard({ schema, totalRows }) {
     </SectionCard>
   );
 }
-SchemaCard.propTypes = { schema: PropTypes.array, totalRows: PropTypes.number };
+SchemaCard.propTypes = {
+  schema: PropTypes.array,
+  totalRows: PropTypes.number,
+  change: PropTypes.object,
+};
 
 function SchemaColumnRow({ col }) {
   return (

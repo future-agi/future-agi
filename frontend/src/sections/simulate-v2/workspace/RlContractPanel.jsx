@@ -27,6 +27,7 @@ import { environmentVersions } from "../_mock/versions";
 import { ruleCoverageOf } from "../_mock/subGoalCatalog";
 import { firstSnapshotOfWorld, nextSnapshotLabel } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
+import useVersionChange from "./useVersionChange";
 import ToolArgsGrid from "./ToolArgsGrid";
 import { goalLabel } from "../_mock/scenarios";
 import ClosableDialog from "../components/ClosableDialog";
@@ -100,9 +101,17 @@ export default function RlContractPanel({
   const shownTools = inBuild
     ? tools.slice(0, buildProgress?.tools || 0)
     : tools;
+  /* A new version adding rules from a file: they appear one by one. */
+  const ruleChange = useVersionChange(envState, "rules");
+  const liveRules = ruleChange.live;
+  const pendingRules = liveRules
+    ? new Set(liveRules.ids.slice(liveRules.shown))
+    : null;
   const shownRules = inBuild
     ? rules.slice(0, buildProgress?.rules || 0)
-    : rules;
+    : pendingRules
+      ? rules.filter((r) => !pendingRules.has(r.id))
+      : rules;
   /* The limits only — each tool's full arguments are on World → Tools. */
   const limits = shownTools.flatMap((t) =>
     t.args.filter(isArgLimit).map((a) => ({ ...a, tool: t.name })),
@@ -126,6 +135,21 @@ export default function RlContractPanel({
             total={rules.length}
           />
         ))}
+
+      {liveRules && (
+        <BuildStreamNote
+          waiting={liveRules.state === "next"}
+          label={
+            liveRules.state === "next"
+              ? `Rules from your files are added next, in ${liveRules.label}`
+              : `Adding rules from your files to ${liveRules.label}`
+          }
+          {...(liveRules.state !== "next" && {
+            count: liveRules.shown,
+            total: liveRules.total,
+          })}
+        />
+      )}
 
       {/* ── rules — stable ids, and what tests each ───────────────────── */}
       {(!inBuild || shownRules.length > 0) && (
@@ -160,6 +184,11 @@ export default function RlContractPanel({
               >
                 <RuleRow
                   rule={r}
+                  newIn={
+                    ruleChange.fresh?.ids.includes(r.id)
+                      ? ruleChange.fresh.label
+                      : null
+                  }
                   changedIn={worldShown(r.changedIn)}
                   coverage={coverage.get(r.id)}
                   onGo={onGo}
@@ -476,7 +505,15 @@ RlContractPanel.propTypes = {
   rests on it. A rule nothing tests says so quietly — it is a gap in the
   suite, not an error in the contract.
 */
-function RuleRow({ rule, changedIn, coverage, onGo, onEdit, onRemove }) {
+function RuleRow({
+  rule,
+  changedIn,
+  coverage,
+  onGo,
+  onEdit,
+  onRemove,
+  newIn = null,
+}) {
   const goals = coverage?.subGoals.length || 0;
   const scenarios = coverage?.scenarios.length || 0;
   return (
@@ -504,11 +541,40 @@ function RuleRow({ rule, changedIn, coverage, onGo, onEdit, onRemove }) {
       <Box minWidth={0}>
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {rule.text}
+          {newIn && (
+            <Box
+              component="span"
+              sx={{
+                typography: "s3",
+                fontWeight: 500,
+                color: "text.secondary",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                px: 0.625,
+                ml: 1,
+                verticalAlign: "1px",
+              }}
+            >
+              {`New in ${newIn}`}
+            </Box>
+          )}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          From the agent&apos;s prompt
-          {changedIn && (
-            <> · changed in environment {changedIn} · spec change</>
+          {rule.source === "file" ? (
+            <>
+              From {rule.sourceName || "your files"}
+              {changedIn && <> · added in environment {changedIn}</>}
+            </>
+          ) : rule.source === "added" ? (
+            <>Added in environment {changedIn}</>
+          ) : (
+            <>
+              From the agent&apos;s prompt
+              {changedIn && (
+                <> · changed in environment {changedIn} · spec change</>
+              )}
+            </>
           )}
         </Typography>
       </Box>
@@ -563,6 +629,7 @@ function RuleRow({ rule, changedIn, coverage, onGo, onEdit, onRemove }) {
   );
 }
 RuleRow.propTypes = {
+  newIn: PropTypes.string,
   rule: PropTypes.object.isRequired,
   changedIn: PropTypes.string,
   coverage: PropTypes.object,

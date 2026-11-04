@@ -65,7 +65,14 @@ import {
 import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
-import VersionBuildStrip from "./VersionBuildStrip";
+import VersionBuildStrip, { VersionChangeNote } from "./VersionBuildStrip";
+import { changedTabsOf } from "../_mock/versionBuild";
+import {
+  addDesignFilesPatch,
+  addDesignOrgPatch,
+  designSourcesPatch,
+  designSourcesSummary,
+} from "../_mock/designSources";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import {
@@ -621,6 +628,18 @@ export default function EnvironmentWorkspace() {
     /* No run is made here — the first run is started from Run simulation. */
   }, [env?.id, state.hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* "New in vN" labels clear once their tab has been looked at: leaving a
+     tab that showed them marks it seen. */
+  const lastStep = useRef(step);
+  useEffect(() => {
+    const prev = lastStep.current;
+    lastStep.current = step;
+    const news = envState?.versionNews;
+    if (prev === step || !news?.unseen?.includes(prev)) return;
+    const unseen = news.unseen.filter((t) => t !== prev);
+    patch({ versionNews: unseen.length ? { ...news, unseen } : null });
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!env) {
     /* Still loading the store — a custom-built env lives only in
        myEnvironments, which is empty until hydrate runs. Showing
@@ -671,6 +690,8 @@ export default function EnvironmentWorkspace() {
   const awaitingApproval = env.buildStatus === "awaiting_approval";
   /* A new version building after approved changes (a source's proposal). */
   const versionBuilding = !!envState.versionBuild;
+  /* Tabs with a part of a new version building, or new and not yet seen. */
+  const changedTabs = changedTabsOf(envState);
   const chipLive = envLive && !versionBuilding;
 
   // Booting the environment is a real thing we do, so we show it happening.
@@ -1326,6 +1347,27 @@ export default function EnvironmentWorkspace() {
 
   const sendChat = (text, files = []) => {
     const trimmed = (text || "").trim();
+    /* While the design waits, files join the design (the first version),
+       not a proposal for a next one. */
+    if (files?.length && awaitingApproval) {
+      patch(addDesignFilesPatch(envState, files));
+      const names = files.map((f) => f.name).join(", ");
+      setTurns((prev) => [
+        ...prev,
+        { id: `u-${Date.now()}`, role: "user", text: trimmed || names },
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [
+            {
+              kind: "note",
+              text: `Added ${names} to the design — Review design above shows what ${files.length === 1 ? "it adds" : "they add"}. Nothing is built until you approve.`,
+            },
+          ],
+        },
+      ]);
+      return undefined;
+    }
     if (files?.length) return sendFiles(trimmed, files);
     if (!trimmed) return;
     /*
@@ -3106,6 +3148,19 @@ export default function EnvironmentWorkspace() {
         <DesignReview
           framed
           env={env}
+          sources={designSourcesSummary(env, envState)}
+          onAddFiles={(files) =>
+            files?.length && patch(addDesignFilesPatch(envState, files))
+          }
+          onAddOrg={(o) => {
+            const p = addDesignOrgPatch(envState, o);
+            if (p) patch(p);
+            else
+              enqueueSnackbar(
+                `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+                { variant: "info" },
+              );
+          }}
           draftCount={env.builtFrom?.scenarioCount || 10}
           waiting
           parked={
@@ -3122,7 +3177,11 @@ export default function EnvironmentWorkspace() {
             dispatch({
               type: "patchEnvState",
               envId: env.id,
-              patch: fin.statePatch,
+              /* Files added to the design join this first version. */
+              patch: {
+                ...fin.statePatch,
+                ...(designSourcesPatch(env, envState) || {}),
+              },
             });
             dispatch({
               type: "patchEnvironment",
@@ -3401,6 +3460,7 @@ export default function EnvironmentWorkspace() {
                           tab={t}
                           counts={counts}
                           gaps={gapsByStep[t.id]}
+                          changed={changedTabs.has(t.id)}
                         />
                       }
                     />
@@ -3415,6 +3475,13 @@ export default function EnvironmentWorkspace() {
             an empty pane — a bad link should land somewhere, not nowhere.
           */}
           <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
+            {panel === "scenarios" && (
+              <VersionChangeNote
+                env={env}
+                envState={envState}
+                kind="scenarios"
+              />
+            )}
             {panel === "scenarios" ? (
               <ScenariosStep
                 env={worldEnv}
@@ -3519,13 +3586,27 @@ export default function EnvironmentWorkspace() {
 
 /* ── one horizontal tab's label — name + optional count + gap badge ─────── */
 
-function TabLabel({ tab, counts, gaps }) {
+function TabLabel({ tab, counts, gaps, changed = false }) {
   const count = tab.badge ? counts[tab.id] : null;
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
       <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>
         {tab.label}
       </Typography>
+      {/* Part of a new version is building here, or new and not yet seen —
+          the Building chip's colour. */}
+      {changed && (
+        <Box
+          aria-label="Changed in the new version"
+          sx={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            flexShrink: 0,
+            bgcolor: "status.discovery.solid",
+          }}
+        />
+      )}
       {count != null && count > 0 && (
         <Typography
           component="span"
@@ -3565,6 +3646,7 @@ function TabLabel({ tab, counts, gaps }) {
   );
 }
 TabLabel.propTypes = {
+  changed: PropTypes.bool,
   tab: PropTypes.object,
   counts: PropTypes.object,
   gaps: PropTypes.array,

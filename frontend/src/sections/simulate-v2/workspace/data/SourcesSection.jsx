@@ -75,11 +75,14 @@ export default function SourcesSection({
     .sort()
     .pop();
 
+  /* Before the first build, files join the design under review instead of
+     proposing a next version. */
+  const designing = env.buildStatus === "awaiting_approval";
   const addFiles = (files) => {
     const read = files.map(readFile);
     patch({ sources: [...(envState.sources || []), ...read] });
     const usable = read.filter((s) => s.status !== "unsupported");
-    if (usable.length) setReview(usable.map((s) => s.id));
+    if (usable.length && !designing) setReview(usable.map((s) => s.id));
   };
   const addOrg = (o) => {
     setAnchor(null);
@@ -94,7 +97,7 @@ export default function SourcesSection({
        revision is offered as a refresh to review, never applied on its own. */
     const s = sourceFromOrg(o);
     patch({ sources: [...(envState.sources || []), s] });
-    setReview([s.id]);
+    if (!designing) setReview([s.id]);
   };
 
   return (

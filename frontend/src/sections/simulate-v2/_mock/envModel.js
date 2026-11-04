@@ -88,7 +88,9 @@ export const rulesOf = (env, envState) => {
       id: c.id,
       text: c.to,
       original: null,
-      source: "prompt",
+      /* Read from an attached file, or added here — not the agent's prompt. */
+      source: c.fromSource ? "file" : "added",
+      sourceName: c.sourceName || null,
       changedIn: c.envVersion,
     }));
   return [...base, ...added].filter((r) => !retired.has(r.id));
