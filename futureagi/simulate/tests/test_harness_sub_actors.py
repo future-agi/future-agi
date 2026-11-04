@@ -393,6 +393,54 @@ def test_a_pinned_suite_version_keeps_each_scenario_s_sub_actors():
 
 
 @pytest.mark.django_db
+def test_a_hostile_sub_actor_filter_value_matches_nothing_and_never_errors(
+    organization, workspace
+):
+    from simulate.services.run_results_v3_queries import apply_run_call_query
+
+    call = _ingest(
+        organization,
+        workspace,
+        "results-hostile",
+        CallExecution.SimulationCallType.TEXT,
+        {"messages": []},
+        {},
+    )
+    call.call_metadata = {
+        **(call.call_metadata or {}),
+        "harness_sub_actors": {
+            "summary": [{"sub_actor": "friend", "name": "Rowan", "delivered": 1}]
+        },
+    }
+    call.save(update_fields=["call_metadata"])
+    calls = CallExecution.objects.filter(id=call.id)
+
+    for hostile in (
+        'friend" || @.delivered > 0 || @.sub_actor == "x',
+        "friend\\",
+        "$who",
+    ):
+        assert not apply_run_call_query(
+            calls, {"filters": {"sub_actor": [hostile]}}
+        ).exists()
+        assert apply_run_call_query(
+            calls, {"filters": {"sub_actor_not": [hostile]}}
+        ).exists()
+    assert apply_run_call_query(calls, {"filters": {"sub_actor": ["friend"]}}).exists()
+
+
+def test_a_filter_value_the_database_cannot_hold_is_refused():
+    from simulate.views.run_results_v3 import RunCallFiltersSerializer
+
+    for value in ("\x00", "\ud800"):
+        query = RunCallFiltersSerializer(data={"filters": {"sub_actor": [value]}})
+        assert not query.is_valid()
+    assert RunCallFiltersSerializer(
+        data={"filters": {"sub_actor": ["friend", "none"]}}
+    ).is_valid()
+
+
+@pytest.mark.django_db
 def test_the_scenario_filter_names_the_environment_s_own_sub_actors(
     organization, workspace
 ):
