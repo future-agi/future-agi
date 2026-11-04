@@ -472,7 +472,7 @@ def _outcome(
         return "inconclusive"
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
-    if harness_status in _HARNESS_NO_SCORE:
+    if harness_status in _HARNESS_NO_SCORE and passed is not True:
         return "no_score"
     if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"

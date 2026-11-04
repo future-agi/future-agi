@@ -228,8 +228,9 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
         "Rowan (not the person being served): Add a stop.",
         "Customer: Just the airport.",
     ]
-    assert "Rowan (not the person being served): Add a stop." in (
-        _build_transcript_data(call)["transcript"]
+    assert (
+        "Rowan (not the person being served): Add a stop."
+        in (_build_transcript_data(call)["transcript"])
     )
 
 
@@ -368,7 +369,12 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
     assert filtered(sub_actor=["friend"]) == ["entered"]
     assert filtered(sub_actor=["none"]) == ["absent", "plain", "unsaid"]
     assert filtered(sub_actor_not=["friend"]) == ["absent", "plain", "unsaid"]
-    assert filtered(sub_actor=["friend", "none"]) == ["absent", "entered", "plain", "unsaid"]
+    assert filtered(sub_actor=["friend", "none"]) == [
+        "absent",
+        "entered",
+        "plain",
+        "unsaid",
+    ]
     assert _sub_actor_facet(calls) == [
         {"value": "none", "count": 3, "label": "Simulated user only"},
         {"value": "friend", "count": 1, "label": "Rowan"},
@@ -520,3 +526,26 @@ def test_stored_sub_actor_shapes_keep_only_well_formed_entries():
         {"summary": [{"sub_actor": "friend"}, "x"], "events": "x", "extra": 1}
     ) == {"summary": [{"sub_actor": "friend"}]}
     assert _sub_actor_record(["x"]) is None
+
+
+@pytest.mark.django_db
+def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
+
+    call = _ingest(
+        organization,
+        workspace,
+        "rerun-snapshot",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [
+                {"role": "sub_actor", "name": "Rowan", "content": "Add a stop."}
+            ]
+        },
+        {},
+    )
+    clear_call_for_rerun(call)
+
+    [turn] = CallExecutionSnapshot.objects.get(call_execution=call).transcripts
+    assert (turn["speaker_role"], turn["speaker_name"]) == ("sub_actor", "Rowan")

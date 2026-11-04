@@ -27,6 +27,21 @@ describe("subActorWhen", () => {
     expect(subActorWhen(trigger)).toBe(said);
   });
 
+  it.each([
+    [{ kind: "always" }, "After the agent's second turn"],
+    [
+      { kind: "probability", p: 0.5 },
+      "In about 50% of calls, after the agent's second turn",
+    ],
+    [{ kind: "mid_journey", turn: 1 }, "After the agent's turn 2"],
+    [{ kind: "mid_journey", turn: 3 }, "After the agent's turn 3"],
+  ])(
+    "says someone taking the phone waits for the person for %j",
+    (trigger, said) => {
+      expect(subActorWhen(trigger, "audio_handoff")).toBe(said);
+    },
+  );
+
   it("says a phone menu answers the call", () => {
     expect(subActorWhen({ kind: "always" }, "ivr")).toBe("Answers the call");
   });

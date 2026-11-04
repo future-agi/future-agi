@@ -729,6 +729,7 @@ def build_run_dashboard(
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
                 "inconclusive": row["outcomes"]["inconclusive"],
+                "no_score": row["outcomes"]["no_score"],
             }
             for row in risk[:7]
         ],
