@@ -24288,6 +24288,14 @@ export interface SimulateRunV3FunctionCallApi {
   on_behalf_of?: string;
 }
 
+export interface CallSubActorApi {
+  /** @minLength 1 */
+  id?: string;
+  name?: string;
+  role?: string;
+  channel?: string;
+}
+
 export interface CallExecutionV3DetailResponseApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -24437,6 +24445,7 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  sub_actors: CallSubActorApi[];
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */

@@ -84,31 +84,104 @@ describe("function calls in voice transcripts", () => {
   });
 });
 
+const plainCall = [
+  { id: "1", speaker_role: "user", content: "One ride please", duration: 2 },
+  { id: "2", speaker_role: "assistant", content: "Booked", duration: 1 },
+];
+
+const withSubActors = [
+  ...plainCall,
+  {
+    id: "3",
+    speaker_role: "sub_actor",
+    speaker_name: "Rowan",
+    actor_role: "roommate",
+    channel: "audio_mix",
+    content: "Make it two",
+    duration: 1,
+  },
+  {
+    id: "4",
+    speaker_role: "sub_actor",
+    speaker_name: "Sam",
+    actor_role: "son",
+    channel: "audio_handoff",
+    content: "Hi, this is Sam",
+    duration: 1,
+  },
+];
+
+const chipLabels = () =>
+  screen
+    .getAllByRole("button")
+    .map((b) => b.textContent)
+    .filter((t) => ["All", "Assistant", "Customer", "Others"].includes(t));
+
 describe("sub-actors in voice transcripts", () => {
-  it("names a sub-actor's turn as someone who is not the customer", () => {
+  it("names each sub-actor with their role and how they were heard", () => {
+    render(<TranscriptView transcript={withSubActors} />);
+    expect(screen.getAllByText("Rowan · roommate").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sam · son").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Heard nearby").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Takes the phone").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/not the customer/)).toBeNull();
+    expect(screen.getByText(/^Others \d+%$/)).toBeInTheDocument();
+  });
+
+  it("lists who was on the call, customer first and the agent last", () => {
+    render(<TranscriptView transcript={withSubActors} customerName="Maya" />);
+    expect(screen.getByText("On the call:")).toBeInTheDocument();
+    expect(screen.getByText("Maya · Customer")).toBeInTheDocument();
+    // Each sub-actor shows once in the line and once on their turn.
+    expect(screen.getAllByText("Rowan · roommate")).toHaveLength(2);
+    expect(screen.getAllByText("Sam · son")).toHaveLength(2);
+  });
+
+  it("shows just a name, or Someone, for a call stored before roles and channels were kept", () => {
     render(
       <TranscriptView
         transcript={[
+          ...plainCall,
           {
-            id: "1",
-            speaker_role: "user",
-            content: "One ride please",
-            duration: 2,
-          },
-          {
-            id: "2",
+            id: "3",
             speaker_role: "sub_actor",
             speaker_name: "Rowan",
-            content: "Make it two",
+            content: "Two",
+            duration: 1,
+          },
+          {
+            id: "4",
+            speaker_role: "sub_actor",
+            content: "Hello?",
             duration: 1,
           },
         ]}
       />,
     );
-    expect(screen.getByText("Rowan (not the customer)")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Someone else (not the customer)"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(/^Sub-actor \d+%$/)).toBeInTheDocument();
+    expect(screen.getAllByText("Rowan")).toHaveLength(2);
+    expect(screen.getAllByText("Someone")).toHaveLength(2);
+    // The chip and the line's customer, with no persona name to show.
+    expect(screen.getAllByText("Customer")).toHaveLength(2);
+    expect(screen.queryByText("Heard nearby")).toBeNull();
+    expect(screen.queryByText(/undefined| · $/)).toBeNull();
+  });
+
+  it("filters to the others on the call", async () => {
+    render(<TranscriptView transcript={withSubActors} />);
+    expect(chipLabels()).toEqual(["All", "Assistant", "Customer", "Others"]);
+    await userEvent.click(screen.getByRole("button", { name: "Others" }));
+    expect(screen.getByText("Make it two")).toBeInTheDocument();
+    expect(screen.getByText("Hi, this is Sam")).toBeInTheDocument();
+    expect(screen.queryByText("One ride please")).toBeNull();
+    expect(screen.queryByText("Booked")).toBeNull();
+  });
+
+  it("renders a call with only the customer and the agent as before", () => {
+    render(<TranscriptView transcript={plainCall} customerName="Maya" />);
+    expect(chipLabels()).toEqual(["All", "Assistant", "Customer"]);
+    expect(screen.queryByText("On the call:")).toBeNull();
+    expect(screen.queryByText(/^Others/)).toBeNull();
+    expect(screen.getByText(/^Customer \d+%$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Assistant \d+%$/)).toBeInTheDocument();
   });
 });

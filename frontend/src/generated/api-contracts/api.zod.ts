@@ -51483,6 +51483,14 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       on_behalf_of: zod.string().min(1).optional(),
     }),
   ),
+  sub_actors: zod.array(
+    zod.object({
+      id: zod.string().min(1).optional(),
+      name: zod.string().optional(),
+      role: zod.string().optional(),
+      channel: zod.string().optional(),
+    }),
+  ),
   scoring_status: zod.enum([
     "not_applicable",
     "pending",

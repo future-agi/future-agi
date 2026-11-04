@@ -54836,6 +54836,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
+        "sub_actors",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -55307,6 +55308,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/SimulateRunV3FunctionCall",
+          },
+        },
+        sub_actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallSubActor",
           },
         },
         scoring_status: {
@@ -90233,6 +90240,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
           "x-nullable": true,
+        },
+      },
+    },
+    CallSubActor: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
         },
       },
     },

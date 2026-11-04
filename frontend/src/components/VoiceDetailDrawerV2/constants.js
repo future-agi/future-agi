@@ -9,9 +9,13 @@ export const DEFAULT_ROLE_LABELS = {
   assistant: "Assistant",
   system: "System",
   tool: "Tool",
-  sub_actor: "Sub-actor",
   world_actor: "World actor",
+  others: "Others",
 };
+
+// Who someone on the call other than the agent and the customer is, when the call kept no name.
+export const OTHER_PARTY_FALLBACK = "Someone";
+export const CALL_PARTICIPANTS_HEADING = "On the call";
 
 export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   label: PropTypes.string.isRequired,
