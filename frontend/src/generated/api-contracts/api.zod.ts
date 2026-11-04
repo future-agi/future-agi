@@ -32103,6 +32103,12 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
       name: zod.string().min(1),
     })
     .optional(),
+  found_check: zod
+    .object({
+      required: zod.boolean(),
+      done_at: zod.string().datetime({ offset: true }),
+    })
+    .optional(),
 });
 
 /**
@@ -32347,6 +32353,20 @@ export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
     .optional(),
 });
 
+/**
+ * POST /agent-definitions/{id}/found-check/: what the first reading found is
+confirmed; the agent can be built from now.
+ */
+export const SimulateAgentDefinitionsFoundCheckCreateParams = zod.object({
+  agent_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsFoundCheckCreateBody = zod.object({});
+
+export const SimulateAgentDefinitionsFoundCheckCreateResponse = zod.object({
+  found_checked_at: zod.string().datetime({ offset: true }).optional(),
+});
+
 export const SimulateAgentDefinitionsRunsListParams = zod.object({
   agent_id: zod.string(),
 });
@@ -32440,6 +32460,20 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
   in_production: zod.boolean().optional(),
   origin: zod.string().optional(),
   preflight_status: zod.string().optional(),
+  check_step: zod
+    .enum(["snapshot", "reading", "check"])
+    .optional()
+    .describe(
+      "Where a pending check stands: storing the code, reading the agent, or\nchecking its credentials.",
+    ),
+  check_failure: zod
+    .object({
+      code: zod.string().min(1),
+      message: zod.string(),
+      retryable: zod.boolean(),
+    })
+    .optional()
+    .describe("Why a failed check failed, when the version carries a reason."),
   environments_count: zod.number().optional(),
   source: zod
     .object({
@@ -32875,6 +32909,7 @@ export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
   sdk_version: zod.string().min(1),
   stored_at: zod.string().datetime({ offset: true }),
   setup_stale: zod.boolean(),
+  origin: zod.enum(["build", "reading"]),
 });
 
 /**
@@ -33568,6 +33603,166 @@ export const SimulateAgentDefinitionsVersionsRetryCreateParams = zod.object({
 });
 
 export const SimulateAgentDefinitionsVersionsRetryCreateBody = zod.object({});
+
+/**
+ * POST /agents/connect/: the agent and its first version, read on their own.
+ */
+
+export const simulateAgentsConnectCreateBodyRepositoryRegExp = new RegExp(
+  "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+);
+
+export const simulateAgentsConnectCreateBodyRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+export const simulateAgentsConnectCreateBodyVisibilityDefault = `public`;
+export const simulateAgentsConnectCreateBodyInstallationIdMax = 255;
+
+export const simulateAgentsConnectCreateBodyNameMax = 255;
+
+export const simulateAgentsConnectCreateBodySubfolderMax = 512;
+
+export const simulateAgentsConnectCreateBodySubfolderRegExp = new RegExp(
+  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+);
+export const simulateAgentsConnectCreateBodyEnvValuesMaxOne = 65536;
+
+export const SimulateAgentsConnectCreateBody = zod.object({
+  kind: zod.enum(["github", "archive"]),
+  repository: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyRepositoryRegExp)
+    .optional(),
+  ref: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyRefRegExp)
+    .optional(),
+  visibility: zod
+    .enum(["public", "private"])
+    .default(simulateAgentsConnectCreateBodyVisibilityDefault),
+  installation_id: zod
+    .string()
+    .min(1)
+    .max(simulateAgentsConnectCreateBodyInstallationIdMax)
+    .optional(),
+  repository_id: zod.number().min(1).optional(),
+  archive_artifact_id: zod.string().uuid().optional(),
+  name: zod.string().min(1).max(simulateAgentsConnectCreateBodyNameMax),
+  subfolder: zod
+    .string()
+    .max(simulateAgentsConnectCreateBodySubfolderMax)
+    .regex(simulateAgentsConnectCreateBodySubfolderRegExp)
+    .optional(),
+  env_values: zod
+    .record(
+      zod.string(),
+      zod.string().min(1).max(simulateAgentsConnectCreateBodyEnvValuesMaxOne),
+    )
+    .optional(),
+});
+
+export const SimulateAgentsConnectCreateResponse = zod.object({
+  agent_id: zod.string().uuid().optional(),
+  version_id: zod.string().uuid().optional(),
+  exists: zod.boolean().optional(),
+});
+
+/**
+ * POST /agents/scan/: find the agents in a source; the drawer polls the result.
+ */
+
+export const simulateAgentsScanCreateBodyRepositoryRegExp = new RegExp(
+  "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+);
+
+export const simulateAgentsScanCreateBodyRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+export const simulateAgentsScanCreateBodyVisibilityDefault = `public`;
+export const simulateAgentsScanCreateBodyInstallationIdMax = 255;
+
+export const SimulateAgentsScanCreateBody = zod.object({
+  kind: zod.enum(["github", "archive"]),
+  repository: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsScanCreateBodyRepositoryRegExp)
+    .optional(),
+  ref: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsScanCreateBodyRefRegExp)
+    .optional(),
+  visibility: zod
+    .enum(["public", "private"])
+    .default(simulateAgentsScanCreateBodyVisibilityDefault),
+  installation_id: zod
+    .string()
+    .min(1)
+    .max(simulateAgentsScanCreateBodyInstallationIdMax)
+    .optional(),
+  repository_id: zod.number().min(1).optional(),
+  archive_artifact_id: zod.string().uuid().optional(),
+});
+
+/**
+ * GET /agents/scan/{id}/.
+ */
+export const SimulateAgentsScanReadParams = zod.object({
+  scan_id: zod.string(),
+});
+
+export const SimulateAgentsScanReadResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  status: zod
+    .enum(["pending", "running", "found", "none", "error", "failed"])
+    .optional(),
+  kind: zod.string().min(1).optional(),
+  repository: zod.string().min(1).optional(),
+  ref: zod.string().min(1).optional(),
+  commit_sha: zod.string().min(1).optional(),
+  agents: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1).optional(),
+        subfolder: zod.string().optional(),
+        entry: zod.string().min(1).optional(),
+        framework: zod
+          .object({
+            name: zod.string().min(1).optional(),
+            version: zod.string().min(1).optional(),
+            label: zod.string().min(1).optional(),
+          })
+          .optional(),
+        confidence: zod.enum(["high", "medium", "low"]).optional(),
+        evidence: zod.array(zod.string().min(1)).optional(),
+        env_names: zod.array(zod.string().min(1)).optional(),
+        estimates: zod
+          .object({
+            tools: zod.number().optional(),
+            prompt_files: zod.number().optional(),
+          })
+          .optional(),
+      }),
+    )
+    .optional(),
+  truncated: zod.boolean().optional(),
+  error: zod
+    .object({
+      code: zod.string().min(1).optional(),
+      message: zod.string().min(1).optional(),
+    })
+    .optional(),
+  failure: zod
+    .object({
+      code: zod.string().min(1).optional(),
+      message: zod.string().min(1).optional(),
+      retryable: zod.boolean().optional(),
+    })
+    .optional(),
+});
 
 export const SimulateApiAgentDefinitionOperationsListQueryParams = zod.object({
   page: zod

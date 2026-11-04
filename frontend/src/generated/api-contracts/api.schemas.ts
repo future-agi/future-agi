@@ -15973,6 +15973,11 @@ export type AgentDefinitionDetailResponseApiActiveVersion = {
   [key: string]: string;
 };
 
+export interface AgentFoundCheckApi {
+  required: boolean;
+  done_at: string;
+}
+
 export interface AgentDefinitionDetailResponseApi {
   readonly id?: string;
   /**
@@ -16048,6 +16053,7 @@ export interface AgentDefinitionDetailResponseApi {
   observe_project?: ObserveProjectRefApi;
   readonly connected?: boolean;
   managed_by?: RunEnvironmentRefApi;
+  found_check?: AgentFoundCheckApi;
 }
 
 export type AgentBuildPreflightCheckApiStatus =
@@ -16148,6 +16154,10 @@ export interface AgentDefinitionEditResponseApi {
   agent?: AgentDefinitionResponseApi;
 }
 
+export interface AgentFoundCheckResponseApi {
+  readonly found_checked_at?: string;
+}
+
 export type HarnessRunSummaryApiKind =
   (typeof HarnessRunSummaryApiKind)[keyof typeof HarnessRunSummaryApiKind];
 
@@ -16202,6 +16212,29 @@ export const AgentVersionListResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
+/**
+ * Where a pending check stands: storing the code, reading the agent, or
+checking its credentials.
+ */
+export type AgentVersionListResponseApiCheckStep =
+  (typeof AgentVersionListResponseApiCheckStep)[keyof typeof AgentVersionListResponseApiCheckStep];
+
+export const AgentVersionListResponseApiCheckStep = {
+  snapshot: "snapshot",
+  reading: "reading",
+  check: "check",
+} as const;
+
+/**
+ * Why a failed check failed, when the version carries a reason.
+ */
+export interface AgentVersionCheckFailureApi {
+  /** @minLength 1 */
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
 export interface AgentVersionSourceApi {
   /** @minLength 1 */
   kind: string;
@@ -16250,6 +16283,10 @@ export interface AgentVersionListResponseApi {
   readonly in_production?: boolean;
   readonly origin?: string;
   readonly preflight_status?: string;
+  /** Where a pending check stands: storing the code, reading the agent, or
+  checking its credentials. */
+  readonly check_step?: AgentVersionListResponseApiCheckStep;
+  check_failure?: AgentVersionCheckFailureApi;
   readonly environments_count?: number;
   source?: AgentVersionSourceApi;
   readonly created_at?: string;
@@ -16428,6 +16465,14 @@ export interface AgentVersionActivateResponseApi {
   version?: AgentVersionResponseApi;
 }
 
+export type StoredAgentResponseApiOrigin =
+  (typeof StoredAgentResponseApiOrigin)[keyof typeof StoredAgentResponseApiOrigin];
+
+export const StoredAgentResponseApiOrigin = {
+  build: "build",
+  reading: "reading",
+} as const;
+
 export interface StoredProviderRefApi {
   /** @minLength 1 */
   provider: string;
@@ -16524,6 +16569,7 @@ export interface StoredAgentResponseApi {
   sdk_version: string;
   stored_at: string;
   setup_stale: boolean;
+  origin: StoredAgentResponseApiOrigin;
 }
 
 /**
@@ -16926,6 +16972,189 @@ export interface AgentVersionRestoreResponseApi {
   readonly message?: string;
   readonly agent?: AgentVersionRestoreResponseApiAgent;
   version?: AgentVersionResponseApi;
+}
+
+export type AgentConnectRequestApiKind =
+  (typeof AgentConnectRequestApiKind)[keyof typeof AgentConnectRequestApiKind];
+
+export const AgentConnectRequestApiKind = {
+  github: "github",
+  archive: "archive",
+} as const;
+
+export type AgentConnectRequestApiVisibility =
+  (typeof AgentConnectRequestApiVisibility)[keyof typeof AgentConnectRequestApiVisibility];
+
+export const AgentConnectRequestApiVisibility = {
+  public: "public",
+  private: "private",
+} as const;
+
+export type AgentConnectRequestApiEnvValues = { [key: string]: string };
+
+export interface AgentConnectRequestApi {
+  kind: AgentConnectRequestApiKind;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$
+   */
+  repository?: string;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9._/-]+$
+   */
+  ref?: string;
+  visibility?: AgentConnectRequestApiVisibility;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  installation_id?: string;
+  /** @minimum 1 */
+  repository_id?: number;
+  archive_artifact_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * @maxLength 512
+   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   */
+  subfolder?: string;
+  env_values?: AgentConnectRequestApiEnvValues;
+}
+
+export interface AgentConnectResponseApi {
+  readonly agent_id?: string;
+  readonly version_id?: string;
+  readonly exists?: boolean;
+}
+
+export type AgentSourceRequestApiKind =
+  (typeof AgentSourceRequestApiKind)[keyof typeof AgentSourceRequestApiKind];
+
+export const AgentSourceRequestApiKind = {
+  github: "github",
+  archive: "archive",
+} as const;
+
+export type AgentSourceRequestApiVisibility =
+  (typeof AgentSourceRequestApiVisibility)[keyof typeof AgentSourceRequestApiVisibility];
+
+export const AgentSourceRequestApiVisibility = {
+  public: "public",
+  private: "private",
+} as const;
+
+export interface AgentSourceRequestApi {
+  kind: AgentSourceRequestApiKind;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$
+   */
+  repository?: string;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9._/-]+$
+   */
+  ref?: string;
+  visibility?: AgentSourceRequestApiVisibility;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  installation_id?: string;
+  /** @minimum 1 */
+  repository_id?: number;
+  archive_artifact_id?: string;
+}
+
+export interface AgentScanStartedResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+}
+
+export type AgentScanResponseApiStatus =
+  (typeof AgentScanResponseApiStatus)[keyof typeof AgentScanResponseApiStatus];
+
+export const AgentScanResponseApiStatus = {
+  pending: "pending",
+  running: "running",
+  found: "found",
+  none: "none",
+  error: "error",
+  failed: "failed",
+} as const;
+
+export interface FoundAgentFrameworkApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly version?: string;
+  /** @minLength 1 */
+  readonly label?: string;
+}
+
+export type FoundAgentApiConfidence =
+  (typeof FoundAgentApiConfidence)[keyof typeof FoundAgentApiConfidence];
+
+export const FoundAgentApiConfidence = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export interface FoundAgentEstimatesApi {
+  readonly tools?: number;
+  readonly prompt_files?: number;
+}
+
+export interface FoundAgentApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly subfolder?: string;
+  /** @minLength 1 */
+  readonly entry?: string;
+  framework?: FoundAgentFrameworkApi;
+  readonly confidence?: FoundAgentApiConfidence;
+  readonly evidence?: readonly string[];
+  readonly env_names?: readonly string[];
+  estimates?: FoundAgentEstimatesApi;
+}
+
+export interface AgentScanErrorApi {
+  /** @minLength 1 */
+  readonly code?: string;
+  /** @minLength 1 */
+  readonly message?: string;
+}
+
+export interface AgentScanFailureApi {
+  /** @minLength 1 */
+  readonly code?: string;
+  /** @minLength 1 */
+  readonly message?: string;
+  readonly retryable?: boolean;
+}
+
+export interface AgentScanResponseApi {
+  readonly id?: string;
+  readonly status?: AgentScanResponseApiStatus;
+  /** @minLength 1 */
+  readonly kind?: string;
+  /** @minLength 1 */
+  readonly repository?: string;
+  /** @minLength 1 */
+  readonly ref?: string;
+  /** @minLength 1 */
+  readonly commit_sha?: string;
+  readonly agents?: readonly FoundAgentApi[];
+  readonly truncated?: boolean;
+  error?: AgentScanErrorApi;
+  failure?: AgentScanFailureApi;
 }
 
 export type AgentDefinitionApiAgentType =

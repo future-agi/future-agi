@@ -77,6 +77,8 @@ import type {
   AgentCodeChangesResponseApi,
   AgentCodeFileResponseApi,
   AgentCodeTreeResponseApi,
+  AgentConnectRequestApi,
+  AgentConnectResponseApi,
   AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
@@ -100,6 +102,7 @@ import type {
   AgentFixRunApi,
   AgentFixRunDetailApi,
   AgentFixRunListApi,
+  AgentFoundCheckResponseApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -120,6 +123,9 @@ import type {
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
   AgentRunsResponseApi,
+  AgentScanResponseApi,
+  AgentScanStartedResponseApi,
+  AgentSourceRequestApi,
   AgentVersionActionResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionChangeRequestApi,
@@ -56826,6 +56832,62 @@ export const simulateAgentDefinitionsEditUpdate = async (
   );
 };
 
+export type simulateAgentDefinitionsFoundCheckCreateResponse200 = {
+  data: AgentFoundCheckResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
+  simulateAgentDefinitionsFoundCheckCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsFoundCheckCreateResponseError = (
+  | simulateAgentDefinitionsFoundCheckCreateResponse404
+  | simulateAgentDefinitionsFoundCheckCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse =
+  | simulateAgentDefinitionsFoundCheckCreateResponseSuccess
+  | simulateAgentDefinitionsFoundCheckCreateResponseError;
+
+export const getSimulateAgentDefinitionsFoundCheckCreateUrl = (
+  agentId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/found-check/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/found-check/: what the first reading found is
+confirmed; the agent can be built from now.
+ */
+export const simulateAgentDefinitionsFoundCheckCreate = async (
+  agentId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsFoundCheckCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsFoundCheckCreateResponse>(
+    getSimulateAgentDefinitionsFoundCheckCreateUrl(agentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateAgentDefinitionsRunsListResponse200 = {
   data: AgentRunsResponseApi;
   status: 200;
@@ -57984,6 +58046,179 @@ export const simulateAgentDefinitionsVersionsRetryCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsConnectCreateResponse200 = {
+  data: AgentConnectResponseApi;
+  status: 200;
+};
+
+export type simulateAgentsConnectCreateResponse201 = {
+  data: AgentConnectResponseApi;
+  status: 201;
+};
+
+export type simulateAgentsConnectCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentsConnectCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentsConnectCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201 | 400 | 422>;
+};
+
+export type simulateAgentsConnectCreateResponseSuccess = (
+  | simulateAgentsConnectCreateResponse200
+  | simulateAgentsConnectCreateResponse201
+) & {
+  headers: Headers;
+};
+export type simulateAgentsConnectCreateResponseError = (
+  | simulateAgentsConnectCreateResponse400
+  | simulateAgentsConnectCreateResponse422
+  | simulateAgentsConnectCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentsConnectCreateResponse =
+  | simulateAgentsConnectCreateResponseSuccess
+  | simulateAgentsConnectCreateResponseError;
+
+export const getSimulateAgentsConnectCreateUrl = () => {
+  return `/simulate/agents/connect/`;
+};
+
+/**
+ * POST /agents/connect/: the agent and its first version, read on their own.
+ */
+export const simulateAgentsConnectCreate = async (
+  agentConnectRequestApi: AgentConnectRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentsConnectCreateResponse> => {
+  return apiMutator<simulateAgentsConnectCreateResponse>(
+    getSimulateAgentsConnectCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentConnectRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsScanCreateResponse202 = {
+  data: AgentScanStartedResponseApi;
+  status: 202;
+};
+
+export type simulateAgentsScanCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentsScanCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentsScanCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 422>;
+};
+
+export type simulateAgentsScanCreateResponseSuccess =
+  simulateAgentsScanCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateAgentsScanCreateResponseError = (
+  | simulateAgentsScanCreateResponse400
+  | simulateAgentsScanCreateResponse422
+  | simulateAgentsScanCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentsScanCreateResponse =
+  | simulateAgentsScanCreateResponseSuccess
+  | simulateAgentsScanCreateResponseError;
+
+export const getSimulateAgentsScanCreateUrl = () => {
+  return `/simulate/agents/scan/`;
+};
+
+/**
+ * POST /agents/scan/: find the agents in a source; the drawer polls the result.
+ */
+export const simulateAgentsScanCreate = async (
+  agentSourceRequestApi: AgentSourceRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentsScanCreateResponse> => {
+  return apiMutator<simulateAgentsScanCreateResponse>(
+    getSimulateAgentsScanCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentSourceRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsScanReadResponse200 = {
+  data: AgentScanResponseApi;
+  status: 200;
+};
+
+export type simulateAgentsScanReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentsScanReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentsScanReadResponseSuccess =
+  simulateAgentsScanReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentsScanReadResponseError = (
+  | simulateAgentsScanReadResponse404
+  | simulateAgentsScanReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentsScanReadResponse =
+  | simulateAgentsScanReadResponseSuccess
+  | simulateAgentsScanReadResponseError;
+
+export const getSimulateAgentsScanReadUrl = (scanId: string) => {
+  return `/simulate/agents/scan/${scanId}/`;
+};
+
+/**
+ * GET /agents/scan/{id}/.
+ */
+export const simulateAgentsScanRead = async (
+  scanId: string,
+  options?: RequestInit,
+): Promise<simulateAgentsScanReadResponse> => {
+  return apiMutator<simulateAgentsScanReadResponse>(
+    getSimulateAgentsScanReadUrl(scanId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
