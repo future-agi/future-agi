@@ -96,7 +96,7 @@ function normalizeMessage(message) {
       : message;
   if (!msg || typeof msg !== "object")
     return { role: "unknown", content: [String(msg)] };
-  const role = msg.role || "unknown";
+  const role = typeof msg.role === "string" && msg.role ? msg.role : "unknown";
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
     if (typeof msg.content === "string")
@@ -301,7 +301,28 @@ const ChatMessageView = ({
       }
     }
     if (data === null || typeof data !== "object") return [];
-    if (Array.isArray(data)) return data.map(normalizeMessage);
+    if (Array.isArray(data)) {
+      // Output columns also hold arbitrary JSON. Only normalize complete message
+      // arrays; keep business records (including their role fields) intact.
+      const isMessageArray =
+        data.length > 0 &&
+        data.every(
+          (message) =>
+            typeof message?.role === "string" &&
+            ("content" in message ||
+              Array.isArray(message.parts) ||
+              Array.isArray(message.tool_calls) ||
+              Array.isArray(message.toolCalls)),
+        );
+      return isMessageArray
+        ? data.map(normalizeMessage)
+        : [
+            {
+              role: "assistant",
+              content: [`\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``],
+            },
+          ];
+    }
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
     if (data.content?.role) return [normalizeMessage(data.content)];
     if (data.role) return [normalizeMessage(data)];
