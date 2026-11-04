@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, IconButton, Stack, Tab, Typography } from "@mui/material";
+import { Box, Button, IconButton, Stack, Tab, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import SideDrawer from "../components/SideDrawer";
@@ -140,7 +140,8 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             <Tab value="start" label="Use with your agent" />
           </CustomTabs>
 
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
+          {/* Keyed by tab, so switching starts the new tab at its top. */}
+          <Box key={tab} sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
             {tab === "world" && <WorldPreview world={world} />}
             {tab === "start" && (
               <TemplateBuildPanel
@@ -151,6 +152,32 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
               />
             )}
           </Box>
+          {/* Read the world, then the next step is always in reach. */}
+          {tab === "world" && (
+            <Stack
+              direction="row"
+              justifyContent="flex-end"
+              sx={{
+                pl: 2.5,
+                /* Clear of the floating help button in the corner. */
+                pr: 9,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
+            >
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => setTab("start")}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
+              >
+                Use with your agent
+              </Button>
+            </Stack>
+          )}
         </Box>
       )}
     </SideDrawer>
