@@ -6,6 +6,8 @@ const INLINE_ERRORS = new Set([
   "scenario_ungradable",
   "scenario_selection_unknown",
   "idempotency_key_reused",
+  "pair_validating",
+  "pair_failed",
 ]);
 
 const isClientError = (error) => {
