@@ -2647,23 +2647,35 @@ class TestTraceSessionOverlayWritePath:
 
         assert name_map[sid] == "renamed-via-2b"
 
-    def test_overlay_upsert_failure_rolls_back_trace_session(self, trace_session):
+    @pytest.mark.parametrize("existing_overlay", [False, True])
+    def test_overlay_upsert_failure_rolls_back_trace_session(
+        self, trace_session, existing_overlay
+    ):
         """Atomicity: a failing overlay upsert rolls back the TraceSession write.
 
         The overlay is PG (same DB as TraceSession), so ``perform_update`` wraps
-        ``save()`` + the overlay ``update_or_create`` in ONE
+        ``save()`` + the locked overlay ``get_or_create``/``save`` in ONE
         ``transaction.atomic()`` — both-or-neither. We drive ``perform_update``
         directly (the exact code under test) so the assertion targets the
         transactional guarantee, not DRF's exception-to-status mapping: a raw
         ``RuntimeError`` is not an ``APIException`` and would otherwise propagate
         through the test client unconverted. Force the overlay upsert to raise,
         then assert the legacy TraceSession row is UNCHANGED (the save did not
-        stick) and NO overlay row was created.
+        stick), and the overlay was neither created nor changed.
         """
         from tracer.serializers.trace_session import TraceSessionSerializer
 
         original_name = trace_session.name
+        original_bookmarked = trace_session.bookmarked
         assert original_name != "renamed-via-2b"
+        overlay = None
+        if existing_overlay:
+            overlay = TraceSessionOverlay.objects.create(
+                trace_session_id=trace_session.id,
+                project_id=trace_session.project_id,
+                display_name="previous rename",
+                bookmarked=True,
+            )
 
         view = TraceSessionView()
         serializer = TraceSessionSerializer(
@@ -2673,22 +2685,46 @@ class TestTraceSessionOverlayWritePath:
         )
         assert serializer.is_valid(), serializer.errors
 
+        save_overlay = TraceSessionOverlay.save
+        writes = []
+
+        def fail_overlay_save(instance, *args, **kwargs):
+            # Let get_or_create and the actual update persist first, then fail
+            # inside the transaction. This targets the shared save edge rather
+            # than a manager method the production path no longer calls.
+            save_overlay(instance, *args, **kwargs)
+            if "display_name" in (kwargs.get("update_fields") or ()):
+                writes.append(instance.pk)
+                assert (
+                    TraceSession.objects.get(pk=trace_session.pk).name
+                    == "renamed-via-2b"
+                )
+                assert (
+                    TraceSessionOverlay._base_manager.get(pk=instance.pk).display_name
+                    == "renamed-via-2b"
+                )
+                raise RuntimeError("overlay write boom")
+
         with mock.patch.object(
-            TraceSessionOverlay.objects,
-            "update_or_create",
-            side_effect=RuntimeError("overlay write boom"),
+            TraceSessionOverlay, "save", autospec=True, side_effect=fail_overlay_save
         ):
             with pytest.raises(RuntimeError, match="overlay write boom"):
                 view.perform_update(serializer)
+        assert len(writes) == 1
 
-        # The atomic() block rolled the TraceSession save back with the failed
-        # overlay upsert (shared transaction) — re-read straight from the DB.
+        # The atomic() block rolled both writes back — re-read from the DB.
         fresh = TraceSession.objects.get(id=trace_session.id)
         assert fresh.name == original_name
-        # No overlay row leaked.
-        assert not TraceSessionOverlay.objects.filter(
-            trace_session_id=trace_session.id
-        ).exists()
+        assert fresh.bookmarked == original_bookmarked
+        if overlay is None:
+            assert not TraceSessionOverlay._base_manager.filter(
+                trace_session_id=trace_session.id
+            ).exists()
+        else:
+            overlay.refresh_from_db()
+            assert overlay.display_name == "previous rename"
+            assert overlay.bookmarked is True
+            assert overlay.deleted is False
 
 
 @pytest.mark.integration
