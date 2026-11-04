@@ -79,3 +79,16 @@ def test_qualified_session_presence_wins(session):
     once = deepcopy(span)
     normalize_span_attributes([span])
     assert span == once
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("direction", ["input", "output"])
+@pytest.mark.parametrize("empty", [None, "", "[]", []])
+def test_ordinary_legacy_content_retains_existing_raw_fallback(direction, empty):
+    from tracer.utils.content_attributes import content_attribute
+
+    attrs = {f"{direction}.value": empty, f"raw.{direction}": "legacy content"}
+    assert content_attribute(attrs, direction) == "legacy content"
+    # Native messages activate the stricter privacy boundary instead.
+    attrs[f"gen_ai.{direction}.messages"] = [{"role": "user", "parts": []}]
+    assert content_attribute(attrs, direction) == (None if empty == "" else empty)

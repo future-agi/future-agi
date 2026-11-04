@@ -8,6 +8,29 @@ def content_attribute(
     attributes: dict[str, Any], direction: Literal["input", "output"]
 ) -> Any:
     """An explicit alias, even empty/redacted, must suppress native fallback."""
+    native_content = any(
+        key in attributes
+        for key in (
+            "gen_ai.input.messages",
+            "gen_ai.output.messages",
+            "gen_ai.system_instructions",
+            "gen_ai.tool.call.arguments",
+            "gen_ai.tool.call.result",
+            "anthropic.tool_result.content",
+        )
+    )
+    if not native_content:
+        # Ordinary legacy spans keep their established empty-placeholder fallback.
+        value = attributes.get(f"fi.llm.{direction}") or attributes.get(
+            f"{direction}.value"
+        )
+        if (
+            value in (None, "", "[]", [])
+            and attributes.get(f"raw.{direction}") is not None
+        ):
+            value = attributes[f"raw.{direction}"]
+        return value if value else None
+
     for key in (f"{direction}.value", f"fi.llm.{direction}", f"raw.{direction}"):
         if key in attributes:
             value = attributes[key]
