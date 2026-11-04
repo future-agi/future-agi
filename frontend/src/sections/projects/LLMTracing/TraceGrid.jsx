@@ -279,6 +279,7 @@ const TraceGrid = React.forwardRef(
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
+          responseVersion: "capture-coverage-v1",
           selectionQueryKey,
           requestedAttributeKeys: requestedAttributeKeysKey,
           pageSize,
