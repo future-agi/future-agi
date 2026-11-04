@@ -46,13 +46,13 @@ const IncrementerButton = forwardRef(
         size="small"
         onClick={onDecrease}
         disabled={disabledDecrease}
-        sx={{ p: 0, flex: 1 }}
+        sx={{ flex: 1 }}
       >
         <Iconify
           sx={{
             color: "text.disabled",
           }}
-          icon="eva:minus-fill"
+          icon="solar:minus-linear"
           width={16}
         />
       </IconButton>
@@ -73,13 +73,13 @@ const IncrementerButton = forwardRef(
         size="small"
         onClick={onIncrease}
         disabled={disabledIncrease}
-        sx={{ p: 0, flex: 1 }}
+        sx={{ flex: 1 }}
       >
         <Iconify
           sx={{
             color: "text.disabled",
           }}
-          icon="mingcute:add-line"
+          icon="solar:add-linear"
           width={16}
         />
       </IconButton>

@@ -162,6 +162,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -1185,8 +1186,8 @@ def _soft_delete_trace_tree(traces):
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
-        deleted=True, deleted_at=now
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation
@@ -5619,11 +5620,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
-        # Format response matching PG format
+        # Format response matching PG format. Keep the typed sidecar separate
+        # from arbitrary attributes/eval columns, which may use the same names.
+        trace_capture_coverage = {}
         table_data = []
         for row in result.data:
             trace_id = str(row.get("trace_id", ""))
-            raw_cost = row.get("cost")
+            raw_cost = row.get("cost", 0)
             entry = {
                 "trace_id": trace_id,
                 "project_id": (
@@ -5646,7 +5649,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)
-                    else 0
+                    else (None if raw_cost is None else 0)
                 ),
                 "trace_name": row.get("trace_name") or row.get("span_name") or "",
                 "start_time": row.get("start_time"),
@@ -5658,6 +5661,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
             }
+
+            if row.get("capture_coverage") is not None:
+                trace_capture_coverage.setdefault(entry["project_id"], {})[trace_id] = (
+                    row["capture_coverage"]
+                )
 
             # Add eval metrics
             trace_evals = eval_map.get(trace_id, {})
@@ -5876,6 +5884,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "metadata": metadata,
             "table": _sanitize_nonfinite_floats(table_data),
             "config": column_config,
+            **(
+                {"trace_capture_coverage": trace_capture_coverage}
+                if trace_capture_coverage
+                else {}
+            ),
         }
 
         return self._gm.success_response(response)

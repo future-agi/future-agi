@@ -1,4 +1,5 @@
-import { Box, Button, Card, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import CustomTooltip from "src/components/tooltip";
 import PropTypes from "prop-types";
@@ -22,7 +23,7 @@ const ModelBaselineCard = ({ modelDetails }) => {
     return (
       <>
         Your model’s default dataset is{" "}
-        <Typography variant="body2" sx={{ fontWeight: 700 }} component="span">
+        <Typography variant="body2" sx={{ fontWeight: 600 }} component="span">
           {baselineModelEnvironment} {baselineModelVersion}
         </Typography>
       </>
@@ -30,7 +31,7 @@ const ModelBaselineCard = ({ modelDetails }) => {
   };
 
   return (
-    <Card>
+    <Section variant="panel">
       <Box
         sx={{
           padding: 2.5,
@@ -42,11 +43,11 @@ const ModelBaselineCard = ({ modelDetails }) => {
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             Dataset Config
           </Typography>
           {/* <CustomTooltip title="Informative text" placement="top" arrow>
-            <Iconify icon="eva:info-fill" sx={{ color: "divider" }} />
+            <Iconify icon="solar:info-circle-linear" sx={{ color: "divider" }} />
           </CustomTooltip> */}
         </Box>
         <CustomTooltip
@@ -78,7 +79,7 @@ const ModelBaselineCard = ({ modelDetails }) => {
         onClose={() => setIsConfigureModalOpen(false)}
         modelDetails={modelDetails}
       />
-    </Card>
+    </Section>
   );
 };
 

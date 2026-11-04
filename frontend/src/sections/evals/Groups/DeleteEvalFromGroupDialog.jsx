@@ -70,15 +70,15 @@ const DeleteEvalFromGroupDialog = ({
       open={open}
       onClose={onClose}
       onSubmit={handleDelete}
-      modalWidth="480px"
+      modalWidth="560px"
       isLoading={isUpdatingGroupEvalList || isDeletingGroup}
       isValid={true}
       actionBtnTitle="Delete Evaluation"
       cancelBtnTitle="Cancel"
       actionBtnSx={{
-        backgroundColor: "red.500",
+        backgroundColor: "status.danger.solid",
         ":hover": {
-          backgroundColor: "red.500",
+          backgroundColor: "status.danger.solid",
         },
       }}
       cancelBtnSx={{
@@ -91,7 +91,7 @@ const DeleteEvalFromGroupDialog = ({
       }}
     >
       <Typography
-        fontSize="14px"
+        fontSize="13px"
         color="text.primary"
         fontWeight="fontWeightRegular"
         sx={{ lineHeight: 1.5 }}

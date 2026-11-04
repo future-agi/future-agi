@@ -20772,6 +20772,12 @@ export const ModelHubDevelopsAddRowsCreateBody = zod.object({
   rows: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
+      order: zod
+        .number()
+        .optional()
+        .describe(
+          "Legacy input accepted for compatibility; rows are appended in request order.",
+        ),
       cells: zod
         .array(
           zod.object({
@@ -34193,6 +34199,1189 @@ export const SimulateApiAgentDefinitionOperationsPartialUpdateResponse =
 
 export const SimulateApiAgentDefinitionOperationsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineBriefParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineCandidatesParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentFixEngineCandidatesBody = zod.object({
+  attempt: zod.number(),
+  summary: zod.string().optional(),
+  tree: zod.instanceof(File),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineCheckRunsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiAgentFixEngineCheckRunsBodyLabelMax = 64;
+
+export const simulateApiAgentFixEngineCheckRunsBodyScenarioKeysItemMax = 255;
+
+export const simulateApiAgentFixEngineCheckRunsBodyTrialsMax = 20;
+
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatDefault = 1;
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatMax = 20;
+
+export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
+  label: zod
+    .string()
+    .min(1)
+    .max(simulateApiAgentFixEngineCheckRunsBodyLabelMax),
+  agent_version_id: zod.string().uuid(),
+  scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixEngineCheckRunsBodyScenarioKeysItemMax),
+    )
+    .min(1),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixEngineCheckRunsBodyTrialsMax),
+  repeat: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixEngineCheckRunsBodyRepeatMax)
+    .default(simulateApiAgentFixEngineCheckRunsBodyRepeatDefault),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineCheckRunParams = zod.object({
+  id: zod.string(),
+  run_id: zod.string(),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineReportParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiAgentFixEngineReportBodyStageMax = 32;
+
+export const simulateApiAgentFixEngineReportBodyPlanTargetMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanHeldBackMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanMustPassMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanProtectedDefault = 0;
+export const simulateApiAgentFixEngineReportBodyPlanProtectedMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanMaxCandidatesMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanRepeatsMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyPlanBaselineSpreadPtsMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyDiagnosisCausesDefault = [];
+
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictMustPassWithinNoiseDefault =
+  [];
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersDefault =
+  [];
+export const simulateApiAgentFixEngineReportBodyCandidatesDefault = [];
+export const simulateApiAgentFixEngineReportBodySummaryDefault = ``;
+export const simulateApiAgentFixEngineReportBodyFailureCodeMax = 64;
+
+export const simulateApiAgentFixEngineReportBodyFailureMessageMax = 500;
+
+export const SimulateApiAgentFixEngineReportBody = zod.object({
+  stage: zod.string().min(1).max(simulateApiAgentFixEngineReportBodyStageMax),
+  step: zod.enum(["reproduce", "search", "verify", "done"]).optional(),
+  plan: zod
+    .object({
+      target: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanTargetMin),
+      held_back: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanHeldBackMin),
+      must_pass: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanMustPassMin),
+      protected: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanProtectedMin)
+        .default(simulateApiAgentFixEngineReportBodyPlanProtectedDefault),
+      max_candidates: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanMaxCandidatesMin),
+      repeats: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanRepeatsMin),
+      baseline_spread_pts: zod
+        .number()
+        .min(simulateApiAgentFixEngineReportBodyPlanBaselineSpreadPtsMin),
+    })
+    .optional(),
+  diagnosis: zod
+    .object({
+      causes: zod
+        .array(zod.string().min(1))
+        .default(simulateApiAgentFixEngineReportBodyDiagnosisCausesDefault),
+    })
+    .optional(),
+  candidates: zod
+    .array(
+      zod.object({
+        candidate_id: zod.string().uuid(),
+        outcome: zod.enum(["pending", "rejected", "finalist", "winner"]),
+        verdict: zod
+          .object({
+            accepted: zod.boolean(),
+            reason: zod.string().min(1),
+            target_pass_rate: zod.array(zod.number()).optional(),
+            held_back_pass_rate: zod.array(zod.number()).optional(),
+            must_pass_regressions: zod.array(zod.string().min(1)),
+            must_pass_within_noise: zod
+              .array(zod.string().min(1))
+              .default(
+                simulateApiAgentFixEngineReportBodyCandidatesItemVerdictMustPassWithinNoiseDefault,
+              ),
+            tiers: zod
+              .array(
+                zod.object({
+                  name: zod.string().min(1),
+                  status: zod.enum(["passed", "failed", "pending", "skipped"]),
+                  detail: zod
+                    .string()
+                    .default(
+                      simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersItemDetailDefault,
+                    ),
+                }),
+              )
+              .default(
+                simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersDefault,
+              ),
+          })
+          .optional(),
+      }),
+    )
+    .default(simulateApiAgentFixEngineReportBodyCandidatesDefault),
+  ending: zod
+    .enum([
+      "ready",
+      "no_improvement",
+      "not_reproduced",
+      "out_of_budget",
+      "failed",
+    ])
+    .optional(),
+  summary: zod
+    .string()
+    .default(simulateApiAgentFixEngineReportBodySummaryDefault),
+  failure: zod
+    .object({
+      owner: zod.enum(["ours", "user"]),
+      code: zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixEngineReportBodyFailureCodeMax),
+      message: zod
+        .string()
+        .max(simulateApiAgentFixEngineReportBodyFailureMessageMax),
+    })
+    .optional(),
+  winner_candidate_id: zod.string().uuid().optional(),
+});
+
+export const SimulateApiAgentFixEngineReportResponse = zod.object({
+  state: zod.string().min(1),
+});
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const SimulateApiAgentFixEngineSourceParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * The engine's model calls, at the path an OpenAI-compatible client builds from its
+base URL: no trailing slash, so it is routed on its own, not by the router.
+ */
+export const SimulateApiAgentFixEngineV1ChatCompletionsCreateParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+
+export const simulateApiAgentFixRunsListQueryLimitMax = 100;
+
+export const SimulateApiAgentFixRunsListQueryParams = zod.object({
+  environment_id: zod.string().uuid(),
+  page: zod.number().min(1).optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixRunsListQueryLimitMax)
+    .optional(),
+});
+
+export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanTargetMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanHeldBackMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanMustPassMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanProtectedDefault = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanProtectedMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanMaxCandidatesMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanRepeatsMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemPlanBaselineSpreadPtsMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemDiagnosisCausesDefault =
+  [];
+
+export const simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScenarioKeysDefault =
+  [];
+export const simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault =
+  [];
+
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
+
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault =
+  [];
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault =
+  [];
+
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax = 512;
+
+export const SimulateApiAgentFixRunsListResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      number: zod.number(),
+      environment_id: zod.string().uuid(),
+      environment: zod
+        .object({
+          name: zod.string().min(1),
+          version: zod.number(),
+          default_agent_version_id: zod.string().uuid(),
+        })
+        .optional(),
+      source_run_id: zod.string().uuid(),
+      source_run_number: zod.number(),
+      base_agent_version_id: zod.string().uuid(),
+      agent: zod
+        .object({
+          name: zod.string().min(1),
+          kind: zod.string().min(1),
+          version_id: zod.string().uuid(),
+          version_number: zod.number(),
+          ref: zod.string().min(1),
+        })
+        .optional(),
+      state: zod
+        .enum([
+          "queued",
+          "running",
+          "stopping",
+          "ready",
+          "no_improvement",
+          "not_reproduced",
+          "out_of_budget",
+          "stopped",
+          "failed",
+        ])
+        .optional(),
+      stage: zod
+        .string()
+        .max(simulateApiAgentFixRunsListResponseResultsItemStageMax)
+        .optional(),
+      step: zod
+        .enum(["reproduce", "search", "verify", "done"])
+        .optional()
+        .describe("A finished fix is done, whatever the engine last said."),
+      plan: zod.object({
+        target: zod
+          .number()
+          .min(simulateApiAgentFixRunsListResponseResultsItemPlanTargetMin),
+        held_back: zod
+          .number()
+          .min(simulateApiAgentFixRunsListResponseResultsItemPlanHeldBackMin),
+        must_pass: zod
+          .number()
+          .min(simulateApiAgentFixRunsListResponseResultsItemPlanMustPassMin),
+        protected: zod
+          .number()
+          .min(simulateApiAgentFixRunsListResponseResultsItemPlanProtectedMin)
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemPlanProtectedDefault,
+          ),
+        max_candidates: zod
+          .number()
+          .min(
+            simulateApiAgentFixRunsListResponseResultsItemPlanMaxCandidatesMin,
+          ),
+        repeats: zod
+          .number()
+          .min(simulateApiAgentFixRunsListResponseResultsItemPlanRepeatsMin),
+        baseline_spread_pts: zod
+          .number()
+          .min(
+            simulateApiAgentFixRunsListResponseResultsItemPlanBaselineSpreadPtsMin,
+          ),
+      }),
+      diagnosis: zod.object({
+        causes: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemDiagnosisCausesDefault,
+          ),
+      }),
+      request: zod.object({
+        target_scenario_keys: zod.array(zod.string().min(1)),
+        protected_scenario_keys: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScenarioKeysDefault,
+          ),
+        held_back_scenario_keys: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault,
+          ),
+        failing_sub_goals: zod.array(zod.string().min(1)),
+        surfaces: zod.array(zod.string().min(1)),
+        locked_paths: zod.array(zod.string().min(1)),
+        budget_credits: zod.number(),
+        max_minutes: zod.number(),
+      }),
+      spent_credits: zod.number(),
+      committed_credits: zod.number(),
+      report: zod.object({
+        ending: zod.string().min(1),
+        summary: zod.string(),
+        winner_candidate_id: zod.string().min(1),
+      }),
+      failure: zod.object({
+        code: zod.string().min(1),
+        message: zod.string().min(1),
+      }),
+      retried_from_id: zod.string().uuid(),
+      retryable: zod.boolean().optional(),
+      limited_validation: zod.boolean().optional(),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional()
+        .describe("The base version's runs; each candidate lists its own."),
+      candidates: zod.array(
+        zod.object({
+          id: zod.string().uuid().optional(),
+          attempt: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin,
+            )
+            .max(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax,
+            ),
+          agent_version_id: zod.string().uuid(),
+          version_number: zod.number(),
+          summary: zod.string().optional(),
+          outcome: zod
+            .enum(["pending", "rejected", "finalist", "winner"])
+            .optional(),
+          verdict: zod.object({
+            accepted: zod.boolean(),
+            reason: zod.string().min(1),
+            target_pass_rate: zod.array(zod.number()).optional(),
+            held_back_pass_rate: zod.array(zod.number()).optional(),
+            must_pass_regressions: zod.array(zod.string().min(1)),
+            must_pass_within_noise: zod
+              .array(zod.string().min(1))
+              .default(
+                simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault,
+              ),
+            tiers: zod
+              .array(
+                zod.object({
+                  name: zod.string().min(1),
+                  status: zod.enum(["passed", "failed", "pending", "skipped"]),
+                  detail: zod
+                    .string()
+                    .default(
+                      simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault,
+                    ),
+                }),
+              )
+              .default(
+                simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault,
+              ),
+          }),
+          check_runs: zod
+            .array(
+              zod.object({
+                run_id: zod.string().uuid(),
+                test_execution_id: zod.string().uuid(),
+                label: zod.string().min(1),
+                state: zod.string().min(1),
+              }),
+            )
+            .optional(),
+          override: zod
+            .object({
+              allowed: zod.boolean(),
+              regressions: zod.array(zod.string().min(1)),
+              reason: zod.string(),
+              by: zod.object({
+                id: zod.string().min(1),
+                name: zod.string(),
+              }),
+              at: zod.string().datetime({ offset: true }),
+            })
+            .optional(),
+          pull_request_url: zod
+            .string()
+            .url()
+            .max(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax,
+            )
+            .optional(),
+          created_at: zod.string().datetime({ offset: true }).optional(),
+        }),
+      ),
+      started_at: zod.string().datetime({ offset: true }).optional(),
+      finished_at: zod.string().datetime({ offset: true }).optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+    }),
+  ),
+});
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
+
+export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysMax = 200;
+
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysItemMax = 255;
+
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysDefault = [];
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysMax = 200;
+
+export const simulateApiAgentFixRunsCreateBodyLockedPathsItemMax = 512;
+
+export const simulateApiAgentFixRunsCreateBodyLockedPathsDefault = [];
+export const simulateApiAgentFixRunsCreateBodyBudgetCreditsMax = 50000;
+
+export const simulateApiAgentFixRunsCreateBodyMaxMinutesMax = 1440;
+
+export const SimulateApiAgentFixRunsCreateBody = zod.object({
+  source_run_id: zod.string().uuid(),
+  target_scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax),
+    )
+    .min(1)
+    .max(simulateApiAgentFixRunsCreateBodyTargetScenarioKeysMax),
+  protected_scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysItemMax),
+    )
+    .max(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysMax)
+    .default(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysDefault),
+  surfaces: zod.array(zod.enum(["prompt", "tools", "settings", "code"])).min(1),
+  locked_paths: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyLockedPathsItemMax),
+    )
+    .default(simulateApiAgentFixRunsCreateBodyLockedPathsDefault),
+  budget_credits: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixRunsCreateBodyBudgetCreditsMax),
+  max_minutes: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax),
+});
+
+/**
+ * What the launch form shows and prefills for a finished run, and what would
+refuse the launch now.
+ */
+export const SimulateApiAgentFixRunsLaunchOptionsQueryParams = zod.object({
+  source_run_id: zod.string().uuid(),
+});
+
+export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
+  source_run: zod.object({
+    id: zod.string().uuid(),
+    number: zod.number(),
+    state: zod.string().min(1),
+    finished_at: zod.string().min(1),
+  }),
+  environment: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    version: zod.number(),
+  }),
+  agent: zod.object({
+    name: zod.string().min(1),
+    kind: zod.string().min(1),
+    version_id: zod.string().uuid(),
+    version_number: zod.number(),
+    ref: zod.string().min(1),
+  }),
+  scenarios: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      name: zod.string().min(1),
+      passed: zod.boolean(),
+      failing_sub_goals: zod.array(zod.string().min(1)),
+    }),
+  ),
+  suggested: zod.object({
+    target_scenario_keys: zod.array(zod.string().min(1)),
+    protected_scenario_keys: zod.array(zod.string().min(1)),
+  }),
+  surfaces: zod.array(
+    zod.object({
+      id: zod.enum(["prompt", "tools", "settings", "code"]),
+      label: zod.string().min(1),
+      allowed: zod.boolean(),
+      reason: zod.string().min(1),
+    }),
+  ),
+  defaults: zod.object({
+    surfaces: zod.array(zod.enum(["prompt", "tools", "settings", "code"])),
+    budget_credits: zod.number(),
+    max_minutes: zod.number(),
+  }),
+  limits: zod.object({
+    budget_credits_max: zod.number(),
+    max_minutes_max: zod.number(),
+    scenarios_min: zod.number(),
+    scenarios_max: zod.number(),
+  }),
+  blocked: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+});
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const SimulateApiAgentFixRunsReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiAgentFixRunsReadResponseStageMax = 32;
+
+export const simulateApiAgentFixRunsReadResponsePlanTargetMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanHeldBackMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanMustPassMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanProtectedDefault = 0;
+export const simulateApiAgentFixRunsReadResponsePlanProtectedMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanMaxCandidatesMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanRepeatsMin = 0;
+
+export const simulateApiAgentFixRunsReadResponsePlanBaselineSpreadPtsMin = 0;
+
+export const simulateApiAgentFixRunsReadResponseDiagnosisCausesDefault = [];
+
+export const simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefault =
+  [];
+export const simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault =
+  [];
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
+  [];
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
+  [];
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax = 512;
+
+export const SimulateApiAgentFixRunsReadResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  number: zod.number(),
+  environment_id: zod.string().uuid(),
+  environment: zod
+    .object({
+      name: zod.string().min(1),
+      version: zod.number(),
+      default_agent_version_id: zod.string().uuid(),
+    })
+    .optional(),
+  source_run_id: zod.string().uuid(),
+  source_run_number: zod.number(),
+  base_agent_version_id: zod.string().uuid(),
+  agent: zod
+    .object({
+      name: zod.string().min(1),
+      kind: zod.string().min(1),
+      version_id: zod.string().uuid(),
+      version_number: zod.number(),
+      ref: zod.string().min(1),
+    })
+    .optional(),
+  state: zod
+    .enum([
+      "queued",
+      "running",
+      "stopping",
+      "ready",
+      "no_improvement",
+      "not_reproduced",
+      "out_of_budget",
+      "stopped",
+      "failed",
+    ])
+    .optional(),
+  stage: zod
+    .string()
+    .max(simulateApiAgentFixRunsReadResponseStageMax)
+    .optional(),
+  step: zod
+    .enum(["reproduce", "search", "verify", "done"])
+    .optional()
+    .describe("A finished fix is done, whatever the engine last said."),
+  plan: zod.object({
+    target: zod.number().min(simulateApiAgentFixRunsReadResponsePlanTargetMin),
+    held_back: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanHeldBackMin),
+    must_pass: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanMustPassMin),
+    protected: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanProtectedMin)
+      .default(simulateApiAgentFixRunsReadResponsePlanProtectedDefault),
+    max_candidates: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanMaxCandidatesMin),
+    repeats: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanRepeatsMin),
+    baseline_spread_pts: zod
+      .number()
+      .min(simulateApiAgentFixRunsReadResponsePlanBaselineSpreadPtsMin),
+  }),
+  diagnosis: zod.object({
+    causes: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsReadResponseDiagnosisCausesDefault),
+  }),
+  request: zod.object({
+    target_scenario_keys: zod.array(zod.string().min(1)),
+    protected_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefault,
+      ),
+    held_back_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault,
+      ),
+    failing_sub_goals: zod.array(zod.string().min(1)),
+    surfaces: zod.array(zod.string().min(1)),
+    locked_paths: zod.array(zod.string().min(1)),
+    budget_credits: zod.number(),
+    max_minutes: zod.number(),
+  }),
+  spent_credits: zod.number(),
+  committed_credits: zod.number(),
+  report: zod.object({
+    ending: zod.string().min(1),
+    summary: zod.string(),
+    winner_candidate_id: zod.string().min(1),
+  }),
+  failure: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+  retried_from_id: zod.string().uuid(),
+  retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
+  check_runs: zod
+    .array(
+      zod.object({
+        run_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        label: zod.string().min(1),
+        state: zod.string().min(1),
+      }),
+    )
+    .optional()
+    .describe("The base version's runs; each candidate lists its own."),
+  candidates: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      attempt: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin)
+        .max(simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax),
+      agent_version_id: zod.string().uuid(),
+      version_number: zod.number(),
+      summary: zod.string().optional(),
+      outcome: zod
+        .enum(["pending", "rejected", "finalist", "winner"])
+        .optional(),
+      verdict: zod.object({
+        accepted: zod.boolean(),
+        reason: zod.string().min(1),
+        target_pass_rate: zod.array(zod.number()).optional(),
+        held_back_pass_rate: zod.array(zod.number()).optional(),
+        must_pass_regressions: zod.array(zod.string().min(1)),
+        must_pass_within_noise: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
+          ),
+        tiers: zod
+          .array(
+            zod.object({
+              name: zod.string().min(1),
+              status: zod.enum(["passed", "failed", "pending", "skipped"]),
+              detail: zod
+                .string()
+                .default(
+                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault,
+                ),
+            }),
+          )
+          .default(
+            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault,
+          ),
+      }),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional(),
+      override: zod
+        .object({
+          allowed: zod.boolean(),
+          regressions: zod.array(zod.string().min(1)),
+          reason: zod.string(),
+          by: zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          at: zod.string().datetime({ offset: true }),
+        })
+        .optional(),
+      pull_request_url: zod
+        .string()
+        .url()
+        .max(simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax)
+        .optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+    }),
+  ),
+  started_at: zod.string().datetime({ offset: true }).optional(),
+  finished_at: zod.string().datetime({ offset: true }).optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  eval_warnings: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1),
+        pass_rate: zod.number(),
+        base_pass_rate: zod.number(),
+        trials: zod.number(),
+        base_trials: zod.number(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
+  id: zod.string(),
+  candidate_id: zod.string(),
+});
+
+export const simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonDefault = ``;
+export const simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonMax = 2000;
+
+export const SimulateApiAgentFixRunsCandidatesMakeDefaultBody = zod.object({
+  override_reason: zod
+    .string()
+    .max(simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonMax)
+    .default(
+      simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonDefault,
+    ),
+});
+
+export const SimulateApiAgentFixRunsCandidatesMakeDefaultResponse = zod.object({
+  outcome: zod.string().min(1),
+});
+
+/**
+ * The candidate's change as a git patch on the base version, to apply by hand.
+ */
+export const SimulateApiAgentFixRunsCandidatesCandidatePatchParams = zod.object(
+  {
+    id: zod.string(),
+    candidate_id: zod.string(),
+  },
+);
+
+export const SimulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  zod.string();
+
+/**
+ * A GitHub agent's winner, or a candidate only its must-pass check refused with
+the user's reason, opened once as a pull request on its repository.
+ */
+export const SimulateApiAgentFixRunsCandidatesPullRequestParams = zod.object({
+  id: zod.string(),
+  candidate_id: zod.string(),
+});
+
+export const simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonDefault = ``;
+export const simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonMax = 2000;
+
+export const SimulateApiAgentFixRunsCandidatesPullRequestBody = zod.object({
+  override_reason: zod
+    .string()
+    .max(simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonMax)
+    .default(
+      simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonDefault,
+    ),
+});
+
+export const SimulateApiAgentFixRunsCandidatesPullRequestResponse = zod.object({
+  pull_request_url: zod.string().url().min(1),
+});
+
+/**
+ * Start a failed fix again: a new fix with the same request. The check runs the
+failed one finished are reused, so the user does not pay for them twice.
+ */
+export const SimulateApiAgentFixRunsRetryParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentFixRunsRetryBody = zod.object({});
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const SimulateApiAgentFixRunsStopParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentFixRunsStopBody = zod.object({});
+
+export const simulateApiAgentFixRunsStopResponseStageMax = 32;
+
+export const simulateApiAgentFixRunsStopResponsePlanTargetMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanHeldBackMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanMustPassMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanProtectedDefault = 0;
+export const simulateApiAgentFixRunsStopResponsePlanProtectedMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanMaxCandidatesMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanRepeatsMin = 0;
+
+export const simulateApiAgentFixRunsStopResponsePlanBaselineSpreadPtsMin = 0;
+
+export const simulateApiAgentFixRunsStopResponseDiagnosisCausesDefault = [];
+
+export const simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefault =
+  [];
+export const simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault =
+  [];
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
+  [];
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault =
+  [];
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax = 512;
+
+export const SimulateApiAgentFixRunsStopResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  number: zod.number(),
+  environment_id: zod.string().uuid(),
+  environment: zod
+    .object({
+      name: zod.string().min(1),
+      version: zod.number(),
+      default_agent_version_id: zod.string().uuid(),
+    })
+    .optional(),
+  source_run_id: zod.string().uuid(),
+  source_run_number: zod.number(),
+  base_agent_version_id: zod.string().uuid(),
+  agent: zod
+    .object({
+      name: zod.string().min(1),
+      kind: zod.string().min(1),
+      version_id: zod.string().uuid(),
+      version_number: zod.number(),
+      ref: zod.string().min(1),
+    })
+    .optional(),
+  state: zod
+    .enum([
+      "queued",
+      "running",
+      "stopping",
+      "ready",
+      "no_improvement",
+      "not_reproduced",
+      "out_of_budget",
+      "stopped",
+      "failed",
+    ])
+    .optional(),
+  stage: zod
+    .string()
+    .max(simulateApiAgentFixRunsStopResponseStageMax)
+    .optional(),
+  step: zod
+    .enum(["reproduce", "search", "verify", "done"])
+    .optional()
+    .describe("A finished fix is done, whatever the engine last said."),
+  plan: zod.object({
+    target: zod.number().min(simulateApiAgentFixRunsStopResponsePlanTargetMin),
+    held_back: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanHeldBackMin),
+    must_pass: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanMustPassMin),
+    protected: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanProtectedMin)
+      .default(simulateApiAgentFixRunsStopResponsePlanProtectedDefault),
+    max_candidates: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanMaxCandidatesMin),
+    repeats: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanRepeatsMin),
+    baseline_spread_pts: zod
+      .number()
+      .min(simulateApiAgentFixRunsStopResponsePlanBaselineSpreadPtsMin),
+  }),
+  diagnosis: zod.object({
+    causes: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsStopResponseDiagnosisCausesDefault),
+  }),
+  request: zod.object({
+    target_scenario_keys: zod.array(zod.string().min(1)),
+    protected_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefault,
+      ),
+    held_back_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault,
+      ),
+    failing_sub_goals: zod.array(zod.string().min(1)),
+    surfaces: zod.array(zod.string().min(1)),
+    locked_paths: zod.array(zod.string().min(1)),
+    budget_credits: zod.number(),
+    max_minutes: zod.number(),
+  }),
+  spent_credits: zod.number(),
+  committed_credits: zod.number(),
+  report: zod.object({
+    ending: zod.string().min(1),
+    summary: zod.string(),
+    winner_candidate_id: zod.string().min(1),
+  }),
+  failure: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+  retried_from_id: zod.string().uuid(),
+  retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
+  check_runs: zod
+    .array(
+      zod.object({
+        run_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        label: zod.string().min(1),
+        state: zod.string().min(1),
+      }),
+    )
+    .optional()
+    .describe("The base version's runs; each candidate lists its own."),
+  candidates: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      attempt: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin)
+        .max(simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax),
+      agent_version_id: zod.string().uuid(),
+      version_number: zod.number(),
+      summary: zod.string().optional(),
+      outcome: zod
+        .enum(["pending", "rejected", "finalist", "winner"])
+        .optional(),
+      verdict: zod.object({
+        accepted: zod.boolean(),
+        reason: zod.string().min(1),
+        target_pass_rate: zod.array(zod.number()).optional(),
+        held_back_pass_rate: zod.array(zod.number()).optional(),
+        must_pass_regressions: zod.array(zod.string().min(1)),
+        must_pass_within_noise: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
+          ),
+        tiers: zod
+          .array(
+            zod.object({
+              name: zod.string().min(1),
+              status: zod.enum(["passed", "failed", "pending", "skipped"]),
+              detail: zod
+                .string()
+                .default(
+                  simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault,
+                ),
+            }),
+          )
+          .default(
+            simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault,
+          ),
+      }),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional(),
+      override: zod
+        .object({
+          allowed: zod.boolean(),
+          regressions: zod.array(zod.string().min(1)),
+          reason: zod.string(),
+          by: zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          at: zod.string().datetime({ offset: true }),
+        })
+        .optional(),
+      pull_request_url: zod
+        .string()
+        .url()
+        .max(simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax)
+        .optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+    }),
+  ),
+  started_at: zod.string().datetime({ offset: true }).optional(),
+  finished_at: zod.string().datetime({ offset: true }).optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
 });
 
 /**
@@ -58711,10 +59900,10 @@ export const TracerFeedIssuesTracesListResponse = zod.object({
       total_traces: zod.number(),
       failing_traces: zod.number(),
       passing_traces: zod.number(),
-      avg_score: zod.number(),
+      avg_score: zod.number().nullable(),
       p50_latency: zod.number(),
       p95_latency: zod.number(),
-      avg_turns: zod.number(),
+      avg_turns: zod.number().nullable(),
     }),
     traces: zod.array(
       zod.object({
@@ -61573,6 +62762,11 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
 });
 
 export const tracerObservationSpanGetGraphMethodsResponseStatusDefault = true;
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerObservationSpanGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -61614,6 +62808,35 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -64194,6 +65417,11 @@ export const TracerProjectGetGraphDataQueryParams = zod.object({
 });
 
 export const tracerProjectGetGraphDataResponseStatusDefault = true;
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetGraphDataResponse = zod.object({
   status: zod.boolean().default(tracerProjectGetGraphDataResponseStatusDefault),
@@ -64202,6 +65430,38 @@ export const TracerProjectGetGraphDataResponse = zod.object({
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     system_metric_statistics: zod
       .record(zod.string(), zod.enum(["count", "sum", "mean", "percentage"]))
       .optional()
@@ -64288,12 +65548,49 @@ export const TracerProjectGetUserGraphDataBody = zod.object({
 });
 
 export const tracerProjectGetUserGraphDataResponseStatusDefault = true;
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetUserGraphDataResponse = zod.object({
   status: zod
     .boolean()
     .default(tracerProjectGetUserGraphDataResponseStatusDefault),
   result: zod.object({
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     session: zod.array(
       zod.record(
         zod.string(),
@@ -64521,6 +65818,11 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
 
 export const tracerProjectGetUsersAggregateGraphDataResponseStatusDefault =
   true;
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerProjectGetUsersAggregateGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -64562,6 +65864,35 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -66595,10 +67926,10 @@ export const TracerSharedReadResponse = zod.object({
           total_traces: zod.number(),
           failing_traces: zod.number(),
           passing_traces: zod.number(),
-          avg_score: zod.number(),
+          avg_score: zod.number().nullable(),
           p50_latency: zod.number(),
           p95_latency: zod.number(),
-          avg_turns: zod.number(),
+          avg_turns: zod.number().nullable(),
         }),
         traces: zod.array(
           zod.object({
@@ -66753,6 +68084,14 @@ export const TracerSharedTracesReadParams = zod.object({
 
 export const tracerSharedTracesReadResponseStatusDefault = true;
 
+export const tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerSharedTracesReadResponse = zod.object({
   status: zod.boolean().default(tracerSharedTracesReadResponseStatusDefault),
   result: zod.object({
@@ -66811,6 +68150,52 @@ export const TracerSharedTracesReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -67198,6 +68583,11 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
 });
 
 export const tracerTraceSessionGetSessionGraphDataResponseStatusDefault = true;
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceSessionGetSessionGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -67239,6 +68629,35 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -67476,6 +68895,8 @@ export const TracerTraceSessionListSessionsQueryParams = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -67489,9 +68910,45 @@ export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFil
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFilterCountMin = 0;
 
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionListSessionsResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -67556,6 +69013,54 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           created_at: zod.string().datetime({ offset: true }).nullish(),
           duration: zod.number().nullish(),
           total_cost: zod.number().nullish(),
+          cost_coverage: zod
+            .object({
+              status: zod.enum(["complete", "partial", "unknown"]),
+              known_subtotal: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin,
+                )
+                .describe(
+                  "Sum in USD of known observed contributions, never an average.",
+                ),
+              known_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with known cost, including zero.",
+                ),
+              unknown_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with unknown cost, not missing requests.",
+                ),
+            })
+            .optional(),
+          capture_coverage: zod
+            .object({
+              scope: zod.enum(["observed_requests"]),
+              source_summary_present: zod.boolean(),
+              request_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin,
+                )
+                .describe(
+                  "Observed request spans only; never inferred from source summary totals.",
+                ),
+              coverage_unknown: zod
+                .boolean()
+                .describe(
+                  "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+                ),
+            })
+            .optional(),
           total_tokens: zod.number().nullish(),
           total_traces_count: zod.number().nullish(),
           first_message: jsonValueSchema
@@ -67664,6 +69169,8 @@ export const TracerTraceSessionListSessionsCreateBody = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -67676,6 +69183,14 @@ export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryResu
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionListSessionsCreateResponse =
   TracerTraceSessionListSessionsResponse;
@@ -67808,10 +69323,66 @@ export const TracerTraceSessionQueryQueryParams = zod.object({
     .default(tracerTraceSessionQueryQueryPageSizeDefault),
 });
 
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionQueryResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     session_metadata: zod.record(zod.string(), zod.unknown()),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin,
+          )
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     response: zod.array(zod.record(zod.string(), zod.unknown())),
     next: zod.boolean(),
   }),
@@ -67857,6 +69428,14 @@ export const TracerTraceSessionQueryCreateBody = zod.object({
     .max(tracerTraceSessionQueryCreateBodyPageSizeMax)
     .default(tracerTraceSessionQueryCreateBodyPageSizeDefault),
 });
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionQueryCreateResponse =
   TracerTraceSessionQueryResponse;
@@ -67959,6 +69538,12 @@ export const tracerTraceAgentGraphResponseResultNodesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTraceCountMin = 0;
@@ -67973,6 +69558,12 @@ export const tracerTraceAgentGraphResponseResultEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTraceCountMin = 0;
@@ -67984,6 +69575,12 @@ export const tracerTraceAgentGraphResponseResultPathEdgesItemAvgLatencyMsMin = 0
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -68017,6 +69614,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemErrorCountMin),
@@ -68048,6 +69674,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin),
@@ -68078,6 +69733,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin),
@@ -68150,6 +69834,12 @@ export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTraceCountMin = 0;
@@ -68164,6 +69854,12 @@ export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTraceCountMin = 0;
@@ -68175,6 +69871,12 @@ export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemAvgLatencyMsM
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -68409,6 +70111,11 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
 });
 
 export const tracerTraceGetGraphMethodsResponseStatusDefault = true;
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -68450,6 +70157,35 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -68949,6 +70685,8 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
   interval: zod.string().optional(),
 });
 
+export const tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceListTracesOfSessionResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -68965,6 +70703,34 @@ export const tracerTraceListTracesOfSessionResponseResultMetadataQueryAppliedFil
 export const TracerTraceListTracesOfSessionResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -69126,6 +70892,8 @@ export const TracerTraceListTracesOfSessionCreateBody = zod.object({
     ),
   interval: zod.string().optional(),
 });
+
+export const tracerTraceListTracesOfSessionCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
 
 export const tracerTraceListTracesOfSessionCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -69547,6 +71315,14 @@ export const TracerTraceReadQueryParams = zod.object({
 
 export const tracerTraceReadResponseStatusDefault = true;
 
+export const tracerTraceReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceReadResponse = zod.object({
   status: zod.boolean().default(tracerTraceReadResponseStatusDefault),
   result: zod.object({
@@ -69598,6 +71374,46 @@ export const TracerTraceReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageUnknownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCaptureCoverageRequestCountMin)
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -71759,6 +73575,11 @@ export const TracerUsersListQueryParams = zod.object({
 });
 
 export const tracerUsersListResponseStatusDefault = true;
+export const tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersListResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -71770,6 +73591,35 @@ export const TracerUsersListResponse = zod.object({
       zod.object({
         user_id: zod.string().min(1).optional(),
         total_cost: zod.number(),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         total_tokens: zod.number().optional(),
         input_tokens: zod.number().optional(),
         output_tokens: zod.number().optional(),
@@ -71884,6 +73734,11 @@ export const TracerUsersCreateBody = zod.object({
 });
 
 export const tracerUsersCreateResponseStatusDefault = true;
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersCreateResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");

@@ -167,5 +167,5 @@ test('OBS-E2E-006: session suggestions select only their own traces', {
   const firstTrace = detail.result.response[0].trace_id;
   await sessionDrawer.getByRole('button', { name: 'View Trace', exact: true }).first().click();
   const opened = seeds.find(s => s.traceId === firstTrace)!;
-  await expect(page.getByText(opened.spanIds[0], { exact: true }).first()).toBeVisible({ timeout: UI_READY });
+  await expect(page.getByText(opened.spanIds[0], { exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: UI_READY });
 });
