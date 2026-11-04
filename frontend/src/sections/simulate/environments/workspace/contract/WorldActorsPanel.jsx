@@ -222,7 +222,7 @@ function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
   return (
     <Stack spacing={1}>
       <Box>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
           {title}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
@@ -622,7 +622,7 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
     >
       {actor && (
         <Stack spacing={2} sx={{ p: 2.5 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {existing
               ? F.editTitle(actor.name)
               : callerSide

@@ -642,7 +642,12 @@ describe("callTranscript", () => {
   it("shows a world actor's action as theirs, not as the agent's tool call", () => {
     const detail = mapCallDetail({
       function_calls: [
-        { id: "agent", name: "update_deal", actor_id: "agent", start_time_ms: 1000 },
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          start_time_ms: 1000,
+        },
         {
           id: "manager",
           name: "approve",

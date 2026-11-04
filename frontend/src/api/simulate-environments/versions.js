@@ -191,7 +191,10 @@ export const getActorView = async (envId, actorId, scenarioKey) =>
 export const editActor = async (envId, { op, actor, actorId, revision }) => {
   if (op === "create") {
     return (
-      await axios.post(actorsPath(envId), { actor, expected_revision: revision })
+      await axios.post(actorsPath(envId), {
+        actor,
+        expected_revision: revision,
+      })
     ).data;
   }
   if (op === "replace") {
@@ -760,7 +763,12 @@ export function useActors(envId, { enabled = true } = {}) {
   });
 }
 
-export function useActorView(envId, actorId, scenarioKey, { enabled = true } = {}) {
+export function useActorView(
+  envId,
+  actorId,
+  scenarioKey,
+  { enabled = true } = {},
+) {
   return useQuery({
     queryKey: actorViewKey(envId, actorId, scenarioKey),
     queryFn: () => getActorView(envId, actorId, scenarioKey),

@@ -104,7 +104,9 @@ export default function ChatTranscriptPane({ turns }) {
               }}
             >
               {turnStamp(s, i)} ·{" "}
-              {s.role === "world_actor" ? worldActorLabel(s.speakerName) : ROLE_LABEL[s.role] || s.role}
+              {s.role === "world_actor"
+                ? worldActorLabel(s.speakerName)
+                : ROLE_LABEL[s.role] || s.role}
             </Typography>
             {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
             {Array.isArray(s.toolCalls) &&
