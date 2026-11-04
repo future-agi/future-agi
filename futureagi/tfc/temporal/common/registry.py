@@ -75,6 +75,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
     "simulate.tasks.hosted_harness_usage",
+    "simulate.tasks.agent_scans",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -441,6 +442,9 @@ def _ensure_workflows_registered() -> None:
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
         from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+        from simulate.temporal.workflows.agent_version_workflow import (
+            AgentVersionWorkflow,
+        )
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
         )
@@ -454,6 +458,7 @@ def _ensure_workflows_registered() -> None:
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
                 AgentFixWorkflow,
+                AgentVersionWorkflow,
             ],
         )
     except ImportError as e:
@@ -742,6 +747,13 @@ def _ensure_activities_registered() -> None:
             release_agent_fix_sandbox,
             watch_agent_fix_engine,
         )
+        from simulate.temporal.activities.agent_version import (
+            check_agent_version,
+            fail_agent_version,
+            read_agent_version,
+            snapshot_agent_version,
+            supersede_agent_versions,
+        )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
@@ -769,9 +781,14 @@ def _ensure_activities_registered() -> None:
                 watch_agent_fix_engine,
                 release_agent_fix_sandbox,
                 close_agent_fix_run,
+                supersede_agent_versions,
+                snapshot_agent_version,
+                read_agent_version,
+                check_agent_version,
+                fail_agent_version,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=11)
+        log.info("registered_hosted_runner_activities", count=16)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

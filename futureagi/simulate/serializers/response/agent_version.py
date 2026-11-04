@@ -23,6 +23,12 @@ class AgentVersionSourceSerializer(serializers.Serializer):
     subfolder = serializers.CharField(required=False)
 
 
+class AgentVersionCheckFailureSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField(allow_blank=True)
+    retryable = serializers.BooleanField()
+
+
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
     """
     Response serializer for AgentVersion detail endpoints.
@@ -149,6 +155,8 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     in_production = serializers.BooleanField(source="is_active", read_only=True)
     origin = serializers.SerializerMethodField()
     preflight_status = serializers.SerializerMethodField()
+    check_step = serializers.SerializerMethodField()
+    check_failure = serializers.SerializerMethodField()
     environments_count = serializers.SerializerMethodField()
     source = serializers.SerializerMethodField()
 
@@ -171,6 +179,8 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
             "in_production",
             "origin",
             "preflight_status",
+            "check_step",
+            "check_failure",
             "environments_count",
             "source",
             "created_at",
@@ -193,6 +203,27 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     def get_preflight_status(self, obj) -> str | None:
         runtime = self._runtime(obj)
         return runtime.preflight_status if runtime is not None else None
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ChoiceField(
+            choices=("snapshot", "reading", "check"), allow_null=True
+        )
+    )
+    def get_check_step(self, obj) -> str | None:
+        """Where a pending check stands: storing the code, reading the agent, or
+        checking its credentials."""
+        from simulate.services.agent_version_steps import check_step
+
+        return check_step(self._runtime(obj))
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentVersionCheckFailureSerializer(allow_null=True)
+    )
+    def get_check_failure(self, obj) -> dict | None:
+        """Why a failed check failed, when the version carries a reason."""
+        from simulate.services.agent_version_steps import check_failure
+
+        return check_failure(self._runtime(obj))
 
     def get_environments_count(self, obj) -> int:
         return int((self.context.get("environments_count") or {}).get(obj.id, 0))

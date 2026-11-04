@@ -134,6 +134,12 @@ def _source_gone() -> HostedHarnessError:
 
 
 def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
+    return branch_head_of(definition.organization_id, definition.workspace_id, source)
+
+
+def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, Any]):
+    """The commit a source's branch points at now; a private repository is read
+    through the workspace's GitHub installation."""
     from simulate.services.harness_agent_changes import github_head
 
     installation_id = source.get("installation_id")
@@ -145,8 +151,8 @@ def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
         )
 
         if not installation_connected(
-            organization_id=definition.organization_id,
-            workspace_id=definition.workspace_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
             installation_id=str(installation_id),
         ):
             raise HostedHarnessError(
@@ -355,6 +361,8 @@ def retry_version(version: AgentVersion) -> None:
 
 
 def discard_version(version: AgentVersion) -> None:
+    from simulate.temporal.client import cancel_agent_version_workflow
+
     with transaction.atomic():
         lock_agent_production(version.agent_definition_id)
         if AgentVersion._base_manager.filter(
@@ -367,6 +375,7 @@ def discard_version(version: AgentVersion) -> None:
                 status_code=409,
             )
         discard_agent_version(version)
+        transaction.on_commit(lambda: cancel_agent_version_workflow(str(version.id)))
 
 
 def set_environment_policy(
@@ -508,6 +517,14 @@ def build_preflight(
         True,
         f"{len(names)} credential name{'s' if len(names) != 1 else ''} come from the version",
     )
+    from simulate.services.agent_connect import found_check_required
+
+    if found_check_required(definition):
+        check(
+            "found_check",
+            False,
+            "check what we found about this agent first",
+        )
     return {
         "ok": all(one["status"] == "ok" for one in checks),
         "version_id": str(version.id),

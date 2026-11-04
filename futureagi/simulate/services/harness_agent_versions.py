@@ -49,6 +49,8 @@ MAX_CREDENTIAL_BLOB_BYTES = 16 * 1024 * 1024
 # A new version with the identity of a live row of these statuses is that row.
 _NOT_DEDUPED = (Status.FAILED, Status.DISCARDED)
 _RETRYABLE = (Status.FAILED, Status.PENDING)
+# What a version's reading wrote on its report, kept when the check writes its own.
+_KEPT_REPORT_KEYS = frozenset({"reading", "step"})
 # The environment payload's record of its default's last move by hand.
 HAND_MOVE_KEY = "agent_default_hand_move"
 # Activations turned down for a reason the environment may want to override: offered.
@@ -1203,10 +1205,18 @@ def change_credentials(
 
 
 def _schedule_preflight(version_id: Any) -> None:
+    """Start the version's check: a code version of an Agents-page agent goes through
+    its workflow (read, then checked); any other is checked at once."""
+    from simulate.services.agent_version_steps import workflow_applies_to
     from simulate.tasks.harness_agent_versions import schedule_agent_preflight
 
     try:
-        schedule_agent_preflight(version_id)
+        if workflow_applies_to(version_id):
+            from simulate.temporal.client import start_agent_version_workflow
+
+            start_agent_version_workflow(str(version_id))
+        else:
+            schedule_agent_preflight(version_id)
     except Exception:  # noqa: BLE001 - a retry starts it again
         logger.exception("could not start the agent preflight version=%s", version_id)
 
@@ -1389,6 +1399,13 @@ def preflight_agent_version(
             passed, report = False, _report([], [], [], "preflight_error")
     status = Status.PASSED if passed else Status.FAILED
     now = timezone.now()
+    # What the version's reading left on the report stays beside the check's own.
+    kept = {
+        name: value
+        for name, value in (runtime.preflight_report or {}).items()
+        if name in _KEPT_REPORT_KEYS
+    }
+    report = {**kept, **report}
     # A version discarded while it was checked stays discarded.
     updated = HarnessAgentVersionRuntime.no_workspace_objects.filter(
         id=runtime.id, preflight_status=Status.PENDING
@@ -2740,6 +2757,9 @@ def _bind_connected_agent(
             "This agent has no version to build from yet",
             status_code=409,
         )
+    from simulate.services.agent_connect import require_found_check
+
+    require_found_check(definition)
     runtime = _side_row(version.id)
     if runtime is not None and runtime.preflight_status not in (
         Status.PASSED,
