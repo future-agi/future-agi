@@ -265,6 +265,23 @@ def test_the_actor_routes_need_versioning(
     )
 
 
+@pytest.mark.parametrize("authored", [True, False])
+def test_an_environment_built_before_versioning_reads_its_actors(
+    user, workspace, storage, auth_client, authored
+):
+    from simulate.tests.test_harness_versioning_backfill import _legacy
+
+    environment = _legacy(user, workspace, f"actors-legacy-{authored}", storage)
+    if not authored:
+        environment.payload["metadata"].pop("authoring_object_key")
+        environment.save(update_fields=["payload"])
+
+    response = auth_client.get(f"{BASE}/{environment.id}/actors/")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "saved"
+
+
 def test_an_actor_a_scenario_includes_is_not_removed(
     user, workspace, storage, auth_client
 ):
