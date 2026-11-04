@@ -38,20 +38,24 @@ export const finishBuildPatch = (env, envState = {}, now = new Date()) => {
   if (env?.buildStatus !== "building") return null;
   const at = now.toISOString();
   const kept = (envState.scenarios || []).filter((r) => !r.proposed && !r.archived);
+  /* Built from scratch: the scenarios the approved design proposed from the
+     description, not a pool read from an agent (builder.md §3–4). */
+  const scratch = env.builtFrom?.kind === "scratch";
+  const pool = scratch && env.starterScenarios?.length ? env.starterScenarios : generatedPool(env);
   const scenarios = kept.length
     ? envState.scenarios
     : [
       ...(envState.scenarios || []),
-      ...sizeToCount(generatedPool(env), env.builtFrom?.scenarioCount || QUICK_SCENARIOS)
+      ...sizeToCount(pool, env.builtFrom?.scenarioCount || QUICK_SCENARIOS)
         .map((r) => stampProvenance(r, { source: "derived", actor: currentUser(), at, batchId: `batch_build_${env.id}` })),
     ];
   const count = scenarios.filter((r) => !r.proposed && !r.archived).length;
   const versions = envState.envVersions || [];
-  const builtFor = currentAgentVersion(envState)?.label || "v1";
+  const builtFor = scratch ? null : currentAgentVersion(envState)?.label || "v1";
   const envVersions = versions.length
     /* Still the first build: v1 carries what the build made. */
     ? versions.map((v, i) => (i === 0 && versions.length === 1 ? { ...v, scenarios: count } : v))
-    : [{ id: `${env.id}-v1`, label: "v1", createdAt: at, note: `First build, read from agent ${builtFor}.`, scenarios: count, changed: ["contract", "seed"], tools: (env.tools || []).map((t) => ({ ...t })), builtFor }];
+    : [{ id: `${env.id}-v1`, label: "v1", createdAt: at, note: scratch ? "First build, from your description." : `First build, read from agent ${builtFor}.`, scenarios: count, changed: ["contract", "seed"], tools: (env.tools || []).map((t) => ({ ...t })), builtFor }];
   const total = env.buildProgress?.total || 3;
   return {
     envPatch: { buildStatus: "ready", buildProgress: { done: total, total } },

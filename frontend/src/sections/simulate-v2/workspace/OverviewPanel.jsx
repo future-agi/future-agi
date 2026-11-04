@@ -150,50 +150,56 @@ export default function OverviewPanel({
         running. (Building from an agent attaches it before this mounts,
         so it never shows there.)
       */}
-      {!agentConnected && !inBuild && (
-        <Box
-          sx={{
-            p: 2,
-            mb: 2,
-            borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
-            bgcolor: "background.paper",
-          }}
-        >
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            alignItems={{ sm: "center" }}
-            spacing={2}
+      {!agentConnected &&
+        !inBuild &&
+        /* Built from scratch: an agent is connected once the release is saved. */
+        !(
+          env.builtFrom?.releaseStep &&
+          (env.buildStatus === "awaiting_approval" || !env.releaseSavedAt)
+        ) && (
+          <Box
+            sx={{
+              p: 2,
+              mb: 2,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
           >
-            <Box flex={1}>
-              {/* Its agent was deleted from Agents: say so, and that nothing here went with it. */}
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-                {envState?.removedAgent
-                  ? `${envState.removedAgent.name || "Its agent"} was deleted — connect an agent to run again`
-                  : "Connect your agent to start testing"}
-              </Typography>
-              <Typography
-                sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
-              >
-                {envState?.removedAgent
-                  ? "Scenarios, evaluations and past runs are all still here."
-                  : `${surface.blurb} We handle the ${surface.transports.join(", ")} side — you point us at your agent.`}
-              </Typography>
-            </Box>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => go("agent")}
-              endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
-              sx={{ flexShrink: 0 }}
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              alignItems={{ sm: "center" }}
+              spacing={2}
             >
-              Connect agent
-            </Button>
-          </Stack>
-        </Box>
-      )}
+              <Box flex={1}>
+                {/* Its agent was deleted from Agents: say so, and that nothing here went with it. */}
+                <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                  {envState?.removedAgent
+                    ? `${envState.removedAgent.name || "Its agent"} was deleted — connect an agent to run again`
+                    : "Connect your agent to start testing"}
+                </Typography>
+                <Typography
+                  sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+                >
+                  {envState?.removedAgent
+                    ? "Scenarios, evaluations and past runs are all still here."
+                    : `${surface.blurb} We handle the ${surface.transports.join(", ")} side — you point us at your agent.`}
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => go("agent")}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
+                sx={{ flexShrink: 0 }}
+              >
+                Connect agent
+              </Button>
+            </Stack>
+          </Box>
+        )}
 
       {/*
         Difficulty sits here rather than in the strip below: that strip is a

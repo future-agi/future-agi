@@ -156,8 +156,10 @@ export default function RlContractPanel({
         <SectionCard
           title={`Rules (${shownRules.length})`}
           subtitle={
-            "From the agent's prompt. When a new agent version changes one, it's either a fix — the suite stays — " +
-            "or a spec change — the rule, its sub-goals and their scenarios change. Someone confirms which."
+            env?.builtFrom?.kind === "scratch"
+              ? "From your description and the answers you gave the builder. Edit one here or ask the builder; a change is saved as the next environment version."
+              : "From the agent's prompt. When a new agent version changes one, it's either a fix — the suite stays — " +
+                "or a spec change — the rule, its sub-goals and their scenarios change. Someone confirms which."
           }
           action={
             canEdit && (
@@ -568,6 +570,11 @@ function RuleRow({
             </>
           ) : rule.source === "added" ? (
             <>Added in environment {changedIn}</>
+          ) : rule.source === "description" ? (
+            <>
+              From your description
+              {changedIn && <> · changed in environment {changedIn}</>}
+            </>
           ) : (
             <>
               From the agent&apos;s prompt

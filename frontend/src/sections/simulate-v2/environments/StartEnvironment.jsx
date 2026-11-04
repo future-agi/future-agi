@@ -56,8 +56,6 @@ import ChipCard from "./ChipCard";
 import EnvironmentsLanding from "./EnvironmentsLanding";
 import PrebuiltWorldsView from "./PrebuiltWorldsView";
 import SetupDrawer from "./SetupDrawer";
-import { stampNewBatch } from "../_mock/addScenarios";
-import { SOURCES } from "../_mock/scenarioProvenance";
 import SideDrawer from "../components/SideDrawer";
 import { worldTotal } from "./landingData";
 import GithubRepoPicker from "../integrations/GithubRepoPicker";
@@ -109,6 +107,7 @@ import {
 } from "./worldSource";
 import { gatewayServerForHost, gatewayServersOf } from "../_mock/gatewayMcp";
 import { mcpServerHost } from "../_mock/mcpServers";
+import { scratchDesignOf, specificScenarioSeeds } from "../_mock/scratchDesign";
 
 /**
  * Variation B entry point.
@@ -524,7 +523,7 @@ export default function StartEnvironment({ entry = false }) {
                   >
                     {view === "worlds"
                       ? "Tables, tools and rules, as designed. Use one with your agent."
-                      : "Every environment belongs to one agent — pick yours, or connect one, then start from its own world or one of these."}
+                      : "Build from your agent's own world, from one of these, or from scratch — the agent can come later."}
                   </Typography>
                 </Box>
                 {/* No agent yet, or rather start from the world: describe it
@@ -2897,6 +2896,9 @@ function PanelScratch() {
   const [name, setName] = useState("");
   const [flowText, setFlowText] = useState(prefill?.flowText || "");
   const [attachments, setAttachments] = useState([]);
+  /* Files are parsed in a cloud sandbox; how personal data in them is
+     handled is asked up front (builder.md §1), the Privacy tab default. */
+  const [personalData, setPersonalData] = useState("replace");
   /* Name is optional — the intake describes the flow well enough on its
      own, so if the user skips the name field we derive a reasonable one
      from the description before building. Build is only gated on the
@@ -2917,8 +2919,17 @@ function PanelScratch() {
        and suggested evals. Tools stay empty because we intentionally
        have no agent connected yet; Overview shows its
        empty state and the way to connect one. */
+    /* The builder proposes the whole world from the description — records,
+       tools, rules, scenario coverage — and waits for approval: nothing is
+       built until the person approves (builder.md §3). Questions it can't
+       answer from the description are asked first, one at a time (§2). */
+    const design = scratchDesignOf(flowText);
     const derivedRules = deriveScratchRules(flowText);
-    const derivedScenarios = deriveScratchScenarios(flowText, finalName);
+    const derivedScenarios = deriveScratchScenarios(
+      flowText,
+      finalName,
+      design.tools,
+    );
     const derivedEvals = deriveScratchEvals(flowText);
     const env = {
       id: envId,
@@ -2939,8 +2950,12 @@ function PanelScratch() {
       popularity: 1,
       builtFrom: {
         kind: "scratch",
+        scenarioCount: derivedScenarios.length,
+        /* After the build, Review and save makes the private release. */
+        releaseStep: true,
         intake: {
           flow: flowText.trim(),
+          personalData: attachments.length ? personalData : null,
           attachments: attachments.map((f) => ({
             name: f.name,
             size: f.size,
@@ -2949,44 +2964,31 @@ function PanelScratch() {
         },
       },
       custom: true,
-      seed: { tables: [] },
-      tools: [],
+      seed: { tables: design.tables },
+      tools: design.tools,
+      actors: [],
       rules: derivedRules,
       evalPreset: derivedEvals,
-      buildStatus: "ready",
+      buildStatus: "awaiting_approval",
+      designPendingAt: Date.now(),
+      /* Written by the build once the design is approved. */
       starterScenarios: derivedScenarios,
     };
     const now = new Date().toISOString();
     dispatch({ type: "adoptEnvironment", env, now });
-    /* Stamped like every other add: written by the system from the
-       description just now, each checked against v1 — not back-filled with
-       made-up authors, and not waiting on a re-check. */
-    const batch = stampNewBatch(derivedScenarios, {
-      env,
-      envState: {},
-      source: "derived",
-      actor: SOURCES.derived.actor,
-      at: now,
-    });
-    /* Seed the workspace envState with the derived scenarios only.
-       Evals stay empty on purpose — the derived list lives on
-       env.evalPreset and surfaces on the Evaluations tab under
-       "Suggested evaluations". Added evaluations must be an
-       explicit user action (either "Add" on a suggested row or the
-       "Add evaluations" button), so we don't pre-fill envState.evals
-       and make the choice for them. Agents stays empty too. */
     dispatch({
       type: "patchEnvState",
       envId,
       patch: {
-        scenarios: batch.rows,
+        designQuestions: design.questions.map((q) => ({ ...q, answer: null })),
+        /* Only the people the description and its answers call for — not a
+           default cast picked by channel. */
+        actors: [],
       },
     });
-    /* Route to the scratch build-in-progress screen instead of straight
-       to the workspace — user sees TemplateReviewLayout stream the
-       stages (Understanding → Building world → Proving scenarios)
-       before Finish setup ships them off to /environments/:envId. */
-    navigate(paths.dashboard.simulate.environmentScratchBuild(envId));
+    /* The draft opens on its Review design, with the builder chat asking
+       anything it needs first. */
+    navigate(paths.dashboard.simulate.environmentStep(envId, "overview"));
   };
 
   const addFiles = (list) => {
@@ -3042,6 +3044,24 @@ function PanelScratch() {
         canSubmit={canGo}
         submitLabel="Build environment"
       />
+      {attachments.length > 0 && (
+        <Stack spacing={0.75}>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            Files are read in a cloud sandbox, not on your machine. Personal
+            data in them:
+          </Typography>
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={personalData}
+            onChange={(_, v) => v && setPersonalData(v)}
+          >
+            <ToggleButton value="replace">Replace consistently</ToggleButton>
+            <ToggleButton value="remove">Remove</ToggleButton>
+            <ToggleButton value="keep">Keep as is</ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+      )}
     </Stack>
   );
 }
@@ -4031,7 +4051,7 @@ function deriveScratchRules(flowText) {
   branchCategory. Purely mocked — a real generator would run an LLM
   against the intake and produce a similar spread.
 */
-function deriveScratchScenarios(flowText, envName) {
+function deriveScratchScenarios(flowText, envName, tools = []) {
   const t = String(flowText || "").toLowerCase();
   const short = (envName || "flow")
     .toLowerCase()
@@ -4311,7 +4331,12 @@ function deriveScratchScenarios(flowText, envName) {
     adversarial: "Callers who push",
     "failure mode": "When a tool fails",
   };
-  return base.map((s, i) => ({
+  /* Cases for what this world does come first; the generic ones fill in. */
+  const specific = specificScenarioSeeds(tools);
+  const pool = specific.length
+    ? [...specific, ...base.filter((s) => s.key !== "happy")].slice(0, 14)
+    : base;
+  return pool.map((s, i) => ({
     id: `sc-scratch-${short}-${s.key}`,
     name: `${short}-${s.key}`,
     title: s.situation,

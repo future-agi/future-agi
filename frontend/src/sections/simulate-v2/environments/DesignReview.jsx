@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import AddSourceMenu from "../workspace/data/AddSourceMenu";
 
@@ -24,8 +31,11 @@ export default function DesignReview({
   sources = null,
   onAddFiles,
   onAddOrg,
+  question = null,
 }) {
   const [anchor, setAnchor] = useState(null);
+  /* Built from scratch there's no agent: the world comes from the words. */
+  const scratch = env?.builtFrom?.kind === "scratch";
   /* Files before the build (plan: "Attach a policy and optional CSV"):
      they shape this design and join the first version. */
   const canAdd = !!(onAddFiles && onAddOrg);
@@ -43,7 +53,9 @@ export default function DesignReview({
               .filter(Boolean)
               .join(" and ") || "reference material"
           }${sources.needsInput ? ` · ${sources.needsInput} to answer after the build` : ""}`
-        : "None — the world is built from the agent alone."}
+        : scratch
+          ? "Your description"
+          : "The agent alone"}
       {canAdd && (
         <ButtonBase
           onClick={(e) => setAnchor(e.currentTarget)}
@@ -55,7 +67,7 @@ export default function DesignReview({
             verticalAlign: "baseline",
           }}
         >
-          {files.length ? "Add another" : "Add a policy or records"}
+          {files.length ? "Add another" : "Add files"}
         </ButtonBase>
       )}
     </>
@@ -64,18 +76,18 @@ export default function DesignReview({
     ...(canAdd || files.length ? [["Sources", sourcesValue]] : []),
     [
       "World",
-      `${(env?.seed?.tables || []).length} tables · ${(env?.seed?.tables || []).reduce((n, t) => n + (t.rows || 0), 0).toLocaleString()} seeded rows`,
+      `${(env?.seed?.tables || []).length} tables · ${(env?.seed?.tables || []).reduce((n, t) => n + (t.rows || 0), 0).toLocaleString()} rows`,
     ],
-    ["Tools", `${(env?.tools || []).length} the world answers`],
+    ["Tools", `${(env?.tools || []).length}`],
     [
       "Rules",
-      `${(env?.rules || []).length} graded on every run${sources?.rules ? `, plus ${sources.rules} from your files` : ""}`,
+      `${(env?.rules || []).length}${sources?.rules ? ` + ${sources.rules} from your files` : ""}`,
     ],
     [
       "People",
-      `${(env?.actors || []).length || "No"} simulated ${(env?.actors || []).length === 1 ? "person" : "people"} besides the caller`,
+      `${(env?.actors || []).length ? `Caller + ${(env?.actors || []).length}` : "Caller only"}`,
     ],
-    ["Scenarios", `${draftCount} to write and check`],
+    ["Scenarios", `${draftCount} to write`],
   ];
   const status = parked ? "Parked" : waiting ? "Awaiting approval" : "Approved";
   /* Framed: the full-width card above every tab, so the one thing to do
@@ -105,10 +117,20 @@ export default function DesignReview({
             sources={sources}
             onAddFiles={onAddFiles}
             onAddOrg={onAddOrg}
+            question={question}
           />
         </Box>
       </Box>
     );
+  /* Compact: title, status and the one action on a row; the proposal as
+     one wrapping line of facts; one line on what happens next. */
+  const note = parked
+    ? `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up this same proposal.`
+    : waiting && question
+      ? `One question first, in the builder chat: ${question}`
+      : waiting
+        ? "Nothing is built until you approve. To change something first, ask the builder."
+        : "Approved — the build is running from this design.";
   return (
     <Box
       sx={{
@@ -116,11 +138,11 @@ export default function DesignReview({
         borderBottom: "1px solid",
         borderColor: "divider",
         px: 2,
-        py: 1.5,
+        py: 1,
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           Review design
         </Typography>
         <Typography
@@ -135,63 +157,7 @@ export default function DesignReview({
         >
           {status}
         </Typography>
-      </Stack>
-
-      {waiting && (
-        <Box
-          component="table"
-          sx={{ width: 1, borderCollapse: "collapse", mb: 1 }}
-        >
-          <Box component="tbody">
-            {rows.map(([k, v]) => (
-              <Box component="tr" key={k}>
-                <Box
-                  component="td"
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 84,
-                    py: 0.25,
-                    verticalAlign: "top",
-                  }}
-                >
-                  {k}
-                </Box>
-                <Box
-                  component="td"
-                  sx={{ typography: "s2", color: "text.primary", py: 0.25 }}
-                >
-                  {v}
-                </Box>
-              </Box>
-            ))}
-          </Box>
-        </Box>
-      )}
-
-      <Typography
-        sx={{ typography: "s3", color: "text.tertiary", mb: waiting ? 1 : 0.5 }}
-      >
-        {parked
-          ? `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up this same proposal.`
-          : waiting
-            ? "Nothing is built until you approve. To change something first, ask the builder."
-            : "Approved — the build is running from this design."}
-      </Typography>
-
-      <Stack direction="row" alignItems="center" spacing={1}>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {autoMode
-            ? "Auto mode: approved steps run without stopping. It never approves a design for you."
-            : "Manual: each approved step waits for you to start it."}
-        </Typography>
+        <Box flex={1} />
         {canAdd && (
           <AddSourceMenu
             anchorEl={anchor}
@@ -215,20 +181,59 @@ export default function DesignReview({
           </Button>
         ) : (
           waiting && (
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={onApprove}
-              startIcon={
-                <Iconify icon="solar:check-circle-linear" width={14} />
+            <Tooltip
+              arrow
+              title={
+                question
+                  ? "Answer the builder's question first — it won't guess a policy."
+                  : autoMode
+                    ? "Auto mode runs approved steps without stopping. It never approves a design for you."
+                    : ""
               }
             >
-              Approve and build
-            </Button>
+              <span>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  disabled={!!question}
+                  onClick={onApprove}
+                  startIcon={
+                    <Iconify icon="solar:check-circle-linear" width={14} />
+                  }
+                >
+                  Approve and build
+                </Button>
+              </span>
+            </Tooltip>
           )
         )}
       </Stack>
+
+      {waiting && (
+        <Stack
+          direction="row"
+          flexWrap="wrap"
+          columnGap={2.5}
+          rowGap={0.25}
+          sx={{ mt: 0.75 }}
+        >
+          {rows.map(([k, v]) => (
+            <Typography key={k} component="div" sx={{ typography: "s2" }}>
+              <Box component="span" sx={{ color: "text.secondary", mr: 0.75 }}>
+                {k}
+              </Box>
+              <Box component="span" sx={{ color: "text.primary" }}>
+                {v}
+              </Box>
+            </Typography>
+          ))}
+        </Stack>
+      )}
+
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
+        {note}
+      </Typography>
     </Box>
   );
 }
@@ -245,4 +250,6 @@ DesignReview.propTypes = {
   sources: PropTypes.object,
   onAddFiles: PropTypes.func,
   onAddOrg: PropTypes.func,
+  /* The builder's open question — Approve waits for its answer. */
+  question: PropTypes.string,
 };

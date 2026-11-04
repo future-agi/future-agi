@@ -78,7 +78,8 @@ export const rulesOf = (env, envState) => {
       id,
       text: last?.to || text,
       original: text,
-      source: "prompt",
+      /* Built from scratch there is no agent: the rules are the description's. */
+      source: env?.builtFrom?.kind === "scratch" ? "description" : "prompt",
       changedIn: last?.envVersion || null,
     };
   });

@@ -153,6 +153,8 @@ import { finishBuildPatch } from "../_mock/quickBuild";
 import PrivateUpdateBanner from "./PrivateUpdateBanner";
 import { privateUpdateOf } from "../_mock/envCopy";
 import DesignReview from "../environments/DesignReview";
+import SaveFirstRelease from "../environments/SaveFirstRelease";
+import { applyScratchAnswer } from "../_mock/scratchDesign";
 import { DESIGN_PARK_MS } from "../_mock/builder";
 import { getBuilderMode } from "../_mock/builderModeBus";
 import { envLabelOf } from "../_mock/envVersionKinds";
@@ -558,6 +560,46 @@ export default function EnvironmentWorkspace() {
     }
   }, [env, state.myEnvironments, dispatch]);
 
+  /* Build from scratch (builder.md §2): an answer to the builder's question
+     sets the rule's wording and who takes part, records the answer, and the
+     builder says what changed. Approval stays the person's next step. */
+  const answerDesignQuestion = (q, answer) => {
+    if (answer.pick == null && !answer.other?.trim()) return;
+    const res = applyScratchAnswer(env, q, answer);
+    dispatch({
+      type: "patchEnvironment",
+      envId: env.id,
+      patch: { rules: res.rules, actors: res.actors },
+    });
+    const latest = latestEnvState.current;
+    patch({
+      designQuestions: (latest.designQuestions || []).map((x) =>
+        x.id === q.id
+          ? {
+              ...x,
+              answer: answer.other?.trim() || q.options[answer.pick]?.label,
+            }
+          : x,
+      ),
+      ...(res.actors.length && {
+        actors: [...new Set([...(latest.actors || []), ...res.actors])],
+      }),
+    });
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [
+          {
+            kind: "note",
+            text: `${res.reply} Approve the design above when it looks right — nothing is built before that.`,
+          },
+        ],
+      },
+    ]);
+  };
+
   /* The conversation belongs to one environment: opening another (the same
      screen, a new id) starts its own, instead of greeting with the last one's name. */
   const turnsEnvRef = useRef(null);
@@ -569,6 +611,12 @@ export default function EnvironmentWorkspace() {
       turnsEnvRef.current !== null && turnsEnvRef.current !== env.id;
     turnsEnvRef.current = env.id;
     chatLoadedFor.current = env.id;
+    /* Built from scratch: the builder's open question waits in the chat,
+       one at a time, until it's answered — after a reload too. */
+    const openQ =
+      env.buildStatus === "awaiting_approval"
+        ? (latestEnvState.current.designQuestions || []).find((q) => !q.answer)
+        : null;
     setTurns((prev) =>
       prev.length && !switched
         ? prev
@@ -579,13 +627,30 @@ export default function EnvironmentWorkspace() {
               steps: [
                 {
                   kind: "note",
-                  text:
-                    env.buildStatus === "awaiting_approval"
+                  text: openQ
+                    ? `I drafted ${env.name} from your description — the design is above. One question first: ${openQ.why}`
+                    : env.buildStatus === "awaiting_approval"
                       ? `${env.name}'s design is waiting for your approval — review it above. Nothing is built until you approve.`
                       : env.buildStatus === "building"
                         ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
                         : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
                 },
+                ...(openQ
+                  ? [
+                      {
+                        kind: "ask",
+                        question: {
+                          step: 1,
+                          total: 1,
+                          prompt: openQ.prompt,
+                          multiSelect: false,
+                          options: openQ.options,
+                        },
+                        onSubmit: (answer) =>
+                          answerDesignQuestion(openQ, answer),
+                      },
+                    ]
+                  : []),
               ],
             },
             ...(latestEnvState.current.chatHistory || []).map(restoredTurn),
@@ -1074,6 +1139,9 @@ export default function EnvironmentWorkspace() {
     if (viewingOlder) return null;
     /* Awaiting approval, the review above is the one next step. */
     if (env.buildStatus === "awaiting_approval" || versionBuilding) return null;
+    /* Built from scratch: Review and save above is the next step — an agent
+       is connected after the release is saved (builder.md §5). */
+    if (env.builtFrom?.releaseStep && !env.releaseSavedAt) return null;
     /* Sealed runs go ahead on what we read; the review is still worth doing. */
     if (runEnabled)
       return needsFoundCheck(envState.agent)
@@ -3262,6 +3330,10 @@ export default function EnvironmentWorkspace() {
               );
           }}
           draftCount={env.builtFrom?.scenarioCount || 10}
+          question={
+            (envState.designQuestions || []).find((q) => !q.answer)?.prompt ||
+            null
+          }
           waiting
           parked={
             Date.now() - (env.designPendingAt || Date.now()) > DESIGN_PARK_MS
@@ -3298,6 +3370,28 @@ export default function EnvironmentWorkspace() {
           }
         />
       )}
+      {/* Built from scratch: the build is checked, then saved as a private
+          release before an agent is connected (builder.md §5). */}
+      {env.builtFrom?.releaseStep &&
+        env.buildStatus === "ready" &&
+        !env.releaseSavedAt && (
+          <SaveFirstRelease
+            env={env}
+            envState={envState}
+            label={envState.activeEnvVersion || "v1"}
+            onSave={() => {
+              dispatch({
+                type: "patchEnvironment",
+                envId: env.id,
+                patch: { releaseSavedAt: new Date().toISOString() },
+              });
+              enqueueSnackbar(
+                `Saved release ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent from Overview to run it.`,
+                { variant: "success" },
+              );
+            }}
+          />
+        )}
       <VersionBuildStrip
         env={env}
         envState={envState}
