@@ -143109,7 +143109,8 @@
                 "passed",
                 "failed",
                 "error",
-                "inconclusive"
+                "inconclusive",
+                "no_score"
             ],
             "type": "object",
             "properties": {
@@ -143140,6 +143141,10 @@
                 },
                 "inconclusive": {
                     "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "no_score": {
+                    "title": "No score",
                     "type": "integer"
                 }
             }

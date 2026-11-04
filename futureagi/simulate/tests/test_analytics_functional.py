@@ -1349,6 +1349,10 @@ class TestRunResultsV3Views:
             item for item in response.json()["results"] if item["id"] == str(call.id)
         )
         assert row["outcome"] == "no_score"
+        risk = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        ).json()["dashboard"]["use_case_risk"]
+        assert sum(one["no_score"] for one in risk) == 1
         assert row["sub_goal_results"] == [
             {
                 "name": "noticed",
