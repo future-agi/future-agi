@@ -49,6 +49,7 @@ from simulate.services.test_executor import (
     _run_simulate_evaluations_task,
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
+from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
@@ -115,8 +116,8 @@ _HARNESS_EVAL_NAMESPACE = uuid.UUID("754ea237-3306-4c91-a718-c3e1c304689c")
 _HARNESS_OUTPUTS = {
     "pass": "Passed",
     "fail": "Failed",
-    "not_applicable": "Not applicable",
-    "inconclusive": "Inconclusive",
+    "not_applicable": NOT_APPLICABLE_OUTPUT,
+    "inconclusive": INCONCLUSIVE_OUTPUT,
 }
 
 

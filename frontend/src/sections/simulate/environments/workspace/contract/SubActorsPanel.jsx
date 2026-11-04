@@ -31,7 +31,7 @@ export default function SubActorsPanel({ subActors }) {
                 </Box>
               ) : null}
             </Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {[
                 C.channels[one.channel] || one.channel,
                 genderLabel(one.persona?.gender),

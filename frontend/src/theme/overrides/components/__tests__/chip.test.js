@@ -1,4 +1,4 @@
-import { createTheme } from "@mui/material/styles";
+import { alpha, createTheme } from "@mui/material/styles";
 import { describe, expect, it } from "vitest";
 import { chip } from "../chip";
 
@@ -27,7 +27,7 @@ describe("chip theme override", () => {
     });
 
     expect(styles["&:hover"]).toEqual({
-      backgroundColor: darkTheme.palette.grey[100],
+      backgroundColor: darkTheme.palette.action.selected,
     });
   });
 
@@ -52,22 +52,24 @@ describe("chip theme override", () => {
 
   it("leaves a non-clickable filled coloured chip alone on hover", () => {
     const styles = rootStyles(darkTheme, {
-      color: "primary",
+      color: "success",
       variant: "filled",
     });
 
     expect(styles["&:hover"]).toBeUndefined();
   });
 
+  // Design system: primary/secondary chips render neutral (purple is kept for
+  // the main action), so the coloured case uses a status colour.
   it("repaints a clickable filled coloured chip on hover", () => {
     const styles = rootStyles(darkTheme, {
-      color: "primary",
+      color: "success",
       variant: "filled",
       clickable: true,
     });
 
     expect(styles["&:hover"]).toEqual({
-      backgroundColor: darkTheme.palette.primary.dark,
+      backgroundColor: alpha(darkTheme.palette.success.main, 0.18),
     });
   });
 });

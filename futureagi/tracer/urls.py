@@ -36,6 +36,29 @@ from tracer.views.feed import (
     LinearTeamsView,
 )
 from tracer.views.imagine_analysis import ImagineAnalysisView
+from tracer.views.insights import (
+    InsightConfigDetailView,
+    InsightConfigListView,
+    InsightDraftView,
+    InsightEstimateView,
+    InsightPreviewView,
+    InsightRunAskView,
+    InsightRunCreateView,
+    InsightRunDetailView,
+    InsightRunMediaView,
+    InsightRunStopView,
+    InsightRunUnitsView,
+)
+from tracer.views.insights_evidence import InsightEvidenceView
+from tracer.views.instant_eval import InstantEvalRunsView
+from tracer.views.instant_eval_scale import (
+    InstantEvalControlView,
+    InstantEvalEstimateView,
+    InstantEvalExportView,
+    InstantEvalRowsView,
+    InstantEvalStartView,
+    InstantEvalSummaryView,
+)
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
 from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
@@ -232,6 +255,90 @@ urlpatterns = [
     ),
     # Imagine analysis — trigger + poll for dynamic analysis results
     path("imagine-analysis/", ImagineAnalysisView.as_view(), name="imagine-analysis"),
+    path(
+        "insights/configs/",
+        InsightConfigListView.as_view(),
+        name="insight-configs",
+    ),
+    path(
+        "insights/configs/<uuid:config_id>/",
+        InsightConfigDetailView.as_view(),
+        name="insight-config-detail",
+    ),
+    path("insights/draft/", InsightDraftView.as_view(), name="insight-draft"),
+    path("insights/preview/", InsightPreviewView.as_view(), name="insight-preview"),
+    path("insights/estimate/", InsightEstimateView.as_view(), name="insight-estimate"),
+    path("insights/runs/", InsightRunCreateView.as_view(), name="insight-runs"),
+    path(
+        "insights/runs/<uuid:run_id>/",
+        InsightRunDetailView.as_view(),
+        name="insight-run-detail",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/stop/",
+        InsightRunStopView.as_view(),
+        name="insight-run-stop",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/units/",
+        InsightRunUnitsView.as_view(),
+        name="insight-run-units",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/media/",
+        InsightRunMediaView.as_view(),
+        name="insight-run-media",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/ask/",
+        InsightRunAskView.as_view(),
+        name="insight-run-ask",
+    ),
+    # The Insights agent's evidence broker (PROTOCOL_V2): no trailing slash,
+    # the agent posts to <base>/<op>.
+    *(
+        path(
+            f"internal/insights/evidence/{op}",
+            InsightEvidenceView.as_view(op=op),
+            name=f"insight-evidence-{op}",
+        )
+        for op in ("manifest", "fields", "media")
+    ),
+    path(
+        "instant-eval/runs/",
+        InstantEvalRunsView.as_view(),
+        name="instant-eval-runs",
+    ),
+    path(
+        "instant-eval/estimate/",
+        InstantEvalEstimateView.as_view(),
+        name="instant-eval-estimate",
+    ),
+    path(
+        "instant-eval/start/",
+        InstantEvalStartView.as_view(),
+        name="instant-eval-start",
+    ),
+    path(
+        "instant-eval/summary/",
+        InstantEvalSummaryView.as_view(),
+        name="instant-eval-summary",
+    ),
+    path(
+        "instant-eval/rows/",
+        InstantEvalRowsView.as_view(),
+        name="instant-eval-rows",
+    ),
+    path(
+        "instant-eval/export/",
+        InstantEvalExportView.as_view(),
+        name="instant-eval-export",
+    ),
+    path(
+        "instant-eval/control/",
+        InstantEvalControlView.as_view(),
+        name="instant-eval-control",
+    ),
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",

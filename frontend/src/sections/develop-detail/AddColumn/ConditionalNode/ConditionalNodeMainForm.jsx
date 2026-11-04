@@ -91,7 +91,7 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
         }}
       >
         {index === 0 ? (
-          <Typography fontSize="14px" fontWeight={600}>
+          <Typography fontSize="13px" fontWeight={600}>
             If
           </Typography>
         ) : (
@@ -279,11 +279,11 @@ const ConditionalNodeMainForm = ({
           alignItems: "center",
         }}
       >
-        <Typography fontWeight={700} color="text.secondary">
+        <Typography fontWeight={600} color="text.secondary">
           {editId ? "Edit Conditional Node" : "Conditional Node"}
         </Typography>
         <IconButton onClick={onCloseClick} size="small">
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box

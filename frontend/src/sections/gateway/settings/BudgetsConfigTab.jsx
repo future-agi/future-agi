@@ -17,6 +17,7 @@ import {
   Button,
   Autocomplete,
 } from "@mui/material";
+import Section from "src/components/section";
 import { Icon } from "@iconify/react";
 import { useAvailableModels } from "../hooks/useAvailableModels";
 
@@ -72,7 +73,7 @@ const PerModelBudgets = ({ perModel, onUpdate }) => {
             label={model}
             size="small"
             variant="outlined"
-            icon={<Icon icon="mdi:robot" width={14} />}
+            icon={<Icon icon="solar:bot-linear" width={14} />}
           />
           <TextField
             size="small"
@@ -83,8 +84,12 @@ const PerModelBudgets = ({ perModel, onUpdate }) => {
             sx={{ width: 120 }}
             inputProps={{ step: 0.01, min: 0 }}
           />
-          <IconButton size="small" onClick={() => handleRemove(model)}>
-            <Icon icon="mdi:close" width={16} color="#d32f2f" />
+          <IconButton
+            sx={{ color: "status.danger.fg" }}
+            size="small"
+            onClick={() => handleRemove(model)}
+          >
+            <Icon icon="solar:close-linear" width={16} />
           </IconButton>
         </Stack>
       ))}
@@ -172,14 +177,18 @@ const BudgetLevelSection = ({
         onClick={() => setExpanded(!expanded)}
       >
         <Icon icon={icon} width={20} />
-        <Typography variant="subtitle1" fontWeight="bold" sx={{ flex: 1 }}>
+        <Typography variant="subtitle1" fontWeight="600" sx={{ flex: 1 }}>
           {title}
         </Typography>
         {count > 0 && (
           <Chip label={count} size="small" color="primary" variant="outlined" />
         )}
         <Icon
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
           width={20}
         />
       </Stack>
@@ -196,10 +205,14 @@ const BudgetLevelSection = ({
             const config = cfg || {};
             const hardValue = config.hard !== undefined ? config.hard : true;
             return (
-              <Paper
+              <Section
                 key={name}
-                variant="outlined"
-                sx={{ p: 1.5, mb: 1.5, bgcolor: "action.hover" }}
+                sx={{
+                  py: 1.5,
+                  mb: 1.5,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
               >
                 <Stack
                   direction="row"
@@ -259,19 +272,19 @@ const BudgetLevelSection = ({
                     }
                     label={<Typography variant="caption">Hard</Typography>}
                   />
-                  <IconButton size="small" onClick={() => handleRemove(name)}>
-                    <Icon
-                      icon="mdi:delete-outline"
-                      width={18}
-                      color="#d32f2f"
-                    />
+                  <IconButton
+                    sx={{ color: "status.danger.fg" }}
+                    size="small"
+                    onClick={() => handleRemove(name)}
+                  >
+                    <Icon icon="solar:trash-bin-trash-linear" width={18} />
                   </IconButton>
                 </Stack>
                 <PerModelBudgets
                   perModel={config.per_model || config.perModel}
                   onUpdate={(pm) => handleEntryChange(name, "per_model", pm)}
                 />
-              </Paper>
+              </Section>
             );
           })}
 
@@ -353,7 +366,7 @@ const BudgetsConfigTab = ({
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:wallet-outline" width={24} />
+        <Icon icon="solar:wallet-linear" width={24} />
         <Typography variant="h6">Budgets & Cost Tracking</Typography>
       </Stack>
 
@@ -379,7 +392,7 @@ const BudgetsConfigTab = ({
         <Stack spacing={3}>
           {/* Organization Budget (existing) */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+            <Typography variant="subtitle1" fontWeight="600" gutterBottom>
               Organization Budget
             </Typography>
             <Stack direction="row" spacing={2} flexWrap="wrap">
@@ -454,7 +467,7 @@ const BudgetsConfigTab = ({
           {/* Hierarchical Budget Levels */}
           <BudgetLevelSection
             title="Team Budgets"
-            icon="mdi:account-group"
+            icon="solar:users-group-rounded-linear"
             levelKey="teams"
             entries={budgetConfig.teams}
             onUpdate={(v) => updateBudget("teams", v)}
@@ -462,7 +475,7 @@ const BudgetsConfigTab = ({
           />
           <BudgetLevelSection
             title="User Budgets"
-            icon="mdi:account"
+            icon="solar:user-linear"
             levelKey="users"
             entries={budgetConfig.users}
             onUpdate={(v) => updateBudget("users", v)}
@@ -470,7 +483,7 @@ const BudgetsConfigTab = ({
           />
           <BudgetLevelSection
             title="Key Budgets"
-            icon="mdi:key"
+            icon="solar:key-linear"
             levelKey="keys"
             entries={budgetConfig.keys}
             onUpdate={(v) => updateBudget("keys", v)}
@@ -478,7 +491,7 @@ const BudgetsConfigTab = ({
           />
           <BudgetLevelSection
             title="Tag Budgets"
-            icon="mdi:tag"
+            icon="solar:tag-linear"
             levelKey="tags"
             entries={budgetConfig.tags}
             onUpdate={(v) => updateBudget("tags", v)}
@@ -491,8 +504,8 @@ const BudgetsConfigTab = ({
 
       {/* ===== COST TRACKING ===== */}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:cash-multiple" width={20} />
-        <Typography variant="subtitle1" fontWeight="bold">
+        <Icon icon="solar:banknote-linear" width={20} />
+        <Typography variant="subtitle1" fontWeight="600">
           Custom Pricing
         </Typography>
       </Stack>
@@ -562,10 +575,11 @@ const BudgetsConfigTab = ({
                   inputProps={{ step: 0.01, min: 0 }}
                 />
                 <IconButton
+                  sx={{ color: "status.danger.fg" }}
                   size="small"
                   onClick={() => handleRemovePricing(model)}
                 >
-                  <Icon icon="mdi:delete-outline" width={18} color="#d32f2f" />
+                  <Icon icon="solar:trash-bin-trash-linear" width={18} />
                 </IconButton>
               </Stack>
             </Paper>

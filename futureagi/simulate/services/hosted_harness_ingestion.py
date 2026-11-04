@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.types import CallSubActors
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -1191,20 +1192,32 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
-    sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error.
+    sub-goal not applicable, inconclusive, or a mix of the two, and no evaluation decided. An execution
+    error stays an error.
     """
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
         if isinstance(one, dict)
     }
+    decided = any(
+        isinstance(one, dict)
+        and isinstance(one.get("passed"), bool)
+        and not one.get("grading_error")
+        for one in body.get("evaluations") or []
+    )
     if (
         body["status"] == "passed"
         and results & {"not_applicable", "inconclusive"}
         and not results & {"pass", "fail"}
+        and not decided
     ):
         return "no_score"
     return body["status"]
+
+
+# A sub-goal's pass or fail as `passed`; any other result has no pass or fail.
+SUB_GOAL_PASSED = {"pass": True, "fail": False}
 
 
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
@@ -1231,7 +1244,7 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": {"pass": True, "fail": False}.get(result),
+                "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
             }
@@ -1333,6 +1346,17 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
+def _sub_actor_record(raw: object) -> CallSubActors | None:
+    """The transcript's sub-actor record, keeping only the entries of its three lists."""
+    if not isinstance(raw, dict):
+        return None
+    record: CallSubActors = {}
+    for key in ("resolved", "summary", "events"):
+        if isinstance(raw.get(key), list):
+            record[key] = [one for one in raw[key] if isinstance(one, dict)]
+    return record or None
+
+
 def _ingest_hosted_transcript(
     call: CallExecution,
     artifact: HostedHarnessArtifact,
@@ -1358,7 +1382,9 @@ def _ingest_hosted_transcript(
         messages = payload.get("messages") if isinstance(payload, dict) else []
         # Who else was in the call, who took part and when; a rerun without them clears it.
         if metadata is not None:
-            record = payload.get("sub_actors") if isinstance(payload, dict) else None
+            record = _sub_actor_record(
+                payload.get("sub_actors") if isinstance(payload, dict) else None
+            )
             if record:
                 metadata["harness_sub_actors"] = record
             else:

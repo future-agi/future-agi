@@ -12,6 +12,7 @@ import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const createValidationSchema = z.object({
   actionType: z.enum([ACTION_TYPES.RETUNE, ACTION_TYPES.RECALCULATE]),
@@ -42,9 +43,9 @@ const AddEvalsFormLoading = ({ handleClose }) => {
           <Skeleton height={20} width={250} />
           <Skeleton height={40} />
         </Box>
-        <IconButton onClick={handleClose} size="small" sx={{ height: "32px" }}>
+        <IconButton onClick={handleClose} size="small">
           {/* @ts-ignore */}
-          <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+          <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
         </IconButton>
       </Box>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -112,8 +113,7 @@ const AddEvalsFeedbackDrawerChild = ({
   }, [configData]);
 
   const multiChoice = Boolean(configData?.multi_choice);
-  const isMultiSelect =
-    outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
+  const isMultiSelect = outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
 
   const { control, reset, handleSubmit, formState } = useForm({
     defaultValues: {
@@ -148,10 +148,9 @@ const AddEvalsFeedbackDrawerChild = ({
     mutationFn: ({ url, body }) => axios.post(url, body),
     onSuccess: (data) => {
       // @ts-ignore
-      enqueueSnackbar(
-        data?.data?.result?.message || "Feedback updated",
-        { variant: "success" },
-      );
+      enqueueSnackbar(data?.data?.result?.message || "Feedback updated", {
+        variant: "success",
+      });
       reset();
       onClose(true);
       refreshGrid({ purge: true });
@@ -280,20 +279,21 @@ AddEvalsFeedbackDrawerChild.propTypes = {
 };
 
 const AddEvalsFeedbackDrawer = ({ open, onClose, ...rest }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "670px",
+          width: "640px",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

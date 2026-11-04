@@ -1,4 +1,4 @@
-import { BUILD_TONES } from "src/sections/simulate/environments/buildEnvironment/buildTones";
+import { SUB_ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 
 // The one monospace stack the contract uses for observation fields, action
 // verbs and verifier names. Kept as a constant so the string is not repeated
@@ -7,11 +7,12 @@ export const MONO_FONT = "ui-monospace, Menlo, monospace";
 
 // The three kinds of verifier that make up the reward spec. The verifiers ARE
 // the evals applied to the environment, given weights — grouped here only for
-// presentation. Colours read from BUILD_TONES.
+// presentation. Each kind is a category, so it takes a data-palette series
+// (`theme.palette.data[series]`), not a status colour.
 export const VERIFIER_KINDS = [
-  { id: "goal", label: "Goal", color: BUILD_TONES.green, blurb: "Did the task get done. Terminal, sparse." },
-  { id: "rubric", label: "Rubric", color: BUILD_TONES.blue, blurb: "How well, judged per turn. Dense." },
-  { id: "constraint", label: "Constraints", color: BUILD_TONES.red, blurb: "What must never happen. Penalty." },
+  { id: "goal", label: "Goal", series: 0, blurb: "Did the task get done. Terminal, sparse." },
+  { id: "rubric", label: "Rubric", series: 1, blurb: "How well, judged per turn. Dense." },
+  { id: "constraint", label: "Constraints", series: 2, blurb: "What must never happen. Penalty." },
 ];
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
@@ -85,11 +86,7 @@ export const CONTRACT_COPY = {
     title: (n) => `Sub-actors (${n})`,
     subtitle:
       "People on the person's side who are not the person. Change them in the builder chat.",
-    channels: {
-      audio_mix: "Heard nearby",
-      audio_handoff: "Takes the phone",
-      ivr: "Phone menu",
-    },
+    channels: SUB_ACTOR_CHANNEL_LABELS,
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },
 

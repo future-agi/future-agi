@@ -748,6 +748,15 @@ _TRACE_PROJECT_SCOPE = filed(
 # Every entry is decided: a reader is filed under the category whose claim holds,
 # with a reason, and a reader nobody filed fails the case that reads this table.
 _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
+    "accounts.user_onboard": {
+        "_write_demo_trace_to_clickhouse": filed(
+            BY_ID_ALONE,
+            why=(
+                "demo publication reads the span ids of the one demo trace it is "
+                "given before inserting, so a retried publication cannot double them"
+            ),
+        ),
+    },
     "agentic_eval.core.database.ch_vector": {
         "ClickHouseVectorDB.fetch_all_vectors": _EMBEDDING_STORE,
         "ClickHouseVectorDB.fetch_vector_by_id": _EMBEDDING_STORE,
@@ -755,6 +764,25 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseVectorDB.get_random_examples": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search_with_threshold": _EMBEDDING_STORE,
+    },
+    "ee.agenthub.insights.evidence": {
+        **{
+            f"EvidenceQueryBuilder.{name}": filed(
+                BY_ID_ALONE,
+                why=(
+                    "reads the spans of the sessions, users or traces a report run "
+                    "sampled, for the evidence broker, pinned to the run's project; "
+                    "a run is only created for a project its view took from a "
+                    "project manager"
+                ),
+            )
+            for name in (
+                "content_query",
+                "identity_query",
+                "roster_query",
+                "trace_stats_query",
+            )
+        },
     },
     "ee.agenthub.traceerroragent.error_cluster": {
         (
@@ -1307,6 +1335,13 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SessionListQueryBuilder._candidate_session_ctes": _SESSION_OR_USER,
         "SessionListQueryBuilder._seed_witness_identity_gate": _SESSION_OR_USER,
         "SessionListQueryBuilder._session_from_where": _SESSION_OR_USER,
+        "SessionListQueryBuilder._session_member_ctes": filed(
+            PROJECT_SET,
+            why=(
+                "latest live member replay and child-inclusive usage for sessions "
+                "scoped by the list view's project ids; shared by filtering and hydration"
+            ),
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,
@@ -1332,6 +1367,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SpanListQueryBuilder.build_filter_anchor_probe": _CANDIDATE_PROBE,
         "SpanListQueryBuilder.build_filter_seed_page": _SEED_PAGE,
         "SpanListQueryBuilder.build_id_query": _LEGACY_PAGE_STATEMENT,
+    },
+    "tracer.services.clickhouse.query_builders.graph_monetary_usage": {
+        "graph_monetary_rows_sql": filed(
+            PROJECT_SET,
+            why="reduces only the latest-live source fenced by each graph caller's authorized project; parent evidence is grouped by project and trace",
+        ),
     },
     "tracer.services.clickhouse.query_builders.time_series": {
         "TimeSeriesQueryBuilder._build_agg_query": _PROJECT_CHART_STATEMENT,
@@ -1660,6 +1701,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "latest_physical_span_rows_sql": _SESSION_OR_USER,
     },
     "tracer.services.clickhouse.v2.span_reader": {
+        "CHSpanReader._roots_resolved": filed(
+            BY_ID_ALONE,
+            why=(
+                "root spans of the session or end-user ids it is given (Instant "
+                "eval and Insights, through roots_by_session_ids and "
+                "roots_by_end_user_ids); the project only narrows the read"
+            ),
+        ),
         "CHSpanReader._session_filter_remap": filed(
             NO_SPAN_TABLE,
             why=(
@@ -1692,6 +1741,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "manager; the third, the session comparison, passes only a session "
                 "id, after a trace session manager check of the organization when "
                 "one is passed, and a hidden project has no session row to pass it"
+            ),
+        ),
+        "CHSpanReader.source_arrivals_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
+        "CHSpanReader.activity_by_trace_ids": filed(
+            BY_ID_ALONE,
+            why=(
+                "the tool calls, failed steps and media steps of the traces it is "
+                "given (the built-in Insights engine, after roots_by_trace_ids or "
+                "roots_by_session_ids picked them); the project only narrows it"
             ),
         ),
         "CHSpanReader.distinct_end_users_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
@@ -1807,6 +1865,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
         "nearest_sql": _GROUPING_STORE,
+    },
+    "tracer.services.instant_eval_rows": {
+        "_FACET_SQL": filed(
+            BY_ID_ALONE,
+            why=(
+                "Instant eval facets of the trace, session or user ids a run reads; "
+                "the run's project only narrows the read"
+            ),
+        ),
+        "_extent_sql": filed(
+            BY_ID_ALONE,
+            why=(
+                "first and last span start of the trace, session or user ids an "
+                "Instant eval run reads; the run's project only narrows the read"
+            ),
+        ),
     },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
@@ -1955,6 +2029,13 @@ SCOPE_IDS = {
 BY_ID_WITHOUT_AN_ID = {
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
+    ),
+    "ee.agenthub.insights.evidence:EvidenceQueryBuilder.content_query": (
+        "reads the physical span identities (trace, span and version) that "
+        "identity_query returned for the trace ids it was given"
+    ),
+    "accounts.user_onboard:_write_demo_trace_to_clickhouse": (
+        "takes the one demo Trace object it publishes and reads by that trace's id"
     ),
 }
 
@@ -2206,7 +2287,8 @@ def _filing_problems(readers):
                     )
                 ]
                 if not any(
-                    name.endswith(("_id", "_ids")) and name not in SCOPE_IDS
+                    (name == "ids" or name.endswith(("_id", "_ids")))
+                    and name not in SCOPE_IDS
                     for name in names
                 ):
                     problems.append(
@@ -3010,6 +3092,12 @@ ROW_TYPES = {
     "tracer.EvalTask.project": USER_MADE,
     "tracer.EvaluationRun.project": USER_MADE,
     "tracer.ImagineAnalysis.project": USER_MADE,
+    # Insights reports and Instant eval runs are started from the Insights and
+    # Ask pages, whose views resolve the project through Project.objects, which
+    # leaves the hidden project out.
+    "tracer.InsightConfig.project": USER_MADE,
+    "tracer.InsightRun.project": USER_MADE,
+    "tracer.InstantEvalRun.project": USER_MADE,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,

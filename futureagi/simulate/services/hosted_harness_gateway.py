@@ -5327,6 +5327,7 @@ def _record_harness_spend(
 
 
 def sub_actors_summary(listing: dict[str, Any]) -> str:
+    """The stage output's one-line summary of the environment's sub-actor list."""
     count = len(listing.get("sub_actors") or [])
     return f"{count} sub-actor" + ("" if count == 1 else "s")
 

@@ -101,7 +101,7 @@ export default function TwoFactorBanner() {
         <Box
           sx={{
             bgcolor: "background.paper",
-            borderRadius: 2,
+            borderRadius: "12px",
             p: 4,
             maxWidth: 480,
             textAlign: "center",
@@ -158,7 +158,6 @@ export default function TwoFactorBanner() {
         severity="warning"
         onClose={handleDismiss}
         sx={{
-          borderRadius: 0,
           "& .MuiAlert-message": {
             width: "100%",
             display: "flex",

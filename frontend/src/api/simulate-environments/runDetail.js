@@ -415,9 +415,20 @@ export function functionCallTranscriptRows(calls = []) {
 /** One stable timeline shared by the chat and voice drawers. */
 export function callTranscript(raw) {
   const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
+  // A sub-actor's turn carries only their name; their role and how they were heard come from the call.
+  const subActors = new Map(
+    (Array.isArray(raw?.sub_actors) ? raw.sub_actors : []).map((one) => [
+      one.name,
+      one,
+    ]),
+  );
   return [
     ...transcript.map((turn) => ({
       ...turn,
+      ...(turn.speaker_role === "sub_actor" && {
+        actor_role: subActors.get(turn.speaker_name)?.role,
+        channel: subActors.get(turn.speaker_name)?.channel,
+      }),
       start_time_seconds: relativeTime(turn),
       end_time_seconds: relativeTime(turn, true),
     })),
@@ -560,6 +571,8 @@ export function mapCallDetail(raw) {
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
     speakerName: t.speaker_name || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
@@ -596,6 +609,7 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,

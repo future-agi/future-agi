@@ -9,8 +9,12 @@ export const DEFAULT_ROLE_LABELS = {
   assistant: "Assistant",
   system: "System",
   tool: "Tool",
-  sub_actor: "Sub-actor",
+  others: "Others",
 };
+
+// Who someone on the call other than the agent and the customer is, when the call kept no name.
+export const OTHER_PARTY_FALLBACK = "Someone";
+export const CALL_PARTICIPANTS_HEADING = "On the call";
 
 export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   label: PropTypes.string.isRequired,
@@ -18,3 +22,16 @@ export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   icon: PropTypes.string,
   content: PropTypes.node,
 });
+
+// How a sub-actor joins a call, as the transcript and the contract tab both name it.
+export const SUB_ACTOR_CHANNEL_LABELS = {
+  audio_mix: "Heard nearby",
+  audio_handoff: "Takes the phone",
+  ivr: "Phone menu",
+};
+
+// Data-palette slot for everyone on a call besides the agent and the customer.
+export const OTHER_PARTY_SERIES = 2;
+
+// Widest a sub-actor's "Name · role" label gets before it is cut, in px.
+export const OTHER_PARTY_LABEL_MAX_WIDTH = 320;
