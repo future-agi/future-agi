@@ -1,3 +1,4 @@
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /* eslint-disable react/prop-types */
 /**
  * PrimaryGraph
@@ -917,7 +918,8 @@ const PrimaryGraph = ({
       const ts = item.timestamp.replace(/\+00:00$/, "");
       mData.push({
         x: new Date(ts).getTime(),
-        y: item.value == null ? null : Number(item.value),
+        y: isIncompleteCost(item.cost_coverage) || item.value == null ? null : Number(item.value),
+        cost_coverage: item.cost_coverage,
       });
       tData.push({
         x: new Date(ts).getTime(),
@@ -954,7 +956,9 @@ const PrimaryGraph = ({
   const metricSeriesName = metricSeriesQualifiers.length
     ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
-  const lineSeriesName = metricSeriesName;
+  const lineSeriesName = metricData.some((point) => isIncompleteCost(point.cost_coverage))
+    ? `${metricSeriesName} · Cost coverage incomplete`
+    : metricSeriesName;
   const trafficSeriesName = "Traffic";
 
   // Series: metric line FIRST (left axis), traffic bars SECOND (right axis)
@@ -1092,7 +1096,9 @@ const PrimaryGraph = ({
         theme: theme.palette.mode,
         x: { format: "dd MMM yyyy" },
         y: {
-          formatter: (v, { seriesIndex }) => {
+          formatter: (v, { seriesIndex, dataPointIndex }) => {
+            const coverage = metricData[dataPointIndex]?.cost_coverage;
+            if (seriesIndex === 0 && isIncompleteCost(coverage)) return monetaryCostLabel(null, coverage);
             if (v == null) return "-";
             if (seriesIndex === 0) {
               return metricDef.unit
@@ -1114,6 +1120,7 @@ const PrimaryGraph = ({
       handleZoomed,
       trafficLabel,
       trafficSeriesName,
+      metricData,
     ],
   );
 

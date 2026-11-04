@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import EmptyState from "src/components/empty-state";
 import React, {
   forwardRef,
@@ -1353,7 +1354,7 @@ export default function DashboardDetailView() {
               }
               label={
                 datePreset === "custom" && customDateRange
-                  ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                  ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
                   : "Custom"
               }
               size="small"
@@ -1391,6 +1392,7 @@ export default function DashboardDetailView() {
             open={isDatePickerOpen}
             onClose={() => setIsDatePickerOpen(false)}
             anchorEl={customDateAnchorRef.current}
+            value={customDateRange}
             setDateFilter={(filter) => {
               if (filter && filter[0] && filter[1]) {
                 setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);

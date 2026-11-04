@@ -1,4 +1,5 @@
 /* eslint-disable no-restricted-syntax -- ds: data colours (span-type encodings) */
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /**
  * AgentGraph — Aggregate agent DAG visualization
  *
@@ -246,7 +247,7 @@ const AgentNode = ({ data }) => {
       </Box>
 
       {/* Cost */}
-      {(data.total_cost > 0 || data.avg_cost > 0) && (
+      {(data.cost_coverage || data.total_cost > 0 || data.avg_cost > 0) && (
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
@@ -258,7 +259,10 @@ const AgentNode = ({ data }) => {
             Estimated LLM cost
           </Typography>
           <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
-            ${(data.total_cost || data.avg_cost || 0).toFixed(4)}
+            {monetaryCostLabel(
+              (data.total_cost || data.avg_cost || 0).toFixed(4),
+              data.cost_coverage,
+            )}
           </Typography>
         </Box>
       )}
@@ -843,8 +847,10 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         strokeWidth: Math.round(thickness * 10) / 10,
       },
       // Show transition count on edges with > 1 transition
-      ...(count > 1 && {
-        label: `×${count}`,
+      ...((count > 1 || isIncompleteCost(edge.cost_coverage)) && {
+        label: isIncompleteCost(edge.cost_coverage)
+          ? `×${count} · ${monetaryCostLabel(null, edge.cost_coverage)}`
+          : `×${count}`,
         labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
         labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
         labelBgPadding: [3, 2],

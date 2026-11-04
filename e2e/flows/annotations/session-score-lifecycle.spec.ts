@@ -1,5 +1,5 @@
 import { test, expect } from '../../lib/scope-actors';
-import type { Request } from '@playwright/test';
+import type { Request, Response } from '@playwright/test';
 import { sendTrace } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
@@ -207,6 +207,78 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
     ? req.postDataJSON() : Object.fromEntries(new URL(req.url()).searchParams);
   const complete = (body: ListPage) => expect(body.result.metadata).toMatchObject({ has_more: false,
     next_cursor: null, query_complete: true, query_status: 'complete', query_error_code: null, total_rows_is_lower_bound: false });
+  // Session-grid's loadExactListPage follows opaque cursors before publishing a
+  // visible page. Capture those actual browser reads; API replay is independent.
+  const listResponses: Response[] = [];
+  page.on('response', response => {
+    if (new URL(response.url()).pathname === LIST && ['GET', 'POST'].includes(response.request().method()))
+      listResponses.push(response);
+  });
+  // Same finite eight-page bound as OBS catalog-history-live-parity. Our cohort
+  // fits one visible page; transport chunks may stop at the acquisition wall.
+  const walkList = async (load: (cursor: string | undefined) => Promise<ListPage>) => {
+    const pages: ListPage[] = [], table: ListPage['result']['table'] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let hop = 0; hop < 8; hop++) {
+      const body = await load(cursor), metadata = body.result.metadata;
+      pages.push(body);
+      table.push(...body.result.table);
+      expect(new Set(table.map(row => row.session_id)).size).toBe(table.length);
+      expect(typeof metadata.has_more).toBe('boolean');
+      if (!metadata.has_more) {
+        complete(body);
+        return { pages, table };
+      }
+      expect(metadata.total_rows_is_lower_bound).toBe(true);
+      expect(typeof metadata.query_complete).toBe('boolean');
+      if (metadata.query_complete) {
+        expect([metadata.query_status, metadata.query_error_code]).toEqual(['complete', null]);
+      } else {
+        expect(metadata.query_complete).toBe(false);
+        expect(metadata.query_status).toBe('degraded');
+        expect(['deadline_exceeded', 'query_budget_exceeded']).toContain(metadata.query_error_code);
+      }
+      expect(typeof metadata.next_cursor).toBe('string');
+      expect(metadata.next_cursor!.length).toBeGreaterThan(0);
+      expect(cursors.has(metadata.next_cursor!)).toBe(false);
+      cursors.add(metadata.next_cursor!);
+      cursor = metadata.next_cursor!;
+    }
+    throw new Error('Session list did not complete within eight cursor pages');
+  };
+  // listCursorPagination.requestParams drops the numbered offset on cursor hops.
+  const cursorParams = (params: Record<string, string | number | boolean>, cursor: string | undefined) => {
+    if (cursor === undefined) return params;
+    const { page_number: _page, ...query } = params;
+    return { ...query, cursor };
+  };
+  const readUIList = async (first: Response) => {
+    const initialParams = paramsOf(first.request());
+    expect(initialParams.cursor).toBeUndefined();
+    const started = Date.now();
+    let position = listResponses.indexOf(first);
+    expect(position).toBeGreaterThanOrEqual(0);
+    return walkList(async cursor => {
+      let response = first;
+      if (cursor !== undefined) {
+        const remaining = UI_READY - (Date.now() - started);
+        expect(remaining).toBeGreaterThan(0);
+        await expect.poll(() => listResponses.slice(position + 1)
+          .find(candidate => paramsOf(candidate.request()).cursor === cursor), { timeout: remaining }).toBeDefined();
+        response = listResponses.slice(position + 1)
+          .find(candidate => paramsOf(candidate.request()).cursor === cursor)!;
+        position = listResponses.indexOf(response);
+      }
+      expect(response.status()).toBe(200);
+      expect(paramsOf(response.request())).toEqual(cursorParams(initialParams, cursor));
+      return readJsonWithin<ListPage>(response);
+    });
+  };
+  const readAPIList = (api: typeof actor.api, params: Record<string, string | number | boolean>) => {
+    expect(params.cursor).toBeUndefined();
+    return walkList(cursor => api.post<ListPage>(LIST, cursorParams(params, cursor)));
+  };
   const saved: { labelId: string; phase: number; params: Record<string, string | number | boolean> }[] = [];
   const receipts: unknown[] = [];
   let initial: Score[] = [];
@@ -352,15 +424,13 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
             expect(params.project_id).toBe(projectId);
             const filter = (JSON.parse(String(params.filters)) as Filter[]).find(f => f.column_id === label.id)!;
             expect(filter).toMatchObject({ property_id: `annotation:${label.id}`, filter_config: expectedConfig });
-            const body = await response.json() as ListPage;
+            const body = await readUIList(response);
             const expected = phase === wanted ? [sessionId] : [];
-            complete(body);
-            expect(body.result.table.map(r => r.session_id)).toEqual(expected);
-            if (expected.length) expect(body.result.table[0]).toMatchObject({ project_id: projectId, total_traces_count: 2 });
+            expect(body.table.map(r => r.session_id)).toEqual(expected);
+            if (expected.length) expect(body.table[0]).toMatchObject({ project_id: projectId, total_traces_count: 2 });
             await expect.poll(rowsInGrid, { timeout: UI_READY }).toEqual(expected);
-            const replay = await actor.api.post<ListPage>(LIST, params);
-            complete(replay);
-            expect(replay.result.table.map(r => r.session_id)).toEqual(expected);
+            const replay = await readAPIList(actor.api, params);
+            expect(replay.table.map(r => r.session_id)).toEqual(expected);
             if (phase) saved.push({ labelId: label.id, phase: wanted, params });
             await testInfo.attach(`filter-${label.id}-${phase}-${wanted}`, { body: JSON.stringify({ params, body, replay }), contentType: 'application/json' });
           }
@@ -383,10 +453,13 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
         for (const entry of saved.filter(s => s.phase === 1)) {
           const { project_id: _project, ...unscopedParams } = entry.params;
           const params = sibling ? { ...entry.params, project_id: siblingId } : unscopedParams;
-          const body = await reader.api.post<ListPage | EmptyWorkspacePage>(LIST, params);
-          if (sibling) complete(body as ListPage);
-          else expect(body.result.metadata).toEqual({ total_rows: 0 });
-          expect(body.result.table).toEqual([]);
+          const body = sibling ? await readAPIList(reader.api, params)
+            : await reader.api.post<EmptyWorkspacePage>(LIST, params);
+          if ('pages' in body) expect(body.table).toEqual([]);
+          else {
+            expect(body.result.metadata).toEqual({ total_rows: 0 });
+            expect(body.result.table).toEqual([]);
+          }
           receipts.push({ organizationId: reader.organizationId, workspaceId: reader.workspaceId, params, body });
         }
         receipts.push({ organizationId: reader.organizationId, workspaceId: reader.workspaceId, catalogParams, catalog });
@@ -401,9 +474,8 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
       expect(deleted).toEqual(current.map(s => ({ ...s, deleted: 1, has_delete_timestamp: 1 })));
       await expect.poll(readCH, POLL.CDC_VISIBLE).toEqual(deleted);
       for (const entry of saved) {
-        const body = await actor.api.post<ListPage>(LIST, entry.params);
-        complete(body);
-        expect(body.result.table).toEqual([]);
+        const body = await readAPIList(actor.api, entry.params);
+        expect(body.table).toEqual([]);
         receipts.push({ deletedFilter: entry, body });
       }
       // ObserveHeader's Reload data refreshes Session-grid without discarding useState extraFilters.
@@ -416,9 +488,8 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
       await reload.click();
       const response = await refreshed;
       expect(response.status()).toBe(200);
-      const body = await response.json() as ListPage;
-      complete(body);
-      expect(body.result.table).toEqual([]);
+      const body = await readUIList(response);
+      expect(body.table).toEqual([]);
       await expect.poll(rowsInGrid, { timeout: UI_READY }).toEqual([]);
       expect(await readSource()).toEqual(sourceBefore);
       expect(await readSessions()).toEqual(sessions);

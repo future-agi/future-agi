@@ -1,0 +1,186 @@
+[
+  {
+    "name": "invoke_agent",
+    "scope": {
+      "name": "github.copilot",
+      "version": "1.0.98"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.conversation.id": "session-test",
+      "gen_ai.usage.input_tokens": 42925
+    },
+    "expected": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "AGENT",
+      "session.id": "session-test",
+      "fi.source.operation": "invoke_agent",
+      "fi.normalization.profile": "github-copilot-cli-1.0.98",
+      "fi.source.summary.gen_ai.usage.input_tokens": 42925,
+      "fi.usage.contribution": "none",
+      "fi.usage.scope": "turn",
+      "fi.cost.kind": "unknown"
+    }
+  },
+  {
+    "name": "execute_hook",
+    "scope": {
+      "name": "github.copilot",
+      "version": "1.0.98"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "execute_hook",
+      "gen_ai.conversation.id": "session-test"
+    },
+    "expected": {
+      "gen_ai.operation.name": "execute_hook",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "CHAIN",
+      "session.id": "session-test",
+      "fi.source.operation": "execute_hook",
+      "fi.normalization.profile": "github-copilot-cli-1.0.98"
+    }
+  },
+  {
+    "name": "llm_call",
+    "scope": {
+      "name": "gemini-cli",
+      "version": "v1"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "llm_call",
+      "gen_ai.conversation.id": "session-test"
+    },
+    "expected": {
+      "gen_ai.operation.name": "llm_call",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "LLM",
+      "session.id": "session-test",
+      "fi.source.operation": "llm_call",
+      "fi.normalization.profile": "gemini-cli-tracer-v1"
+    }
+  },
+  {
+    "name": "tool_call",
+    "scope": {
+      "name": "gemini-cli",
+      "version": "v1"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "tool_call",
+      "gen_ai.conversation.id": "session-test"
+    },
+    "expected": {
+      "gen_ai.operation.name": "tool_call",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "TOOL",
+      "session.id": "session-test",
+      "fi.source.operation": "tool_call",
+      "fi.normalization.profile": "gemini-cli-tracer-v1"
+    }
+  },
+  {
+    "name": "agent_call",
+    "scope": {
+      "name": "gemini-cli",
+      "version": "v1"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "agent_call",
+      "gen_ai.conversation.id": "session-test"
+    },
+    "expected": {
+      "gen_ai.operation.name": "agent_call",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "AGENT",
+      "session.id": "session-test",
+      "fi.source.operation": "agent_call",
+      "fi.normalization.profile": "gemini-cli-tracer-v1"
+    }
+  },
+  {
+    "name": "schedule_tool_calls",
+    "scope": {
+      "name": "gemini-cli",
+      "version": "v1"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "schedule_tool_calls",
+      "gen_ai.conversation.id": "session-test"
+    },
+    "expected": {
+      "gen_ai.operation.name": "schedule_tool_calls",
+      "gen_ai.conversation.id": "session-test",
+      "fi.span.kind": "CHAIN",
+      "session.id": "session-test",
+      "fi.source.operation": "schedule_tool_calls",
+      "fi.normalization.profile": "gemini-cli-tracer-v1"
+    }
+  },
+  {
+    "name": "unqualified-{'name': 'github.copilot', 'version': '1.0.99'}",
+    "scope": {
+      "name": "github.copilot",
+      "version": "1.0.99"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    },
+    "expected": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    }
+  },
+  {
+    "name": "unqualified-{'name': 'gemini-cli', 'version': 'v2'}",
+    "scope": {
+      "name": "gemini-cli",
+      "version": "v2"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    },
+    "expected": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    }
+  },
+  {
+    "name": "unqualified-{'name': 'unrelated', 'version': '1.0.98'}",
+    "scope": {
+      "name": "unrelated",
+      "version": "1.0.98"
+    },
+    "attributes": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    },
+    "expected": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    }
+  },
+  {
+    "name": "unqualified-{}",
+    "scope": {},
+    "attributes": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    },
+    "expected": {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.conversation.id": "unmapped"
+    }
+  }
+]

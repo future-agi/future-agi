@@ -72,6 +72,13 @@ EVALUATOR_CALLS = [
     APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
 ]
 
+# Evaluators that run on the org's own provider key. The provider enforces its
+# own limits on that key, so these get no per-call rate limit on any plan; free
+# plans are still capped by credits (ee.usage.services.metering.check_usage).
+BYOK_EVALUATOR_CALLS = [
+    APICallTypeChoices.JEV_EVALUATOR.value,
+]
+
 subscription_tier_entries = [
     {
         "name": SubscriptionTierChoices.FREE.value,
@@ -210,6 +217,10 @@ api_call_type_entries = [
     {
         "name": APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
         "description": "This is the API for turing large evaluator",
+    },
+    {
+        "name": APICallTypeChoices.JEV_EVALUATOR.value,
+        "description": "This is the API for Jev evaluators on the org's own TypeSafe key",
     },
     {
         "name": APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
@@ -1076,8 +1087,9 @@ def create_organization_subscription_if_not_exists(organization):
 
 
 def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
-    if source == FIX_CHECK_RUN_EVAL_SOURCE:
+    if api_call_type in BYOK_EVALUATOR_CALLS or source == FIX_CHECK_RUN_EVAL_SOURCE:
         return False, {}
+
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)

@@ -78,7 +78,7 @@ export default function TrialChart({ candidates }) {
           borderColor: "divider",
         }}
       >
-        <Typography sx={{ typography: "m2", fontWeight: 700, ...num }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600, ...num }}>
           {pct(pick.verdict.target_pass_rate[1])}
           <Box
             component="span"
