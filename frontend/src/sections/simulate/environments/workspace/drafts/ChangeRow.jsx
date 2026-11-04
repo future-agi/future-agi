@@ -10,10 +10,10 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 import { diffLines, sourceLine, sourceLink, undoBlock } from "./reviewView";
 
-const MONO = "ui-monospace, Menlo, monospace";
 const DIFF_LINES_SHOWN = 12;
 // A long file name gives way before the row's title does.
 const LINK_MAX_WIDTH = 200;
@@ -54,8 +54,7 @@ function DiffLine({ line }) {
     <Stack direction="row" spacing={1} alignItems="baseline">
       <Typography
         sx={{
-          typography: "s3",
-          fontFamily: MONO,
+          typography: "code_sm",
           fontWeight: 600,
           color: SIGN_COLOR[line.sign],
           width: 10,
@@ -78,8 +77,7 @@ function DiffLine({ line }) {
         {line.before && (
           <Typography
             sx={{
-              typography: "s3",
-              fontFamily: MONO,
+              typography: "code_sm",
               color: "text.tertiary",
               textDecoration: "line-through",
               wordBreak: "break-word",
@@ -90,8 +88,7 @@ function DiffLine({ line }) {
         )}
         <Typography
           sx={{
-            typography: "s3",
-            fontFamily: MONO,
+            typography: "code_sm",
             color: "text.primary",
             wordBreak: "break-word",
           }}
@@ -154,38 +151,40 @@ export default function ChangeRow({
           />
         </IconButton>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap title={change.summary} sx={{ typography: "s1" }}>
-            {change.summary}
-          </Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {sourceText(source)}
-          </Typography>
+          <OverflowTooltip title={change.summary}>
+            <Typography noWrap sx={{ typography: "s1" }}>
+              {change.summary}
+            </Typography>
+          </OverflowTooltip>
+          <OverflowTooltip title={sourceText(source)}>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {sourceText(source)}
+            </Typography>
+          </OverflowTooltip>
         </Box>
-        <CustomTooltip
-          show={link.kind === "file"}
+        <Button
           size="small"
-          arrow
-          title={linkText(link)}
+          color="inherit"
+          onClick={() => onOpen(link)}
+          sx={{
+            flexShrink: 0,
+            maxWidth: LINK_MAX_WIDTH,
+            color: "text.secondary",
+            whiteSpace: "nowrap",
+          }}
         >
-          <Button
-            size="small"
-            color="inherit"
-            onClick={() => onOpen(link)}
-            sx={{
-              flexShrink: 0,
-              maxWidth: LINK_MAX_WIDTH,
-              color: "text.secondary",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <OverflowTooltip title={linkText(link)}>
             <Box
               component="span"
               sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
             >
               {linkText(link)}
             </Box>
-          </Button>
-        </CustomTooltip>
+          </OverflowTooltip>
+        </Button>
         {canEdit && (
           <CustomTooltip
             show={Boolean(block)}

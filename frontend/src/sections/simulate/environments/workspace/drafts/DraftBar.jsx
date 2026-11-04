@@ -3,6 +3,7 @@ import { useEffect, useId, useRef } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useDraftReview } from "src/api/simulate-environments/draftReview";
 import {
   useDrafts,
@@ -99,7 +100,7 @@ export default function DraftBar({
     <>
       {/* The dashboard stays 1200 wide and scrolls sideways below that, so there
           the bar takes its own row at the left to keep Save on screen. Above it,
-          the line gives way before Save does; the drawer's footer repeats it. */}
+          the line gives way before Save does. */}
       <Stack
         direction="row"
         alignItems="center"
@@ -118,37 +119,48 @@ export default function DraftBar({
           endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
           sx={{ color: "text.secondary", whiteSpace: "nowrap", minWidth: 0 }}
         >
-          <Box
-            component="span"
-            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          <OverflowTooltip
+            title={
+              kept.length
+                ? `${REVIEW_COPY.unsavedEdits(kept.length)} · ${REVIEW_COPY.saveLine(line)}`
+                : shortLabel
+            }
           >
-            {kept.length ? (
-              <>
-                <Box component="span" sx={{ fontWeight: "fontWeightRegular" }}>
-                  {REVIEW_COPY.unsavedEdits(kept.length)}
-                </Box>
-                <Box
-                  component="span"
-                  sx={{ display: { xs: "none", lg: "inline" } }}
-                >
+            <Box
+              component="span"
+              sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+            >
+              {kept.length ? (
+                <>
                   <Box
                     component="span"
                     sx={{ fontWeight: "fontWeightRegular" }}
                   >
-                    {" · "}
+                    {REVIEW_COPY.unsavedEdits(kept.length)}
                   </Box>
                   <Box
                     component="span"
-                    sx={{ ml: 0.5, fontWeight: "fontWeightSemiBold" }}
+                    sx={{ display: { xs: "none", lg: "inline" } }}
                   >
-                    {REVIEW_COPY.saveLine(line)}
+                    <Box
+                      component="span"
+                      sx={{ fontWeight: "fontWeightRegular" }}
+                    >
+                      {" · "}
+                    </Box>
+                    <Box
+                      component="span"
+                      sx={{ ml: 0.5, fontWeight: "fontWeightSemiBold" }}
+                    >
+                      {REVIEW_COPY.saveLine(line)}
+                    </Box>
                   </Box>
-                </Box>
-              </>
-            ) : (
-              shortLabel
-            )}
-          </Box>
+                </>
+              ) : (
+                shortLabel
+              )}
+            </Box>
+          </OverflowTooltip>
         </Button>
         {(kept.length > 0 || uncounted) && (
           <Button
