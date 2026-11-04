@@ -1,5 +1,5 @@
-"""Insights on the agent's insights-agent/v2 engine, without a database or
-network: the engine pin and its header, the 409 retry, usage from every
+"""Insights on the agent's insights-agent/v2 engine, with synthetic network
+edges: the engine pin and its header, the 409 retry, usage from every
 reply (and the ceiling for a model nothing prices), read-units v2 over the
 evidence broker, fail-closed verification of reports, questions and naming,
 and estimates that scale with a unit's size (PROTOCOL_V2). A stopped run's
@@ -1255,11 +1255,17 @@ class TestEstimates:
         assert fits == 100
 
 
+@pytest.mark.django_db
 class TestUnitTextForV2:
+    """Unit loaders use real PG liveness checks alongside synthetic CH rows."""
+
     def test_units_whose_roots_are_empty_are_kept_with_their_last_answer(
         self, monkeypatch
     ):
         from ee.agenthub.insights import units as units_module
+
+        arrival = datetime(2026, 10, 2, tzinfo=UTC)
+        arrival_reads = []
 
         def root(trace, text_in, text_out):
             return SimpleNamespace(
@@ -1270,6 +1276,7 @@ class TestUnitTextForV2:
                 input=text_in,
                 output=text_out,
                 start_time=datetime(2026, 10, 1, tzinfo=UTC),
+                created_at=arrival,
                 end_time=None,
                 trace_name="agent",
                 name="agent",
@@ -1292,6 +1299,16 @@ class TestUnitTextForV2:
             def roots_by_session_ids(self, ids, project_id):
                 return [root("T2", "hi", "final answer"), root("T3", "and?", "")]
 
+            def source_arrivals_by_trace_ids(
+                self, ids, *, project_id, version_cutoff=None
+            ):
+                assert project_id == PROJECT
+                arrival_reads.append(list(ids))
+                return {trace_id: arrival for trace_id in ids}
+
+            def activity_by_trace_ids(self, ids, **kwargs):
+                return []  # This fixture has roots only, not unreadable steps.
+
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", Reader)
         monkeypatch.setattr(units_module, "_user_labels", lambda ids: {})
 
@@ -1313,3 +1330,6 @@ class TestUnitTextForV2:
             "[Turn 1] User: hi\nAssistant: final answer\n\n"
             "[Turn 2] User: and?\nAssistant: "
         )
+        assert arrival_reads == [["T1", "T2"], ["T1", "T2"], ["T2", "T3"]]
+        assert kept["T1"].source_created_at == kept["T2"].source_created_at == arrival
+        assert session["S1"].source_created_at == arrival

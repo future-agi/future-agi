@@ -1,5 +1,8 @@
-"""Insights pipeline pieces that don't need a database: statistics, facet
-validation, clustering, summary verification, sampling and the engine label."""
+"""Insights statistics, facets, clustering, summary verification and sampling.
+
+Category settlement uses real PG rows because it rechecks completed-run
+liveness and persists taxonomy under row locks; other pieces are DB-free.
+"""
 
 import numpy as np
 import pytest
@@ -886,10 +889,24 @@ class TestSampling:
         assert sampling_method(timed[:3], timed[:3], drawn=False, total=3) == "all"
 
 
+@pytest.mark.django_db
 class TestSavingCategories:
     """A discovery run's categories become the report's only while the report
     still asks what the run asked: an edit to the question or lens while it
     runs applies from the next run."""
+
+    @pytest.fixture
+    def category_project(self, organization, workspace):
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+
+        return Project.objects.create(
+            name="Category settlement",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
 
     @pytest.mark.parametrize(
         ("asked", "saved"),
@@ -901,36 +918,63 @@ class TestSavingCategories:
         ids=["unchanged", "new-lens", "new-question"],
     )
     def test_a_discovery_run_saves_its_categories_on_the_report_it_asked(
-        self, monkeypatch, asked, saved
+        self, monkeypatch, category_project, asked, saved
     ):
         settings = {"lens": "failures", "question": "Where?"}
-        assert self.settle(monkeypatch, asked, settings) is saved
+        assert self.settle(monkeypatch, category_project, asked, settings) is saved
 
-    def test_a_report_without_a_question_asks_its_lenss_own(self, monkeypatch):
+    def test_a_report_without_a_question_asks_its_lenss_own(
+        self, monkeypatch, category_project
+    ):
         # finish hands the writer the lens's question when the run has none.
         settings = {"lens": "failures", "question": pipeline.lens_for("failures").title}
-        assert self.settle(monkeypatch, {"lens": "failures", "question": ""}, settings)
-
-    def settle(self, monkeypatch, asked: dict, settings: dict) -> bool:
-        from types import SimpleNamespace
-
-        monkeypatch.setattr(pipeline.billing, "charge_run", lambda run: 0.0)
-        # What the run cost is recorded in the database; not the question here.
-        monkeypatch.setattr(pipeline, "_record_cost", lambda run, charged: None)
-        saves = []
-        config = SimpleNamespace(
-            **asked, taxonomy={}, save=lambda **kwargs: saves.append(kwargs)
+        assert self.settle(
+            monkeypatch, category_project, {"lens": "failures", "question": ""}, settings
         )
-        run = SimpleNamespace(
-            id="run-1",
+
+    def settle(self, monkeypatch, project, asked: dict, settings: dict) -> bool:
+        from unittest.mock import Mock
+
+        from django.utils import timezone
+
+        from tracer.models.insights import InsightConfig, InsightRun
+
+        # Only the external billing edge is replaced; authoritative reads,
+        # source checks, locks, progress and taxonomy persistence stay real.
+        charge = Mock(return_value=0.0)
+        monkeypatch.setattr(pipeline.billing, "charge_run", charge)
+        monkeypatch.setattr(pipeline.billing, "applies", lambda: False)
+        config = InsightConfig.objects.create(
+            **asked,
+            project=project,
+            organization=project.organization,
+            workspace=project.workspace,
+            name="Category settlement",
+            unit="sessions",
+        )
+        run = InsightRun.objects.create(
+            config=config,
+            project=project,
+            organization=project.organization,
+            workspace=project.workspace,
+            status="completed",
+            unit="sessions",
             taxonomy_mode="discover",
             settings=settings,
-            config=config,
-            progress={},
-            save=lambda **kwargs: None,
+            source_created_at=timezone.now(),
         )
-        pipeline._settle_written(run, {"tops": [{"id": "t"}], "subs": [{"id": "s"}]})
-        assert bool(saves) == bool(config.taxonomy)
+        taxonomy = {"tops": [{"id": "t"}], "subs": [{"id": "s"}]}
+        pipeline._settle_written(run, taxonomy)
+        config.refresh_from_db()
+        run.refresh_from_db()
+        charge.assert_called_once()
+        assert charge.call_args.args[0].pk == run.pk
+        assert run.stage == "done" and run.result["cost"] == {"usd": 0.0}
+        if config.taxonomy:
+            assert config.taxonomy["tops"] == taxonomy["tops"]
+            assert config.taxonomy["subs"] == taxonomy["subs"]
+            assert config.taxonomy["source_run_id"] == str(run.pk)
+            assert config.taxonomy["frozen_at"]
         return bool(config.taxonomy)
 
 

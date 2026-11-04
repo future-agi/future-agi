@@ -6,7 +6,8 @@ Each case is also checked against a scan of the project through the global
 survivor map.
 
 Runs against the configured ClickHouse (``CH25_*``); data lives under fresh
-ids and is deleted afterwards.
+ids and is deleted afterwards. PG generation/tombstone reads remain real, so
+both integration cases enable django_db as well.
 """
 
 from __future__ import annotations
@@ -151,6 +152,7 @@ def facets_world():
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 def test_a_sessions_facets_read_through_the_remap(facets_world):
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -192,6 +194,7 @@ def test_a_sessions_facets_read_through_the_remap(facets_world):
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 def test_batched_session_facets_read_the_same(facets_world, monkeypatch):
     """Read a session per statement, bounded by the extents of the ids asked
     alone (as the pick hands them over): every id of a group still counts."""

@@ -9,7 +9,9 @@ The reference is the facet read as it was: every read covers the whole window
 (a user's sessions: all of time).
 
 Runs against the configured ClickHouse (``CH25_*``); data lives under a fresh
-project id and is deleted afterwards.
+project id and is deleted afterwards. The facet readers also consult real PG
+project-generation and source-deletion markers, so those tests enable django_db
+rather than bypassing the liveness checks.
 """
 
 from __future__ import annotations
@@ -158,6 +160,7 @@ def _bounded(monkeypatch, batch):
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 @pytest.mark.parametrize("batch", [1000, 5000])
 def test_sessions_read_a_slice_at_a_time_match_the_whole_window(
     world, monkeypatch, batch
@@ -177,6 +180,7 @@ def test_sessions_read_a_slice_at_a_time_match_the_whole_window(
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 def test_a_session_longer_than_a_day_reads_every_turn(world, monkeypatch):
     expected = _whole_window(world["project"], "sessions", world["sessions"])
     _bounded(monkeypatch, 1000)
@@ -191,6 +195,7 @@ def test_a_session_longer_than_a_day_reads_every_turn(world, monkeypatch):
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 @pytest.mark.parametrize("row_type", ["traces", "spans"])
 def test_traces_and_spans_read_a_slice_at_a_time_match(world, monkeypatch, row_type):
     ids = world[row_type][:6000]
@@ -201,6 +206,7 @@ def test_traces_and_spans_read_a_slice_at_a_time_match(world, monkeypatch, row_t
 
 
 @pytest.mark.integration
+@pytest.mark.django_db
 def test_a_users_sessions_read_in_the_window_match_all_of_time(world, monkeypatch):
     """A user question's sessions were read over all of time; they are now
     read in the run's window and a day either side, a slice at a time."""
