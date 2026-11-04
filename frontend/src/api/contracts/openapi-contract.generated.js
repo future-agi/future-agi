@@ -28673,7 +28673,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/simulate/api/harness-environments/{id}/capabilities/": {
       get: {
-        operationId: "simulate_api_harness-environments_capabilities_read",
+        operationId: "simulate_api_harness-environments_capabilities",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -28750,8 +28750,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/simulate/api/harness-environments/{id}/capabilities/cases/": {
       get: {
-        operationId:
-          "simulate_api_harness-environments_capabilities_capability_cases",
+        operationId: "simulate_api_harness-environments_capability_cases",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -99637,7 +99636,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         by: {
           description:
-            "The rows that put the case in its bucket, or not_proved_here or unknown_need.",
+            "The rows that put the case in its bucket, or pair_validating (the pairing is being checked, so runs are refused until it ends), pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need.",
           type: "array",
           items: {
             type: "string",
@@ -120377,13 +120376,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityDroppedCase: {
-      required: ["key", "reason"],
+      required: ["key", "code", "reason"],
       type: "object",
       properties: {
         key: {
           title: "Key",
           type: "string",
           minLength: 1,
+        },
+        code: {
+          title: "Code",
+          description:
+            "scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it.",
+          type: "string",
+          enum: ["scenario_dropped", "scenario_ungradable"],
         },
         reason: {
           title: "Reason",
@@ -120393,7 +120399,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityGrading: {
-      required: ["gradable", "not_gradable"],
+      required: ["gradable", "not_gradable", "truncated"],
       type: "object",
       properties: {
         gradable: {
@@ -120406,6 +120412,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessCapabilityNotGradable",
           },
+        },
+        truncated: {
+          title: "Truncated",
+          description:
+            "More than 200 cases cannot be graded; the first 200 are listed.",
+          type: "boolean",
         },
       },
     },

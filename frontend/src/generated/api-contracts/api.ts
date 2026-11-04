@@ -1226,8 +1226,8 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsActorViewParams,
-  SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams,
-  SimulateApiHarnessEnvironmentsCapabilitiesReadParams,
+  SimulateApiHarnessEnvironmentsCapabilitiesParams,
+  SimulateApiHarnessEnvironmentsCapabilityCasesParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsDeleteActorParams,
   SimulateApiHarnessEnvironmentsListParams,
@@ -60131,32 +60131,32 @@ export const simulateApiHarnessEnvironmentsDeleteActor = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesReadResponse200 = {
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse200 = {
   data: HarnessCapabilitySelectionReportApi;
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesReadResponseDefault = {
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<HTTPStatusCodes, 200>;
 };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesReadResponseSuccess =
-  simulateApiHarnessEnvironmentsCapabilitiesReadResponse200 & {
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessEnvironmentsCapabilitiesReadResponseError =
-  simulateApiHarnessEnvironmentsCapabilitiesReadResponseDefault & {
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesResponseDefault & {
     headers: Headers;
   };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesReadResponse =
-  | simulateApiHarnessEnvironmentsCapabilitiesReadResponseSuccess
-  | simulateApiHarnessEnvironmentsCapabilitiesReadResponseError;
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseError;
 
-export const getSimulateApiHarnessEnvironmentsCapabilitiesReadUrl = (
+export const getSimulateApiHarnessEnvironmentsCapabilitiesUrl = (
   id: string,
-  params?: SimulateApiHarnessEnvironmentsCapabilitiesReadParams,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -60182,13 +60182,13 @@ export const getSimulateApiHarnessEnvironmentsCapabilitiesReadUrl = (
 and the selected cases it holds back; an absent id is the environment's default
 and absent keys select the whole suite. No writes.
  */
-export const simulateApiHarnessEnvironmentsCapabilitiesRead = async (
+export const simulateApiHarnessEnvironmentsCapabilities = async (
   id: string,
-  params?: SimulateApiHarnessEnvironmentsCapabilitiesReadParams,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
   options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsCapabilitiesReadResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesReadResponse>(
-    getSimulateApiHarnessEnvironmentsCapabilitiesReadUrl(id, params),
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -60244,34 +60244,32 @@ export const simulateApiHarnessEnvironmentsSelectCapabilities = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponse200 =
-  {
-    data: HarnessCapabilityCasePageApi;
-    status: 200;
-  };
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponse200 = {
+  data: HarnessCapabilityCasePageApi;
+  status: 200;
+};
 
-export type simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseDefault =
-  {
-    data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
-  };
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
 
-export type simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseSuccess =
-  simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponse200 & {
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilityCasesResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseError =
-  simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseDefault & {
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponseError =
+  simulateApiHarnessEnvironmentsCapabilityCasesResponseDefault & {
     headers: Headers;
   };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponse =
-  | simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseSuccess
-  | simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponseError;
+export type simulateApiHarnessEnvironmentsCapabilityCasesResponse =
+  | simulateApiHarnessEnvironmentsCapabilityCasesResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilityCasesResponseError;
 
-export const getSimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesUrl = (
+export const getSimulateApiHarnessEnvironmentsCapabilityCasesUrl = (
   id: string,
-  params?: SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams,
+  params?: SimulateApiHarnessEnvironmentsCapabilityCasesParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -60296,13 +60294,13 @@ export const getSimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesUrl = (
  * One page, by scenario number, of the selected cases in a bucket or held
 back by a row. No writes.
  */
-export const simulateApiHarnessEnvironmentsCapabilitiesCapabilityCases = async (
+export const simulateApiHarnessEnvironmentsCapabilityCases = async (
   id: string,
-  params?: SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams,
+  params?: SimulateApiHarnessEnvironmentsCapabilityCasesParams,
   options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesResponse>(
-    getSimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesUrl(id, params),
+): Promise<simulateApiHarnessEnvironmentsCapabilityCasesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilityCasesResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilityCasesUrl(id, params),
     {
       ...options,
       method: "GET",

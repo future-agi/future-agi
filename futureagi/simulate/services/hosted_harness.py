@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
@@ -1270,21 +1270,16 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
         for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
         if isinstance(goal, dict) and goal.get("name")
     }
-    if not catalogue:
-        return
-    ungradable = []
-    for key in scenario_keys:
-        sub_goals = (
-            (pins.members[key].content or {}) if key in pins.members else {}
-        ).get("sub_goals")
-        if not isinstance(sub_goals, list):
-            continue
-        names = {
-            str(goal.get("name") if isinstance(goal, dict) else goal)
-            for goal in sub_goals
-        }
-        if not names & catalogue:
-            ungradable.append(key)
+    ungradable = [
+        key
+        for key in scenario_keys
+        if grades_nothing(
+            ((pins.members[key].content or {}) if key in pins.members else {}).get(
+                "sub_goals"
+            ),
+            catalogue,
+        )
+    ]
     if ungradable:
         raise HostedHarnessError(
             "scenario_ungradable",
@@ -1293,6 +1288,19 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
+
+
+def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused."""
+    if not catalogue or not isinstance(sub_goals, list):
+        return False
+    names = {
+        str(goal.get("name") if isinstance(goal, Mapping) else goal)
+        for goal in sub_goals
+    }
+    return not names & set(catalogue)
 
 
 def _member_registrations(

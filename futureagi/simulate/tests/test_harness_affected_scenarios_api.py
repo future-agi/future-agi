@@ -1,5 +1,6 @@
 import pytest
 
+from accounts.models import Organization
 from simulate.models import HarnessEnvironmentVersion, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessCapabilityCasePageSerializer,
@@ -159,6 +160,33 @@ class TestApi:
         ):
             assert response.status_code == 422, response.content
             assert response.json()["error"] == "version_not_pickable"
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("get", "capabilities"),
+            ("post", "capabilities"),
+            ("get", "capabilities/cases"),
+        ],
+    )
+    def test_another_organizations_environment_is_not_found(
+        self, user, workspace, storage, auth_client, method, path
+    ):
+        environment = _ten_certified(
+            user, workspace, storage, f"as-api-org-{method}-{path.replace('/', '-')}"
+        )
+        other = Organization.objects.create(name="Other org for capabilities")
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            organization=other
+        )
+
+        response = (
+            _post(auth_client, environment.id, scenario_ids=[LOOKUP_KEYS[0]])
+            if method == "post"
+            else _get(auth_client, environment.id, path)
+        )
+
+        assert response.status_code == 404, response.content
 
 
 def _redirected(environment):

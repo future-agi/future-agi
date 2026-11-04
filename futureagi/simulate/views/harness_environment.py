@@ -694,6 +694,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         query_serializer=HarnessCapabilitySelectionQuerySerializer,
         responses={200: HarnessCapabilitySelectionReportSerializer},
         reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_capabilities",
     )
     @action(detail=True, methods=["get"], url_path="capabilities")
     def capabilities(self, request, pk=None):
@@ -729,6 +730,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         query_serializer=HarnessCapabilityCasesQuerySerializer,
         responses={200: HarnessCapabilityCasePageSerializer},
         reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_capability_cases",
     )
     @action(detail=True, methods=["get"], url_path="capabilities/cases")
     def capability_cases(self, request, pk=None):

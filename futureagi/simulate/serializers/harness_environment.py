@@ -1236,6 +1236,11 @@ class HarnessCapabilityCaseListsSerializer(serializers.Serializer):
 
 class HarnessCapabilityDroppedCaseSerializer(serializers.Serializer):
     key = serializers.CharField()
+    code = serializers.ChoiceField(
+        choices=("scenario_dropped", "scenario_ungradable"),
+        help_text="scenario_dropped: certifying the pair dropped it."
+        " scenario_ungradable: it grades no sub-goal, so a run refuses it.",
+    )
     reason = serializers.CharField()
 
 
@@ -1249,11 +1254,15 @@ class HarnessCapabilityNotGradableSerializer(serializers.Serializer):
 class HarnessCapabilityGradingSerializer(serializers.Serializer):
     gradable = serializers.IntegerField(min_value=0)
     not_gradable = HarnessCapabilityNotGradableSerializer(many=True)
+    truncated = serializers.BooleanField(
+        help_text="More than 200 cases cannot be graded; the first 200 are listed."
+    )
 
 
 class HarnessCapabilitySelectionCountsSerializer(serializers.Serializer):
     """The selected cases, each in one bucket: requested is their sum. Cases
-    certifying dropped are listed under dropped and never counted."""
+    certifying dropped, or that grade no sub-goal, are listed under dropped and
+    never counted."""
 
     requested = serializers.IntegerField(min_value=0)
     eligible = serializers.IntegerField(min_value=0)
@@ -1299,8 +1308,10 @@ class HarnessCapabilityCaseSerializer(serializers.Serializer):
     by = serializers.ListField(
         child=serializers.CharField(),
         help_text=(
-            "The rows that put the case in its bucket, or not_proved_here or"
-            " unknown_need."
+            "The rows that put the case in its bucket, or pair_validating (the"
+            " pairing is being checked, so runs are refused until it ends),"
+            " pair_failed (a validation failed the pairing, so runs are refused),"
+            " not_proved_here or unknown_need."
         ),
     )
 

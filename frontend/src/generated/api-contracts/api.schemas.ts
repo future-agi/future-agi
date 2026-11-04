@@ -18930,9 +18930,22 @@ export interface HarnessCapabilityCaseListsApi {
   untested: HarnessCapabilityCaseListApi;
 }
 
+/**
+ * scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it.
+ */
+export type HarnessCapabilityDroppedCaseApiCode =
+  (typeof HarnessCapabilityDroppedCaseApiCode)[keyof typeof HarnessCapabilityDroppedCaseApiCode];
+
+export const HarnessCapabilityDroppedCaseApiCode = {
+  scenario_dropped: "scenario_dropped",
+  scenario_ungradable: "scenario_ungradable",
+} as const;
+
 export interface HarnessCapabilityDroppedCaseApi {
   /** @minLength 1 */
   key: string;
+  /** scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it. */
+  code: HarnessCapabilityDroppedCaseApiCode;
   /** @minLength 1 */
   reason: string;
 }
@@ -18956,6 +18969,8 @@ export interface HarnessCapabilityGradingApi {
   /** @minimum 0 */
   gradable: number;
   not_gradable: HarnessCapabilityNotGradableApi[];
+  /** More than 200 cases cannot be graded; the first 200 are listed. */
+  truncated: boolean;
 }
 
 export interface HarnessCapabilitySelectionCountsApi {
@@ -19011,7 +19026,7 @@ export interface HarnessCapabilityCaseApi {
   number: number;
   name: string;
   persona: string;
-  /** The rows that put the case in its bucket, or not_proved_here or unknown_need. */
+  /** The rows that put the case in its bucket, or pair_validating (the pairing is being checked, so runs are refused until it ends), pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need. */
   by: string[];
 }
 
@@ -39070,7 +39085,7 @@ export type SimulateApiHarnessEnvironmentsDeleteActorParams = {
   expected_revision?: number;
 };
 
-export type SimulateApiHarnessEnvironmentsCapabilitiesReadParams = {
+export type SimulateApiHarnessEnvironmentsCapabilitiesParams = {
   agent_version_id?: string;
   environment_version_id?: string;
   suite_version_id?: string;
@@ -39086,7 +39101,7 @@ export type SimulateApiHarnessEnvironmentsCapabilitiesReadParams = {
   trials?: number;
 };
 
-export type SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams = {
+export type SimulateApiHarnessEnvironmentsCapabilityCasesParams = {
   agent_version_id?: string;
   environment_version_id?: string;
   suite_version_id?: string;
@@ -39100,8 +39115,8 @@ export type SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams = {
    * @maximum 20
    */
   trials?: number;
-  bucket?: SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesBucket;
-  row?: SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesRow;
+  bucket?: SimulateApiHarnessEnvironmentsCapabilityCasesBucket;
+  row?: SimulateApiHarnessEnvironmentsCapabilityCasesRow;
   /**
    * The previous page's next: the number it ended on.
    * @minimum 0
@@ -39109,20 +39124,20 @@ export type SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesParams = {
   cursor?: number;
 };
 
-export type SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesBucket =
-  (typeof SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesBucket)[keyof typeof SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesBucket];
+export type SimulateApiHarnessEnvironmentsCapabilityCasesBucket =
+  (typeof SimulateApiHarnessEnvironmentsCapabilityCasesBucket)[keyof typeof SimulateApiHarnessEnvironmentsCapabilityCasesBucket];
 
-export const SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesBucket = {
+export const SimulateApiHarnessEnvironmentsCapabilityCasesBucket = {
   eligible: "eligible",
   blocked: "blocked",
   stale: "stale",
   untested: "untested",
 } as const;
 
-export type SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesRow =
-  (typeof SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesRow)[keyof typeof SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesRow];
+export type SimulateApiHarnessEnvironmentsCapabilityCasesRow =
+  (typeof SimulateApiHarnessEnvironmentsCapabilityCasesRow)[keyof typeof SimulateApiHarnessEnvironmentsCapabilityCasesRow];
 
-export const SimulateApiHarnessEnvironmentsCapabilitiesCapabilityCasesRow = {
+export const SimulateApiHarnessEnvironmentsCapabilityCasesRow = {
   start: "start",
   message: "message",
   continuity: "continuity",

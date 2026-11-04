@@ -51754,7 +51754,7 @@
         },
         "/simulate/api/harness-environments/{id}/capabilities/": {
             "get": {
-                "operationId": "simulate_api_harness-environments_capabilities_read",
+                "operationId": "simulate_api_harness-environments_capabilities",
                 "description": "The run readiness of an agent, environment and suite pairing, computed now,\nand the selected cases it holds back; an absent id is the environment's default\nand absent keys select the whole suite. No writes.",
                 "parameters": [
                     {
@@ -51865,7 +51865,7 @@
         },
         "/simulate/api/harness-environments/{id}/capabilities/cases/": {
             "get": {
-                "operationId": "simulate_api_harness-environments_capabilities_capability_cases",
+                "operationId": "simulate_api_harness-environments_capability_cases",
                 "description": "One page, by scenario number, of the selected cases in a bucket or held\nback by a row. No writes.",
                 "parameters": [
                     {
@@ -132462,6 +132462,7 @@
         "HarnessCapabilityDroppedCase": {
             "required": [
                 "key",
+                "code",
                 "reason"
             ],
             "type": "object",
@@ -132470,6 +132471,15 @@
                     "title": "Key",
                     "type": "string",
                     "minLength": 1
+                },
+                "code": {
+                    "title": "Code",
+                    "description": "scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it.",
+                    "type": "string",
+                    "enum": [
+                        "scenario_dropped",
+                        "scenario_ungradable"
+                    ]
                 },
                 "reason": {
                     "title": "Reason",
@@ -132504,7 +132514,8 @@
         "HarnessCapabilityGrading": {
             "required": [
                 "gradable",
-                "not_gradable"
+                "not_gradable",
+                "truncated"
             ],
             "type": "object",
             "properties": {
@@ -132518,6 +132529,11 @@
                     "items": {
                         "$ref": "#/definitions/HarnessCapabilityNotGradable"
                     }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "description": "More than 200 cases cannot be graded; the first 200 are listed.",
+                    "type": "boolean"
                 }
             }
         },
@@ -132705,7 +132721,7 @@
                     "type": "string"
                 },
                 "by": {
-                    "description": "The rows that put the case in its bucket, or not_proved_here or unknown_need.",
+                    "description": "The rows that put the case in its bucket, or pair_validating (the pairing is being checked, so runs are refused until it ends), pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need.",
                     "type": "array",
                     "items": {
                         "type": "string",
