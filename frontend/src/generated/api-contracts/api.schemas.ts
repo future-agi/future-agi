@@ -18750,8 +18750,23 @@ export type HarnessDraftItemApiStatus =
 
 export const HarnessDraftItemApiStatus = {
   draft: "draft",
+  candidate: "candidate",
   active: "active",
   discarded: "discarded",
+} as const;
+
+/**
+ * A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.
+ */
+export type HarnessDraftItemApiCandidateState =
+  (typeof HarnessDraftItemApiCandidateState)[keyof typeof HarnessDraftItemApiCandidateState];
+
+export const HarnessDraftItemApiCandidateState = {
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  superseded: "superseded",
+  expired: "expired",
 } as const;
 
 /**
@@ -18816,6 +18831,8 @@ export interface HarnessDraftItemApi {
   pickable: boolean | null;
   /** Whether this environment can discard an agent version. */
   discardable: boolean | null;
+  /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
+  candidate_state: HarnessDraftItemApiCandidateState;
   /** Whether the default moved since the draft started; Save refuses it. */
   stale: boolean;
   /** Bumped on every edit to the draft. */
@@ -18836,10 +18853,56 @@ export interface HarnessDraftItemApi {
   changes: HarnessDraftItemApiChanges;
 }
 
+export type HarnessDraftValidationApiState =
+  (typeof HarnessDraftValidationApiState)[keyof typeof HarnessDraftValidationApiState];
+
+export const HarnessDraftValidationApiState = {
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  superseded: "superseded",
+  unavailable: "unavailable",
+} as const;
+
+export type HarnessValidationErrorApiFailedActionsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessValidationErrorApi {
+  code: string;
+  message: string;
+  /** Each action whose check failed, with the reason. */
+  failed_actions: HarnessValidationErrorApiFailedActionsItem[];
+}
+
+export interface HarnessDraftValidationApi {
+  state: HarnessDraftValidationApiState;
+  /**
+   * The validation job, while one runs.
+   * @minLength 1
+   */
+  job_id?: string;
+  error?: HarnessValidationErrorApi;
+  /** Scenarios that need a failed action on every path. */
+  affected_scenarios?: string[];
+  /** Scenarios certifying left out of the suite. */
+  dropped_scenarios?: string[];
+}
+
+/**
+ * The versions Validate built; send them to Save once validation is ready.
+ */
+export interface HarnessCandidatesApi {
+  environment_version_id: string;
+  suite_version_id: string;
+}
+
 export interface HarnessDraftsApi {
   environment: HarnessDraftItemApi | null;
   suite: HarnessDraftItemApi | null;
   set_aside: HarnessDraftItemApi[];
+  validation: HarnessDraftValidationApi;
+  candidates: HarnessCandidatesApi;
 }
 
 export interface HarnessReviewDraftApi {
@@ -19012,6 +19075,9 @@ export const HarnessDraftSaveItemApiPiece = {
   suite: "suite",
 } as const;
 
+/**
+ * Save the drafts as they are.
+ */
 export interface HarnessDraftSaveItemApi {
   piece: HarnessDraftSaveItemApiPiece;
   /** The draft's parent the caller saw. */
@@ -19024,7 +19090,9 @@ export interface HarnessDraftSaveItemApi {
 }
 
 export interface HarnessDraftSaveApi {
-  drafts: HarnessDraftSaveItemApi[];
+  /** Save the drafts as they are. */
+  drafts?: HarnessDraftSaveItemApi[];
+  candidates?: HarnessCandidatesApi;
   /**
    * The review digest the person saw; Save refuses a review that moved since.
    * @minLength 1
@@ -19049,8 +19117,23 @@ export type HarnessVersionApiStatus =
 
 export const HarnessVersionApiStatus = {
   draft: "draft",
+  candidate: "candidate",
   active: "active",
   discarded: "discarded",
+} as const;
+
+/**
+ * A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.
+ */
+export type HarnessVersionApiCandidateState =
+  (typeof HarnessVersionApiCandidateState)[keyof typeof HarnessVersionApiCandidateState];
+
+export const HarnessVersionApiCandidateState = {
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  superseded: "superseded",
+  expired: "expired",
 } as const;
 
 /**
@@ -19110,6 +19193,8 @@ export interface HarnessVersionApi {
   pickable: boolean | null;
   /** Whether this environment can discard an agent version. */
   discardable: boolean | null;
+  /** A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version. */
+  candidate_state: HarnessVersionApiCandidateState;
 }
 
 /**
@@ -19129,6 +19214,28 @@ export interface HarnessDraftSaveResponseApi {
   /** Each saved piece's new default version, by piece. */
   saved: HarnessDraftSaveResponseApiSaved;
   versions: HarnessVersionsApi;
+}
+
+/**
+ * Per piece, the draft revision the person reviewed.
+ */
+export type HarnessDraftValidateApiExpectedRevisions = {
+  [key: string]: number;
+};
+
+export interface HarnessDraftValidateApi {
+  /** Per piece, the draft revision the person reviewed. */
+  expected_revisions: HarnessDraftValidateApiExpectedRevisions;
+  /**
+   * The review digest the person saw; required once any change is decided.
+   * @minLength 1
+   */
+  expected_review_digest?: string;
+}
+
+export interface HarnessDraftValidateResponseApi {
+  validation: HarnessDraftValidationApi;
+  candidates: HarnessCandidatesApi;
 }
 
 export interface HarnessEnvironmentAddEvaluationApi {

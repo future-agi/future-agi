@@ -51914,7 +51914,7 @@
         "/simulate/api/harness-environments/{id}/drafts/save/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_drafts_save_drafts",
-                "description": "Make every named draft live together; returns the new defaults and every\nversion.",
+                "description": "Make every named draft, or the validated candidates, live together; returns the new defaults and every\nversion.",
                 "parameters": [
                     {
                         "name": "data",
@@ -51930,6 +51930,55 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessDraftSaveResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/drafts/validate/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_drafts_validate_drafts",
+                "description": "Build candidate versions from the reviewed drafts and start validating them; 202 while it runs.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDraftValidate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDraftValidateResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDraftValidateResponse"
                         }
                     },
                     "default": {
@@ -131898,6 +131947,7 @@
                 "requested_here",
                 "pickable",
                 "discardable",
+                "candidate_state",
                 "stale",
                 "revision",
                 "last_edited_by",
@@ -131931,6 +131981,7 @@
                     "type": "string",
                     "enum": [
                         "draft",
+                        "candidate",
                         "active",
                         "discarded"
                     ]
@@ -132060,6 +132111,19 @@
                     "type": "boolean",
                     "x-nullable": true
                 },
+                "candidate_state": {
+                    "title": "Candidate state",
+                    "description": "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+                    "type": "string",
+                    "enum": [
+                        "validating",
+                        "ready",
+                        "failed",
+                        "superseded",
+                        "expired"
+                    ],
+                    "x-nullable": true
+                },
                 "stale": {
                     "title": "Stale",
                     "description": "Whether the default moved since the draft started; Save refuses it.",
@@ -132103,11 +132167,110 @@
             },
             "x-nullable": true
         },
+        "HarnessValidationError": {
+            "required": [
+                "code",
+                "message",
+                "failed_actions"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                },
+                "failed_actions": {
+                    "description": "Each action whose check failed, with the reason.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessDraftValidation": {
+            "required": [
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "validating",
+                        "ready",
+                        "failed",
+                        "superseded",
+                        "unavailable"
+                    ]
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "description": "The validation job, while one runs.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "$ref": "#/definitions/HarnessValidationError"
+                },
+                "affected_scenarios": {
+                    "description": "Scenarios that need a failed action on every path.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "dropped_scenarios": {
+                    "description": "Scenarios certifying left out of the suite.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessCandidates": {
+            "description": "The versions Validate built; send them to Save once validation is ready.",
+            "required": [
+                "environment_version_id",
+                "suite_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessDrafts": {
             "required": [
                 "environment",
                 "suite",
-                "set_aside"
+                "set_aside",
+                "validation",
+                "candidates"
             ],
             "type": "object",
             "properties": {
@@ -132122,6 +132285,12 @@
                     "items": {
                         "$ref": "#/definitions/HarnessDraftItem"
                     }
+                },
+                "validation": {
+                    "$ref": "#/definitions/HarnessDraftValidation"
+                },
+                "candidates": {
+                    "$ref": "#/definitions/HarnessCandidates"
                 }
             }
         },
@@ -132442,6 +132611,7 @@
             }
         },
         "HarnessDraftSaveItem": {
+            "description": "Save the drafts as they are.",
             "required": [
                 "piece",
                 "expected_parent_id"
@@ -132473,16 +132643,19 @@
         },
         "HarnessDraftSave": {
             "required": [
-                "drafts",
                 "idempotency_key"
             ],
             "type": "object",
             "properties": {
                 "drafts": {
+                    "description": "Save the drafts as they are.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessDraftSaveItem"
                     }
+                },
+                "candidates": {
+                    "$ref": "#/definitions/HarnessCandidates"
                 },
                 "expected_review_digest": {
                     "title": "Expected review digest",
@@ -132532,7 +132705,8 @@
                 "activation_outcome",
                 "requested_here",
                 "pickable",
-                "discardable"
+                "discardable",
+                "candidate_state"
             ],
             "type": "object",
             "properties": {
@@ -132559,6 +132733,7 @@
                     "type": "string",
                     "enum": [
                         "draft",
+                        "candidate",
                         "active",
                         "discarded"
                     ]
@@ -132687,6 +132862,19 @@
                     "description": "Whether this environment can discard an agent version.",
                     "type": "boolean",
                     "x-nullable": true
+                },
+                "candidate_state": {
+                    "title": "Candidate state",
+                    "description": "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+                    "type": "string",
+                    "enum": [
+                        "validating",
+                        "ready",
+                        "failed",
+                        "superseded",
+                        "expired"
+                    ],
+                    "x-nullable": true
                 }
             }
         },
@@ -132735,6 +132923,43 @@
                 },
                 "versions": {
                     "$ref": "#/definitions/HarnessVersions"
+                }
+            }
+        },
+        "HarnessDraftValidate": {
+            "required": [
+                "expected_revisions"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revisions": {
+                    "title": "Expected revisions",
+                    "description": "Per piece, the draft revision the person reviewed.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "expected_review_digest": {
+                    "title": "Expected review digest",
+                    "description": "The review digest the person saw; required once any change is decided.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessDraftValidateResponse": {
+            "required": [
+                "validation",
+                "candidates"
+            ],
+            "type": "object",
+            "properties": {
+                "validation": {
+                    "$ref": "#/definitions/HarnessDraftValidation"
+                },
+                "candidates": {
+                    "$ref": "#/definitions/HarnessCandidates"
                 }
             }
         },

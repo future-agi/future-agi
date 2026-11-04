@@ -37567,7 +37567,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -37638,6 +37638,11 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -37676,7 +37681,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -37747,6 +37752,11 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -37785,7 +37795,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -37856,6 +37866,11 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -37886,6 +37901,45 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         ),
     }),
   ),
+  validation: zod.object({
+    state: zod.enum([
+      "validating",
+      "ready",
+      "failed",
+      "superseded",
+      "unavailable",
+    ]),
+    job_id: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe("The validation job, while one runs."),
+    error: zod
+      .object({
+        code: zod.string(),
+        message: zod.string(),
+        failed_actions: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .describe("Each action whose check failed, with the reason."),
+      })
+      .optional(),
+    affected_scenarios: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe("Scenarios that need a failed action on every path."),
+    dropped_scenarios: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe("Scenarios certifying left out of the suite."),
+  }),
+  candidates: zod
+    .object({
+      environment_version_id: zod.string().uuid(),
+      suite_version_id: zod.string().uuid(),
+    })
+    .describe(
+      "The versions Validate built; send them to Save once validation is ready.",
+    ),
 });
 
 /**
@@ -38089,7 +38143,7 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
   });
 
 /**
- * Make every named draft live together; returns the new defaults and every
+ * Make every named draft, or the validated candidates, live together; returns the new defaults and every
 version.
  */
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsParams = zod.object({
@@ -38106,23 +38160,37 @@ export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyIdempotencyKeyReg
   new RegExp("^[A-Za-z0-9_-]+$");
 
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
-  drafts: zod.array(
-    zod.object({
-      piece: zod.enum(["environment", "suite"]),
-      expected_parent_id: zod
-        .string()
-        .uuid()
-        .nullable()
-        .describe("The draft's parent the caller saw."),
-      expected_revision: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin,
-        )
-        .optional()
-        .describe("The draft's revision the caller saw."),
-    }),
-  ),
+  drafts: zod
+    .array(
+      zod
+        .object({
+          piece: zod.enum(["environment", "suite"]),
+          expected_parent_id: zod
+            .string()
+            .uuid()
+            .nullable()
+            .describe("The draft's parent the caller saw."),
+          expected_revision: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin,
+            )
+            .optional()
+            .describe("The draft's revision the caller saw."),
+        })
+        .describe("Save the drafts as they are."),
+    )
+    .optional()
+    .describe("Save the drafts as they are."),
+  candidates: zod
+    .object({
+      environment_version_id: zod.string().uuid(),
+      suite_version_id: zod.string().uuid(),
+    })
+    .optional()
+    .describe(
+      "The versions Validate built; send them to Save once validation is ready.",
+    ),
   expected_review_digest: zod
     .string()
     .min(1)
@@ -38157,7 +38225,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .string()
             .min(1)
             .describe("The name a person gave the version, if any."),
-          status: zod.enum(["draft", "active", "discarded"]),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -38230,6 +38298,11 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          candidate_state: zod
+            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            ),
         }),
       )
       .describe("Each saved piece's new default version, by piece."),
@@ -38242,7 +38315,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .string()
             .min(1)
             .describe("The name a person gave the version, if any."),
-          status: zod.enum(["draft", "active", "discarded"]),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -38315,6 +38388,11 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          candidate_state: zod
+            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            ),
         }),
       ),
       environment: zod.array(
@@ -38325,7 +38403,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .string()
             .min(1)
             .describe("The name a person gave the version, if any."),
-          status: zod.enum(["draft", "active", "discarded"]),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -38398,6 +38476,11 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          candidate_state: zod
+            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            ),
         }),
       ),
       suite: zod.array(
@@ -38408,7 +38491,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .string()
             .min(1)
             .describe("The name a person gave the version, if any."),
-          status: zod.enum(["draft", "active", "discarded"]),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -38481,9 +38564,79 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          candidate_state: zod
+            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            ),
         }),
       ),
     }),
+  });
+
+/**
+ * Build candidate versions from the reviewed drafts and start validating them; 202 while it runs.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsBody =
+  zod.object({
+    expected_revisions: zod
+      .record(zod.string(), zod.number())
+      .describe("Per piece, the draft revision the person reviewed."),
+    expected_review_digest: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "The review digest the person saw; required once any change is decided.",
+      ),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =
+  zod.object({
+    validation: zod.object({
+      state: zod.enum([
+        "validating",
+        "ready",
+        "failed",
+        "superseded",
+        "unavailable",
+      ]),
+      job_id: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("The validation job, while one runs."),
+      error: zod
+        .object({
+          code: zod.string(),
+          message: zod.string(),
+          failed_actions: zod
+            .array(zod.record(zod.string(), zod.string()))
+            .describe("Each action whose check failed, with the reason."),
+        })
+        .optional(),
+      affected_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios that need a failed action on every path."),
+      dropped_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios certifying left out of the suite."),
+    }),
+    candidates: zod
+      .object({
+        environment_version_id: zod.string().uuid(),
+        suite_version_id: zod.string().uuid(),
+      })
+      .describe(
+        "The versions Validate built; send them to Save once validation is ready.",
+      ),
   });
 
 /**
@@ -39666,7 +39819,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -39737,6 +39890,11 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
     }),
   ),
   environment: zod.array(
@@ -39747,7 +39905,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -39818,6 +39976,11 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
     }),
   ),
   suite: zod.array(
@@ -39828,7 +39991,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .string()
         .min(1)
         .describe("The name a person gave the version, if any."),
-      status: zod.enum(["draft", "active", "discarded"]),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -39899,6 +40062,11 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      candidate_state: zod
+        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        ),
     }),
   ),
 });
@@ -39977,7 +40145,7 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40050,6 +40218,11 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -40060,7 +40233,7 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40133,6 +40306,11 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -40143,7 +40321,7 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40216,6 +40394,11 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
   });
@@ -40286,7 +40469,7 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40359,6 +40542,11 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -40369,7 +40557,7 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40442,6 +40630,11 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -40452,7 +40645,7 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .string()
           .min(1)
           .describe("The name a person gave the version, if any."),
-        status: zod.enum(["draft", "active", "discarded"]),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -40525,6 +40718,11 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        candidate_state: zod
+          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          ),
       }),
     ),
   });

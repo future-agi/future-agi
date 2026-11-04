@@ -625,6 +625,8 @@ import type {
   HarnessDraftReviewApi,
   HarnessDraftSaveApi,
   HarnessDraftSaveResponseApi,
+  HarnessDraftValidateApi,
+  HarnessDraftValidateResponseApi,
   HarnessDraftsApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
@@ -60355,7 +60357,7 @@ export const getSimulateApiHarnessEnvironmentsDraftsSaveDraftsUrl = (
 };
 
 /**
- * Make every named draft live together; returns the new defaults and every
+ * Make every named draft, or the validated candidates, live together; returns the new defaults and every
 version.
  */
 export const simulateApiHarnessEnvironmentsDraftsSaveDrafts = async (
@@ -60370,6 +60372,63 @@ export const simulateApiHarnessEnvironmentsDraftsSaveDrafts = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessDraftSaveApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse200 = {
+  data: HarnessDraftValidateResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse202 = {
+  data: HarnessDraftValidateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseSuccess =
+  (
+    | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse200
+    | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse202
+  ) & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseError =
+  simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =
+  | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseSuccess
+  | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDraftsValidateDraftsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/drafts/validate/`;
+};
+
+/**
+ * Build candidate versions from the reviewed drafts and start validating them; 202 while it runs.
+ */
+export const simulateApiHarnessEnvironmentsDraftsValidateDrafts = async (
+  id: string,
+  harnessDraftValidateApi: HarnessDraftValidateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse>(
+    getSimulateApiHarnessEnvironmentsDraftsValidateDraftsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessDraftValidateApi),
     },
   );
 };
