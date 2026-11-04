@@ -32,7 +32,11 @@ const ONE_LINE = {
   maxWidth: "100%",
   verticalAlign: "top",
 };
-const OUTLINED = { color: "text.primary", borderColor: "divider", flexShrink: 0 };
+const OUTLINED = {
+  color: "text.primary",
+  borderColor: "divider",
+  flexShrink: 0,
+};
 
 /**
  * The environment's cast, read from and edited in its draft: people on the caller's side who
@@ -354,7 +358,11 @@ function ActorRow({
               <OverflowTooltip title={`${C.wants}: ${actor.goal}`}>
                 <Typography
                   noWrap
-                  sx={{ typography: "s1", color: "text.secondary", ...ONE_LINE }}
+                  sx={{
+                    typography: "s1",
+                    color: "text.secondary",
+                    ...ONE_LINE,
+                  }}
                 >
                   {`${C.wants}: ${actor.goal}`}
                 </Typography>
@@ -387,7 +395,7 @@ function ActorRow({
                   <Iconify
                     icon="solar:pen-new-square-linear"
                     width={16}
-                    sx={{ color: "text.tertiary" }}
+                    sx={{ color: "text.secondary" }}
                   />
                 </IconButton>
               </CustomTooltip>
@@ -404,7 +412,7 @@ function ActorRow({
                   <Iconify
                     icon="solar:trash-bin-trash-linear"
                     width={16}
-                    sx={{ color: "text.tertiary" }}
+                    sx={{ color: "text.secondary" }}
                   />
                 </IconButton>
               </CustomTooltip>
