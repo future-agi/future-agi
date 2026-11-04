@@ -352,8 +352,12 @@ def enumerate_regions(writer, attempt, table, *, target_rows=RANGE_ROWS):
                     key_relation=region.relation(),
                 )
                 names = ", ".join(keys(table))
+                # Bound each branch by DISTINCT logical keys, not physical
+                # revisions. Duplicate checkpoint rows could otherwise consume
+                # its whole prefix while a later delta key stretches the child
+                # past many unseen checkpoint keys, exceeding target_rows.
                 prefixes = " UNION ALL ".join(
-                    f"SELECT * FROM (SELECT {names} FROM ({branch}) ORDER BY {names} LIMIT %(range_limit)s)"
+                    f"SELECT * FROM (SELECT DISTINCT {names} FROM ({branch}) ORDER BY {names} LIMIT %(range_limit)s)"
                     for branch in branches
                 )
                 rows = (

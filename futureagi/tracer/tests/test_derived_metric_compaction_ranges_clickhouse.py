@@ -177,6 +177,35 @@ def test_small_children_are_disjoint_and_exhaustive(live_writer):
     )
 
 
+def test_duplicate_physical_prefixes_cannot_widen_checkpoint_children(live_writer):
+    writer = live_writer
+    checkpoint = seed_all(writer, count=33)
+    writer.store.execute(f"SYSTEM STOP MERGES {FIELD_CHECKPOINT.name}")
+    try:
+        # Simulate an acknowledged legacy replay whose identical physical rows
+        # have not merged yet. A later delta field sorts after all checkpoint
+        # fields, but shares one of their immutable unit buckets.
+        writer.store.execute(
+            f"INSERT INTO {FIELD_CHECKPOINT.name} SELECT * FROM {FIELD_CHECKPOINT.name} "
+            "WHERE attempt_id=toUUID(%(attempt)s)",
+            {"attempt": str(checkpoint.checkpoint_attempt_id)},
+        )
+        draft, _ = prepare_field(writer, unit_id="key-0", metric=uuid4())
+        parent = writer.stage_and_publish(draft)
+        expected = {
+            kind: normalized(writer, parent, table)
+            for kind, table in TABLE_KINDS.items()
+        }
+        attempt = prepare(writer, target_rows=2)
+        assert max(attempt.compaction_ranges.values_list("row_count", flat=True)) <= 2
+    finally:
+        writer.store.execute(f"SYSTEM START MERGES {FIELD_CHECKPOINT.name}")
+    manifest = writer.stage_and_publish(attempt)
+    for kind, table in TABLE_KINDS.items():
+        assert normalized(writer, manifest, table) == expected[kind]
+        assert normalized(writer, parent, table) == expected[kind]
+
+
 @pytest.mark.parametrize(
     "corruption", ["missing", "bounds", "schema", "digest", "unfinished"]
 )
