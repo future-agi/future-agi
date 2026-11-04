@@ -381,7 +381,7 @@ class ComposeContractTests(unittest.TestCase):
             runner.split("SERVICES=(", 1)[1].split(")", 1)[0],
         )
 
-    def test_e2e_manages_exact_aggregation_worker_without_other_worker_profiles(self):
+    def test_e2e_manages_exact_aggregation_and_sql_workers_without_other_worker_profiles(self):
         # Parse only the literal list; never execute the harness or Compose.
         runner = (ROOT / "bin/e2e").read_text()
         services = shlex.split(
@@ -394,6 +394,7 @@ class ComposeContractTests(unittest.TestCase):
                 "backend",
                 "worker",
                 "worker-exact-aggregation",
+                "worker-sql-workbench",
                 "postgres",
                 "clickhouse",
                 "redis",

@@ -76,7 +76,7 @@ const idleColor = (t) => t.palette.text.disabled;
 
 // Dot + label pill for the run state, tinted like the Environments StatusPill.
 // The label text is passed in unchanged so screen readers and tests read the
-// same status as before; only its casing is styled.
+// same status as before, with its original accessible text.
 export function StatePill({ state, children, ...other }) {
   const color = STATE_COLOR[state] || idleColor;
   return (
@@ -112,7 +112,6 @@ export function StatePill({ state, children, ...other }) {
           fontWeight: "fontWeightSemiBold",
           color: "text.primary",
           display: "inline-block",
-          "&::first-letter": { textTransform: "uppercase" },
         }}
         {...other}
       >

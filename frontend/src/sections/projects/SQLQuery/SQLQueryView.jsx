@@ -8,7 +8,6 @@ import {
   CircularProgress,
   LinearProgress,
   Tab,
-  Tabs,
   List,
   ListItemButton,
   ListItemText,
@@ -35,13 +34,13 @@ import { getSQLCompletions } from "./sqlCompletions";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { CustomTabs } from "src/components/tabs/tabs";
 import {
   ACTION_BUTTON_PROPS,
   ACTION_BUTTON_SX,
   CONTROL_HEIGHT,
   PRIMARY_BUTTON_PROPS,
   PRIMARY_BUTTON_SX,
-  QUERY_TABS_SX,
   visibilityIcon,
   visibilityLabel,
   warningText,
@@ -395,7 +394,7 @@ export default function SQLQueryView() {
               bgcolor: "background.paper",
             }}
           >
-            <Tabs
+            <CustomTabs
               value={libraryTab}
               onChange={(_, value) => {
                 setLibraryTab(value);
@@ -405,12 +404,6 @@ export default function SQLQueryView() {
               // The three tabs share the narrow library column evenly.
               variant="fullWidth"
               aria-label="Query library views"
-              sx={{
-                ...QUERY_TABS_SX,
-                px: 1,
-                borderBottom: 1,
-                borderColor: "divider",
-              }}
             >
               {[
                 ["catalog", "Catalog", catalog?.datasets?.length],
@@ -441,7 +434,7 @@ export default function SQLQueryView() {
                   }}
                 />
               ))}
-            </Tabs>
+            </CustomTabs>
             <Button
               {...ACTION_BUTTON_PROPS}
               onClick={() => setLibraryOpen((value) => !value)}

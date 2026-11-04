@@ -125,8 +125,8 @@ export default function QueryResults({
     .slice(0, 50)
     .map((row) => ({ category: String(row[xi] ?? "NULL"), value: row[yi] }));
   const ink = theme.palette.text.secondary;
-  const color = theme.palette.mode === "dark" ? "#9085e9" : "#6250d6";
-  const surface = theme.palette.mode === "dark" ? "#1a1a19" : "#fcfcfb";
+  const color = theme.palette.primary.main;
+  const surface = theme.palette.background.paper;
   useEffect(() => {
     setPage(0);
   }, [result]);

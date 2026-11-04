@@ -1,19 +1,3 @@
-export const QUERY_TABS_SX = {
-  minHeight: 40,
-  "& .MuiTab-root": {
-    minHeight: 40,
-    minWidth: 0,
-    px: 1.25,
-    typography: "s2",
-    fontWeight: "fontWeightSemiBold",
-    textTransform: "none",
-    "&:not(:last-of-type)": { mr: 0 },
-  },
-  "& .MuiTab-root:not(.Mui-selected)": { color: "text.subtitle" },
-  "& .MuiTab-root.Mui-selected": { color: "text.primary" },
-  "& .MuiTabs-indicator": { height: 2, bgcolor: "text.primary" },
-};
-
 export const CONTROL_HEIGHT = 32;
 // Neutral contained actions follow annotations/queues/annotate/review-panel.jsx.
 export const PRIMARY_BUTTON_PROPS = {
