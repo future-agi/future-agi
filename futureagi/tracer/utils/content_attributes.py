@@ -4,11 +4,9 @@ import json
 from typing import Any, Literal
 
 
-def content_attribute(
-    attributes: dict[str, Any], direction: Literal["input", "output"]
-) -> Any:
-    """An explicit alias, even empty/redacted, must suppress native fallback."""
-    native_content = any(
+def has_native_content(attributes: dict[str, Any]) -> bool:
+    """Whether presence-sensitive content precedence applies to this span."""
+    return any(
         key in attributes
         for key in (
             "gen_ai.input.messages",
@@ -19,7 +17,13 @@ def content_attribute(
             "anthropic.tool_result.content",
         )
     )
-    if not native_content:
+
+
+def content_attribute(
+    attributes: dict[str, Any], direction: Literal["input", "output"]
+) -> Any:
+    """An explicit alias, even empty/redacted, must suppress native fallback."""
+    if not has_native_content(attributes):
         # Ordinary legacy spans keep their established empty-placeholder fallback.
         value = attributes.get(f"fi.llm.{direction}") or attributes.get(
             f"{direction}.value"

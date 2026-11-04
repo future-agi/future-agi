@@ -26,6 +26,7 @@ from tracer.utils.adapters.base import (
     register_adapter,
     set_io_value,
 )
+from tracer.utils.content_attributes import has_native_content
 from tracer.utils.otel import SpanAttributes
 from tracer.utils.semantic_conventions import AttributeRegistry
 
@@ -175,14 +176,17 @@ class OtelGenAIAdapter(BaseTraceAdapter):
         has_output = any(
             key in attributes for key in ("output.value", "fi.llm.output", "raw.output")
         )
+        # Ordinary indexed GenAI spans retain their legacy placeholder fallback.
+        # Strict alias presence applies only when modern native content is present.
+        native_content = has_native_content(attributes)
         input_messages = (
             []
-            if has_input
+            if has_input and native_content
             else _extract_messages(attributes, "gen_ai.input.messages", _PROMPT_RE)
         )
         output_messages = (
             []
-            if has_output
+            if has_output and native_content
             else _extract_messages(attributes, "gen_ai.output.messages", _COMPLETION_RE)
         )
         native_input = attributes.get("gen_ai.input.messages")
@@ -245,7 +249,11 @@ class OtelGenAIAdapter(BaseTraceAdapter):
                     ),
                 ),
             ):
-                if not present and value is not None:
+                if (
+                    not present
+                    and f"gen_ai.{key}.messages" not in attributes
+                    and value is not None
+                ):
                     # Keep JSON scalars (notably false and zero) decodable too.
                     if isinstance(value, bool | int | float):
                         value = json.dumps(value)

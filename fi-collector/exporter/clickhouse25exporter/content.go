@@ -7,7 +7,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-// Explicit content aliases precede native GenAI content. Presence is decisive:
+// Explicit content aliases precede native GenAI content. For native content,
 // an empty/null/redacted alias must not expose a lower-priority raw attribute.
 // Keep pkg/server's classifyKey in sync: every hot-column copy needs a budget.
 var (
@@ -16,8 +16,8 @@ var (
 )
 
 func spanContent(attrs pcommon.Map, observationType string) (string, string) {
-	input, hasInput := contentValue(attrs, inputContentKeys...)
-	output, hasOutput := contentValue(attrs, outputContentKeys...)
+	input, hasInput := explicitContentValue(attrs, inputContentKeys)
+	output, hasOutput := explicitContentValue(attrs, outputContentKeys)
 	if !hasInput {
 		input, hasInput = contentValue(attrs, "gen_ai.input.messages")
 		if observationType == "llm" {
@@ -37,6 +37,24 @@ func spanContent(attrs pcommon.Map, observationType string) (string, string) {
 		}
 	}
 	return input, output
+}
+
+func explicitContentValue(attrs pcommon.Map, keys []string) (string, bool) {
+	for _, nativeKey := range []string{
+		"gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.system_instructions",
+		"gen_ai.tool.call.arguments", "gen_ai.tool.call.result", "anthropic.tool_result.content",
+	} {
+		if _, present := attrs.Get(nativeKey); present {
+			return contentValue(attrs, keys...)
+		}
+	}
+	// Ordinary spans retain the first-nonempty legacy alias selection.
+	for _, key := range keys {
+		if value, present := contentValue(attrs, key); present && value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // Read pdata directly, not the split numeric tier: tool arguments/results may
