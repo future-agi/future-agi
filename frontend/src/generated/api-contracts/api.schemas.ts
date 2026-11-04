@@ -30928,7 +30928,7 @@ export interface SQLColumnApi {
   type: string;
 }
 
-export type SQLResultApiRowsItemItem = { [key: string]: unknown };
+export type SQLResultApiRowsItemItem = JsonValueApi;
 
 export interface SQLResultApi {
   columns?: SQLColumnApi[];
@@ -30938,7 +30938,7 @@ export interface SQLResultApi {
   result_bytes?: number;
   elapsed_ms?: number;
   offset?: number;
-  next_offset?: number;
+  next_offset?: number | null;
   has_more?: boolean;
   page_row_count?: number;
   previewed?: boolean;
@@ -30953,7 +30953,7 @@ export interface SQLExecutionApi {
   state: SQLExecutionApiState;
   created_at: string;
   expires_at: string;
-  finished_at: string;
+  finished_at: string | null;
   reused?: boolean;
   error: string;
   result: SQLResultApi;
@@ -31021,9 +31021,9 @@ export interface SQLEstimateSourceApi {
   /** @minLength 1 */
   dataset: string;
   estimated: boolean;
-  parts: number;
-  marks: number;
-  max_rows: number;
+  parts: number | null;
+  marks: number | null;
+  max_rows: number | null;
   reason: string;
 }
 
@@ -31032,7 +31032,7 @@ export interface SQLEstimateApi {
   reason: string;
   sources: SQLEstimateSourceApi[];
   max_rows_to_read: number;
-  exceeds_scan_bound: boolean;
+  exceeds_scan_bound: boolean | null;
   elapsed_ms: number;
 }
 
