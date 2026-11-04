@@ -40,9 +40,15 @@ def store_version_contract(
 
     Written once, like the agent: a version that already has one, or whose agent
     is not stored yet, is left alone, unless ``replace`` says a build seeded from
-    the reading brings the contract it finished with. Returns whether this call
-    stored it.
+    the reading brings the contract it finished with. A phone or LiveKit version
+    has nothing to read, so its configured agent is stored first. Returns whether
+    this call stored it.
     """
+    from simulate.services.configured_agent import ensure_configured_document
+
+    if not contract:
+        return False
+    ensure_configured_document(agent_version_id)
     rows = AgentVersionSetup.no_workspace_objects.filter(
         agent_version_id=agent_version_id
     )
@@ -51,7 +57,18 @@ def store_version_contract(
     current = rows.values_list(
         "agent_version__agent_definition_id", "contract_object_key"
     ).first()
-    if not contract or current is None:
+    if current is None:
+        logger.info(
+            "agent_contract_skipped",
+            agent_version_id=str(agent_version_id),
+            reason=(
+                "already_stored"
+                if AgentVersionSetup.no_workspace_objects.filter(
+                    agent_version_id=agent_version_id
+                ).exists()
+                else "no_stored_agent"
+            ),
+        )
         return False
     agent_definition_id, previous_key = current
     key = contract_object_key(organization_id, agent_definition_id, agent_version_id)

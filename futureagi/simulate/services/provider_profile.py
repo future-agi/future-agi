@@ -35,6 +35,7 @@ _SECRET_MARKERS = (
 )
 MAIN_UNIT = "main"
 SETUP_HASH_PREFIX = "sh1:"
+PLATFORM_SDK_VERSION = "platform"
 _NAME_MAX = 255
 
 

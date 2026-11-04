@@ -39,8 +39,6 @@ Trigger = HarnessAgentVersionRuntime.Trigger
 SourceKind = HarnessAgentVersionRuntime.SourceKind
 Status = HarnessAgentVersionRuntime.PreflightStatus
 
-# The SDK version a document the platform mapped itself is stored under.
-_PLATFORM_SDK_VERSION = "platform"
 # The provider a connector reads its agent from, when the two names differ.
 _SYNC_PROVIDERS = {"retell_chat": "retell"}
 KIND_SYNC = "sync"
@@ -234,6 +232,7 @@ def provider_sync(
         stored_agent,
     )
     from simulate.services.provider_profile import (
+        PLATFORM_SDK_VERSION,
         PROVIDERS,
         profile_digest,
         profile_document,
@@ -272,7 +271,7 @@ def provider_sync(
             store_agent(
                 agent_version_id=parent.id,
                 agent=document,
-                sdk_version=_PLATFORM_SDK_VERSION,
+                sdk_version=PLATFORM_SDK_VERSION,
                 origin=AgentVersionSetup.Origin.READING,
             )
         except AgentStoreError as exc:
@@ -310,7 +309,7 @@ def provider_sync(
         store_agent(
             agent_version_id=version.id,
             agent=document,
-            sdk_version=_PLATFORM_SDK_VERSION,
+            sdk_version=PLATFORM_SDK_VERSION,
             origin=AgentVersionSetup.Origin.READING,
         )
     except AgentStoreError as exc:
