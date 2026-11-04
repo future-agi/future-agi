@@ -20,7 +20,10 @@ import {
   compareRunsKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
-import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
+import {
+  useRerunCallsInRun,
+  useResumeRun,
+} from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
@@ -165,6 +168,17 @@ export default function RunDetail({
     .filter(Boolean)
     .map((label) => ` · ${label}`)
     .join("");
+  // An interrupted run says how far it got and can resume the calls it left.
+  const resumeState = identity?.resume;
+  const resume = useResumeRun(executionId);
+  const lastResume = resumeState?.history?.at(-1);
+  const resumeLabel = [
+    resumeState?.resumable &&
+      ` · ${resumeState.finished} of ${resumeState.finished + resumeState.unfinished} trials finished · ${resumeState.unfinished} not finished`,
+    lastResume && ` · resumed ${fToNow(lastResume.at)}`,
+  ]
+    .filter(Boolean)
+    .join("");
   // A re-run starts from the versions this run used.
   const rerunOptions = {
     initialPicks: {
@@ -266,6 +280,7 @@ export default function RunDetail({
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
             {startedLabel ? ` · started ${startedLabel}` : ""}
+            {resumeLabel}
           </Typography>
         </Box>
 
@@ -307,6 +322,17 @@ export default function RunDetail({
         >
           {exporting ? "Exporting…" : "Export"}
         </Button>
+        {resumeState?.resumable && (
+          <Button
+            variant="outlined"
+            size="small"
+            disabled={live || resume.isPending}
+            startIcon={<Iconify icon="solar:play-linear" width={15} />}
+            onClick={() => resume.mutate()}
+          >
+            {resume.isPending ? "Resuming…" : "Resume"}
+          </Button>
+        )}
         {hasTickableCalls === false && (
           <Button
             variant="outlined"
@@ -342,7 +368,12 @@ export default function RunDetail({
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              mb: 2,
+            }}
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} />
             {hasTrials && (
