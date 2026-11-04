@@ -12,6 +12,7 @@ from simulate.models import (
 )
 from simulate.services import harness_readiness
 from simulate.services.harness_readiness import selection
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     PASSED,
     PRODUCTION_ONLY,
@@ -32,6 +33,7 @@ from simulate.tests.test_harness_readiness import (
     storage as storage,  # noqa: F401 - fixture
 )
 from simulate.tests.test_harness_versioning_assembly import _row
+from simulate.tests.test_harness_versioning_runs import _run
 
 pytestmark = pytest.mark.django_db
 
@@ -390,6 +392,36 @@ class TestRunRefusals:
             10,
         )
         assert {tuple(one["by"]) for one in page["items"]} == {("pair_failed",)}
+
+    def test_a_validating_pairing_reads_every_case_untested_as_runs_are_refused(
+        self, user, workspace, storage
+    ):
+        """While the pairing is being checked the run gate refuses it and nothing is
+        known yet: every case is untested by the check, never eligible."""
+        environment = _ten_certified(user, workspace, storage, "as-pair-validating")
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="pending", object_key=None, error=None
+        )
+        _built(environment)
+        pairing = _pairing(environment)
+        assert harness_readiness.recheck(pairing)["state"] == "validating"
+
+        chosen = _select(environment, pairing=pairing)["selection"]
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket="untested", row=None, cursor=None
+        )
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, key="as-pair-validating")
+
+        assert refused.value.code == "pair_validating"
+        assert {bucket: chosen[bucket] for bucket in selection.BUCKETS} == {
+            "eligible": 0,
+            "blocked": 0,
+            "stale": 0,
+            "untested": chosen["requested"],
+        }
+        assert chosen["requested"] == 10
+        assert {tuple(one["by"]) for one in page["items"]} == {("pair_validating",)}
 
     def test_a_pairing_an_ordinary_run_failed_blocks_no_case(
         self, user, workspace, storage

@@ -3,7 +3,8 @@
 Each case lands in exactly one bucket, first match: blocked, stale, untested, then
 eligible. A row holds a case only when the case needs it; a tool row whose targets
 name none of the case's tools reads Supported for it, and an unmeasured row holds no
-case.
+case. While the pairing is being checked, every case reads untested: the run gate
+refuses it and the check has not answered yet.
 """
 
 from __future__ import annotations
@@ -115,8 +116,8 @@ class CasePage(TypedDict):
 @dataclass(frozen=True)
 class Placed:
     """A requested case, its bucket and what put it there (row ids, or
-    ``pair_failed`` / ``not_proved_here`` / ``unknown_need``), and the rows holding
-    it."""
+    ``pair_validating`` / ``pair_failed`` / ``not_proved_here`` / ``unknown_need``),
+    and the rows holding it."""
 
     case: CaseNeeds
     bucket: Bucket
@@ -256,7 +257,11 @@ def _place_all(
             kept.append(one)
     proved = _proved_tokens(pairing)
     ready = certified(bundle)
-    # A run of a pairing a validation failed is refused, whatever its rows say.
+    # A run of a pairing being validated, or a validation failed, is refused, whatever
+    # its rows say.
+    pair_validating = (
+        bundle is not None and validation.live_validation(bundle.id) is not None
+    )
     pair_failed = validation.failed_check(bundle)
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
@@ -268,6 +273,7 @@ def _place_all(
             proved=ready or _scenario_token(case.key) in proved,
             voice=voice,
             many=many,
+            pair_validating=pair_validating,
             pair_failed=pair_failed,
         )
         for case in kept
@@ -362,6 +368,7 @@ def _place(
     proved: bool,
     voice: bool,
     many: bool,
+    pair_validating: bool,
     pair_failed: bool,
 ) -> Placed:
     needed = set(case.rows)
@@ -391,9 +398,9 @@ def _place(
     if case.unknown:
         untested.append("unknown_need")
     order: tuple[tuple[Bucket, list[str]], ...] = (
-        ("blocked", blocked),
-        ("stale", stale),
-        ("untested", untested),
+        (("untested", ["pair_validating"]),)
+        if pair_validating
+        else (("blocked", blocked), ("stale", stale), ("untested", untested))
     )
     bucket, by = next(
         ((name, reasons) for name, reasons in order if reasons), ("eligible", [])
