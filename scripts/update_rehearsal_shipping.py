@@ -28,6 +28,9 @@ from types import SimpleNamespace
 import uuid
 
 from scripts.update_rehearsal_trace_reference import TRACE_REFERENCE_MODELS, seed_trace_reference_family
+from scripts.update_rehearsal_eval_task_reference import (
+    EVAL_TASK_REFERENCE_MODELS, seed_eval_task_reference, verify_eval_task_reference,
+)
 
 REHEARSAL_CONTRACT = 'standalone-disposable-rehearsal-v1'
 # Explicit incompleteness, not an admission flag. Do not flip this constant to
@@ -713,6 +716,10 @@ class ProductWitnesses:
 
     def read(self, label):
         p, n = producer(), self.namespaces[label]
+        if label == 'source':
+            # Separate ORM-fixture preservation, not a fabricated API witness.
+            # This read is used before backup, on B, and after restoring A.
+            verify_eval_task_reference(self.d, prefix=DJANGO_PREFIX, producer=p)
         info = self._http('/accounts/user-info/',headers=n['headers'])
         p.equal(info.get('email'),n['account']['email'],'witness API returned another user')
         relational = {
@@ -1140,6 +1147,11 @@ class ShippingRehearsal:
                     and entry.get('table')==ERROR_FEED_REFERENCE_MODELS[key]):
                 return self.seed_error_feed_reference_family(rows)
             raise p.ManualRelease('high_volume_reference_unavailable')
+        if key in EVAL_TASK_REFERENCE_MODELS or entry.get('table') in EVAL_TASK_REFERENCE_MODELS.values():
+            if (entry.get('database')=='postgres' and key in EVAL_TASK_REFERENCE_MODELS
+                    and entry.get('table')==EVAL_TASK_REFERENCE_MODELS[key]):
+                return self.seed_eval_task_reference(rows)
+            raise p.ManualRelease('high_volume_reference_unavailable')
         if entry['database']!='postgres' or key not in APPEND_ONLY_MODELS:
             # A6 needs product-specific distributions for each registered table.
             # Never create a generic all-default row or silently skip a table.
@@ -1148,6 +1160,9 @@ class ShippingRehearsal:
 
     def seed_trace_reference_family(self, rows):
         return seed_trace_reference_family(self, rows, prefix=DJANGO_PREFIX, producer=producer())
+
+    def seed_eval_task_reference(self, rows):
+        return seed_eval_task_reference(self, rows, prefix=DJANGO_PREFIX, producer=producer())
 
     def seed_error_feed_reference_family(self, rows):
         """Build the whole graph once; later callbacks can only re-verify it.

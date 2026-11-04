@@ -221,6 +221,9 @@ def schema_env():
         definitions[name]=[]
         for declaration in node.body:
             if not isinstance(declaration,ast.Assign) or not isinstance(declaration.value,ast.Call): continue
+            # This double represents v1.56.1/v1.58.0, not the target model.
+            # 0127 adds this field only after the reference has been seeded.
+            if name=='Project' and declaration.targets[0].id=='analysis_source_generation': continue
             function=declaration.value.func
             if (isinstance(function,ast.Attribute) and isinstance(function.value,ast.Name)
                     and function.value.id=='models' and (function.attr.endswith('Field') or function.attr=='ForeignKey')):

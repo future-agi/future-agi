@@ -414,7 +414,8 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(hash_path(h.root,'docker-compose.yml'),digest)
             inventory=json.loads((h.evidence/'updater-code-inventory.json').read_bytes())
             for name in ('bin/update','scripts/update_rehearsal_shipping.py',
-                         'scripts/update_rehearsal_trace_reference.py','deploy/standalone/bin/bootstrap.py'):
+                         'scripts/update_rehearsal_trace_reference.py','scripts/update_rehearsal_eval_task_reference.py',
+                         'deploy/standalone/bin/bootstrap.py'):
                 self.assertEqual(inventory[name],hashlib.sha256((ROOT/name).read_bytes()).hexdigest())
             self.assertFalse(any(name.endswith('.pyc') for name in inventory))
 

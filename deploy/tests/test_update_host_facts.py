@@ -168,7 +168,7 @@ class SelectionTests(pub.PublisherCase):
             'scripts/generate_update_manifest.py', 'scripts/update_rehearsal_shipping.py',
             'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
             'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
-            'scripts/update_rehearsal_trace_reference.py', 'bin/update',
+            'scripts/update_rehearsal_trace_reference.py', 'scripts/update_rehearsal_eval_task_reference.py', 'bin/update',
             'deploy/standalone/bin/start',
             'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
             'api_contracts/host-update/public-status.v1.schema.json',
@@ -180,6 +180,12 @@ class SelectionTests(pub.PublisherCase):
             path.write_text('fixed installed data: ' + name)
         digest = facts.executor_implementation_sha256(self.root)
         self.assertEqual(digest, inventory_hash(implementation_inventory(self.root)))
+        helper = self.root / 'scripts/update_rehearsal_eval_task_reference.py'
+        original = helper.read_text()
+        helper.write_text('changed task qualification fixture')
+        self.assertNotEqual(facts.executor_implementation_sha256(self.root), digest)
+        self.assertEqual(facts.executor_implementation_sha256(self.root), inventory_hash(implementation_inventory(self.root)))
+        helper.write_text(original)
         ignored = self.root / 'deploy/update/__pycache__/untrusted.py'
         ignored.parent.mkdir()
         ignored.write_text('not part of shipped closure')

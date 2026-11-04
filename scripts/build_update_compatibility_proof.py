@@ -92,7 +92,7 @@ def implementation_inventory(root: Path = ROOT) -> dict:
         'rehearse_update_compatibility.py', 'build_update_compatibility_proof.py',
         'generate_update_manifest.py', 'update_rehearsal_shipping.py', 'update_rehearsal_milestone.py',
         'update_rehearsal_qualification.py', 'update_rehearsal_resources.py', 'update_rehearsal_spool.py',
-        'update_rehearsal_trace_reference.py')]
+        'update_rehearsal_trace_reference.py', 'update_rehearsal_eval_task_reference.py')]
     paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
         'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf', *HOST_RUNTIME_CONTRACTS))
     base = root / 'deploy/update'
