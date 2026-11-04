@@ -505,60 +505,36 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["get"], url_path="capabilities")
     def capabilities(self, request, pk=None):
-        """What this environment was shown to support with an agent version (its own when none is named), one status
-        per capability, computed now from its build's evidence; Stale once the environment version moved on or the
-        agent is another version. No writes."""
-        from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
-        from simulate.services.capability_evidence import environment_capability_report
-        from simulate.services.harness_versioning.read import version_not_found
+        """The run readiness of an agent, environment and suite pairing, computed now;
+        an absent id is the environment's default. No writes."""
+        from simulate.services.harness_readiness import (
+            readiness_report,
+            resolve_pairing,
+        )
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        query = request.validated_query_data
-        picked = {}
-        for name, model in (
-            ("environment_version", HarnessEnvironmentVersion),
-            ("suite_version", HarnessSuiteVersion),
-        ):
-            if query.get(f"{name}_id"):
-                picked[name] = model.no_workspace_objects.filter(
-                    job=job, id=query[f"{name}_id"]
-                ).first()
-                if picked[name] is None:
-                    raise version_not_found()
-        return Response(
-            environment_capability_report(
-                job,
-                query.get("agent_version_id"),
-                picked.get("environment_version"),
-                suite_version=picked.get("suite_version") or job.suite_version,
-                keys=list(query.get("keys") or []) or None,
-            )
-        )
+        pairing = resolve_pairing(job, **request.validated_query_data)
+        return Response(readiness_report(pairing))
 
     @validated_request(
         request_serializer=HarnessCapabilityRecheckSerializer,
-        responses={200: HarnessCapabilityRecheckResponseSerializer},
+        responses={202: HarnessCapabilityRecheckResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="capabilities/recheck")
     def recheck_capabilities(self, request, pk=None):
-        """Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
-        world is checked again only by a new build for now. Starts no run."""
-        from simulate.services.capability_evidence import recheck_capabilities
+        """Validate a pairing again with a run-less check; moves no default. An absent
+        id is the environment's default."""
+        from simulate.services.harness_readiness import recheck, resolve_pairing
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        data = request.validated_data
+        pairing = resolve_pairing(job, **request.validated_data)
         return Response(
-            recheck_capabilities(
-                job,
-                data["scope"],
-                data.get("check"),
-                request.query_params.get("agent_version_id"),
-            )
+            {"validation": recheck(pairing)}, status=status.HTTP_202_ACCEPTED
         )
 
     @validated_request(

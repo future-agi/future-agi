@@ -6293,9 +6293,6 @@ def store_authoring_archive(
         if advance_lifecycle
         else None
     )
-    from simulate.services.capability_evidence import record_capability_evidence
-
-    record_capability_evidence(job, body)
     # Re-read under the lock so keys written since the caller read the job are kept.
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
