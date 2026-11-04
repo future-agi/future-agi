@@ -29,3 +29,9 @@ export const SUB_ACTOR_CHANNEL_LABELS = {
   audio_handoff: "Takes the phone",
   ivr: "Phone menu",
 };
+
+// Data-palette slot for everyone on a call besides the agent and the customer.
+export const OTHER_PARTY_SERIES = 2;
+
+// Widest a sub-actor's "Name · role" label gets before it is cut, in px.
+export const OTHER_PARTY_LABEL_MAX_WIDTH = 320;

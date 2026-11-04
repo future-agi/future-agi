@@ -33,7 +33,11 @@ export default function CallParticipants({ others, customerName }) {
         {`${CALL_PARTICIPANTS_HEADING}:`}
       </Typography>
       {entries.map((entry, i) => (
-        <Box key={entry.key} component="span" sx={{ display: "inline-flex" }}>
+        <Box
+          key={entry.key}
+          component="span"
+          sx={{ display: "inline-flex", minWidth: 0, maxWidth: "100%" }}
+        >
           {entry}
           {i < entries.length - 1 && (
             <Typography

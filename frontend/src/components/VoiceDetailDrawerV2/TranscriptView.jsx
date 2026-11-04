@@ -28,11 +28,12 @@ import {
   isOtherRole,
   otherParties,
 } from "./transcriptUtils";
-import { DEFAULT_ROLE_LABELS } from "./constants";
+import { DEFAULT_ROLE_LABELS, OTHER_PARTY_SERIES } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
 import OtherPartyName from "./OtherPartyName";
 import CallParticipants from "./CallParticipants";
 import { statusColors } from "src/utils/runStatus";
+import { seriesColor } from "src/theme/data-colors";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -85,8 +86,8 @@ const useSpeakerColors = () => {
       user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
-      sub_actor: theme.palette.data?.[2] || theme.palette.text.secondary,
-      others: theme.palette.data?.[2] || theme.palette.text.secondary,
+      sub_actor: seriesColor(theme, OTHER_PARTY_SERIES),
+      others: seriesColor(theme, OTHER_PARTY_SERIES),
       unknown: theme.palette.text.disabled,
     }),
     [theme],

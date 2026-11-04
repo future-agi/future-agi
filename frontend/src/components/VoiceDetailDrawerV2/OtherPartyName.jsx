@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { channelLabel, otherPartyLabel } from "./transcriptUtils";
+import { OTHER_PARTY_LABEL_MAX_WIDTH } from "./constants";
 
 export default function OtherPartyName({ party, color = "text.primary" }) {
   const tag = channelLabel(party.channel);
@@ -22,7 +23,7 @@ export default function OtherPartyName({ party, color = "text.primary" }) {
         variant="s3"
         title={label}
         noWrap
-        sx={{ color, fontWeight: 600, maxWidth: 320 }}
+        sx={{ color, fontWeight: 600, maxWidth: OTHER_PARTY_LABEL_MAX_WIDTH }}
       >
         {label}
       </Typography>
