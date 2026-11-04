@@ -42,7 +42,7 @@ export default function MyEnvironmentsTable({
         rowCount={total}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row)}
-        rowHeight={ROW_HEIGHT}
+        rowHeight={ROW_HEIGHT.default}
         emptyMessage={EMPTY_MESSAGE}
       />
       {total > 0 && (

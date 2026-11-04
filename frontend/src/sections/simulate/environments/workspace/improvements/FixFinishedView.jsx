@@ -61,10 +61,6 @@ const TABS_SX = {
   borderBottom: "1px solid",
   borderColor: "divider",
   mb: 2,
-  minHeight: 38,
-  "& .MuiTabs-flexContainer": { gap: 3 },
-  "& .MuiTab-root": { minWidth: "auto", px: 0 },
-  "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
 };
 
 const TABS = [
@@ -113,7 +109,6 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
             label={
               t.id === "trials" ? `${t.label} (${trials.length})` : t.label
             }
-            sx={{ minHeight: 38 }}
           />
         ))}
       </CustomTabs>

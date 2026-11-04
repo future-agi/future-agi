@@ -166,7 +166,7 @@ var = f"{{col_name}}"`}
       <Box
         sx={{
           border: "1px solid var(--border-default)",
-          borderRadius: "10px",
+          borderRadius: "8px",
           overflow: "hidden",
         }}
       >

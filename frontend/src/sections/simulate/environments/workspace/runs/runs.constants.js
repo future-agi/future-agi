@@ -1,5 +1,3 @@
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-
 // Shared lifecycle mapping for the runs list and detail header.
 const RUN_STATE = {
   pending: "queued",
@@ -44,59 +42,65 @@ export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running"]);
 // depending on emotion's generated class name.
 export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 
-// The run status vocabulary. Colours come from BUILD_TONES so this module holds
-// no raw hex. `flaky` and `unmeasured` are deliberately not red: a flaky
-// scenario disagreed with itself (the scenario is the problem, not the agent),
-// and an unmeasured run means nothing upstream of the agent worked, so there is
-// no verdict to blame the agent for.
+// The run status vocabulary: a label and the status role (theme.palette.status)
+// each state takes. `flaky` and `unmeasured` are deliberately not danger: a
+// flaky scenario disagreed with itself (the scenario is the problem, not the
+// agent), and an unmeasured run means nothing upstream of the agent worked, so
+// there is no verdict to blame the agent for. Roles follow src/utils/runStatus.
 export const STATUS_META = {
-  in_progress: { color: BUILD_TONES.blue, label: "In progress" },
-  inconclusive: { color: BUILD_TONES.ash, label: "Inconclusive" },
+  in_progress: { role: "info", label: "In progress" },
+  inconclusive: { role: "neutral", label: "Inconclusive" },
   // Nothing the call was meant to test happened in it: neither a pass nor a fail.
-  no_score: { color: BUILD_TONES.ash, label: "No score" },
-  queued: { color: BUILD_TONES.zinc, label: "Queued" },
-  booting: { color: BUILD_TONES.amber, label: "Provisioning" },
-  running: { color: BUILD_TONES.blue, label: "Running" },
-  grading: { color: BUILD_TONES.accent, label: "Grading" },
-  passed: { color: BUILD_TONES.green, label: "Passed" },
-  flaky: { color: BUILD_TONES.amberBright, label: "Flaky" },
-  unmeasured: { color: BUILD_TONES.ash, label: "Not measured" },
-  // The run header's verdict for mixed results. Green, not grey: it tells the
-  // user the run did run; an all-failed run reads "Failed" instead.
-  completed: { color: BUILD_TONES.green, label: "Completed" },
+  no_score: { role: "neutral", label: "No score" },
+  queued: { role: "neutral", label: "Queued" },
+  booting: { role: "info", label: "Provisioning" },
+  running: { role: "info", label: "Running" },
+  grading: { role: "info", label: "Grading" },
+  passed: { role: "success", label: "Passed" },
+  flaky: { role: "warning", label: "Flaky" },
+  unmeasured: { role: "neutral", label: "Not measured" },
+  // The run header's verdict for mixed results; an all-failed run reads
+  // "Failed" instead.
+  completed: { role: "neutral", label: "Completed" },
   // Shared lifecycle "Completed" for the runs list and detail header.
-  finished: { color: BUILD_TONES.green, label: "Completed" },
-  failed: { color: BUILD_TONES.red, label: "Failed" },
-  error: { color: BUILD_TONES.orange, label: "Error" },
+  finished: { role: "neutral", label: "Completed" },
+  failed: { role: "danger", label: "Failed" },
+  error: { role: "danger", label: "Error" },
   // A stopped run until the backend confirms its sandbox is gone.
-  cancelling: { color: BUILD_TONES.zinc, label: "Cancelling" },
-  cancelled: { color: BUILD_TONES.zinc, label: "Cancelled" },
+  cancelling: { role: "neutral", label: "Cancelling" },
+  cancelled: { role: "neutral", label: "Cancelled" },
+};
+
+// A category colour from the design system's data palette
+// (theme.palette.data, 8 colours), wrapped by index. Used for run identity and
+// eval series, which are categories rather than statuses.
+export const dataColor = (theme, index = 0) => {
+  const palette = theme.palette.data;
+  if (!palette?.length) return theme.palette.text.secondary;
+  return palette[Math.max(0, index) % palette.length];
 };
 
 // Run identity colours, indexed by a run's place in the sequence (its ordinal
-// minus one, wrapped). Keyed off the ordinal — not the list position — so a run
-// keeps the same letter and colour on the history list, the detail header and a
-// comparison. Ported from the designer's `RUN_COLORS`, mapped onto BUILD_TONES
-// so this module holds no raw hex.
-export const RUN_COLORS = [
-  BUILD_TONES.accent, // #7857FC
-  BUILD_TONES.blue, // #2563EB
-  BUILD_TONES.green, // #16A34A
-  BUILD_TONES.amber, // #CA8A04
-  BUILD_TONES.orange, // #EA580C
-  BUILD_TONES.pink, // #DB2777
-  BUILD_TONES.tealDeep, // #0D9488
-  BUILD_TONES.indigo, // #4F46E5
-];
+// minus one, wrapped). They are data-palette tokens (theme.palette.data[i]),
+// written as the sx path "data.<i>" so a screen can use them as `color` or
+// `bgcolor` without a theme in hand. Keyed off the ordinal, not the list
+// position, so a run keeps the same letter and colour on the history list, the
+// detail header and a comparison.
+export const RUN_COLORS = Array.from({ length: 8 }, (_, i) => `data.${i}`);
 
 // The identity colour for a run at a given 1-based ordinal. A missing or
 // non-finite ordinal falls back to the first colour, so a caller never gets
-// `undefined` (which would crash `alpha()` when fed to an sx colour).
-export const runColor = (ordinal) => {
+// `undefined`.
+const runColorIndex = (ordinal) => {
   const n = Number.isFinite(ordinal) ? ordinal : 1;
-  return RUN_COLORS[(Math.max(1, n) - 1) % RUN_COLORS.length];
+  return (Math.max(1, n) - 1) % RUN_COLORS.length;
 };
 
-// The pass bar's two segments — the share that passed vs. the share that did
-// not — so the row carries no raw hex.
-export const PASS_BAR_COLORS = { passed: BUILD_TONES.green, failed: BUILD_TONES.red };
+export const runColor = (ordinal) => RUN_COLORS[runColorIndex(ordinal)];
+
+// The same colour as a value, for helpers like alpha() that can't read an sx path.
+export const runColorValue = (theme, ordinal) =>
+  theme.palette.data[runColorIndex(ordinal)];
+
+// The pass bar's two segments, as status roles.
+export const PASS_BAR_ROLES = { passed: "success", failed: "danger" };

@@ -8,12 +8,10 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import SideDrawer from "../../components/SideDrawer";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
 import { scenarioToolbarButtonSx } from "./scenarios.constants";
 
-const RED = BUILD_TONES.red;
-const GREEN = BUILD_TONES.green;
 
 // The five rare-catastrophic overlays that must be present regardless of
 // sampling (server naming). "Forced" in the header summary counts these.
@@ -29,7 +27,7 @@ const FORCED_OVERLAYS = [
 const humanize = (s) =>
   String(s ?? "")
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .replace(/^\w/, (c) => c.toUpperCase());
 
 // Coverage — the server cross-tab.
 //
@@ -102,26 +100,26 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
 
   const helpContent = (
     <Box sx={{ p: 0.5, maxWidth: 380 }}>
-      <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.5, color: "common.white" }}>
+      <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.5 }}>
         What this panel answers
       </Typography>
-      <Typography sx={{ typography: "s2", color: (t) => alpha(t.palette.common.white, 0.85), mb: 1.5 }}>
+      <Typography sx={{ typography: "s3", mb: 1.5 }}>
         Not &quot;how many tests do we have&quot;, but{" "}
-        <Box component="b" sx={{ color: "common.white" }}>
+        <Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>
           &quot;what kinds of situations did we forget to test?&quot;
         </Box>
       </Typography>
 
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: (t) => alpha(t.palette.common.white, 0.7), textTransform: "uppercase", letterSpacing: 0.4, fontSize: 10.5, mb: 0.75 }}>
+      <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", mb: 0.75 }}>
         Three numbers at a glance
       </Typography>
-      <Typography component="ul" sx={{ typography: "s3", color: (t) => alpha(t.palette.common.white, 0.85), pl: 2, mb: 1.5 }}>
-        <li><Box component="b" sx={{ color: "common.white" }}>Axes</Box> - how many of the coverage axes the suite actually varies (more than one level).</li>
-        <li><Box component="b" sx={{ color: "common.white" }}>Pairs</Box> - of the two axes shown below, what fraction of the observed combinations are covered.</li>
-        <li><Box component="b" sx={{ color: "common.white" }}>Forced</Box> - how many of the five dangerous must-have overlays are present.</li>
+      <Typography component="ul" sx={{ typography: "s3", pl: 2, mb: 1.5 }}>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Axes</Box> - how many of the coverage axes the suite actually varies (more than one level).</li>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Pairs</Box> - of the two axes shown below, what fraction of the observed combinations are covered.</li>
+        <li><Box component="span" sx={{ fontWeight: "fontWeightMedium" }}>Forced</Box> - how many of the five dangerous must-have overlays are present.</li>
       </Typography>
 
-      <Typography sx={{ typography: "s3", color: (t) => alpha(t.palette.common.white, 0.7) }}>
+      <Typography sx={{ typography: "s3" }}>
         Empty red cells in the grid below are the actual gaps. They name a combination nothing in the suite tests yet.
       </Typography>
     </Box>
@@ -134,7 +132,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
   let mark = <Iconify icon="solar:chart-square-linear" width={14} />;
   if (isError) {
     label = "Coverage couldn't load";
-    mark = <Iconify icon="solar:danger-triangle-linear" width={14} sx={{ color: RED }} />;
+    mark = <Iconify icon="solar:danger-triangle-linear" width={14} sx={{ color: "status.danger.solid" }} />;
   } else if (isPending) {
     label = "Loading coverage";
     mark = <CircularProgress size={10} thickness={6} sx={{ color: "text.subtitle" }} />;
@@ -159,8 +157,10 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
           aria-expanded={open}
           onClick={() => setOpen(true)}
           variant="outlined"
+          size="small"
+          color="inherit"
           startIcon={mark}
-          sx={{ ...scenarioToolbarButtonSx, px: 1.75, fontWeight: "fontWeightBold", borderColor: "divider" }}
+          sx={scenarioToolbarButtonSx}
         >
           Coverage
         </Button>
@@ -169,7 +169,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
       <SideDrawer open={open} onClose={close} width={880}>
         {isError ? (
           <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ height: "100%", px: 2 }}>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
               Couldn&apos;t load coverage.
             </Typography>
             <Button size="small" variant="outlined" onClick={() => refetch()}>
@@ -178,28 +178,17 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
           </Stack>
         ) : (
           <Stack sx={{ height: "100%" }}>
-            <Box sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+            <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
               <Box>
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>Coverage</Typography>
+                  <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>Coverage</Typography>
                   <Tooltip
                     arrow
                     title={helpContent}
                     placement="right-start"
                     enterDelay={80}
                     leaveDelay={100}
-                    slotProps={{
-                      tooltip: {
-                        sx: {
-                          maxWidth: 420,
-                          p: 1.5,
-                          bgcolor: "grey.900",
-                          color: "common.white",
-                          boxShadow: (t) => `0 12px 40px ${alpha(t.palette.common.black, 0.4)}`,
-                        },
-                      },
-                      arrow: { sx: { color: "grey.900" } },
-                    }}
+                    slotProps={{ tooltip: { sx: { maxWidth: 420 } } }}
                   >
                     <Box
                       component="span"
@@ -210,11 +199,11 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                     </Box>
                   </Tooltip>
                 </Stack>
-                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
                   {`${scenarioCount} scenarios · what kinds of situations did we forget to test?`}
                 </Typography>
               </Box>
-              <Stack direction="row" spacing={2.5} sx={{ mt: 1.25 }}>
+              <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
                 <SummaryStat label="Axes" value={`${variedAxes}/${perAxis.length}`} color={toneColor(axesRatio)} />
                 <SummaryStat label="Pairs" value={`${pairsPct}%`} color={toneColor(pairsRatio)} />
                 <SummaryStat
@@ -231,7 +220,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                 "& .MuiTableCell-root": {
                   borderBottom: "1px solid",
                   borderColor: "divider",
-                  py: 1,
+                  py: 0,
                 },
               }}>
                 <TableHead>
@@ -245,16 +234,16 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                   {perAxis.map((a) => {
                     const levelNames = Object.keys(a.counts || {});
                     return (
-                      <TableRow key={a.axis} hover>
+                      <TableRow key={a.axis} hover sx={{ height: ROW_HEIGHT.default }}>
                         <TableCell>
-                          <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                          <Typography sx={{ typography: "s1", color: "text.primary" }}>
                             {axisLabel(a.axis)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
                           <Typography sx={{
-                            typography: "s2", fontWeight: 600, fontVariantNumeric: "tabular-nums",
-                            color: a.levels > 1 ? "text.primary" : RED,
+                            typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                            color: a.levels > 1 ? "text.primary" : "status.danger.fg",
                             minWidth: 36, textAlign: "right",
                           }}>
                             {a.levels}
@@ -276,9 +265,9 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
               </Table>
 
               {/* Forced overlays */}
-              <Box sx={{ px: 2.5, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
+              <Box sx={{ px: 3, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
                 <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1 }}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
+                  <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
                     Forced overlays
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -286,8 +275,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                   </Typography>
                   <Box sx={{ flex: 1 }} />
                   <Typography sx={{
-                    typography: "s2", fontWeight: 600, fontVariantNumeric: "tabular-nums",
-                    color: forcedPresent.length < FORCED_OVERLAYS.length ? RED : "text.primary",
+                    typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                    color: forcedPresent.length < FORCED_OVERLAYS.length ? "status.danger.fg" : "text.primary",
                   }}>
                     {forcedPresent.length}/{FORCED_OVERLAYS.length}
                   </Typography>
@@ -303,13 +292,13 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                       <Stack key={f.id} direction="row" alignItems="center" spacing={1}>
                         <Box sx={{
                           width: 8, height: 8, borderRadius: "50%",
-                          bgcolor: present ? GREEN : "transparent",
+                          bgcolor: present ? "status.success.solid" : "transparent",
                           border: "1px solid",
-                          borderColor: present ? GREEN : (t) => alpha(t.palette.text.primary, 0.4),
+                          borderColor: present ? "status.success.solid" : "text.disabled",
                           flexShrink: 0,
                         }} />
                         <Typography sx={{
-                          typography: "s2",
+                          typography: "s1",
                           color: present ? "text.primary" : "text.subtitle",
                         }}>
                           {f.label}
@@ -321,9 +310,9 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
               </Box>
 
               {/* Pairwise heatmap */}
-              <Box sx={{ px: 2.5, py: 1.5 }}>
+              <Box sx={{ px: 3, py: 1.5 }}>
                 <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
+                  <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
                     Pairwise · {axisLabel(activeRowAxis)} × {axisLabel(activeColAxis)}
                   </Typography>
                   <Box sx={{ flex: 1 }} />
@@ -343,9 +332,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                       <Typography
                         key={c}
                         sx={{
-                          typography: "s3", fontWeight: 700, color: "text.subtitle",
-                          textAlign: "center", pb: 0.5, textTransform: "uppercase",
-                          letterSpacing: 0.3, fontSize: 10.5,
+                          typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
+                          textAlign: "center", pb: 0.5,
                         }}
                       >
                         {levelLabel(c)}
@@ -355,8 +343,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                     {rows.map((r) => (
                       <Box key={r} sx={{ display: "contents" }}>
                         <Typography sx={{
-                          typography: "s2", fontWeight: 600, alignSelf: "center",
-                          pr: 1.5, fontSize: 12.5,
+                          typography: "s1", fontWeight: "fontWeightMedium", alignSelf: "center",
+                          pr: 1.5,
                         }}>
                           {levelLabel(r)}
                         </Typography>
@@ -364,7 +352,6 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                           const n = cellAt(r, c);
                           const t = maxCell > 1 ? (n - 1) / (maxCell - 1) : (n > 0 ? 1 : 0);
                           const opacity = n ? 0.08 + 0.22 * t : 0;
-                          const strong = n && n / maxCell >= 0.85;
                           return (
                             <Tooltip
                               key={c} arrow
@@ -376,21 +363,21 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                                 sx={{
                                   height: 40, borderRadius: 1, display: "grid", placeItems: "center",
                                   border: "1px solid",
+                                  // Covered cells ramp one data-palette hue by count;
+                                  // a gap is a status, so it takes the danger tokens.
                                   borderColor: n
-                                    ? alpha(GREEN, 0.12 + 0.2 * t)
-                                    : alpha(RED, 0.28),
+                                    ? (th) => alpha(th.palette.data[0], 0.12 + 0.2 * t)
+                                    : "status.danger.border",
                                   borderStyle: n ? "solid" : "dashed",
                                   bgcolor: n
-                                    ? alpha(GREEN, opacity)
-                                    : (th) => alpha(RED, th.palette.mode === "dark" ? 0.05 : 0.035),
+                                    ? (th) => alpha(th.palette.data[0], opacity)
+                                    : "status.danger.bg",
                                 }}
                               >
                                 <Typography
                                   sx={{
-                                    typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums",
-                                    color: n
-                                      ? (strong ? "common.white" : "text.primary")
-                                      : alpha(RED, 0.85),
+                                    typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
+                                    color: n ? "text.primary" : "status.danger.fg",
                                   }}
                                 >
                                   {n || "-"}
@@ -424,23 +411,19 @@ CoverageMatrix.propTypes = {
 
 const headerCellSx = {
   typography: "s3",
-  fontWeight: 600,
+  fontWeight: "fontWeightMedium",
   color: "text.subtitle",
-  fontSize: 11,
-  textTransform: "uppercase",
-  letterSpacing: 0.6,
   py: 0.75,
-  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015),
 };
 
 function SummaryStat({ label, value, color }) {
   return (
     <Stack direction="row" alignItems="baseline" spacing={0.75}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5 }}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
         {label}
       </Typography>
       <Typography sx={{
-        typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+        typography: "s1", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
         color: color || "text.primary",
       }}>
         {value}
@@ -454,9 +437,9 @@ SummaryStat.propTypes = { label: PropTypes.string, value: PropTypes.string, colo
 // same thresholds.
 function toneColor(ratio) {
   const r = Number(ratio) || 0;
-  if (r < 0.34) return RED;
-  if (r < 0.67) return BUILD_TONES.amber;
-  return GREEN;
+  if (r < 0.34) return "status.danger.fg";
+  if (r < 0.67) return "status.warning.fg";
+  return "status.success.fg";
 }
 
 function AxisPick({ label, value, onChange, options, exclude, labelOf = humanize }) {
@@ -464,10 +447,10 @@ function AxisPick({ label, value, onChange, options, exclude, labelOf = humanize
     <TextField
       select size="small" label={label} value={value || ""}
       onChange={(e) => onChange(e.target.value)}
-      sx={{ minWidth: 140, "& .MuiInputBase-input": { typography: "s2", py: 0.5, fontSize: 12 } }}
+      sx={{ minWidth: 140 }}
     >
       {options.filter((a) => a !== exclude).map((a) => (
-        <MenuItem key={a} value={a} sx={{ typography: "s2" }}>{labelOf(a)}</MenuItem>
+        <MenuItem key={a} value={a}>{labelOf(a)}</MenuItem>
       ))}
     </TextField>
   );

@@ -8,7 +8,6 @@ import {
   Link,
   Stack,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -49,6 +48,7 @@ import { useSearchParams } from "react-router-dom";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useExperimentDerivedVariables } from "../../../api/experiment/use-experiment-derived-variables";
 import { useGetExperimentJSONSchema } from "../../../api/experiment/use-get-exp-jsonschema";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 const getDefaultValue = () => {
   return {
     columnId: null,
@@ -92,7 +92,6 @@ const RunExperimentForm = ({
   const dataset = datasetParam || searchParam.get("datasetId");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const theme = useTheme();
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (d) => {
@@ -354,7 +353,7 @@ const RunExperimentForm = ({
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              sx={{ color: "blue.500", textDecorationColor: "blue.500" }}
+              sx={{ color: "status.info.fg", textDecorationColor: "status.info.fg" }}
             >
               Learn more
             </Link>
@@ -365,7 +364,7 @@ const RunExperimentForm = ({
                 color: "text.primary",
               }}
             >
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
         </Box>
@@ -461,9 +460,6 @@ const RunExperimentForm = ({
               size="medium"
               sx={{
                 color: "text.primary",
-                padding: theme.spacing(0.125, 1.5),
-                fontWeight: "fontWeightMedium",
-                borderRadius: theme.spacing(0.5),
                 width: "143px",
                 borderColor: "divider",
               }}
@@ -479,9 +475,6 @@ const RunExperimentForm = ({
                 color="primary"
                 size="medium"
                 sx={{
-                  padding: theme.spacing(0.125, 1.5),
-                  fontWeight: "fontWeightMedium",
-                  borderRadius: theme.spacing(0.5),
                   borderColor: "divider",
                   width: "143px",
                 }}
@@ -496,9 +489,6 @@ const RunExperimentForm = ({
                 color="primary"
                 size="medium"
                 sx={{
-                  padding: theme.spacing(0.125, 1.5),
-                  fontWeight: "fontWeightMedium",
-                  borderRadius: theme.spacing(0.5),
                   borderColor: "divider",
                   width: "143px",
                 }}
@@ -567,7 +557,6 @@ const RunExperiment = ({
     !!selectedExperiment,
   );
   const allColumns = useMemo(() => {
-
     const cols = experimentColumns?.length ? experimentColumns : datasetColumns;
     if (!cols) return cols;
     return cols.map((col) => ({
@@ -634,7 +623,6 @@ const RunExperiment = ({
 
   const { isDirty, errors } = formState;
   const _selectedColumnId = useWatch({ control, name: "columnId" });
-  const theme = useTheme();
   const [importedPrompts, setImportedPrompts] = useState({});
   const queryClient = useQueryClient();
   const { data: experimentData, isLoading: isLoadingExperiment } =
@@ -712,6 +700,7 @@ const RunExperiment = ({
     onClose();
     hasSubmittedSuccessfullyRef.current = false;
   };
+  const covered = useDrawerCovered(openRunExperiment);
   return (
     <>
       <Drawer
@@ -723,10 +712,9 @@ const RunExperiment = ({
             height: "100vh",
             position: "fixed",
             zIndex: 2,
-            boxShadow: "-10px 0px 100px #00000035",
-            borderRadius: "10px",
+            borderRadius: "8px",
             overflow: "visible",
-            width: "732px",
+            width: "640px",
             p: 0,
             backgroundColor: "transparent",
           },
@@ -738,6 +726,7 @@ const RunExperiment = ({
         }}
         sx={{
           zIndex: 1099,
+          ...coveredDrawerSx(covered),
         }}
       >
         {openRunExperiment ? (
@@ -746,7 +735,7 @@ const RunExperiment = ({
           ) : (
             <RunExperimentForm
               allColumns={allColumns?.filter((col) =>
-                ["run_prompt", "others",].includes(
+                ["run_prompt", "others"].includes(
                   col?.originType?.toLowerCase(),
                 ),
               )}
@@ -784,7 +773,6 @@ const RunExperiment = ({
             color="error"
             size="small"
             onClick={handleConfirmClose}
-            sx={{ paddingX: theme.spacing(3) }}
           >
             Confirm
           </Button>

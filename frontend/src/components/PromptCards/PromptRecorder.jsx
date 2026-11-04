@@ -78,12 +78,7 @@ const PromptRecorderChild = ({ onClose, handleEmbedMedia }) => {
         </Box>
       </ShowComponent>
       <ShowComponent condition={!isRecording && !isPending}>
-        <IconButton
-          sx={{
-            padding: 0,
-          }}
-          onClick={handleSave}
-        >
+        <IconButton onClick={handleSave}>
           <SvgColor
             src="/assets/icons/ic_tick.svg"
             sx={{
@@ -92,13 +87,7 @@ const PromptRecorderChild = ({ onClose, handleEmbedMedia }) => {
             }}
           />
         </IconButton>
-        <IconButton
-          sx={{
-            padding: 0,
-          }}
-          onClick={onClose}
-          disabled={isPending}
-        >
+        <IconButton onClick={onClose} disabled={isPending}>
           <SvgColor
             src="/assets/icons/ic_close.svg"
             sx={{

@@ -7,6 +7,7 @@ import DatasetOptions from "src/sections/develop/AddRowDrawer/DatasetOptions";
 import ExistingDatasetModal from "src/sections/develop/AddRowDrawer/ExistingDatasetModal";
 import SetEmptyRow from "src/sections/develop/AddRowDrawer/SetEmptyRow";
 import AddRowUsingAi from "./AddRowUsingAi";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const AddRowScenario = ({
   open,
@@ -57,17 +58,19 @@ const AddRowScenario = ({
   const [emptyRow, setEmptyRow] = useState(false);
   const [existingDataset, setExistingDataset] = useState(false);
   const [addRowUsingAi, setAddRowUsingAi] = useState(false);
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -83,7 +86,7 @@ const AddRowScenario = ({
             onClick={handleClose}
             sx={{ position: "absolute", top: "10px", right: "12px" }}
           >
-            <Iconify icon="mingcute:close-line" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
           <Box
             sx={{

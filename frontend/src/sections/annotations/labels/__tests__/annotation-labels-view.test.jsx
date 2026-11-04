@@ -178,7 +178,7 @@ describe("AnnotationLabelsView", () => {
   it("renders search field and type filter", () => {
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByPlaceholderText("Search labels...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Active" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Archived" }),
@@ -192,7 +192,7 @@ describe("AnnotationLabelsView", () => {
     const user = userEvent.setup();
     render(<AnnotationLabelsView />);
 
-    await user.click(screen.getByPlaceholderText("Search labels..."));
+    await user.click(screen.getByPlaceholderText("Search"));
     await user.tab();
     expect(screen.getByRole("button", { name: "Active" })).toHaveFocus();
     await user.tab();
@@ -224,7 +224,7 @@ describe("AnnotationLabelsView", () => {
 
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByText("No labels created yet")).toBeInTheDocument();
+    expect(screen.getByText("No labels yet")).toBeInTheDocument();
   });
 
   it("loads archived labels and restores from the archived view", async () => {

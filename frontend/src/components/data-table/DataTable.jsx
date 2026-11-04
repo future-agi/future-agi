@@ -1,7 +1,9 @@
 /* eslint-disable react/prop-types */
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { DataGrid } from "@mui/x-data-grid";
-import { Box, alpha, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 
 /**
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
@@ -21,8 +23,8 @@ export default function DataTable({
   columnVisibility,
   onColumnVisibilityChange,
   emptyMessage = "No data found",
-  rowHeight = 44,
-  headerHeight = 40,
+  rowHeight = ROW_HEIGHT.default,
+  headerHeight = TABLE_HEADER_HEIGHT.default,
   enableSelection = false,
   // Row the caller is showing elsewhere (a detail panel, a drawer): it is
   // highlighted and kept in view as keyboard navigation moves it.
@@ -186,6 +188,12 @@ export default function DataTable({
         disableDensitySelector
         // Styling
         localeText={{ noRowsLabel: emptyMessage }}
+        // Design system empty state instead of the grid's bare text.
+        slots={{
+          noRowsOverlay: () => (
+            <EmptyContent title={emptyMessage} sx={{ height: 1 }} />
+          ),
+        }}
         sx={{
           border: "none",
           bgcolor: "background.paper",
@@ -198,10 +206,12 @@ export default function DataTable({
             maxHeight: `${headerHeight}px !important`,
           },
           "--DataGrid-containerBackground": theme.palette.background.paper,
+          // Design system table: headers 11/500 in fg.tertiary, values 12/18.
           "& .MuiDataGrid-columnHeaderTitle": {
-            fontSize: "13px",
+            fontSize: "11px",
+            lineHeight: "16px",
             fontWeight: 500,
-            color: theme.palette.text.secondary,
+            color: theme.palette.text.subtitle,
           },
           "& .MuiDataGrid-iconButtonContainer": {
             color: theme.palette.text.secondary,
@@ -210,19 +220,16 @@ export default function DataTable({
           "& .MuiDataGrid-cell": {
             borderBottom: "1px solid",
             borderColor: "divider",
-            fontSize: "13px",
+            fontSize: "12px",
             cursor: onRowClick ? "pointer" : "default",
             "&:focus, &:focus-within": { outline: "none" },
           },
           // Rows
           "& .MuiDataGrid-row:hover": {
-            bgcolor:
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.03)"
-                : "rgba(0,0,0,0.02)",
+            bgcolor: "action.hover",
           },
           "& .MuiDataGrid-row.DataTable-activeRow, & .MuiDataGrid-row.DataTable-activeRow:hover":
-            { bgcolor: alpha(theme.palette.primary.main, 0.08) },
+            { bgcolor: "action.selected" },
           // Clean up
           "& .MuiDataGrid-columnSeparator": { display: "none" },
           "& .MuiDataGrid-columnHeader:focus, & .MuiDataGrid-columnHeader:focus-within":

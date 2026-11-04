@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
 import { readQuery, endpoints } from "src/utils/axios";
@@ -240,6 +241,8 @@ const SpanGrid = React.forwardRef(
       canonicalColumnsRef,
       enabled = true,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -256,12 +259,12 @@ const SpanGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: theme.typography.fontWeightMedium,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme.palette.text.primary, theme.typography.fontWeightMedium],
     );
@@ -282,6 +285,8 @@ const SpanGrid = React.forwardRef(
     const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       endUnknown,
@@ -931,8 +936,7 @@ const SpanGrid = React.forwardRef(
         }
         // Pin detail to the span's project (see TraceGrid's row click).
         const rowProjectId = event.data.project_id;
-        const sourceColumn =
-          event.column?.getColDef?.()?.context?.sourceColumn;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
         if (sourceColumn?.groupBy === "Evaluation Metrics") {
           setEvalFocus(true);
         }
@@ -956,7 +960,7 @@ const SpanGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -1015,16 +1019,7 @@ const SpanGrid = React.forwardRef(
             continuationNotice
               ? null
               : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {getQueryReadMessage(readStateRef.current) ||
-                      "No spans found"}
-                  </Typography>,
+                  getQueryReadMessage(readStateRef.current) || "No spans found",
                 )
           }
           onCellClicked={handleCellClick}
@@ -1074,7 +1069,9 @@ const SpanGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -1098,6 +1095,7 @@ SpanGrid.propTypes = {
   setLoading: PropTypes.func,
   setPageMap: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   hasEvalFilter: PropTypes.bool,
   cellHeight: PropTypes.string,
   metricFilters: PropTypes.array,
