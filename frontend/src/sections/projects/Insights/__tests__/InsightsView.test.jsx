@@ -1322,6 +1322,101 @@ describe("InsightsView", () => {
     );
   });
 
+  it("keeps measured categories visible while labelling a failed summary partial", async () => {
+    const base = mocks.readQuery.getMockImplementation();
+    const incompleteRun = {
+      ...runFixture.result,
+      error_code: "summary_unavailable",
+      result: {
+        ...runFixture.result.result,
+        report_status: "partial",
+        summary: { status: "failed", error: "unavailable" },
+      },
+    };
+    mocks.readQuery.mockImplementation((url, options) => {
+      if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(incompleteRun);
+      if (url === "/tracer/insights/configs/")
+        return ok({
+          configs: configsFixture.result.configs.map((config) =>
+            config.id === CONFIG_ID
+              ? {
+                  ...config,
+                  latest_run: {
+                    ...config.latest_run,
+                    error_code: "summary_unavailable",
+                  },
+                }
+              : config,
+          ),
+        });
+      return base(url, options);
+    });
+    renderAt(`?report=${CONFIG_ID}`);
+    expect(await screen.findByText("Partial report")).toBeInTheDocument();
+    expect(
+      screen.getByText("Partial report · summary incomplete"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Analysis is complete, but the summary could not be written/,
+      ),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Ask about this report" }),
+    ).toBeEnabled();
+  });
+
+  it("shows a retryable verification failure rather than a successful empty answer", async () => {
+    mocks.enriched = true;
+    const storage = memoryStorage();
+    vi.stubGlobal("sessionStorage", storage);
+    mocks.post.mockImplementation(() =>
+      ok({
+        answer: [],
+        unverified_answer: [{ text: "An unverified draft must not be shown." }],
+        verification: {
+          status: "failed",
+          reason: "answer_validation_failed",
+          validation: {
+            stage: "backend",
+            rejected_paragraphs: { unsupported_number: 2 },
+          },
+        },
+        dropped: 2,
+        follow_ups: [],
+      }),
+    );
+    renderAt(`?report=${CONFIG_ID}`);
+    const question = await screen.findByRole("button", {
+      name: "Which users are hit hardest?",
+    });
+    await waitFor(() => expect(question).toBeEnabled());
+    fireEvent.click(question);
+    expect(
+      await screen.findByText(
+        /The answer could not be verified against this report/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry", exact: true }),
+    ).toBeEnabled();
+    expect(screen.queryByText(/No answer came back/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("An unverified draft must not be shown."),
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(storage.getItem(`insights-ask:${RUN_ID}`)).toContain(
+        "answer_validation_failed",
+      ),
+    );
+    const [turn] = JSON.parse(storage.getItem(`insights-ask:${RUN_ID}`));
+    expect(turn.status).toBe("error");
+    expect(turn.unverifiedAnswer[0].text).toBe(
+      "An unverified draft must not be shown.",
+    );
+  });
+
   it("asks about the report and cites the answer", async () => {
     mocks.enriched = true;
     const store = new Map();
