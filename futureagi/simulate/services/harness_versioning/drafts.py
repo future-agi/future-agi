@@ -62,6 +62,7 @@ from simulate.services.harness_versioning.versions import (
     retired_keys,
     set_defaults,
     suite_change,
+    suite_documents,
     taken_keys,
     versioning_enabled,
 )
@@ -810,6 +811,20 @@ def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
     }
 
 
+def actor_ids(environment_files: Mapping[str, bytes]) -> set[str]:
+    """The ids of the environment's actors, from its `actors.json`; none when it has no actors."""
+    raw = environment_files.get("actors.json")
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        return set()
+    return {
+        str(one.get("id"))
+        for one in (body.get("actors") or [])
+        if isinstance(one, dict) and one.get("id")
+    }
+
+
 def write_suite_edit(
     environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
 ) -> DraftWrite | None:
@@ -820,6 +835,25 @@ def write_suite_edit(
     )
 
     sides = edit_sides(environment)
+    from simulate.services.harness_scenarios import (
+        actor_reference_problems,
+        with_sessions_to_rewrite,
+    )
+
+    known = actor_ids(sides["environment"])
+    problems = [one for doc in suite for one in actor_reference_problems(doc, known)]
+    if problems:
+        raise HostedHarnessError("actor_unknown", "; ".join(problems), status_code=400)
+    before = {
+        str(doc.get("scenario_key") or doc.get("name") or ""): doc
+        for doc in suite_documents(sides["suite"])
+    }
+    suite = [
+        with_sessions_to_rewrite(
+            doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        )
+        for doc in suite
+    ]
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )

@@ -515,12 +515,22 @@ SIMULATED_USER_ONLY = "Simulated user only"
 
 
 def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
-    """A scenario's actors as `{id, instruction, trigger, actions}`, the fields a run reads."""
+    """A scenario's actors as `{id, instruction, trigger, knowledge, actions}`, the fields a run reads. A missing
+    trigger stays missing (the actor's own activation then applies), never stored as an empty one."""
     entries: list[ScenarioCallActor] = [
         {
             "id": str(one["id"]),
             "instruction": str(one.get("instruction") or ""),
-            "trigger": one["trigger"] if isinstance(one.get("trigger"), dict) else {},
+            **(
+                {"trigger": one["trigger"]}
+                if isinstance(one.get("trigger"), dict) and one["trigger"]
+                else {}
+            ),
+            **(
+                {"knowledge": one["knowledge"]}
+                if isinstance(one.get("knowledge"), list)
+                else {}
+            ),
             **(
                 {"actions": one["actions"]}
                 if isinstance(one.get("actions"), list)
@@ -531,6 +541,58 @@ def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
         if isinstance(one, dict) and one.get("id")
     ]
     return entries or None
+
+
+def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
+    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
+    its event start. Refused when the scenario is saved, the same rule the builder keeps."""
+    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+    named = [
+        str((one or {}).get("id") or "")
+        for one in doc.get("actors") or []
+        if isinstance(one, dict)
+    ]
+    for session in doc.get("pre_run") or []:
+        if isinstance(session, dict):
+            named += [str(one) for one in session.get("actors") or []]
+            named += [
+                str((one or {}).get("actor") or "")
+                for one in session.get("thread") or []
+                if isinstance(one, dict)
+            ]
+    starts = doc.get("starts_with")
+    if isinstance(starts, dict):
+        named.append(str(starts.get("actor") or ""))
+    missing = sorted({one for one in named if one and one not in known})
+    return [f"{name}: {one} is not an actor in this environment" for one in missing]
+
+
+def with_sessions_to_rewrite(
+    doc: dict[str, Any], before: dict[str, Any] | None
+) -> dict[str, Any]:
+    """A scenario whose pre-run session changed its situation (who, where, about) since it was written: that session's
+    thread is cleared, so the next seal writes it again from its actors; a thread is never kept for a situation that
+    no longer matches."""
+    sessions = doc.get("pre_run")
+    if not isinstance(sessions, list):
+        return doc
+    old = (before or {}).get("pre_run") if isinstance(before, dict) else None
+    old = old if isinstance(old, list) else []
+    shape = lambda one: (
+        (one.get("actors"), one.get("where"), one.get("about"))
+        if isinstance(one, dict)
+        else None
+    )  # noqa: E731
+    kept = []
+    for index, session in enumerate(sessions):
+        if not isinstance(session, dict):
+            kept.append(session)
+            continue
+        earlier = old[index] if index < len(old) else None
+        if earlier is not None and shape(session) != shape(earlier):
+            session = {**session, "fingerprint": "", "thread": []}
+        kept.append(session)
+    return {**doc, "pre_run": kept}
 
 
 def call_actor_choice_labels(listing: object) -> dict[str, str]:

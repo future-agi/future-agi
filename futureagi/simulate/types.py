@@ -21,7 +21,9 @@ class ScenarioCallActor(TypedDict):
 
     id: str
     instruction: str
-    trigger: CallActorTrigger
+    # Missing: the actor's own activation applies.
+    trigger: NotRequired[CallActorTrigger]
+    knowledge: NotRequired[list[dict[str, object]]]
     actions: NotRequired[list[dict[str, object]]]
 
 
