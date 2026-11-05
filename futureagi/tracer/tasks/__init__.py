@@ -16,7 +16,11 @@ from tracer.tasks.dataset import (
 )
 
 # Derived metric jobs
-from tracer.tasks.derived_metric import compute_derived_metric
+from tracer.tasks.derived_metric import (
+    compute_derived_metric,
+    dispatch_derived_metrics,
+    refresh_derived_metric_project,
+)
 
 # Error Analysis Tasks
 from tracer.tasks.error_analysis import (
@@ -52,4 +56,6 @@ __all__ = [
     "CHUNK_SIZE",
     "refresh_exact_aggregation_snapshot",
     "compute_derived_metric",
+    "dispatch_derived_metrics",
+    "refresh_derived_metric_project",
 ]

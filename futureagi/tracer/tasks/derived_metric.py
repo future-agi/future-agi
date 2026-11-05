@@ -1,6 +1,8 @@
-"""Bounded metric jobs use the existing single-slot exact-aggregation queue."""
+"""Metric activities on existing Temporal queues; rollout is checked at execution."""
 
 from tfc.temporal import temporal_activity
+from tracer.services.derived_metrics import admission
+from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.service import execute_run
 
 
@@ -14,4 +16,38 @@ from tracer.services.derived_metrics.service import execute_run
     max_retries=0,
 )
 def compute_derived_metric(run_id: str) -> None:
-    execute_run(run_id)
+    if metrics_enabled():
+        execute_run(run_id)
+
+
+@temporal_activity(
+    name="tracer.dispatch_derived_metrics",
+    queue="tasks_s",
+    time_limit=50,
+    max_retries=0,
+)
+def dispatch_derived_metrics() -> int:
+    return admission.dispatch(_enqueue_refresh)
+
+
+def _enqueue_refresh(payload: dict) -> None:
+    refresh_derived_metric_project.apply_async(
+        args=[payload],
+        task_id=f"metric-refresh-{payload['project_id']}-{payload['epoch']}",
+        dispatch_timeout_seconds=10,
+    )
+
+
+@temporal_activity(
+    name="tracer.refresh_derived_metric_project",
+    queue="tasks_l",
+    time_limit=600,
+    schedule_to_start_timeout=300,
+    workflow_run_timeout=960,
+    workflow_execution_timeout=1200,
+    max_retries=0,
+)
+def refresh_derived_metric_project(payload: dict) -> bool:
+    # PG owns retry/backoff, fencing and continuation. Temporal retries must not
+    # turn a queued lease token into two independently executing writers.
+    return admission.execute_reservation(payload)
