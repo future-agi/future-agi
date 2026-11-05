@@ -1044,7 +1044,14 @@ def _settle_written(run, taxonomy) -> None:
             return
         require_retained_lineage(current)
         _record_cost(current, charged)
-        set_progress(current, "done")
+        set_progress(
+            current,
+            "done",
+            report_status=(current.result or {}).get("report_status", "complete"),
+            summary_status=((current.result or {}).get("summary") or {}).get(
+                "status", "complete"
+            ),
+        )
         s = current.settings or {}
         if (
             current.taxonomy_mode == "discover"
@@ -1155,6 +1162,17 @@ def finish(run_id: str) -> dict:
         for category in result["categories"]:
             if category["id"] in insights:
                 category["insight"] = insights[category["id"]]
+        if (summary.get("verification") or {}).get("status") in {
+            "failed",
+            "incomplete",
+        }:
+            summary["status"] = "unverified"
+        elif not (summary.get("findings") or summary.get("key_points")):
+            # A verifier may complete after rejecting every claim. A title
+            # and empty lists are not a successfully written summary.
+            summary.update(status="failed", error="empty")
+        else:
+            summary["status"] = "complete"
         result["summary"] = summary
     except InsightEngineMismatch:
         # Not a report written another way: the run fails.
@@ -1168,7 +1186,15 @@ def finish(run_id: str) -> dict:
             "highlights": [],
             "examples": [],
             "error": "unavailable",
+            "status": "failed",
         }
+    # The workflow has finished, but its report is only complete when the
+    # summary was written and verified. Keep the analysis and its normal
+    # settlement/idempotency semantics; do not disguise a missing summary
+    # as a successful full report or throw away measured categories.
+    result["report_status"] = (
+        "complete" if result["summary"]["status"] == "complete" else "partial"
+    )
     result["engine"] = insight_agent.pinned(run.settings)
     _require_retained(run, run.source_created_at)
     now = timezone.now()
