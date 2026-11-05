@@ -38942,6 +38942,15 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
   reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
 });
 
 /**
@@ -38976,6 +38985,15 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
   reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
 });
 
 /**
@@ -39048,6 +39066,15 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
   reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
 });
 
 /**
@@ -39082,6 +39109,15 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
   reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
 });
 
 /**

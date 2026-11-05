@@ -19461,6 +19461,17 @@ export interface HarnessWorldActionApi {
   description: string;
 }
 
+export interface HarnessActorRecordSourceApi {
+  store: string;
+  /** @minLength 1 */
+  collection: string;
+}
+
+export interface HarnessActorKnowledgeSourcesApi {
+  files: string[];
+  records: HarnessActorRecordSourceApi[];
+}
+
 export interface HarnessActorListApi {
   actors: HarnessActorListApiActorsItem[];
   source: HarnessActorListApiSource;
@@ -19470,6 +19481,7 @@ export interface HarnessActorListApi {
   channels: HarnessActorListApiChannels;
   loudness: HarnessActorListApiLoudness;
   reserved_ids: string[];
+  knowledge_sources: HarnessActorKnowledgeSourcesApi;
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };

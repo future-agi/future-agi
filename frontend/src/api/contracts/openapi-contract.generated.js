@@ -66208,6 +66208,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "channels",
         "loudness",
         "reserved_ids",
+        "knowledge_sources",
       ],
       type: "object",
       properties: {
@@ -66256,6 +66257,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        knowledge_sources: {
+          $ref: "#/definitions/HarnessActorKnowledgeSources",
         },
       },
     },
@@ -101227,6 +101231,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorKnowledgeSources: {
+      required: ["files", "records"],
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        records: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorRecordSource",
+          },
+        },
+      },
+    },
     HarnessWorldAction: {
       required: ["action", "tool", "description"],
       type: "object",
@@ -121571,6 +121594,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           maximum: 1,
           minimum: 0,
+        },
+      },
+    },
+    HarnessActorRecordSource: {
+      required: ["store", "collection"],
+      type: "object",
+      properties: {
+        store: {
+          title: "Store",
+          type: "string",
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+          minLength: 1,
         },
       },
     },

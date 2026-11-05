@@ -140639,6 +140639,46 @@
                 }
             }
         },
+        "HarnessActorRecordSource": {
+            "required": [
+                "store",
+                "collection"
+            ],
+            "type": "object",
+            "properties": {
+                "store": {
+                    "title": "Store",
+                    "type": "string"
+                },
+                "collection": {
+                    "title": "Collection",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessActorKnowledgeSources": {
+            "required": [
+                "files",
+                "records"
+            ],
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActorRecordSource"
+                    }
+                }
+            }
+        },
         "HarnessActorList": {
             "required": [
                 "actors",
@@ -140648,7 +140688,8 @@
                 "actions",
                 "channels",
                 "loudness",
-                "reserved_ids"
+                "reserved_ids",
+                "knowledge_sources"
             ],
             "type": "object",
             "properties": {
@@ -140700,6 +140741,9 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "knowledge_sources": {
+                    "$ref": "#/definitions/HarnessActorKnowledgeSources"
                 }
             }
         },
