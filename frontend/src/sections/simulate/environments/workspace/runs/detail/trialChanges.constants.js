@@ -23,6 +23,7 @@ export const TRIAL_CHANGES_COPY = {
     history: "Before the run",
     waiting: "Waiting for a response",
     timeout: "Timed out",
+    problem: "Could not take part",
   },
   // What the world waits for and, once the wait runs out, the configured outcome; nothing is said in the actor's name.
   waited: (one, name) => {
@@ -37,7 +38,16 @@ export const TRIAL_CHANGES_COPY = {
   outcomes: {
     timed_out: "No answer: nothing happened",
     declined: "No answer: the request was declined",
+    fallback_action: "No answer: their fallback action was taken for them",
+    unresolved_at_end: "Still waited on when the trial ended",
     answered_by: (who) => `No answer: ${who} answered instead`,
+  },
+  // A problem of the scenario, never the agent's.
+  problems: {
+    not_activated: "Never came in: its trigger never happened",
+    no_world_door:
+      "Could not act: this agent's tools run where no actor can act",
+    not_listed: "Not an actor in this environment",
   },
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",

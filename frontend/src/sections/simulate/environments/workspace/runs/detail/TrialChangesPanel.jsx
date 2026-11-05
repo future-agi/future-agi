@@ -19,6 +19,7 @@ export default function TrialChangesPanel({ trialState }) {
   const name = (id) => names[id] || id;
   const timing = (one) => {
     if (one.play === "waiting") return C.waited(one, name);
+    if (one.play === "problem") return C.problems[one.problem] || one.why;
     if (one.play !== "timeout") return null;
     const said = C.outcomes[one.outcome];
     return typeof said === "function" ? said(name(one.fallback)) : said;

@@ -158,4 +158,28 @@ describe("TrialChangesPanel", () => {
       screen.getByText("No change: it committed nothing"),
     ).toBeInTheDocument();
   });
+
+  it("names an actor that could not take part as the scenario's problem, and an open wait", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [
+            { actor: "auditor", play: "problem", problem: "no_world_door" },
+            { actor: "manager", play: "timeout", outcome: "unresolved_at_end" },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "auditor · Could not take part · Could not act: this agent's tools run where no actor can act",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "manager · Timed out · Still waited on when the trial ended",
+      ),
+    ).toBeInTheDocument();
+  });
 });
