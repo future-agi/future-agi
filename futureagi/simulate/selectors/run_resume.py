@@ -1,6 +1,5 @@
 """What an interrupted Run left unfinished, and whether it can be resumed."""
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,8 +9,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     TestExecution,
 )
-from simulate.pydantic_schemas.agent_fix import FailureOwner
-from simulate.selectors.agent_fix import check_failure
+from simulate.services.harness_usage import is_billable_receipt
 
 # A Run that ended before every call finished: stopped, over its limit, or lost to a crash.
 INTERRUPTED_JOB_STATES = (
@@ -34,29 +32,27 @@ class ResumeState:
     history: list[dict[str, Any]]
 
 
-def _cut_short_by_us(failure: Any) -> bool:
-    """A result the platform's own failure ended, such as a timeout or an infrastructure
-    error. A result the agent or the user's environment broke is finished."""
-    if not isinstance(failure, Mapping) or failure.get("domain") == "agent":
-        return False
-    found = check_failure(failure)
-    return found is not None and found.owner == FailureOwner.OURS
-
-
 def unfinished_executions(job: HostedHarnessJob) -> list[HostedHarnessExecution]:
-    """The calls of a Run that did not finish: no result yet, or one the platform cut short."""
-    results = dict(
-        HostedHarnessReceipt.no_workspace_objects.filter(
-            job=job, execution__isnull=False
-        ).values_list("execution_id", "body")
-    )
+    """The calls of a Run that did not finish: those it was not charged for. That is no
+    result yet, a skipped one, a call that never started, or one the platform's own failure
+    ended. Billing reads the same rule, so a resume never runs a call that was charged."""
+    finished = {
+        execution_id
+        for execution_id, status, call, failure_domain in (
+            HostedHarnessReceipt.no_workspace_objects.filter(
+                job=job, execution__isnull=False
+            ).values_list(
+                "execution_id", "status", "body__call", "body__failure__domain"
+            )
+        )
+        if is_billable_receipt(status, call, failure_domain)
+    }
     return [
         execution
         for execution in HostedHarnessExecution.no_workspace_objects.filter(
             job=job
         ).order_by("execution_key")
-        if execution.id not in results
-        or _cut_short_by_us((results[execution.id] or {}).get("failure"))
+        if execution.id not in finished
     ]
 
 

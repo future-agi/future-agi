@@ -91,6 +91,10 @@ class CallExecutionRerunSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     "'unfinished_only' runs the calls again, so it needs rerun_type 'call_and_eval'"
                 )
+            if data.get("environment_values"):
+                raise serializers.ValidationError(
+                    "'unfinished_only' resumes inside the same run, which takes no environment_values"
+                )
             return data
         if not data.get("select_all") and not data.get("call_execution_ids"):
             raise serializers.ValidationError(

@@ -18,6 +18,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.services.hosted_harness import RERUN_EXECUTION_KEYS
+from simulate.services.hosted_harness_ingestion import _backfill_missing_receipts
 
 # The in-run re-run's fixtures: a finished two-call Run, its calls, and the workflow mocks.
 from simulate.tests.test_rerun_calls_in_run import (  # noqa: F401
@@ -26,8 +27,19 @@ from simulate.tests.test_rerun_calls_in_run import (  # noqa: F401
     workflow,
 )
 
+# The summary ALK reports for a call that ran.
+CALL = {
+    "started_at": "2026-11-04T09:00:00.000Z",
+    "ended_at": "2026-11-04T09:00:15.000Z",
+    "duration_ms": 15000,
+    "turns": 4,
+    "transcript_artifact": None,
+    "recording_artifacts": [],
+}
 
-def _result(run, call, *, failure=None):
+
+def _result(run, call, *, status="passed", body=None):
+    """A result receipt as ALK sends it; by default a call that ran and passed."""
     execution = HostedHarnessExecution.no_workspace_objects.select_related(
         "source_scenario"
     ).get(job=run, call_execution=call)
@@ -38,9 +50,13 @@ def _result(run, call, *, failure=None):
         execution=execution,
         attempt_number=1,
         digest="sha256:" + "0" * 64,
-        status="failed" if failure else "passed",
-        body={"failure": failure} if failure else {},
+        status=status,
+        body={"status": status, "call": CALL, "failure": None, **(body or {})},
     )
+
+
+def _failure(domain, code):
+    return {"domain": domain, "stage": "running", "code": code, "message": code}
 
 
 @pytest.fixture
@@ -137,37 +153,78 @@ def test_resume_is_recorded_on_the_run_and_shown_on_its_read(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    ("failure", "resumed"),
+    ("status", "body", "resumed"),
     [
-        # A result the platform's own failure ended runs again.
-        ({"domain": "infrastructure", "code": "sandbox_lost"}, 2),
-        # A result the agent broke, or the user's environment, is finished.
-        ({"domain": "agent", "code": "agent_crashed"}, 1),
-        ({"domain": "environment", "code": "credentials_invalid"}, 1),
+        # A call is finished only when it was charged. The plan's limit refused this one
+        # before it started, so it runs again once the plan is raised.
+        (
+            "errored",
+            {"call": None, "failure": _failure("platform_sync", "usage_exhausted")},
+            2,
+        ),
+        # The platform's own failure ended the call, so it was not charged.
+        ("errored", {"failure": _failure("infrastructure", "call_failed")}, 2),
+        # A call that ran and was charged is finished, whoever broke it.
+        ("errored", {"failure": _failure("simulator", "evidence_missing")}, 1),
+        ("errored", {"failure": _failure("agent", "target_agent_failed")}, 1),
+        ("passed", {}, 1),
     ],
-    ids=["platform-failure", "agent-failure", "environment-failure"],
+    ids=[
+        "usage-limit",
+        "platform-failure",
+        "simulator-failure",
+        "agent-failure",
+        "passed",
+    ],
 )
 def test_which_results_count_as_finished(
     auth_client,
     finished_run,  # noqa: F811
     calls,  # noqa: F811
     workflow,  # noqa: F811
-    failure,
+    status,
+    body,
     resumed,
 ):
     first, _ = calls
-    _result(finished_run, first, failure=failure)
+    _result(finished_run, first, status=status, body=body)
     HostedHarnessJob.no_workspace_objects.filter(id=finished_run.id).update(
         state=HostedHarnessJob.State.CANCELED
     )
     TestExecution.no_workspace_objects.filter(id=finished_run.test_execution_id).update(
         status=TestExecution.ExecutionStatus.CANCELLED
     )
+    assert _read(auth_client, finished_run)["unfinished"] == resumed
 
     response = _resume(auth_client, finished_run)
 
     assert response.status_code == 202, response.content
     assert response.json()["success_count"] == resumed
+
+
+@pytest.mark.django_db
+def test_a_call_the_manifest_backfill_marked_skipped_did_not_finish(
+    auth_client,
+    interrupted_run,
+    calls,  # noqa: F811
+    workflow,  # noqa: F811
+):
+    # The attempt's manifest landed before call B ran, so B got a skipped result.
+    _, unfinished = calls
+    _backfill_missing_receipts(
+        interrupted_run.attempts.order_by("attempt_number").first()
+    )
+    assert (
+        HostedHarnessReceipt.no_workspace_objects.get(
+            job=interrupted_run, execution__call_execution=unfinished
+        ).status
+        == "skipped"
+    )
+
+    response = _resume(auth_client, interrupted_run)
+
+    assert response.status_code == 202, response.content
+    assert response.json()["successful_reruns"] == [str(unfinished.id)]
 
 
 @pytest.mark.django_db
@@ -244,8 +301,13 @@ def test_a_run_whose_pinned_version_is_gone_is_refused_with_the_reason(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "extra",
-    [{"select_all": True}, {"rerun_type": "eval_only"}],
-    ids=["with-select-all", "eval-only"],
+    [
+        {"select_all": True},
+        {"rerun_type": "eval_only"},
+        # A resume re-runs calls inside the run, which takes no fresh environment.
+        {"environment_values": {"API_TOKEN": "fresh"}},
+    ],
+    ids=["with-select-all", "eval-only", "with-environment-values"],
 )
 def test_unfinished_only_takes_no_other_selection(
     auth_client,

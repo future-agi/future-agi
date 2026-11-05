@@ -1581,7 +1581,8 @@ def rerun_calls_in_run(
 def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
     """Run again only the calls an interrupted Run did not finish, as a new attempt of that
     same Run on its pinned versions, and return those calls. Finished calls keep their
-    results and are neither run nor charged again."""
+    results and are neither run nor charged again. Versions are only ever soft-deleted, so
+    a pin stays set and its ``deleted`` flag says whether that version is gone."""
     from simulate.selectors.run_resume import (
         INTERRUPTED_JOB_STATES,
         RESUMES,
