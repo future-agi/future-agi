@@ -485,9 +485,13 @@ def worker_timeline(
             return {}
         if row.get("relationship") != "observed":
             return {"relationship": "unknown"}
-        # Observed with no parent: it ran in the coordinator itself, at the top.
+        # Observed with no parent: nothing handed this work out, so it sits at the top.
         parent = str(row.get("parent_span_id") or "")
-        return {"parent_delegation_id": parent} if parent else {}
+        return (
+            {"parent_delegation_id": parent}
+            if parent
+            else {"relationship": "observed"}
+        )
 
     def own_id(row: Mapping[str, Any], index: int) -> str:
         return str(
@@ -585,7 +589,7 @@ def worker_timeline(
         if "parent_delegation_id" in place:
             event["delegation_id"] = place["parent_delegation_id"]
         elif place.get("relationship"):
-            event["relationship"] = "unknown"
+            event["relationship"] = place["relationship"]
         for key in ("input_omitted", "output_omitted"):
             if call.get(key):
                 event[key] = True

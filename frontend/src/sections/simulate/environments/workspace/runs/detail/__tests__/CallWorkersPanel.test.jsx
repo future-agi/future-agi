@@ -327,6 +327,76 @@ describe("CallWorkersPanel", () => {
     expect(screen.queryByText("Coordinator · get_order")).toBeNull();
   });
 
+  it("marks a hand-off and a call the record can't place as parent unknown, and only those", () => {
+    const handoff = TIMELINE.events[0];
+    const call = TIMELINE.events[1];
+    result = {
+      data: {
+        ...TIMELINE,
+        steps: [
+          {
+            key: "1",
+            kind: "handoff",
+            parent: null,
+            depth: 1,
+            worker_id: handoff.worker_id,
+            transfer: false,
+            handoff,
+            returned: null,
+            parallel: false,
+            turn: 1,
+            relationship: "unknown",
+          },
+          {
+            key: "2",
+            kind: "call",
+            parent: null,
+            depth: 0,
+            worker_id: call.worker_id,
+            call,
+            turn: 1,
+            relationship: "unknown",
+          },
+          {
+            key: "3",
+            kind: "call",
+            parent: null,
+            depth: 0,
+            worker_id: null,
+            call: TIMELINE.events[3],
+            turn: 1,
+            relationship: "observed",
+          },
+        ],
+        turns: [
+          { turn: 1, request: TIMELINE.request, response: TIMELINE.response },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getAllByTestId("parent-unknown")).toHaveLength(2);
+  });
+
+  it("says when nothing was recorded for the participants, and lists the declared ones as not observed", () => {
+    result = {
+      data: {
+        ...TIMELINE,
+        events: [],
+        collection: "no_evidence",
+        workers: TIMELINE.workers.map((one) => ({ ...one, observed: false })),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(
+      screen.getByText(/Nothing was recorded for this call's participants/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/not observed/)).toHaveLength(2);
+  });
+
   it("shows a spinner until the record is read, and an error only with nothing to show", () => {
     result = { data: undefined, isLoading: true, isError: false };
     const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);

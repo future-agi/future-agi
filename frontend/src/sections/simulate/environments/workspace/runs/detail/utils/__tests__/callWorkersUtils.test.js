@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { asShown, isLong, nest, seconds } from "../callWorkersUtils";
 
-const at = (second) => `2026-10-31T12:00:${String(second).padStart(2, "0")}`;
-
 describe("seconds", () => {
   it("reads a stored time with no zone as UTC, and anything else as unknown", () => {
     expect(seconds("2026-10-31T12:00:05")).toBe(

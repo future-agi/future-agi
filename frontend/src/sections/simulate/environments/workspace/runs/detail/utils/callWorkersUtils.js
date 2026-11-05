@@ -55,9 +55,15 @@ export const nest = (data) => {
             delegated: step.handoff,
             returned: step.returned,
             parallel: step.parallel,
+            relationship: step.relationship,
             items: [],
           }
-        : { kind: "call", key: step.key, event: step.call };
+        : {
+            kind: "call",
+            key: step.key,
+            event: step.call,
+            relationship: step.relationship,
+          };
     if (row.kind === "handoff") byKey[step.key] = row;
     (step.parent === null ? items : byKey[step.parent]?.items || items).push(
       row,

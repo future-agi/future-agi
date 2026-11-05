@@ -69,9 +69,10 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
         With several open and no id, the relationship is not recorded, so the event stays at the top as unknown
         rather than being given to the latest one.
         """
-        if event.get("relationship") == "unknown":
-            return None
         wanted = event.get("delegation_id")
+        if event.get("relationship") in ("unknown", "observed") and not wanted:
+            # Recorded as not knowing its hand-off, or as running outside any: never given to an open one.
+            return None
         if wanted:
             found = by_id.get(str(wanted))
             return found if found is not None and found.returned is None else None
@@ -83,6 +84,9 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
         parent = event.get("parent_delegation_id")
         if parent:
             return by_id.get(str(parent))
+        if event.get("relationship") == "observed":
+            # Recorded as handed out at the top: never re-parented under the maker's open hand-off.
+            return root
         worker = event.get("by")
         if not worker:
             return root
@@ -128,7 +132,10 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
         else:
             # A call with no worker is the coordinator's own, even with control passed back to it.
             block = open_for(event) if worker else None
-            if worker and block is None and open_.get(worker):
+            recorded_top = event.get("relationship") == "observed" and not event.get(
+                "delegation_id"
+            )
+            if worker and block is None and open_.get(worker) and not recorded_top:
                 unknown.add(event.get("seq", -1))
             (block or root).items.append(event)
             if block is not None:

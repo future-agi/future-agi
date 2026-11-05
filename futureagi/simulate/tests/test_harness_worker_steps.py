@@ -482,3 +482,38 @@ class TestWorkerStepsByTurn:
         assert result["turns"] == [
             {"turn": 0, "request": request, "response": response}
         ]
+
+
+def test_a_step_recorded_at_the_top_stays_at_the_top_while_its_maker_has_a_hand_off_open():
+    # ADK resumes a transferred agent as the top of the next turn: what it hands out is recorded at the top level.
+    events = [
+        {
+            "seq": 1,
+            "type": "delegated",
+            "worker_id": "w/planner",
+            "by": None,
+            "delegation_id": "p1",
+            "at": "t1",
+        },
+        {
+            "seq": 2,
+            "type": "delegated",
+            "worker_id": "w/search",
+            "by": "w/planner",
+            "delegation_id": "s1",
+            "relationship": "observed",
+            "at": "t2",
+        },
+        {
+            "seq": 3,
+            "type": "tool_call",
+            "worker_id": "w/planner",
+            "tool": "note",
+            "relationship": "observed",
+            "at": "t3",
+        },
+    ]
+    steps = worker_steps(events)["steps"]
+    placed = {s["key"]: (s["parent"], s["relationship"]) for s in steps}
+    assert placed[2] == (None, "observed")
+    assert placed[3] == (None, "observed")

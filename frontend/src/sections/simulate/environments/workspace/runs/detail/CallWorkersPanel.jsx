@@ -159,8 +159,21 @@ Payload.propTypes = {
   omitted: PropTypes.bool,
 };
 
+// Shown where the record does not say which hand-off a step belongs to: never guessed from timing (MA-2).
+function UnknownParent() {
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      label={C.parentUnknown}
+      data-testid="parent-unknown"
+      sx={{ flexShrink: 0 }}
+    />
+  );
+}
+
 // A tool call in the transcript's tool style; its input and output open on click.
-function ToolRow({ event, who, start }) {
+function ToolRow({ event, who, start, unknown }) {
   const [open, setOpen] = useState(false);
   const failed = event.status === "error";
   return (
@@ -206,6 +219,7 @@ function ToolRow({ event, who, start }) {
           {who ? `${who} · ${event.tool}` : event.tool}
           {failed ? ` (${C.failed})` : ""}
         </Typography>
+        {unknown ? <UnknownParent /> : null}
         <Stamp at={event.at} start={start} />
       </Stack>
       <Collapse in={open} unmountOnExit>
@@ -229,6 +243,7 @@ ToolRow.propTypes = {
   event: PropTypes.object.isRequired,
   who: PropTypes.string,
   start: PropTypes.string,
+  unknown: PropTypes.bool,
 };
 
 function Answer({ text, empty }) {
@@ -422,6 +437,7 @@ function HandOff({ block, workers, start, cutOff }) {
                 sx={{ flexShrink: 0 }}
               />
             ) : null}
+            {block.relationship === "unknown" ? <UnknownParent /> : null}
           </Line>
         </Box>
       </Stack>
@@ -579,7 +595,11 @@ export default function CallWorkersPanel({ callExecutionId }) {
       <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {C.intro}
       </Typography>
-      {data.spans_received === false ? (
+      {data.collection === "no_evidence" ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.noEvidence}
+        </Typography>
+      ) : data.spans_received === false ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.sandboxOnly}
         </Typography>
@@ -654,6 +674,7 @@ export default function CallWorkersPanel({ callExecutionId }) {
                       event={item.event}
                       who={nameOf(item.event)}
                       start={start}
+                      unknown={item.relationship === "unknown"}
                     />
                   ),
                 )}

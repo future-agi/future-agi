@@ -35,6 +35,10 @@ export const CALL_WORKERS_COPY = {
           : "one hand-off at a time"
     }`,
   inParallel: "in parallel",
+  // The record does not say which hand-off this ran in, so it sits under the coordinator.
+  parentUnknown: "parent unknown",
+  noEvidence:
+    "Nothing was recorded for this call's participants: the app sent no traces and the sandbox recorded no hand-offs.",
   payloadOmitted: "Not kept: this call's record reached its size limit",
   eventsOmitted: (count) =>
     `${count} more step${count === 1 ? "" : "s"} not shown: this call's record reached its size limit`,
