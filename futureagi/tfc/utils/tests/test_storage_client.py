@@ -646,3 +646,43 @@ def test_failed_tightening_does_not_fail_the_upload(monkeypatch):
     storage_client.ensure_bucket(client, "futureagi")
 
     assert client.get_calls == 1
+
+
+class _RacedClient:
+    """A bucket another worker creates between the existence check and the create."""
+
+    def __init__(self, code):
+        self.code = code
+        self.policies = []
+
+    def bucket_exists(self, _name):
+        return False
+
+    def make_bucket(self, name):
+        from minio.error import S3Error
+
+        raise S3Error(None, self.code, "taken", name, "req", "host")
+
+    def set_bucket_policy(self, name, policy):
+        self.policies.append((name, policy))
+
+    def get_bucket_policy(self, _name):
+        return "{}"
+
+
+@pytest.mark.parametrize("code", ["BucketAlreadyOwnedByYou", "BucketAlreadyExists"])
+def test_a_bucket_created_meanwhile_by_another_worker_is_not_an_error(
+    monkeypatch, code
+):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+
+    storage_client.ensure_bucket(_RacedClient(code), "raced-bucket")
+
+
+def test_any_other_bucket_create_error_is_raised(monkeypatch):
+    from minio.error import S3Error
+
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+
+    with pytest.raises(S3Error):
+        storage_client.ensure_bucket(_RacedClient("AccessDenied"), "denied-bucket")
