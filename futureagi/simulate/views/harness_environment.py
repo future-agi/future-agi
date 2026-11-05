@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
@@ -533,7 +534,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         runs = (
             {
                 one.id: one
-                for one in TestExecution.objects.filter(
+                for one in user_executions().filter(
                     id__in=[one for one in wanted if one], run_test_id=job.run_test_id
                 )
             }
@@ -837,9 +838,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         # (harness_provider.py:1130-1136), so an older run must still be
         # addressable.
         execution = (
-            TestExecution.objects.filter(
-                id=identifier, run_test_id=job.run_test_id
-            ).first()
+            user_executions().filter(id=identifier, run_test_id=job.run_test_id).first()
             if identifier is not None
             else None
         )
@@ -960,7 +959,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if refusal is not None:
             return refusal
         identifier = _uuid_or_none(execution_id)
-        runs = TestExecution.objects.filter(id=identifier, run_test_id=job.run_test_id)
+        runs = user_executions().filter(id=identifier, run_test_id=job.run_test_id)
         if identifier is None or not runs.exists():
             return Response(
                 build_error_envelope(

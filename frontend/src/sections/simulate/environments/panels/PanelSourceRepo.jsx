@@ -83,7 +83,7 @@ export default function PanelSourceRepo() {
   });
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       <ProviderRow
         options={REPO_PROVIDERS}
         value={provider}

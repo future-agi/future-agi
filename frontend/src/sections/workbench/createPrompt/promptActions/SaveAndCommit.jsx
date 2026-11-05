@@ -96,7 +96,13 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
   });
 
   return (
-    <Dialog fullWidth maxWidth={"sm"} open={open} onClose={handleOnClose}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      open={open}
+      onClose={handleOnClose}
+    >
       <DialogTitle sx={{ pb: "0" }}>
         <Stack
           direction={"row"}
@@ -119,7 +125,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
             }}
             onClick={handleOnClose}
           >
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
       </DialogTitle>
@@ -135,7 +141,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
               backgroundColor: "background.default",
 
               border: (theme) => `1px solid ${theme.palette.divider}`,
-              borderRadius: 0.5,
+              borderRadius: "4px",
             }}
           >
             <Typography
@@ -169,7 +175,7 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
 
         <DialogActions sx={{ pt: "32px" }}>
           <LoadingButton
-            sx={{ px: "16px", color: "text.disabled" }}
+            sx={{ color: "text.disabled" }}
             disabled={!isDirty || isPending}
             loading={isPending}
             variant="outlined"
@@ -179,7 +185,6 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
             Commit
           </LoadingButton>
           <LoadingButton
-            sx={{ px: "16px" }}
             loading={isPending}
             variant="contained"
             color="primary"

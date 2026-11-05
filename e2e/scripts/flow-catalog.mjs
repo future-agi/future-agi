@@ -56,8 +56,10 @@ export function renderCatalog(flows) {
       lines.push(
         `### ${f.id} — ${f.title.replace(`${f.id}: `, "")}`,
         "",
-        `**Goal:** ${f.userGoal}  `,
-        `**Spec:** \`${f.location}\`  `,
+        `**Goal:** ${f.userGoal}`,
+        "",
+        `**Spec:** \`${f.location}\``,
+        "",
         `**Tags:** ${f.tags.join(" ") || "—"}`,
         "",
         // The blank line before each list keeps the output prettier-clean, so

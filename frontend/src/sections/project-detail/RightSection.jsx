@@ -1,13 +1,7 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Divider,
-  IconButton,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Divider, IconButton, Typography } from "@mui/material";
 import React from "react";
 import Iconify from "src/components/iconify";
+import { FilterButton } from "src/components/filter";
 import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { Events, trackEvent } from "src/utils/Mixpanel";
@@ -26,6 +20,9 @@ const RightSection = React.forwardRef(
       setOpenFilter,
       filterOpen,
       totalFilters,
+      filterFields,
+      filterValue,
+      onFilterChange,
     },
     columnConfigureRef,
   ) => {
@@ -68,17 +65,13 @@ const RightSection = React.forwardRef(
                   startIcon={
                     <SvgColor
                       src="/icons/datasets/compare_icon.svg"
-                      sx={{
-                        height: "20px",
-                        width: "20px",
-                        color: "text.disabled",
-                      }}
+                      width="20px"
+                      sx={{ color: "text.disabled" }}
                     />
                   }
                   size="small"
                   sx={{
                     color: "text.primary",
-                    fontWeight: "fontWeightRegular",
                     typography: "s1",
                   }}
                   onClick={() => {
@@ -96,18 +89,14 @@ const RightSection = React.forwardRef(
             startIcon={
               <SvgColor
                 src="/assets/icons/ic_delete.svg"
-                sx={{
-                  height: "20px",
-                  width: "20px",
-                  color: "text.disabled",
-                }}
+                width="20px"
+                sx={{ color: "text.disabled" }}
               />
             }
             size="small"
             sx={{
               color: "text.primary",
               typography: "s1",
-              fontWeight: "fontWeightRegular",
             }}
             onClick={onDelete}
           >
@@ -115,13 +104,15 @@ const RightSection = React.forwardRef(
           </Button>
           <Button
             startIcon={
-              <Iconify icon="material-symbols:download" color="text.disabled" />
+              <Iconify
+                icon="solar:download-minimalistic-linear"
+                color="text.disabled"
+              />
             }
             size="small"
             sx={{
               color: "text.primary",
               typography: "s1",
-              fontWeight: "fontWeightRegular",
             }}
             onClick={onExport}
           >
@@ -132,11 +123,11 @@ const RightSection = React.forwardRef(
             flexItem
             sx={{ height: "20px", mt: (theme) => theme.spacing(0.5) }}
           />
-          <IconButton
-            onClick={clearSelection}
-            sx={{ p: (theme) => theme.spacing(0.2) }}
-          >
-            <Iconify icon="ic:outline-close" sx={{ color: "text.disabled" }} />
+          <IconButton size="small" onClick={clearSelection}>
+            <Iconify
+              icon="solar:close-linear"
+              sx={{ color: "text.disabled" }}
+            />
           </IconButton>
         </Box>
       );
@@ -150,35 +141,20 @@ const RightSection = React.forwardRef(
           alignItems: "center",
         }}
       >
-        <Button
-          size="small"
-          sx={{
-            fontWeight: "fontWeightRegular",
-            typography: "s1",
-            color: "text.primary",
-          }}
-          startIcon={
-            <Badge badgeContent={totalFilters} color="error" variant="dot">
-              <SvgColor
-                src={`/assets/icons/components/ic_filter.svg`}
-                sx={{
-                  width: (theme) => theme.spacing(2),
-                  height: (theme) => theme.spacing(2),
-                  color: "text.primary",
-                }}
-              />
-            </Badge>
-          }
-          onClick={() => setOpenFilter((prev) => !prev)}
-        >
-          {filterOpen ? "Hide Filter" : "Show Filter"}
-        </Button>
+        <FilterButton
+          fields={filterFields}
+          value={filterValue}
+          onChange={onFilterChange}
+          count={totalFilters}
+          open={filterOpen}
+          onOpenChange={setOpenFilter}
+        />
         <Button
           size="small"
           startIcon={
             <SvgColor src="/assets/icons/action_buttons/ic_column.svg" />
           }
-          // sx={{ width: '126px', color: 'text.disabled', typography: 's1', fontWeight: 'fontWeightMedium' }}
+          // sx={{ width: '126px', color: 'text.disabled', typography: 's1',}}
           variant="outlined"
           ref={columnConfigureRef}
           onClick={() => setOpenColumnConfigure(true)}
@@ -188,15 +164,9 @@ const RightSection = React.forwardRef(
         <Button
           size="small"
           startIcon={
-            <SvgColor
-              src="/icons/datasets/choose_winner.svg"
-              sx={{
-                height: "16px",
-                width: "16px",
-              }}
-            />
+            <SvgColor src="/icons/datasets/choose_winner.svg" width="16px" />
           }
-          // sx={{ width: '159px', typography: 's1', fontWeight: 'fontWeightSemiBold' }}
+          // sx={{ width: '159px', typography: 's1',}}
           color="primary"
           variant="contained"
           onClick={() => setOpenChooseWinnerDrawer(true)}
@@ -221,6 +191,9 @@ RightSection.propTypes = {
   setOpenFilter: PropTypes.func,
   filterOpen: PropTypes.bool,
   totalFilters: PropTypes.number,
+  filterFields: PropTypes.array,
+  filterValue: PropTypes.array,
+  onFilterChange: PropTypes.func,
 };
 
 export default RightSection;

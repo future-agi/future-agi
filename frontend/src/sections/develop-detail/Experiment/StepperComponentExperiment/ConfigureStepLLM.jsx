@@ -170,19 +170,11 @@ const ConfigureStepLLM = ({
     <Stack spacing={2}>
       <Button
         onClick={(e) => setAddPromptAnchor(e.currentTarget)}
-        startIcon={
-          <SvgColor
-            sx={{
-              height: 16,
-              width: 16,
-            }}
-            src={"/assets/icons/ic_add.svg"}
-          />
-        }
+        startIcon={<SvgColor width={16} src={"/assets/icons/ic_add.svg"} />}
         sx={{
           width: "fit-content",
 
-          bgcolor: addPromptAnchor ? "purple.o10" : "background.paper",
+          bgcolor: addPromptAnchor ? "status.discovery.bg" : "background.paper",
         }}
         color="primary"
         variant="outlined"
@@ -202,7 +194,7 @@ const ConfigureStepLLM = ({
         }}
         sx={{
           "& .MuiPopover-paper": {
-            borderRadius: "2px !important",
+            borderRadius: "4px !important",
             padding: 0.5,
             border: "1px solid",
             borderColor: "divider",
@@ -235,7 +227,7 @@ const ConfigureStepLLM = ({
                 gap: 1,
                 padding: 3 / 8,
                 cursor: "pointer",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 backgroundColor:
                   Boolean(anchorEl) && anchorEl?.typeofConfig === config.value
                     ? "action.hover"
@@ -254,13 +246,17 @@ const ConfigureStepLLM = ({
                 }}
               >
                 <SvgColor sx={{ width: 20 }} src={config.icon} />
-                <Typography sx={{ fontSize: 14 }}>{config.label}</Typography>
+                <Typography sx={{ fontSize: 13 }}>{config.label}</Typography>
               </Box>
               <IconButton
                 size="small"
                 sx={{ cursor: "pointer", pointerEvents: "none" }}
               >
-                <Iconify icon="line-md:chevron-right" width={16} height={16} />
+                <Iconify
+                  icon="solar:alt-arrow-right-linear"
+                  width={16}
+                  height={16}
+                />
               </IconButton>
             </Box>
           ))}
@@ -292,7 +288,7 @@ const ConfigureStepLLM = ({
         }}
         sx={{
           "& .MuiPopover-paper": {
-            borderRadius: "2px !important",
+            borderRadius: "4px !important",
             padding: 0.5,
 
             border: "1px solid",

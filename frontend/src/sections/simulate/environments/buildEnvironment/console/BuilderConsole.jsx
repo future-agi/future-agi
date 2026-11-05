@@ -1,12 +1,10 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer, useRef } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
-import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
@@ -122,7 +120,7 @@ export default function BuilderConsole({
     <Stack sx={{ height: "100%", minWidth: 0 }}>
       {/* Same height as the workspace tab rail, so the two headers line up. */}
       <Stack
-        direction="row" alignItems="center" spacing={1.25}
+        direction="row" alignItems="center" spacing={1}
         sx={{
           flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
           borderBottom: "1px solid", borderColor: "divider",
@@ -130,15 +128,15 @@ export default function BuilderConsole({
       >
         <Box
           sx={{
-            width: 24, height: 24, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
-            color: BUILD_TONES.accent,
+            width: 24, height: 24, borderRadius: "4px", display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: "action.selected",
+            color: "text.secondary",
           }}
         >
           <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
+          <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
             {locked ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
@@ -151,12 +149,9 @@ export default function BuilderConsole({
               aria-label={CONSOLE_COPY.collapse}
               onClick={onCollapse}
               size="small"
-              sx={{
-                width: 26, height: 26, borderRadius: 1, flexShrink: 0, color: "text.subtitle",
-                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-              }}
+              sx={{ flexShrink: 0, color: "text.secondary" }}
             >
-              <Iconify icon="lucide:chevrons-left" width={16} />
+              <Iconify icon="solar:double-alt-arrow-left-linear" width={16} />
             </IconButton>
           </CustomTooltip>
         )}
@@ -168,21 +163,21 @@ export default function BuilderConsole({
       <Box
         ref={listRef}
         data-testid="builder-console-list"
-        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 2.5, py: 3 }}
+        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 3, py: 3 }}
       >
-        <Stack spacing={4}>
+        <Stack spacing={3}>
           {(turns || []).length === 0 && !busy ? (
-            <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
+            <Stack alignItems="center" spacing={1} sx={{ py: 6, opacity: 0.7 }}>
               <Box
                 sx={{
-                  width: 36, height: 36, borderRadius: 999, display: "grid", placeItems: "center",
-                  bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
-                  color: BUILD_TONES.accent,
+                  width: 36, height: 36, borderRadius: "50%", display: "grid", placeItems: "center",
+                  bgcolor: "action.selected",
+                  color: "text.secondary",
                 }}
               >
                 <Iconify icon="solar:chat-round-line-linear" width={17} />
               </Box>
-              <Typography sx={{ typography: "s2", color: "text.subtitle", textAlign: "center", maxWidth: 320 }}>
+              <Typography sx={{ typography: "s1", color: "text.secondary", textAlign: "center", maxWidth: 320 }}>
                 {CONSOLE_COPY.empty}
               </Typography>
             </Stack>
@@ -197,22 +192,16 @@ export default function BuilderConsole({
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
           questionnaire or the selection-context chip drops in here). */}
-      {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
+      {preComposer && <Box sx={{ px: 3, pb: 1 }}>{preComposer}</Box>}
 
-      <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
+      <Box sx={{ px: 3, pb: 3, pt: 1 }}>
         <Box
           sx={{
-            p: 1.5, borderRadius: 2, border: "1.5px solid",
-            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.14),
+            p: 1.5, borderRadius: "8px", border: "1px solid",
+            borderColor: "divider",
             bgcolor: "background.paper",
-            boxShadow: (t) => (t.palette.mode === "dark"
-              ? "0 4px 20px rgba(0,0,0,0.25)"
-              : "0 2px 10px rgba(16,24,40,0.05)"),
-            transition: "border-color 0.15s ease, box-shadow 0.15s ease",
-            "&:focus-within": {
-              borderColor: BUILD_TONES.accent,
-              boxShadow: (t) => `0 0 0 3px ${alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.18 : 0.12)}`,
-            },
+            transition: "border-color 0.15s ease",
+            "&:focus-within": { borderColor: "primary.main" },
           }}
         >
           {scaffolds.length > 0 && (
@@ -222,17 +211,15 @@ export default function BuilderConsole({
                   key={`${s}-${i}`}
                   direction="row" alignItems="center" spacing={0.5}
                   sx={{
-                    pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
-                    bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.14 : 0.08),
-                    border: "1px solid",
-                    borderColor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.35 : 0.24),
+                    pl: 1, pr: 0.5, py: 0.25, borderRadius: "4px",
+                    bgcolor: "action.selected",
                     maxWidth: "100%",
                   }}
                 >
-                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: BUILD_TONES.accent, flexShrink: 0 }} />
+                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: "text.secondary", flexShrink: 0 }} />
                   <Typography
                     sx={{
-                      typography: "s3", fontWeight: "fontWeightSemiBold", color: BUILD_TONES.accent,
+                      typography: "s3", fontWeight: 500, color: "text.secondary",
                       maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}
                   >
@@ -244,7 +231,7 @@ export default function BuilderConsole({
                     onClick={() => dispatch({ type: "unscaffold", index: i })}
                     sx={{ p: 0, ml: 0.25 }}
                   >
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: alpha(BUILD_TONES.accent, 0.6) }} />
+                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: "text.disabled" }} />
                   </IconButton>
                 </Stack>
               ))}
@@ -264,7 +251,7 @@ export default function BuilderConsole({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             }}
-            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
+            InputProps={{ disableUnderline: true, sx: { typography: "m3", px: 0.5, py: 0.5 } }}
           />
 
           {/* Row 2: toolbar — flex-spacer · stop · send. */}
@@ -283,11 +270,11 @@ export default function BuilderConsole({
                 title={CONSOLE_COPY.stop}
                 disabled={running || stopping}
                 onClick={onStop}
+                size="small"
                 sx={{
-                  width: 30, height: 30, borderRadius: 1, mr: 0.5,
-                  color: "text.subtitle",
+                  mr: 0.5,
+                  color: "text.secondary",
                   border: "1px solid", borderColor: "divider",
-                  "&:hover": { bgcolor: "action.hover", color: "text.primary" },
                 }}
               >
                 <Iconify icon="solar:stop-bold" width={13} />
@@ -299,15 +286,12 @@ export default function BuilderConsole({
                 aria-label="Send"
                 disabled={!hasContent || blocked}
                 onClick={send}
+                size="small"
                 sx={{
-                  width: 30, height: 30, borderRadius: 1,
-                  bgcolor: hasContent && !blocked ? BUILD_TONES.accent : undefined,
-                  color: hasContent && !blocked ? "common.white" : undefined,
-                  "&:hover": { bgcolor: hasContent && !blocked ? BUILD_TONES.accentHover : undefined },
-                  "&.Mui-disabled": {
-                    bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
-                    color: "text.disabled",
-                  },
+                  bgcolor: hasContent && !blocked ? "primary.main" : undefined,
+                  color: hasContent && !blocked ? "primary.contrastText" : undefined,
+                  "&:hover": { bgcolor: hasContent && !blocked ? "primary.dark" : undefined },
+                  "&.Mui-disabled": { bgcolor: "action.selected", color: "text.disabled" },
                 }}
               >
                 <Iconify icon="solar:arrow-up-bold" width={15} />

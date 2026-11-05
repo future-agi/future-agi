@@ -58,8 +58,6 @@ function AddButton({ onClick, contained = false, locked = false, short = false }
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          // In the toolbar it matches the 32px row and Coverage's padding beside it.
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", ...(short && { height: 32, px: 1.75 }) }}
         >
           {short ? SCENARIOS_COPY.addShortLabel : SCENARIOS_COPY.addLabel}
         </Button>
@@ -414,7 +412,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           {loadFailed && (
             <Alert
               severity="error"
-              sx={{ mb: 2, typography: "s3", flexShrink: 0 }}
+              sx={{ mb: 2, flexShrink: 0 }}
               action={(
                 <Button color="inherit" size="small" onClick={retryLoad}>
                   Retry
@@ -489,7 +487,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             <Box
               sx={{
                 flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-                border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden",
+                border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden",
               }}
             >
               <PagedScenarioViews
@@ -550,7 +548,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onClose={() => setPendingDelete(null)}
         title="Delete scenarios?"
         content={
-          <Typography component="span" sx={{ typography: "s2" }}>
+          <Typography component="span" sx={{ typography: "m3" }}>
             {pendingDelete?.count === 1
               ? "This scenario will be permanently removed. This can't be undone."
               : `${pendingDelete?.count ?? 0} scenarios will be permanently removed. This can't be undone.`}

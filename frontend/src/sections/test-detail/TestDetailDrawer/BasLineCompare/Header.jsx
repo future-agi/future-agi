@@ -21,26 +21,19 @@ export default function Header({
   };
 
   const breadcrumbs = [
-    <Typography
-      component={Button}
-      typography="s1"
-      fontWeight={"fontWeightMedium"}
-      color="text.disabled"
+    <Button
+      size="small"
+      variant="text"
       key="1"
       onClick={() => {
         setCompareReplay(false);
       }}
-      sx={{
-        px: "10px",
-        "&:hover": {
-          backgroundColor: "transparent",
-        },
-      }}
+      sx={{ color: "text.disabled" }}
     >
       {simulationCallType === AGENT_TYPES.VOICE
         ? "Call log details"
         : "Chat log details"}
-    </Typography>,
+    </Button>,
     <Typography
       typography="s1"
       fontWeight={"fontWeightMedium"}
