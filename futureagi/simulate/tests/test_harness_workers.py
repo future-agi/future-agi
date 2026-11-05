@@ -1811,3 +1811,19 @@ def test_a_cancelled_run_reads_each_call_it_cut_short(
         project_terminal_job_onto_run(run, timezone.now())
     # A call cut short keeps what its workers did before the end.
     assert [one.args for one in read.call_args_list] == [(call.id,)]
+
+
+def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"},
+        {"name": "issue_refund", "ok": True, "at": 2.0, "worker_id": "refund"},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
+    workers = worker_states(timeline, trial="ended")["workers"]
+    # No hand-off was recorded, so nothing says the worker was still out when the trial ended.
+    assert [one.get("state") for one in workers if one["observed"]] == [None, None]
+    # The world refusing one past its deadline is still a recorded end.
+    late = worker_states(timeline, trial="ended", past_deadline={"refund"})["workers"]
+    assert {one["id"]: one.get("state") for one in late}["refund"] == "timed_out"

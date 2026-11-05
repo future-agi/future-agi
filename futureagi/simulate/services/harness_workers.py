@@ -730,6 +730,13 @@ def worker_states(
         if event["type"] == "returned"
     }
     late = set(past_deadline)
+    # Only a hand-off the record shows can be still out; a worker seen only through its tool calls has no recorded
+    # end, so it gets no end state rather than an invented one.
+    handed = {
+        event["worker_id"]
+        for event in timeline["events"]
+        if event["type"] in _HAND_OFF_TYPES
+    }
     workers = []
     for worker in timeline["workers"]:
         back = returned.get(worker["worker_id"])
@@ -739,8 +746,11 @@ def worker_states(
             state = "timed_out"
         elif back is not None:
             state = "failed" if back.get("status") == "error" else "completed"
-        else:
+        elif worker["worker_id"] in handed:
             state = _STILL_OUT.get(trial, "timed_out")
+        else:
+            workers.append(dict(worker))
+            continue
         workers.append({**worker, "state": state})
     return {**timeline, "workers": workers}
 
