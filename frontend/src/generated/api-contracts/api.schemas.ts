@@ -24511,6 +24511,13 @@ export interface CallWorkerStepApi {
   ended_at?: string;
   parallel?: boolean;
   call?: CallWorkerEventApi;
+  turn: number;
+}
+
+export interface CallWorkerRoundApi {
+  turn: number;
+  request: CallWorkerTurnApi;
+  response: CallWorkerTurnApi;
 }
 
 export interface CallWorkersResponseApi {
@@ -24526,6 +24533,7 @@ export interface CallWorkersResponseApi {
   /** @minLength 1 */
   collected_at: string;
   steps: CallWorkerStepApi[];
+  turns: CallWorkerRoundApi[];
   depth: number;
   parallel: number;
   overlap_unknown: boolean;

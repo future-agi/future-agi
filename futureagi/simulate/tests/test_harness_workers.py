@@ -1223,6 +1223,10 @@ def test_the_caller_s_request_and_the_coordinator_s_reply_frame_the_hand_offs():
     }
     assert timeline["coordinator"] == {"name": "Returns coordinator"}
     assert timeline["started_at"] == "2024-11-01T09:49:55"
+    # Every message is kept on the steps' clock, so the API can group the steps by turn.
+    assert [(one["role"], one["text"]) for one in timeline["messages"]] == [
+        (one["role"], one["text"]) for one in turns
+    ]
 
 
 def test_a_request_reply_or_coordinator_not_seen_is_none_so_it_reads_unknown():

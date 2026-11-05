@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from bisect import bisect_right
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from simulate.types import WorkerEvent, WorkerStep, WorkerSteps
+from simulate.types import (
+    CallTurn,
+    TurnSummary,
+    WorkerEvent,
+    WorkerStep,
+    WorkerSteps,
+    WorkerTurn,
+)
 
 _HAND_OFF_TYPES = frozenset({"delegated", "transferred"})
 
@@ -172,19 +180,101 @@ def _flatten(node: _Block, parent: int | None, out: list[WorkerStep]) -> None:
             )
 
 
-def worker_steps(events: Iterable[WorkerEvent]) -> WorkerSteps:
-    """The events as steps in reading order, each hand-off with its parent, depth, span and parallel flag."""
+def _step_time(step: WorkerStep) -> float | None:
+    if step["kind"] == "handoff":
+        return _seconds(step.get("started_at"))
+    return _seconds((step.get("call") or {}).get("at"))
+
+
+def _by_turn(steps: list[WorkerStep], turns: Iterable[CallTurn]) -> list[WorkerTurn]:
+    """Give each step the turn it happened in and return each turn's request and reply.
+
+    Turn n starts at the caller's nth message; turn 0 is anything before the caller first spoke. A top-level step
+    takes the turn its start falls in, and everything under it stays with it even when it runs past the next
+    message; a step with no time keeps the turn of the step before it.
+    """
+    said = [one for one in turns if isinstance(one, Mapping)]
+    asked = [
+        (at, one)
+        for one in said
+        if one.get("role") == "user" and (at := _seconds(one.get("at"))) is not None
+    ]
+    replies = [
+        (at, one)
+        for one in said
+        if one.get("role") == "agent" and (at := _seconds(one.get("at"))) is not None
+    ]
+    asked_at = [at for at, _ in asked]
+    turn_of: dict[int, int] = {}
+    last_turn = 1 if asked else 0
+    latest: dict[int, float] = {}
+    for step in steps:
+        parent = step["parent"]
+        if parent is not None and parent in turn_of:
+            turn = turn_of[parent]
+        else:
+            at = _step_time(step)
+            turn = bisect_right(asked_at, at) if at is not None else last_turn
+            last_turn = turn
+        step["turn"] = turn
+        if step["kind"] == "handoff":
+            turn_of[step["key"]] = turn
+        moment = _seconds(step.get("ended_at")) if step["kind"] == "handoff" else None
+        moment = moment if moment is not None else _step_time(step)
+        if moment is not None:
+            latest[turn] = max(latest.get(turn, moment), moment)
+
+    def summary(one: Mapping) -> TurnSummary:
+        return {"text": one.get("text"), "at": one.get("at")}
+
+    rounds: list[WorkerTurn] = []
+    for turn in sorted({step["turn"] for step in steps}):
+        until = asked_at[turn] if turn < len(asked_at) else None
+        after = latest.get(turn, asked_at[turn - 1] if turn else float("-inf"))
+        reply = next(
+            (
+                one
+                for at, one in replies
+                if at >= after and (until is None or at < until)
+            ),
+            None,
+        )
+        rounds.append(
+            {
+                "turn": turn,
+                "request": summary(asked[turn - 1][1]) if turn else None,
+                "response": summary(reply) if reply is not None else None,
+            }
+        )
+    return rounds
+
+
+def worker_steps(
+    events: Iterable[WorkerEvent],
+    turns: Iterable[CallTurn] = (),
+    *,
+    request: TurnSummary | None = None,
+    response: TurnSummary | None = None,
+) -> WorkerSteps:
+    """The events as steps in reading order, each hand-off with its parent, depth, span and parallel flag, and each
+    step's turn with that turn's request and reply. A record kept before turns were stored is one turn, with the
+    record's own `request` and `response`."""
+    turns = list(turns)
     root, blocks = _tree(events)
     _close(root)
     overlap_unknown = _mark_parallel(root)
     steps: list[WorkerStep] = []
     _flatten(root, None, steps)
+    rounds = _by_turn(steps, turns)
+    if not turns and rounds:
+        rounds = [{"turn": 0, "request": request, "response": response}]
     depth_of: dict[str, int] = {}
     for block in blocks:
         if block.worker_id is not None:
             depth_of.setdefault(block.worker_id, block.depth)
     return {
         "steps": steps,
+        "turns": rounds,
         "depth": max((block.depth for block in blocks), default=0),
         "parallel": sum(1 for block in blocks if block.parallel),
         "overlap_unknown": overlap_unknown,

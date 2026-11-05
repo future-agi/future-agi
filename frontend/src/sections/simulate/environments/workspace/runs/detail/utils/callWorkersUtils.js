@@ -37,7 +37,8 @@ export const asShown = (text) => {
 
 /**
  * The API's steps (reading order, each naming the hand-off it sits under) as the nested rows the panel draws.
- * Grouping only: which hand-off owns what, spans, depth and parallel runs all come from the API.
+ * Grouping only: which hand-off owns what, which turn it happened in, spans, depth and parallel runs all come from
+ * the API.
  */
 export const nest = (data) => {
   const byKey = {};
@@ -62,8 +63,31 @@ export const nest = (data) => {
       row,
     );
   }
+  // One block per turn the API returned, each with the top-level rows that happened in it.
+  const fallback = data.steps?.length
+    ? [
+        {
+          turn: 0,
+          request: data.request ?? null,
+          response: data.response ?? null,
+        },
+      ]
+    : [];
+  const rounds = (data.turns?.length ? data.turns : fallback).map((round) => ({
+    ...round,
+    items: [],
+  }));
+  const roundOf = Object.fromEntries(
+    rounds.map((round) => [round.turn, round]),
+  );
+  for (const step of data.steps || []) {
+    if (step.parent !== null) continue;
+    const row = items.find((one) => one.key === step.key);
+    (roundOf[step.turn] ?? rounds[rounds.length - 1]).items.push(row);
+  }
   return {
     items,
+    rounds,
     depth: data.depth ?? 0,
     parallel: data.parallel ?? 0,
     overlapUnknown: Boolean(data.overlap_unknown),

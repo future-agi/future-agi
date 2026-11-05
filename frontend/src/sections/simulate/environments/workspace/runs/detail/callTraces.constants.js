@@ -46,6 +46,7 @@ export const CALL_WORKERS_COPY = {
   noRequest: "No request recorded",
   response: "Coordinator's reply",
   noReply: "No reply recorded",
+  turn: (n) => (n === 0 ? "Before the caller spoke" : `Turn ${n}`),
   delegated: (name) => `Delegated to ${name}`,
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:

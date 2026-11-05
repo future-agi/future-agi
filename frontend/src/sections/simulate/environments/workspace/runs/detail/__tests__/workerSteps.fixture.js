@@ -143,6 +143,7 @@ const flatten = (items, parent, depth, out) => {
         handoff: item.delegated ?? null,
         returned: item.returned ?? null,
         parallel: Boolean(item.parallel),
+        turn: 0,
       });
       flatten(item.items, item.key, item.depth, out);
     } else {
@@ -160,11 +161,20 @@ const flatten = (items, parent, depth, out) => {
 };
 
 export const withSteps = (timeline) => {
-  if (!timeline) return timeline;
+  // A test that hands in the API's rows already keeps them.
+  if (!timeline || timeline.steps) return timeline;
   const tree = arrange(timeline.events || []);
   return {
     ...timeline,
     steps: flatten(tree.items, null, 0, []),
+    // One turn, as the API returns a record kept before turns were stored.
+    turns: [
+      {
+        turn: 0,
+        request: timeline.request ?? null,
+        response: timeline.response ?? null,
+      },
+    ],
     depth: tree.depth,
     parallel: tree.parallel,
     overlap_unknown: tree.overlapUnknown,

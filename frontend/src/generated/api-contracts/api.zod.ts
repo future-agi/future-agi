@@ -51484,6 +51484,20 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           attribution: zod.enum(["reported", "unattributed"]),
         })
         .optional(),
+      turn: zod.number(),
+    }),
+  ),
+  turns: zod.array(
+    zod.object({
+      turn: zod.number(),
+      request: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+      }),
+      response: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+      }),
     }),
   ),
   depth: zod.number(),

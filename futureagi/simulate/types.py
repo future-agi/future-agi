@@ -162,10 +162,20 @@ class WorkerStep(TypedDict, total=False):
     ended_at: str | None
     parallel: bool
     call: WorkerEvent
+    turn: int
+
+
+class WorkerTurn(TypedDict):
+    """One round of the call: the caller's message, the steps before the agent's reply, the reply."""
+
+    turn: int
+    request: TurnSummary | None
+    response: TurnSummary | None
 
 
 class WorkerSteps(TypedDict):
     steps: list[WorkerStep]
+    turns: list[WorkerTurn]
     depth: int
     parallel: int
     overlap_unknown: bool
@@ -187,4 +197,6 @@ class WorkerTimeline(TypedDict):
     request: TurnSummary | None
     response: TurnSummary | None
     started_at: str | None
+    # The caller's and the agent's messages on the steps' clock, so the steps can be grouped by turn.
+    messages: NotRequired[list[CallTurn]]
     collected_at: NotRequired[str]

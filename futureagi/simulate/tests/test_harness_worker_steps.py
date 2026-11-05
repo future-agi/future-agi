@@ -247,6 +247,7 @@ class TestWorkerSteps:
     def test_an_empty_record_has_no_steps(self):
         assert worker_steps([]) == {
             "steps": [],
+            "turns": [],
             "depth": 0,
             "parallel": 0,
             "overlap_unknown": False,
@@ -286,3 +287,127 @@ class TestWorkerSteps:
             1,
             "2026-11-01T10:00:03+00:00",
         )
+
+
+def said(role, second, text):
+    return {"role": role, "text": text, "at": at(second)}
+
+
+class TestWorkerStepsByTurn:
+    EVENTS = [
+        {
+            "seq": 1,
+            "type": "delegated",
+            "worker_id": "refunds",
+            "task": "refund 6109",
+            "at": at(2),
+        },
+        {
+            "seq": 2,
+            "type": "tool_call",
+            "worker_id": "refunds",
+            "tool": "issue_refund",
+            "at": at(3),
+        },
+        {
+            "seq": 3,
+            "type": "returned",
+            "worker_id": "refunds",
+            "result": "refunded",
+            "at": at(4),
+        },
+        {
+            "seq": 4,
+            "type": "delegated",
+            "worker_id": "shipping",
+            "task": "cancel 6110",
+            "at": at(12),
+        },
+        {
+            "seq": 5,
+            "type": "delegated",
+            "worker_id": "notify",
+            "task": "email the caller",
+            "at": at(13),
+        },
+        {
+            "seq": 6,
+            "type": "returned",
+            "worker_id": "notify",
+            "result": "sent",
+            "at": at(14),
+        },
+    ]
+    TURNS = [
+        said("user", 1, "refund order 6109"),
+        said("agent", 5, "done, $83 refunded"),
+        said("user", 8, "thanks, what is the weather"),
+        said("agent", 9, "sunny"),
+        said("user", 11, "also cancel 6110"),
+        said("agent", 16, "I could not cancel it yet"),
+    ]
+
+    def test_each_step_belongs_to_the_turn_its_hand_off_started_in(self):
+        result = worker_steps(self.EVENTS, self.TURNS)
+        assert [(s["key"], s["turn"]) for s in result["steps"]] == [
+            (1, 1),
+            (2, 1),
+            (4, 3),
+            (5, 3),
+        ]
+
+    def test_each_turn_with_steps_carries_its_request_and_the_reply_after_its_last_step(
+        self,
+    ):
+        result = worker_steps(self.EVENTS, self.TURNS)
+        assert [
+            (t["turn"], t["request"]["text"], t["response"]["text"])
+            for t in result["turns"]
+        ] == [
+            (1, "refund order 6109", "done, $83 refunded"),
+            (3, "also cancel 6110", "I could not cancel it yet"),
+        ]
+
+    def test_a_worker_still_running_past_the_next_message_stays_in_the_turn_it_started(
+        self,
+    ):
+        events = [
+            {"seq": 1, "type": "delegated", "worker_id": "coder", "at": at(2)},
+            {
+                "seq": 2,
+                "type": "tool_call",
+                "worker_id": "coder",
+                "tool": "run",
+                "at": at(9),
+            },
+        ]
+        result = worker_steps(
+            events, [said("user", 1, "a"), said("agent", 3, "b"), said("user", 8, "c")]
+        )
+        assert [(s["key"], s["turn"]) for s in result["steps"]] == [(1, 1), (2, 1)]
+
+    def test_work_before_the_caller_first_spoke_is_turn_zero_with_no_request(self):
+        events = [{"seq": 1, "type": "delegated", "worker_id": "greeter", "at": at(1)}]
+        result = worker_steps(
+            events, [said("agent", 2, "hello"), said("user", 4, "hi")]
+        )
+        assert result["turns"] == [
+            {"turn": 0, "request": None, "response": {"text": "hello", "at": at(2)}},
+        ]
+
+    def test_a_turn_whose_reply_never_came_has_no_response(self):
+        events = [{"seq": 1, "type": "delegated", "worker_id": "a", "at": at(2)}]
+        result = worker_steps(
+            events, [said("user", 1, "a"), said("user", 5, "still there?")]
+        )
+        assert result["turns"][0]["response"] is None
+
+    def test_a_record_kept_before_turns_were_stored_is_one_turn_with_its_own_request_and_reply(
+        self,
+    ):
+        request, response = {"text": "q", "at": at(1)}, {"text": "r", "at": at(9)}
+        result = worker_steps(self.EVENTS, request=request, response=response)
+        assert {s["turn"] for s in result["steps"]} == {0}
+        assert result["turns"] == [
+            {"turn": 0, "request": request, "response": response}
+        ]

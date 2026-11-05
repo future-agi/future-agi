@@ -45,6 +45,7 @@ _TEXT_KEYS = (
 _PAYLOAD_CHARS = 2000
 # The record is sent whole to the browser, so it stays bounded however large the team or the call.
 _MAX_EVENTS = 500
+_MAX_TURNS = 200
 _PAYLOAD_BUDGET = 64_000
 
 
@@ -608,6 +609,11 @@ def worker_timeline(
         "request": _turn(turns, "user", before=min(handed_at)) if handed_at else None,
         "response": _turn(turns, "agent", after=max(closed_at)) if handed_at else None,
         "started_at": started_at,
+        "messages": [
+            {"role": one["role"], "text": _summary(one.get("text")), "at": one["at"]}
+            for one in turns[:_MAX_TURNS]
+            if one.get("role") in ("user", "agent") and one.get("at")
+        ],
     }
 
 

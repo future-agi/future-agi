@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "src/utils/test-utils";
 
 import { withSteps } from "./workerSteps.fixture";
 
@@ -381,17 +387,53 @@ describe("CallWorkersPanel", () => {
       expect(node.closest('[data-testid="tree-branch"]')).not.toBeNull();
       expect(ownerOf(node)).toBe(root);
       expect(root).toHaveTextContent("Coordinator · Returns coordinator");
-      // The request sits above the root and the reply after it.
+      // Each turn reads in order: the request, the hand-offs made for it, then the reply.
       const request = screen.getByText("Caller's request");
       const reply = screen.getByText("Coordinator's reply");
       expect(
-        request.compareDocumentPosition(root) &
+        request.compareDocumentPosition(node) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(
-        root.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+        node.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      expect(root.contains(reply)).toBe(false);
+    });
+
+    it("draws one block per turn, each with its own request, hand-offs and reply", () => {
+      const record = withSteps(TIMELINE);
+      result = {
+        data: {
+          ...record,
+          steps: record.steps.map((step, index) => ({
+            ...step,
+            turn: index === 0 ? 1 : 2,
+          })),
+          turns: [
+            {
+              turn: 1,
+              request: { text: "first question", at: null },
+              response: { text: "first answer", at: null },
+            },
+            {
+              turn: 2,
+              request: { text: "second question", at: null },
+              response: null,
+            },
+          ],
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const blocks = screen.getAllByTestId("turn");
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0]).toHaveTextContent("Turn 1 · Caller's request");
+      expect(blocks[0]).toHaveTextContent("first answer");
+      expect(blocks[1]).toHaveTextContent("second question");
+      expect(blocks[1]).toHaveTextContent("No reply recorded");
+      // The hand-off made in turn 1 is drawn in turn 1's block only.
+      expect(within(blocks[0]).getAllByTestId("hand-off")).toHaveLength(1);
+      expect(within(blocks[1]).queryAllByTestId("hand-off")).toHaveLength(0);
     });
 
     it("hangs a nested hand-off under the node of the agent that made it", () => {

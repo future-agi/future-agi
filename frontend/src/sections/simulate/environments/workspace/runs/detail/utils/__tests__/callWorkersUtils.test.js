@@ -131,6 +131,7 @@ describe("nest", () => {
   it("reads a record with no steps as an empty tree", () => {
     expect(nest({})).toEqual({
       items: [],
+      rounds: [],
       depth: 0,
       parallel: 0,
       overlapUnknown: false,

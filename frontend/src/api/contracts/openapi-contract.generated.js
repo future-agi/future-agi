@@ -56718,6 +56718,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "events",
         "collected_at",
         "steps",
+        "turns",
         "depth",
         "parallel",
         "overlap_unknown",
@@ -56769,6 +56770,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/CallWorkerStep",
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerRound",
           },
         },
         depth: {
@@ -92995,8 +93002,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallWorkerRound: {
+      required: ["turn", "request", "response"],
+      type: "object",
+      properties: {
+        turn: {
+          title: "Turn",
+          type: "integer",
+        },
+        request: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+        response: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+      },
+    },
     CallWorkerStep: {
-      required: ["kind", "key", "parent", "depth", "worker_id"],
+      required: ["kind", "key", "parent", "depth", "worker_id", "turn"],
       type: "object",
       properties: {
         kind: {
@@ -93051,6 +93074,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         call: {
           $ref: "#/definitions/CallWorkerEvent",
+        },
+        turn: {
+          title: "Turn",
+          type: "integer",
         },
       },
     },

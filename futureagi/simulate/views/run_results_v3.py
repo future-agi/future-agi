@@ -639,6 +639,16 @@ class CallWorkerStepSerializer(serializers.Serializer):
     parallel = serializers.BooleanField(required=False)
     # Tool-call rows: the call itself.
     call = CallWorkerEventSerializer(required=False)
+    # The call's turn this row happened in: turn n starts at the caller's nth message, 0 is before they spoke.
+    turn = serializers.IntegerField()
+
+
+class CallWorkerRoundSerializer(serializers.Serializer):
+    """One turn that had steps: the caller's message that opened it and the agent's reply after its last step."""
+
+    turn = serializers.IntegerField()
+    request = CallWorkerTurnSerializer(allow_null=True)
+    response = CallWorkerTurnSerializer(allow_null=True)
 
 
 class CallWorkersResponseSerializer(serializers.Serializer):
@@ -654,6 +664,7 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     spans_received = serializers.BooleanField(required=False)
     collected_at = serializers.CharField()
     steps = CallWorkerStepSerializer(many=True)
+    turns = CallWorkerRoundSerializer(many=True)
     # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
     depth = serializers.IntegerField()
     parallel = serializers.IntegerField()
@@ -1036,7 +1047,12 @@ class CallExecutionV3WorkersView(APIView):
         timeline = (call.call_metadata or {}).get(WORKERS_KEY)
         if not timeline:
             return Response(status=status.HTTP_204_NO_CONTENT)
-        steps = worker_steps(timeline.get("events", []))
+        steps = worker_steps(
+            timeline.get("events", []),
+            timeline.get("messages", []),
+            request=timeline.get("request"),
+            response=timeline.get("response"),
+        )
         return Response(CallWorkersResponseSerializer({**timeline, **steps}).data)
 
 

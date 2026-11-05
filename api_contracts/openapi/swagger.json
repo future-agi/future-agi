@@ -144838,7 +144838,8 @@
                 "key",
                 "parent",
                 "depth",
-                "worker_id"
+                "worker_id",
+                "turn"
             ],
             "type": "object",
             "properties": {
@@ -144897,6 +144898,30 @@
                 },
                 "call": {
                     "$ref": "#/definitions/CallWorkerEvent"
+                },
+                "turn": {
+                    "title": "Turn",
+                    "type": "integer"
+                }
+            }
+        },
+        "CallWorkerRound": {
+            "required": [
+                "turn",
+                "request",
+                "response"
+            ],
+            "type": "object",
+            "properties": {
+                "turn": {
+                    "title": "Turn",
+                    "type": "integer"
+                },
+                "request": {
+                    "$ref": "#/definitions/CallWorkerTurn"
+                },
+                "response": {
+                    "$ref": "#/definitions/CallWorkerTurn"
                 }
             }
         },
@@ -144906,6 +144931,7 @@
                 "events",
                 "collected_at",
                 "steps",
+                "turns",
                 "depth",
                 "parallel",
                 "overlap_unknown",
@@ -144957,6 +144983,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/CallWorkerStep"
+                    }
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CallWorkerRound"
                     }
                 },
                 "depth": {

@@ -584,14 +584,6 @@ export default function CallWorkersPanel({ callExecutionId }) {
           {C.sandboxOnly}
         </Typography>
       ) : null}
-      {hasHandOffs && (
-        <Turn
-          title={C.request}
-          turn={data.request}
-          start={start}
-          empty={C.noRequest}
-        />
-      )}
       {/* The coordinator is the tree's root: every hand-off hangs under the agent that made it. */}
       <Box data-testid="tree-root">
         <Box
@@ -623,41 +615,67 @@ export default function CallWorkersPanel({ callExecutionId }) {
                 : C.seen(tree.depth, tree.parallel, tree.overlapUnknown)}
           </Typography>
         </Box>
-        <Branch>
-          {tree.items.map((item) =>
-            item.kind === "handoff" ? (
-              <HandOff
-                key={item.key}
-                block={item}
-                workers={workers}
-                start={start}
-                cutOff={data.events_omitted > 0}
-              />
-            ) : (
-              <ToolRow
-                key={item.key}
-                event={item.event}
-                who={nameOf(item.event)}
-                start={start}
-              />
-            ),
-          )}
-        </Branch>
+        {tree.rounds.map((round) => {
+          const label =
+            tree.rounds.length > 1 ? `${C.turn(round.turn)} · ` : "";
+          return (
+            <Stack key={round.turn} spacing={1.25} data-testid="turn">
+              {hasHandOffs &&
+                !(
+                  round.turn === 0 &&
+                  tree.rounds.length > 1 &&
+                  !round.request
+                ) && (
+                  <Turn
+                    title={`${label}${C.request}`}
+                    turn={round.request}
+                    start={start}
+                    empty={C.noRequest}
+                  />
+                )}
+              {round.turn === 0 && !round.request && tree.rounds.length > 1 ? (
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {C.turn(0)}
+                </Typography>
+              ) : null}
+              <Branch>
+                {round.items.map((item) =>
+                  item.kind === "handoff" ? (
+                    <HandOff
+                      key={item.key}
+                      block={item}
+                      workers={workers}
+                      start={start}
+                      cutOff={data.events_omitted > 0}
+                    />
+                  ) : (
+                    <ToolRow
+                      key={item.key}
+                      event={item.event}
+                      who={nameOf(item.event)}
+                      start={start}
+                    />
+                  ),
+                )}
+              </Branch>
+              {hasHandOffs && (
+                <Turn
+                  title={`${label}${C.response}`}
+                  turn={round.response}
+                  agent
+                  start={start}
+                  empty={C.noReply}
+                />
+              )}
+            </Stack>
+          );
+        })}
       </Box>
       {data.events_omitted ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.eventsOmitted(data.events_omitted)}
         </Typography>
       ) : null}
-      {hasHandOffs && (
-        <Turn
-          title={C.response}
-          turn={data.response}
-          agent
-          start={start}
-          empty={C.noReply}
-        />
-      )}
     </Stack>
   );
 }
