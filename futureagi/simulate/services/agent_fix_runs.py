@@ -2,6 +2,7 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from datetime import timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -46,6 +47,9 @@ logger = structlog.get_logger(__name__)
 # A third of the failing cases are held back, once there are enough for a third to tell.
 HELD_BACK_SHARE = 3
 HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
+# A retry started this soon after its failed fix ended skips the models that fix lost, so it
+# does not hang on them again. A later retry starts clean: an outage may be over.
+RETRY_SKIPS_LOST_MODELS_FOR = timedelta(hours=1)
 
 
 def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:
@@ -175,9 +179,13 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
     require_agent_fix_usage(str(failed.organization_id))
-    # The models the failed fix lost: the retry's first launch starts without them. Its
-    # last error stays with it.
-    lost_models = (failed.engine_notes or {}).get("lost_models") or []
+    # The models the failed fix lost, if it ended recently: the retry's first launch starts
+    # without them. Its last error stays with it.
+    notes = failed.engine_notes or {}
+    recent = failed.finished_at is not None and (
+        timezone.now() - failed.finished_at < RETRY_SKIPS_LOST_MODELS_FOR
+    )
+    lost_models = (notes.get("lost_models") or []) if recent else []
     return _create_fix_run(
         source_run,
         base_version_id=failed.base_agent_version_id,

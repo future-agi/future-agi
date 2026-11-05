@@ -28,7 +28,11 @@ from simulate.models import TestExecution as Execution
 from simulate.pydantic_schemas.agent_fix import Surface
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
-from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
+from simulate.services.agent_fix_runs import (
+    RETRY_SKIPS_LOST_MODELS_FOR,
+    close_fix_run,
+    retry_fix_run,
+)
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_row,
@@ -2233,8 +2237,8 @@ class TestEngineMemory:
         fix_run.refresh_from_db()
         assert fix_run.engine_notes == {"lost_models": [], "last_error": "x" * 500}
 
-    def test_a_retry_s_first_brief_names_what_the_failed_fix_lost(
-        self, api_client, source_run, user, temporal
+    def _retry_of_a_fix_that_lost_a_model(
+        self, api_client, source_run, user, *, ended_ago
     ):
         failed = _armed(_fix_run(source_run))
         self._report(
@@ -2248,20 +2252,46 @@ class TestEngineMemory:
             AgentFixRun.State.FAILED,
             failure={"code": "fix_engine_died", "message": "m"},
         )
+        AgentFixRun.no_workspace_objects.filter(id=failed.id).update(
+            finished_at=timezone.now() - ended_ago
+        )
         retried = retry_fix_run(
             AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
         )
         AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
             state=AgentFixRun.State.RUNNING
         )
-
         brief = _engine(api_client, "get", _armed(retried), "brief/").json()
+        retried.refresh_from_db()
+        return retried, brief
+
+    def test_a_retry_s_first_brief_names_what_a_recent_failed_fix_lost(
+        self, api_client, source_run, user, temporal
+    ):
+        retried, brief = self._retry_of_a_fix_that_lost_a_model(
+            api_client,
+            source_run,
+            user,
+            ended_ago=RETRY_SKIPS_LOST_MODELS_FOR - timedelta(minutes=1),
+        )
 
         assert brief["lost_models"] == ["deepseek/flash"]
         # The failed fix's error is its own: the retry's failure must not name it.
-        retried.refresh_from_db()
         assert retried.report is None
         assert retried.engine_notes == {
             "lost_models": ["deepseek/flash"],
             "last_error": None,
         }
+
+    def test_a_retry_of_a_fix_that_failed_long_ago_starts_clean(
+        self, api_client, source_run, user, temporal
+    ):
+        retried, brief = self._retry_of_a_fix_that_lost_a_model(
+            api_client,
+            source_run,
+            user,
+            ended_ago=RETRY_SKIPS_LOST_MODELS_FOR + timedelta(minutes=1),
+        )
+
+        assert brief["lost_models"] == []
+        assert retried.engine_notes is None
