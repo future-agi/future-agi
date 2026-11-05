@@ -97,6 +97,9 @@ const UserManagementV2 = lazyWithRetry(
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
 );
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
+);
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
 );
@@ -237,6 +240,12 @@ const VoiceFullPage = lazyWithRetry(
 // );
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
+);
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
 );
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
@@ -590,6 +599,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -1176,6 +1188,25 @@ export const dashboardRoutes = (
         {
           path: "users",
           element: <UsersView />,
+        },
+        // Insights and Instant eval are Enterprise: without the capability
+        // (e.g. open source) the route shows the upgrade gate, as Error Feed.
+        {
+          path: "insights",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSIGHTS}>
+              <InsightsView />
+            </CapabilityGate>
+          ),
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSTANT_EVAL}>
+              <AskPage />
+            </CapabilityGate>
+          ),
         },
       ],
     },

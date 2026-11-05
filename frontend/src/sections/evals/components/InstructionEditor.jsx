@@ -283,6 +283,7 @@ const InstructionEditor = ({
   // parent form can collect mode / internet / summary / connectors / KBs.
   mode,
   onModeChange,
+  previousModeRef,
   useInternet,
   onUseInternetChange,
   activeSummary,
@@ -974,6 +975,7 @@ const InstructionEditor = ({
               disabled={modelBarDisabled}
               mode={mode}
               onModeChange={onModeChange}
+              previousModeRef={previousModeRef}
               useInternet={useInternet}
               onUseInternetChange={onUseInternetChange}
               activeSummary={activeSummary}

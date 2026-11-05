@@ -6,10 +6,16 @@ Raw membership only discovers immutable keys. A replaced session ID, a cleared
 ID, or a tombstone must still participate in FINAL before membership is tested.
 """
 
-from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    source_summary_sql,
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
 
-_LIVE_SESSION_SPANS = """
-    SELECT * FROM spans FINAL
+_LIVE_SESSION_SPANS = f"""
+    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.")} AS usage_coverage,
+        {source_summary_sql(attrs="spans.attrs_string")} AS source_summary_present
+    FROM spans FINAL
     PREWHERE project_id = %(project_id)s
       AND (observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN (
           SELECT DISTINCT observation_type, service_name,
@@ -49,13 +55,16 @@ def build_session_detail_aggregate_query(project_id, session_group_ids):
         SELECT
             min(trace_start) AS session_start,
             max(trace_end) AS session_end,
-            sum(usage_cost) AS total_cost,
+            if(countIf(isNull(usage_cost)) > 0,
+               CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS total_cost,
             sum(usage_total_tokens) AS total_tokens,
             count() AS total_traces,
-            toString(argMaxIfMerge(user_state)) AS end_user_id
+            toString(argMaxIfMerge(user_state)) AS end_user_id,
+            max(usage_source_summary_present) AS source_summary_present,
+            sum(usage_request_count) AS observed_request_count
         FROM (
             SELECT trace_id, min(start_time) AS trace_start, max(end_time) AS trace_end,
-                {usage_aggregate_sql(prefix="live_session_spans.")},
+                {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", source_summary="live_session_spans.source_summary_present")},
                 argMaxIfState(end_user_id,
                     tuple(start_time, trace_id, id, observation_type, service_name),
                     isNotNull(end_user_id)
@@ -112,7 +121,7 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
             ) AS trace_messages,
             min(CASE WHEN parent_span_id IS NULL OR parent_span_id = ''
                      THEN latency_ms ELSE NULL END) AS root_latency_ms,
-            {usage_aggregate_sql(prefix="live_session_spans.")},
+            {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage")},
             usage_cost AS total_cost,
             min(start_time) AS trace_min_start_time,
             usage_total_tokens AS total_tokens,

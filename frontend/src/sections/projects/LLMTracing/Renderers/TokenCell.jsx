@@ -1,4 +1,5 @@
 import React from "react";
+import ObservedUsageValue from "./ObservedUsageValue";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -80,6 +81,15 @@ const TokenCell = ({ value, data }) => {
   const promptTokens = data?.prompt_tokens ?? 0;
   const completionTokens = data?.completion_tokens ?? 0;
   const totalTokens = value ?? data?.total_tokens ?? 0;
+
+  if (data?._captureCoverage?.coverage_unknown) {
+    return (
+      <ObservedUsageValue
+        coverage={data._captureCoverage}
+        value={`${totalTokens.toLocaleString()} tokens`}
+      />
+    );
+  }
 
   if (!totalTokens && !promptTokens && !completionTokens) {
     return (
