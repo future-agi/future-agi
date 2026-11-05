@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
 import VoiceLeftPanel from "../VoiceLeftPanel";
@@ -49,6 +49,31 @@ describe("VoiceLeftPanel extra tabs", () => {
 
     await user.click(screen.getByText("Traces"));
 
+    expect(screen.getByTestId("traces-content")).toBeInTheDocument();
+  });
+
+  it("follows a tab its host holds, and asks the host to change it", async () => {
+    const user = userEvent.setup();
+    const onTabChange = vi.fn();
+    render(
+      <VoiceLeftPanel
+        data={data}
+        hidePathTabs
+        tab="traces"
+        onTabChange={onTabChange}
+        extraTabs={[
+          {
+            label: "Traces",
+            value: "traces",
+            content: <div data-testid="traces-content" />,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("traces-content")).toBeInTheDocument();
+    await user.click(screen.getByText("Transcript"));
+    expect(onTabChange).toHaveBeenCalledWith("transcript");
     expect(screen.getByTestId("traces-content")).toBeInTheDocument();
   });
 

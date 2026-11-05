@@ -19,8 +19,13 @@ import {
 const ROLE_LABEL = {
   agent: "Assistant",
   customer: "Customer",
-  tool: "Tool call",
+  tool: "Tool",
 };
+const TOOL_SERIES = 1;
+const isHandOffRow = (turn) =>
+  turn.role === "tool" &&
+  Array.isArray(turn.toolCalls) &&
+  turn.toolCalls.some((call) => call?.delegated_to);
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -120,7 +125,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
                 s.role === "agent"
                   ? t.palette.text.secondary
                   : s.role === "tool"
-                    ? t.palette.warning.main
+                    ? seriesColor(t, TOOL_SERIES)
                     : isOtherRole(s.role)
                       ? seriesColor(t, OTHER_PARTY_SERIES)
                       : t.palette.text.disabled,
@@ -140,6 +145,8 @@ export default function ChatTranscriptPane({ turns, customerName }) {
               {turnStamp(s, i)} ·{" "}
               {isOtherRole(s.role) ? (
                 <OtherPartyName party={s} color="text.subtitle" />
+              ) : isHandOffRow(s) ? (
+                "Hand-off"
               ) : (
                 ROLE_LABEL[s.role] || s.role
               )}

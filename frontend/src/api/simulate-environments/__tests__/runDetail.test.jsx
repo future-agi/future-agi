@@ -1701,6 +1701,62 @@ describe("useCallWorkers", () => {
       true,
     );
     expect(await has({ workers: [{ id: "w" }], events: [] })).toBe(true);
+    expect(await has("")).toBe(false);
+  });
+
+  it("doesn't know whether a call has workers while the record is unread or unreadable", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient();
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get.mockRejectedValue(new Error("forbidden"));
+    const { result } = renderHook(() => useHasWorkers("call-unread"), {
+      wrapper: Wrapper,
+    });
+    expect(result.current).toBeUndefined();
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(client.getQueryState(["simulation-call-workers-v3", "call-unread"]))
+        .toMatchObject({ status: "error" }),
+    );
+    expect(result.current).toBeUndefined();
+  });
+
+  it("stops checking for a record once a check fails, and leaves the failure to the panel", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers, WORKERS_POLL_MS } = await import("../runDetail");
+      axios.get.mockReset();
+      axios.get
+        .mockResolvedValueOnce({ status: 204, data: "" })
+        .mockRejectedValue(new Error("forbidden"));
+      const client = new QueryClient();
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const justEnded = { completedAt: new Date().toISOString() };
+      const { result } = renderHook(
+        () => useCallWorkers("call-failing", justEnded),
+        { wrapper: Wrapper },
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS);
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS * 4);
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(
+        client
+          .getQueryCache()
+          .find({ queryKey: ["simulation-call-workers-v3", "call-failing"] })
+          .meta.errorHandled,
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("checks again for a record still arriving after a recent call, and never for an older one", async () => {

@@ -16,7 +16,11 @@ import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
 import CallWorkersPanel from "./CallWorkersPanel";
-import { CALL_TRACES_COPY, CALL_WORKERS_COPY } from "./callTraces.constants";
+import {
+  CALL_TRACES_COPY,
+  CALL_WORKERS_COPY,
+  ownsArrowKeys,
+} from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -66,17 +70,6 @@ NavArrow.propTypes = {
   disabled: PropTypes.bool,
 };
 
-// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
-// instead of stepping to another conversation — the voice transcript does the
-// same. Focusable so a click inside hands it the keyboard; default not
-// prevented, so the browser still scrolls.
-const ownsArrowKeys = {
-  tabIndex: 0,
-  onKeyDown: (e) => {
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
-  },
-};
-
 export default function ChatCallDrawer({
   task,
   executionId = null,
@@ -108,9 +101,11 @@ export default function ChatCallDrawer({
   const [side, setSide] = useState("analytics");
   const [chosenArtifact, setChosenArtifact] = useState("transcript");
   const hasWorkers = useHasWorkers(task.id, task.completedAt);
-  // The next call may have no Participants tab; the chosen one falls back to the transcript.
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back.
   const artifact =
-    chosenArtifact === "workers" && !hasWorkers ? "transcript" : chosenArtifact;
+    chosenArtifact === "workers" && hasWorkers === false
+      ? "transcript"
+      : chosenArtifact;
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -197,14 +192,14 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            {hasWorkers ? (
+            {hasWorkers || artifact === "workers" ? (
               <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
             ) : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
             {artifact === "workers" ? (
-              <CallWorkersPanel callExecutionId={task.id} />
+              <CallWorkersPanel key={task.id} callExecutionId={task.id} />
             ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel

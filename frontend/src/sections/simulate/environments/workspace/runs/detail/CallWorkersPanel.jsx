@@ -7,29 +7,50 @@ import {
   CircularProgress,
   Collapse,
   Stack,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import {
   isHandOff,
   useCallWorkers,
 } from "src/api/simulate-environments/runDetail";
 import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
+import { MONO_FONT as MONO } from "src/sections/simulate/environments/workspace/contract/contract.constants";
+import { seriesColor } from "src/theme/data-colors";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { arrange, asShown, isLong, seconds } from "./utils/callWorkersUtils";
 import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 // One colour per level of hand-off, so a deep or wide team stays readable; names tell workers apart.
-const DEPTH_COLORS = ["info", "success", "warning", "secondary", "error"];
-const depthColor = (depth) =>
-  DEPTH_COLORS[(Math.max(depth, 1) - 1) % DEPTH_COLORS.length];
+const depthColor = (t, depth) => seriesColor(t, Math.max(depth, 1) - 1);
 // Levels shown open at first; deeper hand-offs start folded.
 const OPEN_DEPTH = 2;
 // Worker chips shown one by one; a larger team is summarised.
 const MAX_CHIPS = 8;
-const MONO = "ui-monospace, Menlo, monospace";
+// Past this a heading may hit its three-line clamp, so the whole of it shows on hover.
+const LONG_TITLE = 80;
+const NO_IMAGES = ["img"];
+
+const DISCLOSURE_SX = {
+  cursor: "pointer",
+  borderRadius: "4px",
+  outline: "none",
+  "&:hover, &:focus-visible": { bgcolor: "action.hover" },
+};
+const disclosure = (open, toggle) => ({
+  role: "button",
+  tabIndex: 0,
+  "aria-expanded": open,
+  onClick: toggle,
+  onKeyDown: (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  },
+});
 
 // Time into the call ("0:05"), as the transcript shows it, with the exact clock time on hover.
 function Stamp({ at, start }) {
@@ -41,7 +62,10 @@ function Stamp({ at, start }) {
       ? new Date(moment * 1000).toISOString().slice(11, 19)
       : formatClock(Math.max(0, moment - from));
   return (
-    <Tooltip
+    <CustomTooltip
+      show
+      size="small"
+      arrow
       title={`${new Date(moment * 1000).toISOString().replace("T", " ").slice(0, 23)} UTC`}
     >
       <Typography
@@ -55,42 +79,46 @@ function Stamp({ at, start }) {
       >
         {label}
       </Typography>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 Stamp.propTypes = { at: PropTypes.string, start: PropTypes.string };
 
 function Line({ title, at, start, color, children }) {
   return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="baseline"
-      justifyContent="space-between"
-    >
+    <Stack direction="row" spacing={1} alignItems="baseline">
       {/* A long task stays a heading: three lines, the whole of it on hover. */}
-      <Typography
-        title={typeof title === "string" ? title : undefined}
-        sx={{
-          typography: "s2",
-          fontWeight: 600,
-          color,
-          wordBreak: "break-word",
-          display: "-webkit-box",
-          WebkitLineClamp: 3,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
+      <CustomTooltip
+        show={title.length > LONG_TITLE}
+        size="small"
+        arrow
+        title={title}
       >
-        {title}
-      </Typography>
-      <Stamp at={at} start={start} />
+        <Typography
+          sx={{
+            typography: "s1",
+            fontWeight: 600,
+            color,
+            flex: 1,
+            minWidth: 0,
+            wordBreak: "break-word",
+            display: "-webkit-box",
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {title}
+        </Typography>
+      </CustomTooltip>
       {children}
+      {/* Last in the row, so every time ends at the same right edge. */}
+      <Stamp at={at} start={start} />
     </Stack>
   );
 }
 Line.propTypes = {
-  title: PropTypes.node,
+  title: PropTypes.string.isRequired,
   at: PropTypes.string,
   start: PropTypes.string,
   color: PropTypes.string,
@@ -105,7 +133,7 @@ function Payload({ label, value, omitted }) {
       </Typography>
       {value === null || value === undefined ? (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          {omitted ? C.payloadOmitted : C.unknown}
+          {omitted ? C.payloadOmitted : C.noPayload}
         </Typography>
       ) : typeof value === "object" ? (
         <CustomJsonViewer object={value} />
@@ -137,15 +165,30 @@ function ToolRow({ event, who, start }) {
   const failed = event.status === "error";
   return (
     <Box
-      sx={{ px: 1, py: 0.5, borderRadius: 0.75, bgcolor: "background.neutral" }}
+      sx={{
+        pl: 1,
+        pr: 1.75,
+        py: 0.5,
+        borderRadius: 0.75,
+        bgcolor: "background.neutral",
+      }}
     >
       <Stack
         direction="row"
         spacing={1}
         alignItems="center"
-        onClick={() => setOpen((one) => !one)}
-        sx={{ cursor: "pointer" }}
+        {...disclosure(open, () => setOpen((one) => !one))}
+        sx={DISCLOSURE_SX}
       >
+        <Iconify
+          icon={
+            open
+              ? "solar:alt-arrow-down-linear"
+              : "solar:alt-arrow-right-linear"
+          }
+          width={12}
+          sx={{ color: "text.subtitle", flexShrink: 0 }}
+        />
         <Iconify
           icon="solar:code-linear"
           width={13}
@@ -164,14 +207,6 @@ function ToolRow({ event, who, start }) {
           {failed ? ` (${C.failed})` : ""}
         </Typography>
         <Stamp at={event.at} start={start} />
-        <Iconify
-          icon={
-            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
-          }
-          width={12}
-          sx={{ color: "text.subtitle" }}
-          aria-label={C.showDetail}
-        />
       </Stack>
       <Collapse in={open} unmountOnExit>
         <Stack spacing={0.75} sx={{ pt: 0.75, pl: 2.5 }}>
@@ -196,12 +231,12 @@ ToolRow.propTypes = {
   start: PropTypes.string,
 };
 
-function Answer({ text }) {
+function Answer({ text, empty }) {
   const [whole, setWhole] = useState(false);
   if (!text)
     return (
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-        {C.unknown}
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+        {empty}
       </Typography>
     );
   const shown = asShown(text);
@@ -212,17 +247,24 @@ function Answer({ text }) {
         data-testid="answer"
         data-clamped={clamped}
         sx={{
+          typography: "s1",
           wordBreak: "break-word",
           // Headings inside an answer read as bold lines, not page titles.
           "& h1, & h2, & h3, & h4, & h5, & h6": {
-            typography: "s2",
+            typography: "s1",
             fontWeight: 600,
             my: 0.25,
           },
-          ...(clamped && { maxHeight: "8.4em", overflow: "hidden" }),
+          ...(clamped && { maxHeight: "9em", overflow: "hidden" }),
         }}
       >
-        <Markdown text={shown} dim />
+        {/* Worker text isn't ours: an image in it would load from any host. */}
+        <Markdown
+          text={shown}
+          dim
+          variant="s1"
+          disallowedElements={NO_IMAGES}
+        />
       </Box>
       {isLong(shown) ? (
         <Typography
@@ -243,10 +285,10 @@ function Answer({ text }) {
     </Box>
   );
 }
-Answer.propTypes = { text: PropTypes.string };
+Answer.propTypes = { text: PropTypes.string, empty: PropTypes.string };
 
 // A turn of the caller or the coordinator, styled as the transcript styles it.
-function Turn({ title, turn, agent, start }) {
+function Turn({ title, turn, agent, start, empty }) {
   return (
     <Box
       sx={{
@@ -265,7 +307,7 @@ function Turn({ title, turn, agent, start }) {
       }}
     >
       <Line title={title} at={turn?.at} start={start} />
-      <Answer text={turn?.text} />
+      <Answer text={turn?.text} empty={empty} />
     </Box>
   );
 }
@@ -274,15 +316,16 @@ Turn.propTypes = {
   turn: PropTypes.object,
   agent: PropTypes.bool,
   start: PropTypes.string,
+  empty: PropTypes.string,
 };
 
 // Children of one node, as a file tree draws them: a guide line down the left and an elbow into each child.
 const ELBOW_TOP = 13;
-function Branch({ children }) {
+function Branch({ children, sx }) {
   const items = children.filter(Boolean);
   if (!items.length) return null;
   return (
-    <Box data-testid="tree-branch" sx={{ ml: 1, pl: 2.25, pt: 0.75 }}>
+    <Box data-testid="tree-branch" sx={{ ml: 1, pl: 2.25, pt: 0.75, ...sx }}>
       {items.map((child, index) => (
         <Box
           key={child.key ?? index}
@@ -316,13 +359,15 @@ function Branch({ children }) {
     </Box>
   );
 }
-Branch.propTypes = { children: PropTypes.array.isRequired };
+Branch.propTypes = {
+  children: PropTypes.array.isRequired,
+  sx: PropTypes.object,
+};
 
 // A hand-off to one worker: what it was asked, its own calls, the hand-offs it made in turn, and what it returned.
-function HandOff({ block, workers, nameOf, start }) {
+function HandOff({ block, workers, start, cutOff }) {
   const [open, setOpen] = useState(block.depth <= OPEN_DEPTH);
   const name = workers[block.worker_id]?.name || C.unknown;
-  const color = depthColor(block.depth);
   const transfer = Boolean(block.transfer);
   return (
     <Box
@@ -331,9 +376,12 @@ function HandOff({ block, workers, nameOf, start }) {
       data-worker={name}
       sx={{
         borderLeft: "2px solid",
-        borderColor: `${color}.main`,
+        borderColor: (t) => depthColor(t, block.depth),
         bgcolor: (t) =>
-          alpha(t.palette[color].main, t.palette.mode === "dark" ? 0.08 : 0.05),
+          alpha(
+            depthColor(t, block.depth),
+            t.palette.mode === "dark" ? 0.08 : 0.05,
+          ),
         px: 1.75,
         py: 1,
       }}
@@ -342,8 +390,10 @@ function HandOff({ block, workers, nameOf, start }) {
         direction="row"
         spacing={0.75}
         alignItems="flex-start"
-        onClick={() => setOpen((one) => !one)}
-        sx={{ cursor: "pointer" }}
+        {...disclosure(open, () => setOpen((one) => !one))}
+        // Named by the hand-off alone; otherwise the whole task becomes the button's name.
+        aria-label={transfer ? C.transferred(name) : C.delegated(name)}
+        sx={DISCLOSURE_SX}
       >
         <Iconify
           icon={
@@ -377,29 +427,20 @@ function HandOff({ block, workers, nameOf, start }) {
       </Stack>
       <Collapse in={open} unmountOnExit>
         <Stack spacing={0.75}>
-          <Branch>
+          {/* Each level reaches its parent's right edge, so times line up at any depth. */}
+          <Branch sx={{ mr: -1.75 }}>
             {block.items.map((item) =>
               item.kind === "handoff" ? (
                 <HandOff
                   key={item.key}
                   block={item}
                   workers={workers}
-                  nameOf={nameOf}
                   start={start}
+                  cutOff={cutOff}
                 />
               ) : (
-                <ToolRow
-                  key={item.key}
-                  event={item.event}
-                  // Inside its worker's node a call names only the tool; one made by another agent still says whose.
-                  who={
-                    item.event.worker_id === block.worker_id &&
-                    item.event.attribution !== "unattributed"
-                      ? null
-                      : nameOf(item.event)
-                  }
-                  start={start}
-                />
+                // Inside its worker's node a call names only the tool.
+                <ToolRow key={item.key} event={item.event} start={start} />
               ),
             )}
           </Branch>
@@ -413,11 +454,11 @@ function HandOff({ block, workers, nameOf, start }) {
                   block.returned.status === "error" ? "error.main" : undefined
                 }
               />
-              <Answer text={block.returned.result} />
+              <Answer text={block.returned.result} empty={C.noResult} />
             </Box>
           ) : (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {C.noReturn(name)}
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+              {cutOff ? C.returnCutOff(name) : C.noReturn(name)}
             </Typography>
           )}
         </Stack>
@@ -428,8 +469,8 @@ function HandOff({ block, workers, nameOf, start }) {
 HandOff.propTypes = {
   block: PropTypes.object.isRequired,
   workers: PropTypes.object.isRequired,
-  nameOf: PropTypes.func,
   start: PropTypes.string,
+  cutOff: PropTypes.bool,
 };
 
 function WorkerChips({ workers, depthOf }) {
@@ -439,10 +480,15 @@ function WorkerChips({ workers, depthOf }) {
       key={one.worker_id}
       size="small"
       variant={one.observed ? "soft" : "outlined"}
-      color={
+      sx={
         one.worker_id in depthOf
-          ? depthColor(depthOf[one.worker_id])
-          : "default"
+          ? (t) => ({
+              borderColor: depthColor(t, depthOf[one.worker_id]),
+              ...(one.observed && {
+                bgcolor: alpha(depthColor(t, depthOf[one.worker_id]), 0.16),
+              }),
+            })
+          : undefined
       }
       label={[
         one.name,
@@ -469,7 +515,7 @@ function WorkerChips({ workers, depthOf }) {
   return (
     <Box sx={{ mt: 0.75 }}>
       <Stack direction="row" spacing={1} alignItems="center">
-        <Typography sx={{ typography: "s2" }}>
+        <Typography sx={{ typography: "s1" }}>
           {C.workersSummary(
             workers.length,
             observed,
@@ -504,19 +550,15 @@ WorkerChips.propTypes = {
 
 /** One call of a multi-agent app as a hand-off tree under the coordinator, framed by the request and the reply. */
 export default function CallWorkersPanel({ callExecutionId }) {
-  const { data, isLoading, isError } = useCallWorkers(callExecutionId);
-  if (isLoading) return <CircularProgress size={20} sx={{ m: 2 }} />;
-  if (isError)
-    return (
-      <Typography sx={{ p: 2, typography: "s2", color: "error.main" }}>
+  const { data, isError } = useCallWorkers(callExecutionId);
+  // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
+  if (!data)
+    return isError ? (
+      <Typography sx={{ p: 2, typography: "s1", color: "error.main" }}>
         {C.error}
       </Typography>
-    );
-  if (!data)
-    return (
-      <Typography sx={{ p: 2, typography: "s2", color: "text.secondary" }}>
-        {C.none}
-      </Typography>
+    ) : (
+      <CircularProgress size={20} sx={{ m: 2 }} />
     );
 
   const workers = Object.fromEntries(
@@ -534,7 +576,7 @@ export default function CallWorkersPanel({ callExecutionId }) {
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {C.intro}
       </Typography>
       {data.spans_received === false ? (
@@ -542,13 +584,14 @@ export default function CallWorkersPanel({ callExecutionId }) {
           {C.sandboxOnly}
         </Typography>
       ) : null}
-      {hasHandOffs ? (
-        <Turn title={C.request} turn={data.request} start={start} />
-      ) : !data.workers.length ? (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {C.noHandOffs}
-        </Typography>
-      ) : null}
+      {hasHandOffs && (
+        <Turn
+          title={C.request}
+          turn={data.request}
+          start={start}
+          empty={C.noRequest}
+        />
+      )}
       {/* The coordinator is the tree's root: every hand-off hangs under the agent that made it. */}
       <Box data-testid="tree-root">
         <Box
@@ -564,8 +607,10 @@ export default function CallWorkersPanel({ callExecutionId }) {
             py: 1,
           }}
         >
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {`${C.coordinator} · ${data.coordinator?.name || C.unknown}`}
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            {data.coordinator?.name
+              ? `${C.coordinator} · ${data.coordinator.name}`
+              : C.coordinator}
           </Typography>
           <WorkerChips workers={data.workers} depthOf={tree.depthOf} />
           <Typography
@@ -573,15 +618,10 @@ export default function CallWorkersPanel({ callExecutionId }) {
           >
             {tree.depth === 0
               ? null
-              : tree.depth === 1 && !tree.parallel
+              : tree.depth === 1 && !tree.parallel && !tree.overlapUnknown
                 ? C.seenFlat
-                : C.seen(tree.depth, tree.parallel)}
+                : C.seen(tree.depth, tree.parallel, tree.overlapUnknown)}
           </Typography>
-          {tree.depth > 1 || tree.parallel ? (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {C.scope}
-            </Typography>
-          ) : null}
         </Box>
         <Branch>
           {tree.items.map((item) =>
@@ -590,8 +630,8 @@ export default function CallWorkersPanel({ callExecutionId }) {
                 key={item.key}
                 block={item}
                 workers={workers}
-                nameOf={nameOf}
                 start={start}
+                cutOff={data.events_omitted > 0}
               />
             ) : (
               <ToolRow
@@ -610,7 +650,13 @@ export default function CallWorkersPanel({ callExecutionId }) {
         </Typography>
       ) : null}
       {hasHandOffs && (
-        <Turn title={C.response} turn={data.response} agent start={start} />
+        <Turn
+          title={C.response}
+          turn={data.response}
+          agent
+          start={start}
+          empty={C.noReply}
+        />
       )}
     </Stack>
   );

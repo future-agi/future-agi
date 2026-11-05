@@ -702,17 +702,24 @@ export function useCallWorkers(callExecutionId, { completedAt } = {}) {
       (await simulateV3CallExecutionWorkers(callExecutionId)).data || null,
     enabled: !!callExecutionId,
     retry: false,
+    // The panel says so inline; this tab must not toast about a call the user isn't looking at.
+    meta: { errorHandled: true },
     refetchInterval: (query) =>
       query.state.data === null &&
+      !query.state.error &&
       Date.now() - ended < WORKERS_ARRIVAL_WINDOW_MS
         ? WORKERS_POLL_MS
         : false,
   });
 }
 
-/** Whether a call has workers to show; a call that handed no work out has no Participants tab. */
+/**
+ * Whether a call has workers to show: false once it's known to have none (no Participants tab),
+ * undefined while the record is unread or couldn't be read.
+ */
 export function useHasWorkers(callExecutionId, completedAt) {
   const { data } = useCallWorkers(callExecutionId, { completedAt });
+  if (data === undefined) return undefined;
   return Boolean(data?.workers?.length || data?.events?.some(isHandOff));
 }
 

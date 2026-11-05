@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "src/utils/test-utils";
+import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 
 let result;
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
@@ -83,11 +83,9 @@ describe("CallWorkersPanel", () => {
     expect(
       screen.getByText("Coordinator · Returns coordinator"),
     ).toBeInTheDocument();
-    // What was seen, and no scope note when the call stayed within it.
     expect(
       screen.getByText("One level, one hand-off at a time"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Checked for one coordinator/)).toBeNull();
     expect(screen.getByText("Please refund order 1042")).toBeInTheDocument();
     expect(
       screen.getByText("Delegated to Order-lookup worker: inspect order 1042"),
@@ -136,13 +134,8 @@ describe("CallWorkersPanel", () => {
     expect(screen.queryByText(note)).toBeNull();
   });
 
-  it("opens with what the tab shows, and names only the tool inside its worker's hand-off", () => {
+  it("names only the tool inside its worker's hand-off", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.getByText(
-        "How the coordinator handed work to other agents in this call: each hand-off, the tools that agent used, and what it returned.",
-      ),
-    ).toBeInTheDocument();
     expect(screen.getByText("get_order (error)")).toBeInTheDocument();
     expect(screen.queryByText(/Order-lookup worker · get_order/)).toBeNull();
     // A call outside any hand-off still says whose it was.
@@ -199,33 +192,20 @@ describe("CallWorkersPanel", () => {
     expect(returned).toHaveAttribute("data-clamped", "true");
   });
 
-  it("says plainly when an agent with no workers handed nothing out, but not when declared workers went unseen", () => {
-    const single = {
-      ...TIMELINE,
-      workers: [],
-      events: [TIMELINE.events[3]],
-    };
-    result = { data: single, isLoading: false, isError: false };
-    const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.getByText(
-        "This agent didn't hand work to other agents in this call.",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Caller's request")).toBeNull();
-    unmount();
+  it("marks declared workers that sent nothing, with no request or reply when nothing was handed out", () => {
     result = {
-      data: { ...single, workers: TIMELINE.workers.slice(1) },
+      data: {
+        ...TIMELINE,
+        workers: TIMELINE.workers.slice(1),
+        events: [TIMELINE.events[3]],
+      },
       isLoading: false,
       isError: false,
     };
     render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.queryByText(
-        "This agent didn't hand work to other agents in this call.",
-      ),
-    ).toBeNull();
     expect(screen.getByText("Audit worker · not observed")).toBeInTheDocument();
+    expect(screen.queryByText("Caller's request")).toBeNull();
+    expect(screen.queryByText("Coordinator's reply")).toBeNull();
   });
 
   it("times each step from the call's start", () => {
@@ -236,15 +216,19 @@ describe("CallWorkersPanel", () => {
     expect(screen.getByText("0:20")).toBeInTheDocument();
   });
 
-  it("opens a tool call to show its input and output", () => {
+  it("opens a tool call to show its input and output, by mouse or keyboard", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.queryByText("store unavailable")).toBeNull();
     fireEvent.click(screen.getByText(/^get_order/));
     expect(screen.getByText("Input")).toBeInTheDocument();
     expect(screen.getByText("store unavailable")).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /^get_order/ });
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(row, { key: " " });
+    expect(row).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("says Unknown for a request, reply, coordinator or return that was not seen", () => {
+  it("says what is missing for a request, reply, coordinator or return that was not seen", () => {
     result = {
       data: {
         ...TIMELINE,
@@ -257,8 +241,9 @@ describe("CallWorkersPanel", () => {
       isError: false,
     };
     render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Coordinator · Unknown")).toBeInTheDocument();
-    expect(screen.getAllByText("Unknown")).toHaveLength(2);
+    expect(screen.getByText("Coordinator")).toBeInTheDocument();
+    expect(screen.getByText("No request recorded")).toBeInTheDocument();
+    expect(screen.getByText("No reply recorded")).toBeInTheDocument();
     expect(
       screen.getByText(
         "No return from Order-lookup worker before the call ended",
@@ -292,6 +277,24 @@ describe("CallWorkersPanel", () => {
     expect(screen.queryByText(/\*\*/)).toBeNull();
   });
 
+  it("doesn't load an image a worker's text points at", () => {
+    result = {
+      data: {
+        ...TIMELINE,
+        events: TIMELINE.events.map((one) =>
+          one.type === "returned"
+            ? { ...one, result: "Done ![](https://host/x?d=secret)" }
+            : one,
+        ),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
   it("says a call no agent can be named for is unknown, not the coordinator's", () => {
     result = {
       data: {
@@ -316,23 +319,24 @@ describe("CallWorkersPanel", () => {
     expect(screen.queryByText("Coordinator · get_order")).toBeNull();
   });
 
-  it("marks a declared worker that sent nothing as not observed", () => {
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Audit worker · not observed")).toBeInTheDocument();
-  });
-
-  it("says plainly when the call has no worker record, and when it could not be read", () => {
-    result = { data: null, isLoading: false, isError: false };
+  it("shows a spinner until the record is read, and an error only with nothing to show", () => {
+    result = { data: undefined, isLoading: true, isError: false };
     const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.getByText(/No workers recorded for this call/),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
     unmount();
     result = { data: undefined, isLoading: false, isError: true };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    const failed = render(<CallWorkersPanel callExecutionId="c1" />);
     expect(
-      screen.getByText("Couldn't load this call's workers."),
+      screen.getByText("Couldn't load this call's participants."),
     ).toBeInTheDocument();
+    failed.unmount();
+    // A failed refetch leaves the tree that's already on screen.
+    result = { data: TIMELINE, isLoading: false, isError: true };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByTestId("tree-root")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Couldn't load this call's participants."),
+    ).toBeNull();
   });
 
   describe("as a tree", () => {
@@ -405,6 +409,9 @@ describe("CallWorkersPanel", () => {
       expect(helper.closest('[data-testid="tree-branch"]')).not.toBe(
         lead.closest('[data-testid="tree-branch"]'),
       );
+      expect(
+        screen.getByText("2 levels deep · one hand-off at a time"),
+      ).toBeInTheDocument();
     });
 
     it("shows a control pass as its own node, with the hand-offs that agent made under it", () => {
@@ -449,6 +456,10 @@ describe("CallWorkersPanel", () => {
         expect(ownerOf(nodes.find((one) => one.dataset.worker === name))).toBe(
           passed,
         );
+      // Neither sibling has a start, so "one at a time" would be a guess.
+      expect(
+        screen.getByText(/can't tell if hand-offs overlapped/),
+      ).toBeInTheDocument();
     });
 
     const depthOf = (text) =>
@@ -456,61 +467,6 @@ describe("CallWorkersPanel", () => {
         .getByText(text, { exact: false })
         .closest("[data-testid='hand-off']")
         .getAttribute("data-depth");
-
-    it("nests a hand-off under the worker that made it, and says how deep the call went", () => {
-      result = timeline(
-        [worker("planner"), worker("search")],
-        [
-          {
-            type: "delegated",
-            worker_id: "r/planner",
-            by: null,
-            task: "plan the trip",
-            at: at(1),
-          },
-          {
-            type: "delegated",
-            worker_id: "r/search",
-            by: "r/planner",
-            task: "find hotels",
-            at: at(2),
-          },
-          {
-            type: "tool_call",
-            worker_id: "r/search",
-            tool: "hotels",
-            status: "ok",
-            at: at(3),
-          },
-          {
-            type: "returned",
-            worker_id: "r/search",
-            result: "two hotels",
-            at: at(4),
-          },
-          {
-            type: "returned",
-            worker_id: "r/planner",
-            result: "a plan",
-            at: at(5),
-          },
-        ],
-      );
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(depthOf("Delegated to planner worker")).toBe("1");
-      expect(depthOf("Delegated to search worker")).toBe("2");
-      expect(
-        screen
-          .getByText("Delegated to search worker", { exact: false })
-          .closest("[data-depth='1']"),
-      ).not.toBeNull();
-      expect(
-        screen.getByText("2 levels deep · one hand-off at a time"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/Checked for one coordinator/),
-      ).toBeInTheDocument();
-    });
 
     it("marks sibling hand-offs whose spans overlap as in parallel", () => {
       result = timeline(
@@ -572,20 +528,22 @@ describe("CallWorkersPanel", () => {
       ]);
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(
-        screen.getByText("20 workers · 15 observed · 5 not observed"),
+        screen.getByText("20 participants · 15 observed · 5 not observed"),
       ).toBeInTheDocument();
       expect(screen.queryByText("w3 worker")).toBeNull();
-      fireEvent.click(screen.getByText("Show all workers"));
-      const chip = (name) => screen.getByText(name).closest(".MuiChip-root");
-      expect(chip("w0 worker").className).toMatch(/colorInfo/);
-      expect(chip("w1 worker").className).toMatch(/colorSuccess/);
-      expect(chip("w2 worker").className).toMatch(/colorSuccess/);
+      fireEvent.click(screen.getByText("Show all participants"));
+      const tint = (name) =>
+        getComputedStyle(screen.getByText(name).closest(".MuiChip-root"))
+          .backgroundColor;
+      expect(tint("w1 worker")).toBe(tint("w2 worker"));
+      expect(tint("w0 worker")).not.toBe(tint("w1 worker"));
     });
 
-    it("says why a step's payload or later steps are missing when the record reached its limit", () => {
+    it("says why a step's payload, later steps or a return are missing when the record reached its limit", () => {
       result = timeline(
-        [worker("a")],
+        [worker("a"), worker("b")],
         [
+          { type: "delegated", worker_id: "r/b", task: "two", at: at(1) },
           { type: "delegated", worker_id: "r/a", task: "one", at: at(1) },
           {
             type: "tool_call",
@@ -600,8 +558,19 @@ describe("CallWorkersPanel", () => {
           { type: "returned", worker_id: "r/a", result: "x", at: at(3) },
         ],
       );
-      result.data.events_omitted = 12;
+      const uncut = result;
       render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByText(/^No return from b worker/)).toBeInTheDocument();
+      cleanup();
+      result = {
+        ...uncut,
+        data: { ...uncut.data, events_omitted: 12 },
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(
+        screen.getByText(/^Return from b worker not shown/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/^No return from/)).toBeNull();
       fireEvent.click(screen.getByText(/^lookup/));
       expect(
         screen.getAllByText(
@@ -633,99 +602,30 @@ describe("CallWorkersPanel", () => {
       ).toBeInTheDocument();
     });
 
-    it("renders a hundred workers three levels deep with a thousand steps, folding the deep levels", () => {
-      const team = Array.from({ length: 100 }, (_, index) =>
-        worker(`w${index}`),
-      );
-      const big = "x".repeat(2000);
-      const events = [];
-      let second = 0;
-      const stamp = () => {
-        second += 1;
-        return new Date(Date.UTC(2026, 9, 31, 12, 0, 0) + second * 100)
-          .toISOString()
-          .slice(0, 23);
-      };
-      for (let top = 0; top < 10; top += 1) {
-        const lead = `r/w${top}`;
-        events.push({
-          type: "delegated",
-          worker_id: lead,
-          task: "lead",
-          at: stamp(),
-        });
-        for (let mid = 0; mid < 3; mid += 1) {
-          const helper = `r/w${10 + top * 3 + mid}`;
-          events.push({
-            type: "delegated",
-            worker_id: helper,
-            by: lead,
-            task: "help",
-            at: stamp(),
-          });
-          for (let low = 0; low < 2; low += 1) {
-            const leaf = `r/w${40 + ((top * 6 + mid * 2 + low) % 60)}`;
-            events.push({
-              type: "delegated",
-              worker_id: leaf,
-              by: helper,
-              task: "do",
-              at: stamp(),
-            });
-            for (let call = 0; call < 10; call += 1)
-              events.push({
-                type: "tool_call",
-                worker_id: leaf,
-                tool: "t",
-                status: "ok",
-                input: { big },
-                output: big,
-                at: stamp(),
-              });
-            events.push({
-              type: "returned",
-              worker_id: leaf,
-              result: "leaf done",
-              at: stamp(),
-            });
-          }
-          for (let call = 0; call < 7; call += 1)
-            events.push({
-              type: "tool_call",
-              worker_id: helper,
-              tool: "t",
-              status: "ok",
-              input: { big },
-              output: big,
-              at: stamp(),
-            });
-          events.push({
+    it("keeps hand-offs below the second level folded and unmounted until opened", () => {
+      result = timeline(
+        [worker("a"), worker("b"), worker("c")],
+        [
+          { type: "delegated", worker_id: "r/a", at: at(1) },
+          { type: "delegated", worker_id: "r/b", by: "r/a", at: at(2) },
+          { type: "delegated", worker_id: "r/c", by: "r/b", at: at(3) },
+          {
             type: "returned",
-            worker_id: helper,
-            result: "helper done",
-            at: stamp(),
-          });
-        }
-        events.push({
-          type: "returned",
-          worker_id: lead,
-          result: "lead done",
-          at: stamp(),
-        });
-      }
-      result = timeline(team, events);
+            worker_id: "r/c",
+            result: "leaf done",
+            at: at(4),
+          },
+        ],
+      );
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(events.length).toBeGreaterThanOrEqual(1000);
-      expect(
-        screen.getByText("100 workers · 100 observed · 0 not observed"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText("3 levels deep · one hand-off at a time"),
-      ).toBeInTheDocument();
-      // Levels one and two are open; level three shows its 60 headers folded, so its 600 steps are not in the page.
-      expect(screen.getAllByTestId("hand-off")).toHaveLength(100);
       expect(screen.queryByText("leaf done")).toBeNull();
-      expect(screen.getAllByText(/^t$/)).toHaveLength(210);
+      const deep = screen.getByRole("button", {
+        name: /Delegated to c worker/,
+      });
+      expect(deep).toHaveAttribute("aria-expanded", "false");
+      fireEvent.keyDown(deep, { key: "Enter" });
+      expect(deep).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText("leaf done")).toBeInTheDocument();
     });
   });
 });

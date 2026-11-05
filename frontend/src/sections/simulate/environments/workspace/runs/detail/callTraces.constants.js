@@ -5,46 +5,60 @@ export const CALL_TRACES_COPY = {
   noRoot: "Root span not stored yet",
 };
 
+// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
+// instead of stepping to another conversation, as the voice transcript does.
+// Focusable so a click inside hands it the keyboard; default not
+// prevented, so the browser still scrolls.
+export const ownsArrowKeys = {
+  tabIndex: 0,
+  onKeyDown: (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
+  },
+};
+
 export const CALL_WORKERS_COPY = {
   tab: "Participants",
-  none: "No workers recorded for this call. Hand-offs to other agents show here once they are seen, which can take a minute after the call.",
-  error: "Couldn't load this call's workers.",
+  error: "Couldn't load this call's participants.",
   coordinator: "Coordinator",
   unknown: "Unknown",
   notObserved: "not observed",
   undeclared: "not declared",
   intro:
-    "How the coordinator handed work to other agents in this call: each hand-off, the tools that agent used, and what it returned.",
-  noHandOffs: "This agent didn't hand work to other agents in this call.",
+    "How the coordinator handed work to the other participants in this call: each hand-off, the tools each one used, and what it returned.",
   seenFlat: "One level, one hand-off at a time",
-  seen: (depth, parallel) =>
+  seen: (depth, parallel, overlapUnknown) =>
     `${depth === 1 ? "One level" : `${depth} levels deep`} · ${
       parallel
         ? `${parallel} hand-off${parallel === 1 ? "" : "s"} ran in parallel`
-        : "one hand-off at a time"
+        : overlapUnknown
+          ? "can't tell if hand-offs overlapped, some have no start time"
+          : "one hand-off at a time"
     }`,
-  scope:
-    "Checked for one coordinator handing work one at a time; deeper or parallel hand-offs are shown as they happened.",
   inParallel: "in parallel",
   payloadOmitted: "Not kept: this call's record reached its size limit",
   eventsOmitted: (count) =>
     `${count} more step${count === 1 ? "" : "s"} not shown: this call's record reached its size limit`,
   workersSummary: (total, observed, missing) =>
-    `${total} workers · ${observed} observed · ${missing} not observed`,
-  showWorkers: "Show all workers",
-  hideWorkers: "Hide workers",
+    `${total} participants · ${observed} observed · ${missing} not observed`,
+  showWorkers: "Show all participants",
+  hideWorkers: "Hide participants",
   request: "Caller's request",
+  noRequest: "No request recorded",
   response: "Coordinator's reply",
+  noReply: "No reply recorded",
   delegated: (name) => `Delegated to ${name}`,
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
   returned: (name) => `${name} returned`,
+  noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
+  returnCutOff: (name) =>
+    `Return from ${name} not shown: this call's record reached its size limit`,
   failed: "error",
   input: "Input",
   output: "Output",
-  showDetail: "Input and output",
+  noPayload: "Nothing recorded",
   showMore: "Show more",
   showLess: "Show less",
 };
