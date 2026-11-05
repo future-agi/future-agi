@@ -1965,7 +1965,8 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         "offered" if not payload.get("created_for_environment") else "not_requested"
     )
     _record_activation(version.id, dict.fromkeys(others, outcome))
-    record_offers(version.id, others)
+    if outcome == "offered":
+        record_offers(version.id, others)
     for environment_id in others:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, requested)
