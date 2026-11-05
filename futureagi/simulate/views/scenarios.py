@@ -5,7 +5,7 @@ import uuid
 
 from accounts.models.user import User
 from django.db import close_old_connections, models, transaction
-from django.db.models import Count, Max, OuterRef, Q, Subquery
+from django.db.models import Case, Count, Max, OuterRef, Q, Subquery, When
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -256,6 +256,7 @@ class ScenariosListView(APIView):
             search_query = validated_query.get("search", "").strip()
             agent_definition_id = validated_query.get("agent_definition_id", None)
             agent_type = validated_query.get("agent_type", None)
+            selected_scenario_ids = validated_query.get("selected_scenarios", [])
 
             # Build base queryset with optimized joins
             base_queryset = Scenarios.objects.filter(
@@ -301,8 +302,18 @@ class ScenariosListView(APIView):
 
                 scenarios = scenarios.filter(subquery)
 
-            # Order by creation date (newest first)
-            scenarios = scenarios.order_by("-created_at")
+            # Order by creation date (newest first), pinning selected scenarios
+            # to the top so they stay visible across pagination.
+            if selected_scenario_ids:
+                scenarios = scenarios.annotate(
+                    _is_selected=Case(
+                        When(id__in=selected_scenario_ids, then=True),
+                        default=False,
+                        output_field=models.BooleanField(),
+                    )
+                ).order_by("-_is_selected", "-created_at")
+            else:
+                scenarios = scenarios.order_by("-created_at")
 
             # Apply pagination
             paginator = ExtendedPageNumberPagination()

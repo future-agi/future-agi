@@ -324,6 +324,7 @@ const SimulationDetailHeader = ({ onBack }) => {
                 ref={scenarioButtonRef}
                 variant="outlined"
                 size="small"
+                disabled={!simulation}
                 onClick={() => setScenarioPopoverOpen(true)}
                 startIcon={
                   <SvgColor
