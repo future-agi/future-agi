@@ -5,6 +5,7 @@ These replace the Celery Beat schedules for tracer tasks.
 """
 
 from tfc.temporal.schedules.config import ScheduleConfig
+from tracer.services.derived_metrics.feature_flag import metrics_enabled
 
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: list[ScheduleConfig] = [
@@ -74,3 +75,16 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         description="Fetch logs from observability providers (VAPI, Retell, etc.)",
     ),
 ]
+
+# A previously registered schedule can survive a rollout rollback. Its activity
+# also checks the shared flag before reading control rows or starting writers.
+if metrics_enabled():
+    TRACER_SCHEDULES.append(
+        ScheduleConfig(
+            schedule_id="dispatch-derived-metrics",
+            activity_name="tracer.dispatch_derived_metrics",
+            interval_seconds=60,
+            queue="tasks_s",
+            description="Dispatch durable metric refresh work",
+        )
+    )
