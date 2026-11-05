@@ -385,8 +385,17 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
-  // Only a run where some call had a sub-actor enter offers this filter.
-  const subActorFacet = facets.sub_actor;
+  // Only a run where some call had a sub-actor enter offers this filter. Facets
+  // are empty while loading or failed, so the row keeps the last ones it had.
+  const lastSubActorFacetRef = useRef(facets.sub_actor);
+  useEffect(() => {
+    if (facets.sub_actor?.length)
+      lastSubActorFacetRef.current = facets.sub_actor;
+  }, [facets.sub_actor]);
+  const subActorFacet =
+    (isLoading || error) && !facets.sub_actor?.length
+      ? lastSubActorFacetRef.current
+      : facets.sub_actor;
   const subActorField = useMemo(
     () =>
       subActorFacet?.length

@@ -377,12 +377,18 @@ export default function TraceTable({
                           {goal.name}
                         </Typography>
                         {goal.passed == null ? (
-                          <Typography
-                            title={goal.reason || undefined}
-                            sx={{ typography: "s3", color: verdict.color }}
+                          <CustomTooltip
+                            show={!!goal.reason}
+                            size="small"
+                            arrow
+                            title={goal.reason}
                           >
-                            {verdict.label}
-                          </Typography>
+                            <Typography
+                              sx={{ typography: "s3", color: verdict.color }}
+                            >
+                              {verdict.label}
+                            </Typography>
+                          </CustomTooltip>
                         ) : (
                           <Box
                             role="img"

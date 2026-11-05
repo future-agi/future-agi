@@ -32,6 +32,7 @@ vi.mock("src/components/share-dialog", () => ({
 }));
 
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
+const { STATUS_META } = await import("../../runs.constants");
 
 describe("ChatCallDrawer share", () => {
   it("opens the share dialog for the call execution", async () => {
@@ -72,6 +73,14 @@ describe("ChatCallDrawer tabs", () => {
       />,
     );
     expect(screen.getByRole("tab", { name: "Evals (1)" })).toBeInTheDocument();
+  });
+
+  it("names a call's outcome instead of printing its raw status", async () => {
+    render(<ChatCallDrawer task={{ id: "call-execution-3", status: "no_score" }} onClose={vi.fn()} />);
+    expect(screen.getByText(STATUS_META.no_score.label)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Attributes" }));
+    expect(screen.getAllByText(STATUS_META.no_score.label)).toHaveLength(2);
+    expect(screen.queryByText("no_score")).not.toBeInTheDocument();
   });
 
   it("has no Checklist or Graph tab while they have no data behind them", () => {

@@ -461,6 +461,32 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
   });
 
+  it("keeps the Sub-actor filter on offer while the next results load", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        sub_actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+    }));
+    const { rerender } = renderTable();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      tasks: [],
+      groups: [],
+      facets: {},
+      isLoading: true,
+    }));
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    expect(
+      await screen.findByRole("option", { name: "Sub-actor" }),
+    ).toBeInTheDocument();
+  });
+
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
     const onQueryChange = vi.fn();
     const { rerender } = renderTable({ onQueryChange });

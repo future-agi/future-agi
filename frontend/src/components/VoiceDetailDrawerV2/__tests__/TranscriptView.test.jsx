@@ -124,8 +124,15 @@ describe("sub-actors in voice transcripts", () => {
     expect(screen.getAllByText("Sam · son").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Heard nearby").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Takes the phone").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/not the customer/)).toBeNull();
     expect(screen.getByText(/^Others \d+%$/)).toBeInTheDocument();
+  });
+
+  it("names a sub-actor, not their raw role, on the speaker timeline", () => {
+    render(<TranscriptView transcript={withSubActors} />);
+    expect(
+      screen.getByLabelText(/^Rowan · roommate · \d+:\d{2}$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^sub_actor/)).toBeNull();
   });
 
   it("lists who was on the call, customer first and the agent last", () => {
@@ -174,6 +181,15 @@ describe("sub-actors in voice transcripts", () => {
     expect(screen.getByText("Hi, this is Sam")).toBeInTheDocument();
     expect(screen.queryByText("One ride please")).toBeNull();
     expect(screen.queryByText("Booked")).toBeNull();
+  });
+
+  it("shows every turn when Others was picked and the next call has none", async () => {
+    const { rerender } = render(<TranscriptView transcript={withSubActors} />);
+    await userEvent.click(screen.getByRole("button", { name: "Others" }));
+    rerender(<TranscriptView transcript={plainCall} />);
+    expect(screen.queryByText("No matching turns")).toBeNull();
+    expect(screen.getByText("One ride please")).toBeInTheDocument();
+    expect(screen.getByText("Booked")).toBeInTheDocument();
   });
 
   it("renders a call with only the customer and the agent as before", () => {
