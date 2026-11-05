@@ -372,6 +372,10 @@ def create_selected_harness_run(
                 "environment changed while submitting this Run",
                 status_code=409,
             )
+        if coding_agent_key_id is not None:
+            # A coding agent's request key names only its own runs, never a person's
+            # or another key's, so a repeat can neither read nor re-queue theirs.
+            idempotency_key = f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
         idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
         child_idempotency_key = run_idempotency_key(environment, idempotency_key)
         resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)

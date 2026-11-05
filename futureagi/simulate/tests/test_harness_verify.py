@@ -544,6 +544,34 @@ class TestRunsACodingAgentAsksFor:
         assert run.payload["metadata"]["coding_agent_key_id"] == str(keys.coder.id)
         assert run.verify_of_id is None
 
+    def test_its_request_key_never_returns_a_person_s_or_another_key_s_run(
+        self, api_client, user, workspace, environment, keys
+    ):
+        chosen = ensure_held_back(environment)
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        person = self._run(api_client, keys.user, environment, shown, "shared")
+        # The person's run could not be scheduled, so a replay of it would re-queue it.
+        HostedHarnessJob.no_workspace_objects.filter(id=person.json()["job_id"]).update(
+            state=HostedHarnessJob.State.FAILED,
+            failure={"code": "scheduler_unavailable"},
+        )
+        other = _api_key(user, workspace, "coding_agent", environment)
+
+        coder = self._run(api_client, keys.coder, environment, shown, "shared")
+        again = self._run(api_client, keys.coder, environment, shown, "shared")
+        second = self._run(api_client, other, environment, shown, "shared")
+
+        assert coder.status_code == second.status_code == 202, coder.content
+        ids = {person.json()["job_id"], coder.json()["job_id"], second.json()["job_id"]}
+        assert len(ids) == 3
+        assert again.json()["job_id"] == coder.json()["job_id"]
+        untouched = HostedHarnessJob.no_workspace_objects.get(
+            id=person.json()["job_id"]
+        )
+        assert untouched.state == HostedHarnessJob.State.FAILED
+
     def test_a_person_still_runs_every_case(self, api_client, environment, keys):
         ensure_held_back(environment)
 
