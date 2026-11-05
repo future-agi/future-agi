@@ -16948,6 +16948,7 @@ export interface HarnessRunSummaryApi {
   agent_version: AgentVersionRefApi;
   outcome_passed: number;
   outcome_failed: number;
+  outcome_errored: number;
   outcome_skipped: number;
   outcome_no_score: number;
   started_at: string;
@@ -23183,6 +23184,8 @@ export interface CallTranscriptApi {
   speaker_role?: CallTranscriptApiSpeakerRole;
   /** @maxLength 255 */
   speaker_name?: string;
+  /** @maxLength 255 */
+  sub_actor_id?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -23831,6 +23834,7 @@ export interface TestExecutionItemResponseApi {
   readonly completed_at?: string;
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
+  readonly outcome_errored?: number;
   readonly outcome_skipped?: number;
   readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
@@ -25090,6 +25094,19 @@ export interface SimulateRunV3FunctionCallApi {
   start_time_ms?: number;
 }
 
+/**
+ * How far they got in the call; absent on a call stored without a summary.
+ */
+export type CallSubActorApiDelivery =
+  (typeof CallSubActorApiDelivery)[keyof typeof CallSubActorApiDelivery];
+
+export const CallSubActorApiDelivery = {
+  delivered: "delivered",
+  dropped: "dropped",
+  not_triggered: "not_triggered",
+  not_drawn: "not_drawn",
+} as const;
+
 export interface CallSubActorApi {
   /** The sub-actor's id in the environment. */
   id?: string;
@@ -25099,6 +25116,8 @@ export interface CallSubActorApi {
   role?: string;
   /** The channel id they joined the call on. */
   channel?: string;
+  /** How far they got in the call; absent on a call stored without a summary. */
+  delivery?: CallSubActorApiDelivery;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -25922,18 +25941,24 @@ export interface FacetValueApi {
   count: number;
 }
 
-export interface LabelledFacetValueApi {
+export interface SubActorFacetValueApi {
   /** @minLength 1 */
   value: string;
   count: number;
   /** @minLength 1 */
   label: string;
+  /** Calls where at least one of the sub-actor's lines reached the agent. */
+  delivered: number;
+  /** Calls where the sub-actor was triggered but none of its lines reached the agent. */
+  dropped: number;
+  /** Calls the sub-actor was planned for but never triggered in. */
+  not_triggered: number;
 }
 
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
-  sub_actor?: LabelledFacetValueApi[];
+  sub_actor?: SubActorFacetValueApi[];
   status: FacetValueApi[];
 }
 

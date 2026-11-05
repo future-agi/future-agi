@@ -93457,6 +93457,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version",
         "outcome_passed",
         "outcome_failed",
+        "outcome_errored",
         "outcome_skipped",
         "outcome_no_score",
         "started_at",
@@ -93506,6 +93507,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_failed: {
           title: "Outcome failed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_errored: {
+          title: "Outcome errored",
           type: "integer",
           "x-nullable": true,
         },
@@ -94843,6 +94849,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "The channel id they joined the call on.",
           type: "string",
         },
+        delivery: {
+          title: "Delivery",
+          description:
+            "How far they got in the call; absent on a call stored without a summary.",
+          type: "string",
+          enum: ["delivered", "dropped", "not_triggered", "not_drawn"],
+        },
       },
     },
     CostBreakdown: {
@@ -95049,6 +95062,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Speaker name",
           type: "string",
           maxLength: 255,
+        },
+        sub_actor_id: {
+          title: "Sub actor id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
         },
         content: {
           title: "Content",
@@ -110916,7 +110935,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         sub_actor: {
           type: "array",
           items: {
-            $ref: "#/definitions/LabelledFacetValue",
+            $ref: "#/definitions/SubActorFacetValue",
           },
         },
         status: {
@@ -111307,6 +111326,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_failed: {
           title: "Outcome failed",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_errored: {
+          title: "Outcome errored",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -125861,8 +125886,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    LabelledFacetValue: {
-      required: ["value", "count", "label"],
+    SubActorFacetValue: {
+      required: [
+        "value",
+        "count",
+        "label",
+        "delivered",
+        "dropped",
+        "not_triggered",
+      ],
       type: "object",
       properties: {
         value: {
@@ -125878,6 +125910,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Label",
           type: "string",
           minLength: 1,
+        },
+        delivered: {
+          title: "Delivered",
+          description:
+            "Calls where at least one of the sub-actor's lines reached the agent.",
+          type: "integer",
+        },
+        dropped: {
+          title: "Dropped",
+          description:
+            "Calls where the sub-actor was triggered but none of its lines reached the agent.",
+          type: "integer",
+        },
+        not_triggered: {
+          title: "Not triggered",
+          description:
+            "Calls the sub-actor was planned for but never triggered in.",
+          type: "integer",
         },
       },
     },

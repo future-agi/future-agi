@@ -33882,6 +33882,7 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         }),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
+        outcome_errored: zod.number(),
         outcome_skipped: zod.number(),
         outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
@@ -38415,6 +38416,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         }),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
+        outcome_errored: zod.number(),
         outcome_skipped: zod.number(),
         outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
@@ -47551,6 +47553,8 @@ export const SimulateCallExecutionsTranscriptsListParams = zod.object({
 
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax = 255;
 
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSubActorIdMax = 255;
+
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -47583,6 +47587,12 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
           .string()
           .max(
             simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax,
+          )
+          .optional(),
+        sub_actor_id: zod
+          .string()
+          .max(
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemSubActorIdMax,
           )
           .optional(),
         content: zod.string().min(1).describe("Transcript content"),
@@ -50614,6 +50624,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         completed_at: zod.string().min(1).optional(),
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
+        outcome_errored: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
         outcome_no_score: zod.number().optional(),
         environment_version: zod
@@ -52614,6 +52625,8 @@ export const SimulateTestExecutionsTranscriptsListParams = zod.object({
 
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax = 255;
 
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSubActorIdMax = 255;
+
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -52650,6 +52663,12 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                 .string()
                 .max(
                   simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax,
+                )
+                .optional(),
+              sub_actor_id: zod
+                .string()
+                .max(
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSubActorIdMax,
                 )
                 .optional(),
               content: zod.string().min(1).describe("Transcript content"),
@@ -53004,6 +53023,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .string()
         .optional()
         .describe("The channel id they joined the call on."),
+      delivery: zod
+        .enum(["delivered", "dropped", "not_triggered", "not_drawn"])
+        .optional()
+        .describe(
+          "How far they got in the call; absent on a call stored without a summary.",
+        ),
     }),
   ),
   scoring_status: zod.enum([
@@ -54158,6 +54183,21 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           value: zod.string().min(1),
           count: zod.number(),
           label: zod.string().min(1),
+          delivered: zod
+            .number()
+            .describe(
+              "Calls where at least one of the sub-actor's lines reached the agent.",
+            ),
+          dropped: zod
+            .number()
+            .describe(
+              "Calls where the sub-actor was triggered but none of its lines reached the agent.",
+            ),
+          not_triggered: zod
+            .number()
+            .describe(
+              "Calls the sub-actor was planned for but never triggered in.",
+            ),
         }),
       )
       .optional(),
