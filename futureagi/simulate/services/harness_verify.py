@@ -39,26 +39,19 @@ def pick_held_back(seed: str, keys: Sequence[str]) -> list[str]:
 
 
 def ensure_held_back(environment: HostedHarnessJob) -> HeldBack | None:
-    """The environment's held-back cases, chosen from its current suite the first time
-    they are needed and kept from then on. ``None`` for an environment without a suite
-    version, which has nothing to choose from."""
-    if (chosen := held_back(environment)) is not None:
+    """The environment's held-back cases, chosen from its default suite the first time
+    they are needed and carried to each new default suite after that. ``None`` for an
+    environment without a suite version, which has nothing to choose from."""
+    chosen = held_back(environment)
+    if not _behind(chosen, environment.suite_version_id):
         return chosen
-    if environment.suite_version_id is None:
-        return None
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=environment.id
         )
         chosen = held_back(locked)
-        if chosen is None:
-            keys = HarnessSuiteMember.no_workspace_objects.filter(
-                suite_version_id=locked.suite_version_id
-            ).values_list("scenario_key", flat=True)
-            chosen = HeldBack(
-                suite_version_id=locked.suite_version_id,
-                scenario_keys=tuple(pick_held_back(str(locked.id), list(keys))),
-            )
+        if _behind(chosen, locked.suite_version_id):
+            chosen = _carried(locked, chosen)
             metadata = dict(locked.payload.get("metadata") or {})
             metadata[HELD_BACK_METADATA_KEY] = {
                 "suite_version_id": str(chosen.suite_version_id),
@@ -68,6 +61,37 @@ def ensure_held_back(environment: HostedHarnessJob) -> HeldBack | None:
             locked.save(update_fields=["payload", "updated_at"])
     environment.payload = locked.payload
     return chosen
+
+
+def _behind(chosen: HeldBack | None, suite_version_id: UUID | None) -> bool:
+    """Whether the set is still to be chosen from, or carried to, the default suite."""
+    return suite_version_id is not None and (
+        chosen is None or chosen.suite_version_id != suite_version_id
+    )
+
+
+def _suite_keys(suite_version_id: UUID) -> list[str]:
+    return list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=suite_version_id
+        ).values_list("scenario_key", flat=True)
+    )
+
+
+def _carried(environment: HostedHarnessJob, chosen: HeldBack | None) -> HeldBack:
+    """The held-back cases for the environment's default suite. A case held back stays
+    held back, even once a suite drops it, so no older version's read shows it. A case
+    the old suite showed stays shown. A third of the cases it did not have join."""
+    held = set(chosen.scenario_keys) if chosen is not None else set()
+    known = held | (
+        set(_suite_keys(chosen.suite_version_id)) if chosen is not None else set()
+    )
+    new = [key for key in _suite_keys(environment.suite_version_id) if key not in known]
+    held.update(pick_held_back(str(environment.id), new))
+    return HeldBack(
+        suite_version_id=environment.suite_version_id,
+        scenario_keys=tuple(sorted(held)),
+    )
 
 
 def require_held_back(environment: HostedHarnessJob) -> HeldBack:
@@ -92,19 +116,27 @@ def no_held_back() -> HostedHarnessError:
 def start_verify(
     environment: HostedHarnessJob, *, agent_version_id: UUID, trials: int
 ) -> HostedHarnessJob:
-    """Run ``agent_version_id`` on the held-back cases, pinned to the suite version they
-    were chosen from. A live or completed verify is final: asking again returns it,
-    whatever its trials, so the held-back cases cannot be sampled twice. After one
-    that failed or was canceled, asking again starts a new one.
+    """Run ``agent_version_id`` on the held-back cases of the default suite, pinned to
+    that suite. A live or completed verify is final: asking again returns it, whatever
+    its trials, so the held-back cases cannot be sampled twice. After one that failed
+    or was canceled, asking again starts a new one.
 
     The advisory lock and ``version_verify`` keep a repeated request to one verify;
     the idempotency key is unique per verify, so no run a caller names can stand in
     for one."""
     chosen = ensure_held_back(environment)
-    if chosen is None or not chosen.scenario_keys:
+    # A case its suite dropped stays held back but can no longer run.
+    cases = (
+        sorted(
+            set(chosen.scenario_keys).intersection(_suite_keys(chosen.suite_version_id))
+        )
+        if chosen is not None
+        else []
+    )
+    if not cases:
         raise HostedHarnessError(
             "held_back_empty",
-            "this environment has too few scenarios to hold any back",
+            "this environment's scenarios include no held-back case to verify on",
             status_code=409,
         )
     if (existing := version_verify(environment, agent_version_id)) is not None:
@@ -118,7 +150,7 @@ def start_verify(
             return existing
         run, created = create_selected_harness_run(
             environment,
-            scenario_keys=list(chosen.scenario_keys),
+            scenario_keys=cases,
             trials=trials,
             idempotency_key=f"verify:{agent_version_id}:{uuid4().hex}",
             picks=VersionPicks(

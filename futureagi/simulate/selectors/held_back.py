@@ -1,9 +1,9 @@
 """An environment's held-back cases: what a coding agent may not read, and the counts
 it gets back when it verifies an agent version on them.
 
-The set is stored on the environment's payload metadata, beside the suite version it
-was drawn from. A coding agent reads the environment without those cases, cannot run
-them, and learns how a version did on them only as counts.
+The set is stored on the environment's payload metadata, beside the default suite
+version it was last carried to. A coding agent reads the environment without those
+cases, cannot run them, and learns how a version did on them only as counts.
 """
 
 from collections.abc import Collection, Mapping
@@ -31,6 +31,8 @@ VERIFY_RETRYABLE_STATES = (
 @dataclass(frozen=True)
 class HeldBack:
     suite_version_id: UUID
+    # Every case ever held back, so a suite that drops one never shows it again; a
+    # verify runs those still in ``suite_version_id``.
     scenario_keys: tuple[str, ...]
 
 

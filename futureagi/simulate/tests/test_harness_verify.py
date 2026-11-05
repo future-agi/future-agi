@@ -10,8 +10,9 @@ from uuid import uuid4
 import pytest
 
 from accounts.models import OrgApiKey
-from simulate.models import HarnessSuiteMember, HostedHarnessJob
+from simulate.models import HarnessSuiteMember, HarnessSuiteVersion, HostedHarnessJob
 from simulate.models import TestExecution as Execution
+from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.held_back import held_back, verify_run, version_verify
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.services.harness_environment import annotate_for_list, environment_row
@@ -20,25 +21,28 @@ from simulate.services.harness_verify import (
     pick_held_back,
     start_verify,
 )
+from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
 )
 from simulate.services.run_compare import wilson_interval
 from simulate.tests.test_agent_fix_services import (
+    KEYS,
     _executions,
-    _move_default_suite,
     _receipt,
 )
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     environment as environment,
 )
 from simulate.tests.test_harness_agent_versions import _environment
+from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_run_compare import _done
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_picks import _second_agent
+from simulate.tests.test_harness_versioning_record import _authoring
 
 pytestmark = pytest.mark.django_db
 
@@ -136,7 +140,7 @@ class TestPickHeldBack:
 
 
 class TestChoosingTheSet:
-    def test_chosen_once_from_the_current_suite_and_kept(self, environment, user):
+    def test_chosen_once_from_the_current_suite_and_kept(self, environment):
         drawn_from = environment.suite_version_id
 
         chosen = ensure_held_back(environment)
@@ -144,8 +148,6 @@ class TestChoosingTheSet:
         assert chosen.suite_version_id == drawn_from
         assert len(chosen.scenario_keys) == 1
         assert set(chosen.scenario_keys) <= set(_suite_keys(environment))
-        _move_default_suite(environment, user)
-        assert environment.suite_version_id != drawn_from
         assert ensure_held_back(environment) == chosen
         environment.refresh_from_db()
         assert held_back(environment) == chosen
@@ -163,14 +165,94 @@ class TestChoosingTheSet:
         assert "verify_held_back" not in run.payload["metadata"]
 
 
+def _hold(environment, keys):
+    """The set as if chosen from the current suite: ``keys``, not the hash's pick."""
+    metadata = {
+        **environment.payload["metadata"],
+        "verify_held_back": {
+            "suite_version_id": str(environment.suite_version_id),
+            "scenario_keys": sorted(keys),
+        },
+    }
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload={**environment.payload, "metadata": metadata}
+    )
+    environment.refresh_from_db()
+
+
+def _new_default_suite(environment, user, names):
+    record_authoring(environment, _authoring(names=names), origin="manual", user=user)
+    environment.refresh_from_db()
+
+
+class TestWhenTheSuiteChanges:
+    """A case the coding agent could read never becomes held back, and a held-back
+    case never becomes readable."""
+
+    ADDED = ("refund_late_order", "update_home_address", "report_lost_item")
+
+    def test_a_third_of_the_new_cases_join_and_the_old_ones_stay(
+        self, environment, user
+    ):
+        old_suite = environment.suite_version_id
+        _hold(environment, [KEYS[1]])
+        _new_default_suite(environment, user, [*NAMES[:2], *self.ADDED])
+        added = [_key(name) for name in self.ADDED]
+
+        chosen = ensure_held_back(environment)
+
+        assert chosen.suite_version_id == environment.suite_version_id != old_suite
+        joined = pick_held_back(str(environment.id), added)
+        assert len(joined) == 1
+        assert chosen.scenario_keys == tuple(sorted([KEYS[1], *joined]))
+        assert KEYS[0] not in chosen.scenario_keys
+        environment.refresh_from_db()
+        assert held_back(environment) == chosen
+
+    def test_a_dropped_held_back_case_stays_hidden_and_no_longer_runs(
+        self, api_client, environment, user, keys
+    ):
+        old_suite = environment.suite_version_id
+        _hold(environment, [KEYS[1]])
+        # The new suite drops the held-back case and adds one, too few to hold back.
+        _new_default_suite(environment, user, [NAMES[0], NAMES[2]])
+
+        old_members = _as(
+            api_client,
+            keys.coder,
+            "get",
+            f"{BASE}/{environment.id}/versions/suite/{old_suite}/members/",
+        )
+        with pytest.raises(HostedHarnessError) as refused:
+            _verify(environment, _second_agent(environment))
+
+        assert old_members.status_code == 200, old_members.content
+        assert [row["scenario_key"] for row in old_members.json()] == [KEYS[0]]
+        assert held_back(environment).scenario_keys == (KEYS[1],)
+        assert held_back(environment).suite_version_id == environment.suite_version_id
+        assert refused.value.code == "held_back_empty"
+
+    def test_a_discarded_pinned_suite_does_not_stop_a_verify(self, environment, user):
+        old_suite = environment.suite_version_id
+        _hold(environment, [KEYS[1]])
+        _new_default_suite(environment, user, [*NAMES[:2], *self.ADDED])
+        HarnessSuiteVersion.no_workspace_objects.filter(id=old_suite).update(
+            status=VersionStatus.DISCARDED
+        )
+
+        run = _verify(environment, _second_agent(environment))
+
+        assert run.suite_version_id == environment.suite_version_id
+        assert KEYS[1] in run.payload["metadata"]["selected_scenario_keys"]
+        assert KEYS[0] not in run.payload["metadata"]["selected_scenario_keys"]
+
+
 class TestVerify:
     def test_runs_the_held_back_cases_at_n_trials_pinned_to_their_suite(
-        self, environment, user, temporal, django_capture_on_commit_callbacks
+        self, environment, temporal, django_capture_on_commit_callbacks
     ):
         candidate = _second_agent(environment)
         chosen = ensure_held_back(environment)
-        # The default suite moves on; the verify still runs the suite the set came from.
-        _move_default_suite(environment, user)
 
         with django_capture_on_commit_callbacks(execute=True):
             run = _verify(environment, candidate, trials=3)
