@@ -3,7 +3,15 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, IconButton, Link, Tab } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Link,
+  Tab,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -368,7 +376,12 @@ export default function RunDetail({
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              mb: 2,
+            }}
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} />
             {hasTrials && (
