@@ -126459,7 +126459,7 @@
                 },
                 "check_step": {
                     "title": "Check step",
-                    "description": "Where a pending check stands: storing the code, reading the agent, or\nchecking its credentials.",
+                    "description": "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
                     "type": "string",
                     "enum": [
                         "snapshot",

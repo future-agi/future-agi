@@ -210,8 +210,7 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
         )
     )
     def get_check_step(self, obj) -> str | None:
-        """Where a pending check stands: storing the code, reading the agent, or
-        checking its credentials."""
+        """Where a pending check stands: storing the code, reading the agent, or checking its credentials."""
         from simulate.services.agent_version_steps import check_step
 
         return check_step(self._runtime(obj))

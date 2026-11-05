@@ -16251,8 +16251,7 @@ export const AgentVersionListResponseApiStatus = {
 } as const;
 
 /**
- * Where a pending check stands: storing the code, reading the agent, or
-checking its credentials.
+ * Where a pending check stands: storing the code, reading the agent, or checking its credentials.
  */
 export type AgentVersionListResponseApiCheckStep =
   (typeof AgentVersionListResponseApiCheckStep)[keyof typeof AgentVersionListResponseApiCheckStep];
@@ -16321,8 +16320,7 @@ export interface AgentVersionListResponseApi {
   readonly in_production?: boolean;
   readonly origin?: string;
   readonly preflight_status?: string;
-  /** Where a pending check stands: storing the code, reading the agent, or
-  checking its credentials. */
+  /** Where a pending check stands: storing the code, reading the agent, or checking its credentials. */
   readonly check_step?: AgentVersionListResponseApiCheckStep;
   check_failure?: AgentVersionCheckFailureApi;
   readonly environments_count?: number;

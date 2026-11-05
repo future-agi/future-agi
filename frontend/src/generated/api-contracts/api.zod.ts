@@ -32477,7 +32477,7 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
     .enum(["snapshot", "reading", "check"])
     .optional()
     .describe(
-      "Where a pending check stands: storing the code, reading the agent, or\nchecking its credentials.",
+      "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
     ),
   check_failure: zod
     .object({

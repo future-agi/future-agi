@@ -52833,7 +52833,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         check_step: {
           title: "Check step",
           description:
-            "Where a pending check stands: storing the code, reading the agent, or\nchecking its credentials.",
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
           type: "string",
           enum: ["snapshot", "reading", "check"],
           readOnly: true,
