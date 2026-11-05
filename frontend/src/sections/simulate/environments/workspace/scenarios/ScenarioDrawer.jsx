@@ -4,7 +4,11 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
-import { callActorWhen } from "./callActorLabels";
+import {
+  callActorTimeout,
+  callActorWhen,
+  effectiveTrigger,
+} from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // One scenario, opened from its table row, laid out as the designer's
@@ -94,6 +98,9 @@ function ScenarioSheet({ row, env }) {
   const listed = Object.fromEntries(
     (env?.callActors || []).map((one) => [one.id, one]),
   );
+  const names = Object.fromEntries(
+    Object.values(listed).map((one) => [one.id, one.name || one.id]),
+  );
   const goals = normaliseSubTasks(row.subTasks);
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
@@ -171,14 +178,19 @@ function ScenarioSheet({ row, env }) {
                   {listed[one.id]?.name || one.id}
                 </Box>
                 {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
-                {` · ${callActorWhen(one.trigger, listed[one.id]?.channel)}`}
+                {` · ${callActorWhen(effectiveTrigger(one, listed[one.id]), listed[one.id]?.channel)}`}
               </Typography>
-              {one.instruction && (
+              {callActorTimeout(listed[one.id], names) && (
+                <Typography className="sd-val" sx={{ color: "text.secondary" }}>
+                  {callActorTimeout(listed[one.id], names)}
+                </Typography>
+              )}
+              {(one.instruction || listed[one.id]?.goal) && (
                 <Typography
                   className="sd-val"
                   sx={{ color: "text.secondary", whiteSpace: "pre-line" }}
                 >
-                  {one.instruction}
+                  {one.instruction || listed[one.id]?.goal}
                 </Typography>
               )}
             </Box>

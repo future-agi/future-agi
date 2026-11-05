@@ -34,6 +34,14 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useEditActor(...args)
         : { mutate, reset: resetEdit, ...editState },
+    useSetActorLimits: (...args) =>
+      realHooks
+        ? real.useSetActorLimits(...args)
+        : { mutate: vi.fn(), reset: vi.fn() },
+    useUploadEnvironmentFile: (...args) =>
+      realHooks
+        ? real.useUploadEnvironmentFile(...args)
+        : { mutateAsync: vi.fn(), reset: vi.fn() },
     useActorView: () =>
       viewState ?? {
         data: {
@@ -367,7 +375,8 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
     );
-    choose("Comes in", "When the agent calls crm.request_approval");
+    choose("Comes in", "When the agent calls an action");
+    choose("The action", "crm.request_approval");
     fireEvent.click(screen.getByText("Save to draft"));
     const [change] = mutate.mock.calls[0];
     expect(change.op).toBe("create");
@@ -613,14 +622,15 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText(/Comes in: After 30 seconds/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "After 30 seconds",
+      "At a set time",
     );
+    expect(screen.getByLabelText("Seconds after the start")).toHaveValue(30);
     const save = screen.getByRole("button", { name: "Save to draft" });
-    choose("Comes in", "When the agent calls crm.request_approval");
+    choose("Comes in", "When the agent contacts them");
     expect(save).not.toBeDisabled();
     // The first menu is gone before the select can be opened again.
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    choose("Comes in", "After 30 seconds");
+    choose("Comes in", "At a set time");
     expect(save).toBeDisabled();
   });
 
@@ -644,7 +654,7 @@ describe("WorldActorsPanel", () => {
       "Jordan",
     );
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "From the start",
+      "Present from the start",
     );
   });
 

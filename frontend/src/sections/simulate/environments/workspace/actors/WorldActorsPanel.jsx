@@ -17,6 +17,8 @@ import {
   useActors,
   useActorView,
   useEditActor,
+  useSetActorLimits,
+  useUploadEnvironmentFile,
 } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -24,6 +26,8 @@ import SectionCard from "../../components/SectionCard";
 import { refusalText } from "../evals/refusalText";
 import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
+import ActorLimits from "./ActorLimits";
+import ActorRelations from "./ActorRelations";
 import ActorsSkeleton from "./ActorsSkeleton";
 import { hidden, seenValue, speaks } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
@@ -51,6 +55,9 @@ const OUTLINED = {
 export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
+  const limits = useSetActorLimits(envId);
+  const [settings, setSettings] = useState(false);
+  const upload = useUploadEnvironmentFile(envId);
   const [inUse, setInUse] = useState(null);
   // The record and the revision it was read at, taken together when the form opens: a refresh under an open form must
   // not move the revision, or a save would overwrite an edit it never saw.
@@ -81,7 +88,25 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     loudness: data?.loudness || {},
     knowledgeSources: data?.knowledge_sources || { files: [], records: [] },
     others: cast,
+    actorModels: data?.actor_models || [],
+    // Uploads a document into the draft and answers with its path, so the form can pick it for this actor.
+    upload: locked
+      ? null
+      : async (file) => {
+          const before = new Set(data?.knowledge_sources?.files || []);
+          const next = await upload.mutateAsync({
+            file,
+            kind: "knowledge",
+            revision,
+          });
+          return (
+            (next?.knowledge_sources?.files || []).find(
+              (one) => !before.has(one),
+            ) || `knowledge/${file.name}`
+          );
+        },
   };
+  const hasCaller = cast.some((one) => one.id === "caller");
 
   // Kept after the dialog closes, so its title doesn't blank while it fades out.
   const [removing, setRemoving] = useState(null);
@@ -142,6 +167,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       </Typography>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
+        {!hasCaller && <Alert severity="info">{ACTORS_COPY.noCaller}</Alert>}
         {inUse && (
           <Alert severity="warning" onClose={() => setInUse(null)}>
             {inUse}
@@ -164,6 +190,29 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       >
         {rows(cast)}
       </Group>
+      <Button
+        size="small"
+        sx={{ mt: 2 }}
+        onClick={() => setSettings((open) => !open)}
+      >
+        {settings ? ACTORS_COPY.hideSettings : ACTORS_COPY.showSettings}
+      </Button>
+      <Collapse in={settings} unmountOnExit>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <ActorRelations cast={cast} />
+          <ActorLimits
+            key={revision}
+            limits={data?.limits || {}}
+            models={data?.actor_models || []}
+            locked={locked}
+            busy={limits.isPending}
+            error={limits.error}
+            onSave={(next, done) =>
+              limits.mutate({ limits: next, revision }, { onSuccess: done })
+            }
+          />
+        </Stack>
+      </Collapse>
       <ActorForm
         key={form ? form.actor.id || "new" : "closed"}
         actor={form?.actor ?? null}

@@ -2,6 +2,46 @@ import { ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constan
 
 // Every copy string on the Actors tab, so nothing is inlined in the JSX.
 export const ACTORS_COPY = {
+  limits: {
+    title: "Limits",
+    subtitle:
+      "Every limit on actors is a setting. Empty is the default for the channel; none is no limit.",
+    labels: {
+      max_active: "How many at once on a call",
+      caller_takes_back_after_turns: "Caller takes back after agent turns",
+      actor_seconds_per_call: "Seconds of actors per call",
+      max_messages: "Most messages in a conversation before the run",
+    },
+    defaults: {
+      max_active: "Default: 2 on a phone line, none in a chat",
+      caller_takes_back_after_turns:
+        "Default: 4 on a phone line, none in a chat",
+      actor_seconds_per_call: "Default: 60 on a phone line, none in a chat",
+      max_messages: "Default: 500",
+    },
+    none: "none",
+    help: "A number, or none",
+    badNumber: "A number above 0, or none",
+    model: "Model actors are played on",
+    modelHelp: "Each actor can also have its own",
+    callerModel: (model) => `The caller's model (${model})`,
+    save: "Save limits to draft",
+    saveFailed: "The limits could not be saved",
+    scenarioOverride: "A scenario can set its own values for any of these.",
+  },
+  relations: {
+    title: "Who can reach whom",
+    subtitle:
+      "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
+    comesIn: (when) => `Comes in: ${when}`,
+    broughtBy: (name) => `Brought in by ${name}`,
+    reaches: (names) => `Its actions reach ${names.join(", ")}`,
+    reachesNoOne: "Its actions reach no other actor",
+  },
+  showSettings: "Who can reach whom, and limits",
+  hideSettings: "Hide who can reach whom and limits",
+  noCaller:
+    "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
     title: (n) => `Actors (${n})`,
     subtitle:
@@ -136,6 +176,11 @@ export const ACTORS_COPY = {
       recordsHelp:
         "Record collections in the world they can look up during a run",
       noFiles: "This environment has no documents an actor can read",
+      upload: "Upload a document",
+      uploading: "Uploading…",
+      uploadHelp:
+        "A policy, price list or note they know (.md, .txt, .json or .csv, up to 1 MB). Only actors you give it to can read it.",
+      uploadFailed: "The document could not be uploaded",
       noRecords: "This environment's world has no records yet",
       style: "How they behave (optional)",
       styleHelp: "Their manner, such as brisk and decides quickly",
@@ -149,7 +194,33 @@ export const ACTORS_COPY = {
       noWorldActions:
         "This environment has no world actions: its tools run inside the agent, so no one in the world can act here.",
       trigger: "Comes in",
-      triggerHelp: "When they first act in a call",
+      triggerHelp:
+        "When they first take part; a scenario can give them its own",
+      modes: {
+        always: "Present from the start",
+        on_tool: "When the agent calls an action",
+        on_keyword: "When the agent says a word",
+        mid_journey: "From an agent turn",
+        contacted: "When the agent contacts them",
+        after_seconds: "At a set time",
+        conditional: "Once a record exists",
+      },
+      triggerTool: "The action",
+      triggerWords: "Words",
+      triggerWordsHelp: "Separated by commas",
+      triggerTurn: "From the agent's turn",
+      triggerSeconds: "Seconds after the start",
+      triggerCollection: "Records of",
+      triggerWhere: "Matching (optional)",
+      triggerWhereHelp:
+        'Field values the record holds, such as {"status": "pending"}',
+      takesAction: (action) => `${action} is taken for them`,
+      model: "Model they are played on",
+      environmentModel: "The environment's model",
+      modelHelp: "A cheaper model costs less per actor turn",
+      maxTurns: "Most turns in a call (optional)",
+      maxLines: "Most lines in a call (optional)",
+      noLimitHelp: "Empty is no limit of their own",
       timeout: "Waits, in seconds (optional)",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",

@@ -25,8 +25,10 @@ import {
   idRule,
   idRuleText,
   initialFields,
+  modesFor,
   recordKey,
   toRecord,
+  whereProblem,
 } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
@@ -104,6 +106,8 @@ export default function ActorForm({
   const existing = Boolean(actor?.id);
   const [fields, setFields] = useState({});
   const [more, setMore] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const initial = initialFields(actor);
   const value = (name) => (name in fields ? fields[name] : initial[name]);
   const put = (name, next) =>
@@ -336,6 +340,49 @@ export default function ActorForm({
                   />
                 )}
               />
+              {context.upload && (
+                <Box>
+                  <Button
+                    size="small"
+                    component="label"
+                    disabled={uploading}
+                    sx={{ alignSelf: "flex-start" }}
+                  >
+                    {uploading ? F.uploading : F.upload}
+                    <input
+                      hidden
+                      type="file"
+                      accept=".md,.txt,.json,.csv"
+                      onChange={async (event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        setUploading(true);
+                        setUploadError("");
+                        try {
+                          const path = await context.upload(file);
+                          if (path)
+                            put("files", [
+                              ...new Set([...value("files"), path]),
+                            ]);
+                        } catch (failure) {
+                          setUploadError(failure?.message || F.uploadFailed);
+                        } finally {
+                          setUploading(false);
+                        }
+                      }}
+                    />
+                  </Button>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: uploadError ? "error.main" : "text.secondary",
+                    }}
+                  >
+                    {uploadError || F.uploadHelp}
+                  </Typography>
+                </Box>
+              )}
               <Autocomplete
                 multiple
                 size="small"
@@ -412,19 +459,55 @@ export default function ActorForm({
                 helperText: F.playHelp,
               })}
               {choice(
-                "tool",
+                "mode",
                 F.trigger,
-                [
-                  ["", C.atStart],
-                  ...actionIds.map((id) => [id, C.whenCalled(id)]),
-                ],
+                modesFor(channel).map((mode) => [mode, F.modes[mode]]),
                 {
                   helperText: F.triggerHelp,
                   startLabel:
-                    initial.tool === KEPT_TRIGGER
+                    initial.mode === KEPT_TRIGGER
                       ? C.comesInLabel(activation.trigger)
-                      : C.whenCalled(initial.tool),
+                      : F.modes[initial.mode],
                 },
+              )}
+              {value("mode") === "on_tool" &&
+                choice(
+                  "triggerTool",
+                  F.triggerTool,
+                  actionIds.map((id) => [id, id]),
+                  { startLabel: initial.triggerTool },
+                )}
+              {value("mode") === "on_keyword" &&
+                text("triggerWords", F.triggerWords, {
+                  helperText: F.triggerWordsHelp,
+                })}
+              {value("mode") === "mid_journey" &&
+                text("triggerTurn", F.triggerTurn, {
+                  type: "number",
+                  inputProps: { min: 1 },
+                })}
+              {value("mode") === "after_seconds" &&
+                text("triggerSeconds", F.triggerSeconds, {
+                  type: "number",
+                  inputProps: { min: 0 },
+                })}
+              {value("mode") === "conditional" && (
+                <>
+                  {choice(
+                    "triggerCollection",
+                    F.triggerCollection,
+                    (context.knowledgeSources?.records || []).map((one) => [
+                      one.collection,
+                      one.collection,
+                    ]),
+                    { startLabel: initial.triggerCollection },
+                  )}
+                  {text("triggerWhere", F.triggerWhere, {
+                    error: Boolean(whereProblem(value("triggerWhere"))),
+                    helperText:
+                      whereProblem(value("triggerWhere")) || F.triggerWhereHelp,
+                  })}
+                </>
               )}
               {text("timeout", F.timeout, {
                 type: "number",
@@ -436,9 +519,33 @@ export default function ActorForm({
                 F.fallback,
                 [
                   ...Object.entries(F.fallbacks),
+                  ...permitted.map((id) => [id, F.takesAction(id)]),
                   ...others.map((one) => [one.id, F.answeredBy(one.name)]),
                 ],
-                { startLabel: F.answeredBy(nameOf(initial.fallback)) },
+                {
+                  startLabel: permitted.includes(initial.fallback)
+                    ? F.takesAction(initial.fallback)
+                    : F.answeredBy(nameOf(initial.fallback)),
+                },
+              )}
+              {context.actorModels?.length > 0 &&
+                choice(
+                  "model",
+                  F.model,
+                  [
+                    ["", F.environmentModel],
+                    ...context.actorModels.map((one) => [one, one]),
+                  ],
+                  { helperText: F.modelHelp, startLabel: initial.model },
+                )}
+              {text(
+                channel ? "max_lines" : "max_turns",
+                channel ? F.maxLines : F.maxTurns,
+                {
+                  type: "number",
+                  helperText: F.noLimitHelp,
+                  inputProps: { min: 1 },
+                },
               )}
               {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
               <Button
@@ -552,6 +659,8 @@ ActorForm.propTypes = {
     records: PropTypes.object,
     channels: PropTypes.object,
     loudness: PropTypes.object,
+    actorModels: PropTypes.arrayOf(PropTypes.string),
+    upload: PropTypes.func,
     knowledgeSources: PropTypes.shape({
       files: PropTypes.arrayOf(PropTypes.string),
       records: PropTypes.arrayOf(

@@ -89,15 +89,99 @@ const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
 // The persona fields an actor's voice is picked from.
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
 
-// The "Comes in" choice for a trigger the select can't make itself (a delay, a chance, a later call): kept as it is.
+// The "Comes in" choice for a trigger the form can't make itself (a chance, a later call): kept as it is.
 export const KEPT_TRIGGER = "__kept__";
 
-const triggerChoice = (trigger) => {
+// Nikhil's five ways an actor comes in, as each runtime can evaluate them: someone who speaks runs on the agent's
+// turns and words; someone acting through the world on its actions, contacts and time.
+export const MODES = {
+  speaking: ["always", "on_tool", "on_keyword", "mid_journey", "conditional"],
+  world: ["always", "on_tool", "contacted", "after_seconds", "conditional"],
+};
+export const modesFor = (channel) => (channel ? MODES.speaking : MODES.world);
+
+const triggerFields = (trigger) => {
   const kind = trigger?.kind || "always";
-  if (kind === "always") return "";
-  if (kind === "on_tool" && trigger.tool && !(trigger.on_call > 1))
-    return trigger.tool;
-  return KEPT_TRIGGER;
+  const plain =
+    [...MODES.speaking, ...MODES.world].includes(kind) &&
+    !(kind === "on_tool" && trigger.on_call > 1);
+  return {
+    mode: plain ? kind : KEPT_TRIGGER,
+    triggerTool: trigger?.tool || "",
+    triggerWords: (trigger?.words || []).join(", "),
+    triggerTurn: trigger?.turn ?? 1,
+    triggerSeconds: trigger?.seconds ?? 0,
+    triggerCollection: trigger?.collection || "",
+    triggerWhere:
+      trigger?.where && Object.keys(trigger.where).length
+        ? JSON.stringify(trigger.where)
+        : "",
+  };
+};
+
+const TRIGGER_FIELDS = [
+  "mode",
+  "triggerTool",
+  "triggerWords",
+  "triggerTurn",
+  "triggerSeconds",
+  "triggerCollection",
+  "triggerWhere",
+];
+
+// The trigger the form's fields make; null when the mode is the one kept as it was.
+export const triggerOf = (read) => {
+  switch (read("mode")) {
+    case "always":
+      return { kind: "always" };
+    case "on_tool":
+      return { kind: "on_tool", tool: read("triggerTool") };
+    case "on_keyword":
+      return {
+        kind: "on_keyword",
+        words: String(read("triggerWords") || "")
+          .split(",")
+          .map((one) => one.trim())
+          .filter(Boolean),
+      };
+    case "mid_journey":
+      return { kind: "mid_journey", turn: Number(read("triggerTurn")) || 1 };
+    case "contacted":
+      return { kind: "contacted" };
+    case "after_seconds":
+      return {
+        kind: "after_seconds",
+        seconds: Number(read("triggerSeconds")) || 0,
+      };
+    case "conditional": {
+      let where = {};
+      try {
+        where = read("triggerWhere") ? JSON.parse(read("triggerWhere")) : {};
+      } catch {
+        where = {};
+      }
+      return {
+        kind: "conditional",
+        collection: read("triggerCollection"),
+        where,
+      };
+    }
+    default:
+      return null;
+  }
+};
+
+// Why the form's conditional "where" cannot be saved, or "".
+export const whereProblem = (text) => {
+  if (!String(text || "").trim()) return "";
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? ""
+      : "an object of field values";
+  } catch {
+    return 'an object of field values, such as {"status": "pending"}';
+  }
 };
 
 // A fact the form can show: one with text. Any other entry is kept where it is, untouched.
@@ -172,9 +256,12 @@ export const initialFields = (actor) => {
     seconds: timing.seconds ?? 0,
     permitted: actor?.permitted_actions || [],
     play: actor?.play || "mocked",
-    tool: triggerChoice(activation.trigger),
+    ...triggerFields(activation.trigger),
     timeout: activation.timeout_seconds ?? 0,
     fallback: activation.fallback || "silent",
+    model: actor?.model || "",
+    max_turns: actor?.max_turns ?? "",
+    max_lines: actor?.max_lines ?? "",
   };
 };
 
@@ -303,15 +390,29 @@ export const toRecord = (actor, fields, context) => {
   }
   if (writes("permitted")) record.permitted_actions = read("permitted");
   if (edited("play")) record.play = read("play");
-  if (writes("tool", "timeout", "fallback")) {
+  if (writes(...TRIGGER_FIELDS, "timeout", "fallback")) {
     record.activation = { ...actor.activation };
-    if (writes("tool"))
-      record.activation.trigger = read("tool")
-        ? { kind: "on_tool", tool: read("tool") }
-        : { kind: "always" };
+    if (
+      TRIGGER_FIELDS.some((name) => edited(name)) ||
+      (isNew && read("mode") !== KEPT_TRIGGER)
+    ) {
+      const trigger = triggerOf(read);
+      if (trigger) record.activation.trigger = trigger;
+    }
     if (writes("timeout"))
       record.activation.timeout_seconds = Number(read("timeout")) || 0;
     if (writes("fallback")) record.activation.fallback = read("fallback");
+  }
+  // Empty is the environment's model, and no limit of its own.
+  if (edited("model")) {
+    if (read("model")) record.model = read("model");
+    else delete record.model;
+  }
+  for (const name of ["max_turns", "max_lines"]) {
+    if (!edited(name)) continue;
+    const value = Number(read(name));
+    if (read(name) !== "" && value > 0) record[name] = Math.floor(value);
+    else delete record[name];
   }
   return record;
 };

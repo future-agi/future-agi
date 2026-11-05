@@ -69,13 +69,72 @@ describe("toRecord", () => {
   it("keeps a trigger of any kind until Comes in really changes", () => {
     const trigger = { kind: "after_seconds", seconds: 30 };
     const actor = { id: "a", name: "A", activation: { trigger } };
-    expect(toRecord(actor, { tool: KEPT_TRIGGER }, CONTEXT)).toEqual(actor);
+    expect(toRecord(actor, { mode: "after_seconds" }, CONTEXT)).toEqual(actor);
     expect(
-      toRecord(actor, { tool: "crm.note" }, CONTEXT).activation.trigger,
+      toRecord(actor, { mode: "on_tool", triggerTool: "crm.note" }, CONTEXT)
+        .activation.trigger,
     ).toEqual({ kind: "on_tool", tool: "crm.note" });
-    expect(toRecord(actor, { tool: "" }, CONTEXT).activation.trigger).toEqual({
+    expect(
+      toRecord(actor, { mode: "always" }, CONTEXT).activation.trigger,
+    ).toEqual({
       kind: "always",
     });
+    // A trigger the form cannot make itself (a later call of a tool) is kept as it is.
+    const later = {
+      id: "a",
+      name: "A",
+      activation: { trigger: { kind: "on_tool", tool: "x", on_call: 2 } },
+    };
+    expect(
+      toRecord(later, { mode: KEPT_TRIGGER, name: "B" }, CONTEXT).activation,
+    ).toEqual(later.activation);
+  });
+
+  it("writes each of the five ways an actor comes in, with its own fields", () => {
+    const actor = { id: "a", name: "A" };
+    const trigger = (fields) =>
+      toRecord(actor, fields, CONTEXT).activation.trigger;
+    expect(trigger({ mode: "contacted" })).toEqual({ kind: "contacted" });
+    expect(trigger({ mode: "after_seconds", triggerSeconds: "45" })).toEqual({
+      kind: "after_seconds",
+      seconds: 45,
+    });
+    expect(
+      trigger({ mode: "on_keyword", triggerWords: "refund, manager" }),
+    ).toEqual({
+      kind: "on_keyword",
+      words: ["refund", "manager"],
+    });
+    expect(trigger({ mode: "mid_journey", triggerTurn: "3" })).toEqual({
+      kind: "mid_journey",
+      turn: 3,
+    });
+    expect(
+      trigger({
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: '{"status": "pending"}',
+      }),
+    ).toEqual({
+      kind: "conditional",
+      collection: "approvals",
+      where: { status: "pending" },
+    });
+  });
+
+  it("writes an actor's own model and caps, and empty takes them away", () => {
+    const actor = {
+      id: "a",
+      name: "A",
+      model: "gemini-3.7-flash",
+      max_turns: 4,
+    };
+    const record = toRecord(actor, { model: "", max_turns: "" }, CONTEXT);
+    expect(record.model).toBeUndefined();
+    expect(record.max_turns).toBeUndefined();
+    expect(
+      toRecord({ id: "b", name: "B" }, { max_lines: "3" }, CONTEXT).max_lines,
+    ).toBe(3);
   });
 
   it("rewrites only the facts: other knowledge keeps its place, an unchanged fact keeps its keys", () => {
