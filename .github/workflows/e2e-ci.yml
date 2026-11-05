@@ -120,7 +120,10 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Image builds (~20 min), the Playwright suite (~70 min and growing with
+    # the flow catalog) and the SDK live suites run in this one job. Dev runs
+    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
