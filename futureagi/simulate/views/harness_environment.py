@@ -68,7 +68,7 @@ from simulate.services.harness_provider import (
     request_workspace,
     scope_jobs,
 )
-from simulate.services.harness_verify import require_held_back, start_verify
+from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
@@ -110,12 +110,13 @@ def _bound_by_name(run_test, name):
     return None
 
 
-def _held_back_from(request, job) -> tuple[str, ...]:
+def _held_back_from(request, job, suite_version_id=None) -> tuple[str, ...]:
     """The scenarios this caller may not read: the held-back cases for a coding agent,
-    chosen on its first read; none for anyone else."""
+    chosen on its first read; none for anyone else. A coding agent may read or pick
+    only the default suite: ``suite_version_id`` is refused as not found otherwise."""
     if coding_agent_key(request) is None:
         return ()
-    return require_held_back(job).scenario_keys
+    return require_default_suite(job, suite_version_id).scenario_keys
 
 
 def _uuid_or_none(value):
@@ -369,8 +370,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if identifier is None:
             raise version_reads.version_not_found()
+        hidden = _held_back_from(request, job, identifier)
         members = version_reads.suite_members(job, identifier)
-        return Response(members_without(members, _held_back_from(request, job)))
+        return Response(members_without(members, hidden))
 
     @validated_request(
         request_serializer=HarnessVerifyCreateSerializer,
@@ -568,6 +570,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         query = request.validated_query_data
+        # A coding agent may plan only on the default suite.
+        _held_back_from(request, job, query.get("suite_version_id"))
         picks = VersionPicks(
             agent_version_id=query.get("agent_version_id"),
             environment_version_id=query.get("environment_version_id"),

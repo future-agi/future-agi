@@ -2,7 +2,7 @@
 it gets back when it verifies an agent version on them.
 
 The set is stored on the environment's payload metadata, beside the default suite
-version it was last carried to. A coding agent reads the environment without those
+version it was last carried to. A coding agent reads only that suite, without those
 cases, cannot run them, and learns how a version did on them only as counts.
 """
 
@@ -34,6 +34,8 @@ class HeldBack:
     # Every case ever held back, so a suite that drops one never shows it again; a
     # verify runs those still in ``suite_version_id``.
     scenario_keys: tuple[str, ...]
+    # Every other case of a suite the set was carried to: the coding agent saw them.
+    seen_keys: tuple[str, ...]
 
 
 def held_back(environment: HostedHarnessJob) -> HeldBack | None:
@@ -46,6 +48,7 @@ def held_back(environment: HostedHarnessJob) -> HeldBack | None:
     return HeldBack(
         suite_version_id=UUID(str(stored["suite_version_id"])),
         scenario_keys=tuple(stored["scenario_keys"]),
+        seen_keys=tuple(stored.get("seen_keys") or ()),
     )
 
 

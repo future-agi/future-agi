@@ -21,6 +21,7 @@ from simulate.selectors.held_back import (
 from simulate.services.agent_fix_runs import HELD_BACK_SHARE
 from simulate.services.harness_agent_versions import advisory_xact_lock
 from simulate.services.harness_usage import require_harness_call_usage
+from simulate.services.harness_versioning.read import version_not_found
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     VersionPicks,
@@ -56,6 +57,7 @@ def ensure_held_back(environment: HostedHarnessJob) -> HeldBack | None:
             metadata[HELD_BACK_METADATA_KEY] = {
                 "suite_version_id": str(chosen.suite_version_id),
                 "scenario_keys": list(chosen.scenario_keys),
+                "seen_keys": list(chosen.seen_keys),
             }
             locked.payload = {**locked.payload, "metadata": metadata}
             locked.save(update_fields=["payload", "updated_at"])
@@ -80,17 +82,18 @@ def _suite_keys(suite_version_id: UUID) -> list[str]:
 
 def _carried(environment: HostedHarnessJob, chosen: HeldBack | None) -> HeldBack:
     """The held-back cases for the environment's default suite. A case held back stays
-    held back, even once a suite drops it, so no older version's read shows it. A case
-    the old suite showed stays shown. A third of the cases it did not have join."""
+    held back, even once a suite drops it. A case of any suite the set was carried to
+    stays shown, even when a revert brings it back. A third of the cases in neither
+    join the held-back ones."""
     held = set(chosen.scenario_keys) if chosen is not None else set()
-    known = held | (
-        set(_suite_keys(chosen.suite_version_id)) if chosen is not None else set()
-    )
-    new = [key for key in _suite_keys(environment.suite_version_id) if key not in known]
+    seen = set(chosen.seen_keys) if chosen is not None else set()
+    keys = _suite_keys(environment.suite_version_id)
+    new = [key for key in keys if key not in held and key not in seen]
     held.update(pick_held_back(str(environment.id), new))
     return HeldBack(
         suite_version_id=environment.suite_version_id,
         scenario_keys=tuple(sorted(held)),
+        seen_keys=tuple(sorted(seen.union(keys) - held)),
     )
 
 
@@ -100,6 +103,19 @@ def require_held_back(environment: HostedHarnessJob) -> HeldBack:
     chosen = ensure_held_back(environment)
     if chosen is None:
         raise no_held_back()
+    return chosen
+
+
+def require_default_suite(
+    environment: HostedHarnessJob, suite_version_id: UUID | None
+) -> HeldBack:
+    """``require_held_back`` for a coding agent's read of, or pick from, a suite
+    version. It may use only the default suite, so every case it ever saw is in a
+    suite the set was carried to; any other version reads as one that does not exist.
+    """
+    chosen = require_held_back(environment)
+    if suite_version_id is not None and suite_version_id != chosen.suite_version_id:
+        raise version_not_found()
     return chosen
 
 

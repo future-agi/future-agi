@@ -21,7 +21,10 @@ from simulate.services.harness_verify import (
     pick_held_back,
     start_verify,
 )
-from simulate.services.harness_versioning.versions import record_authoring
+from simulate.services.harness_versioning.versions import (
+    move_default,
+    record_authoring,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
@@ -172,6 +175,7 @@ def _hold(environment, keys):
         "verify_held_back": {
             "suite_version_id": str(environment.suite_version_id),
             "scenario_keys": sorted(keys),
+            "seen_keys": sorted(set(_suite_keys(environment)) - set(keys)),
         },
     }
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
@@ -182,6 +186,17 @@ def _hold(environment, keys):
 
 def _new_default_suite(environment, user, names):
     record_authoring(environment, _authoring(names=names), origin="manual", user=user)
+    environment.refresh_from_db()
+
+
+def _revert(environment, suite_version_id):
+    """Make an older suite version the default again."""
+    move_default(
+        environment,
+        "suite",
+        suite_version_id,
+        expected_default_id=environment.suite_version_id,
+    )
     environment.refresh_from_db()
 
 
@@ -209,28 +224,81 @@ class TestWhenTheSuiteChanges:
         environment.refresh_from_db()
         assert held_back(environment) == chosen
 
-    def test_a_dropped_held_back_case_stays_hidden_and_no_longer_runs(
+    def test_a_dropped_held_back_case_stays_held_back_when_a_revert_brings_it_back(
         self, api_client, environment, user, keys
     ):
         old_suite = environment.suite_version_id
         _hold(environment, [KEYS[1]])
         # The new suite drops the held-back case and adds one, too few to hold back.
         _new_default_suite(environment, user, [NAMES[0], NAMES[2]])
+        ensure_held_back(environment)
 
-        old_members = _as(
+        with pytest.raises(HostedHarnessError) as refused:
+            _verify(environment, _second_agent(environment))
+        _revert(environment, old_suite)
+        members = _as(
             api_client,
             keys.coder,
             "get",
-            f"{BASE}/{environment.id}/versions/suite/{old_suite}/members/",
+            f"{BASE}/{environment.id}/versions/suite/{environment.suite_version_id}/members/",
         )
-        with pytest.raises(HostedHarnessError) as refused:
-            _verify(environment, _second_agent(environment))
 
-        assert old_members.status_code == 200, old_members.content
-        assert [row["scenario_key"] for row in old_members.json()] == [KEYS[0]]
-        assert held_back(environment).scenario_keys == (KEYS[1],)
-        assert held_back(environment).suite_version_id == environment.suite_version_id
         assert refused.value.code == "held_back_empty"
+        assert members.status_code == 200, members.content
+        assert [row["scenario_key"] for row in members.json()] == [KEYS[0]]
+        assert held_back(environment).scenario_keys == (KEYS[1],)
+
+    def test_a_seen_case_stays_shown_when_a_revert_brings_it_back(
+        self, environment, user
+    ):
+        _hold(environment, [KEYS[1]])
+        _new_default_suite(environment, user, [*NAMES[:2], *self.ADDED])
+        wide = environment.suite_version_id
+        joined = ensure_held_back(environment).scenario_keys
+        # The next suite drops every seen case; a revert brings them all back.
+        _new_default_suite(environment, user, [NAMES[1]])
+        ensure_held_back(environment)
+        _revert(environment, wide)
+
+        chosen = ensure_held_back(environment)
+
+        assert len(joined) == 2
+        assert chosen.scenario_keys == joined
+        assert chosen.suite_version_id == environment.suite_version_id
+
+    def test_a_coding_agent_reads_and_picks_only_the_default_suite(
+        self, api_client, environment, user, keys
+    ):
+        old_suite = environment.suite_version_id
+        _hold(environment, [KEYS[1]])
+        _new_default_suite(environment, user, [*NAMES[:2], *self.ADDED])
+        old = f"{BASE}/{environment.id}/versions/suite/{old_suite}/members/"
+
+        coder = _as(api_client, keys.coder, "get", old)
+        person = _as(api_client, keys.user, "get", old)
+        plan = _as(
+            api_client,
+            keys.coder,
+            "get",
+            f"{BASE}/{environment.id}/run-plan/?suite_version_id={old_suite}",
+        )
+        run = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {
+                "scenario_ids": [KEYS[0]],
+                "trials": 1,
+                "suite_version_id": str(old_suite),
+            },
+            HTTP_IDEMPOTENCY_KEY="old-suite",
+        )
+
+        assert coder.status_code == plan.status_code == run.status_code == 404
+        assert run.json()["error"] == "version_not_found", run.content
+        assert person.status_code == 200, person.content
+        assert [row["scenario_key"] for row in person.json()] == KEYS
 
     def test_a_completed_verify_stays_final_once_its_cases_are_dropped(
         self, environment, user
