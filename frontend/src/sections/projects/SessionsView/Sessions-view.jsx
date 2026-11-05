@@ -73,6 +73,7 @@ import {
 } from "./ReplaySessions/store";
 import { REPLAY_TYPES } from "./ReplaySessions/constants";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
+import { observeImportHref } from "src/sections/simulate-v2/_mock/observeSelection";
 import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -842,8 +843,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           navigate("/dashboard/simulate/environments");
           return;
         }
+        /* The exact sessions picked here — the review opens on them. */
         navigate(
-          `/dashboard/simulate/environments/${target.envId}/scenarios?add=replay&from=observe&n=${selectAll ? "all" : (toggledNodes || []).length}`,
+          observeImportHref(target.envId, {
+            kind: "sessions",
+            ids: toggledNodes || [],
+            all: selectAll,
+            project: target.projectName,
+          }),
         );
       } else if (action === "annotation-queue") {
         // Choosing the queue action is an explicit request to operate on the
@@ -1123,7 +1130,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           });
         }}
         onBulkAction={handleBulkAction}
-        bulkActions={SESSION_BULK_ACTIONS}
+        /* A project that feeds an agent's environment turns sessions into
+           tests only through that environment's review — the old Replay
+           would build a second, unreviewed set elsewhere (clarified plan,
+           evidence.md). Projects with no environment keep Replay. */
+        bulkActions={
+          envsForObserveProject(observeId).length
+            ? SESSION_BULK_ACTIONS.filter((a) => a.id !== "replay")
+            : SESSION_BULK_ACTIONS
+        }
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
       />

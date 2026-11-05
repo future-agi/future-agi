@@ -8,12 +8,12 @@ import { productionConversationsOf, replayScenarioOf } from "./scenarioSources";
 import { agentVersions } from "./versions";
 import { hashSeed } from "./runStream";
 
-/** The Observe project these traces come from. */
-export const traceProjectOf = (env, envState) =>
-  envState?.agent?.values?.observeProject?.id ||
-  `${String(env?.name || "agent")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")}-prod`;
+/** The Observe project these traces come from — the one linked to the
+    agent, or none. A name is never made up for an unlinked agent. */
+export const traceProjectOf = (env, envState) => {
+  const p = envState?.agent?.values?.observeProject;
+  return p?.name || p?.id || null;
+};
 
 /**
  * The production traces for this environment's agent: each with its trace ID,
@@ -157,6 +157,7 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
         transcript: "uploaded transcript",
         dataset: "dataset row",
         simulation: "failed simulation trial",
+        simCall: "simulated call",
       }[t.sourceKind] || "production trace";
     const summaries = {
       reproduce: `Reproduces ${origin} ${t.traceId} — the situation and the failure, judged against the policy`,
@@ -171,6 +172,7 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
             transcript: "transcript",
             dataset: "dataset-import",
             simulation: "simulation",
+            simCall: "simulation",
           }[t.sourceKind],
         }),
         ...(goal !== "replay" && {

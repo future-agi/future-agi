@@ -112,10 +112,11 @@ export default function useFixPlan(issue, rootCause = null, envId = null) {
   const ready = !!agent && !!main && !building && drafts.length > 0;
 
   /* Start it with these defaults and a budget — the Fix page's own start. */
-  const startFix = (budget) =>
+  /* `reviewed`: the drafts as the import review left them — what runs. */
+  const startFix = (budget, reviewed = null) =>
     start({
       env: main,
-      drafts,
+      drafts: reviewed?.length ? reviewed : drafts,
       regressionEnvIds: [main.id],
       budget,
       minutes: minutesFor(

@@ -28,7 +28,7 @@ import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
 import { SectionCard } from "../../components/primitives";
 import { useConnectedAgents } from "../../store";
 import { errorFeedProjectsOf, reproduceOf } from "../../errorFeed/issueFix";
-import { issueAsSource } from "../../_mock/errorFeedSource";
+import { issueAsSource, issueImportOf } from "../../_mock/errorFeedSource";
 import {
   errorFeedScenarios,
   asProposal,
@@ -180,12 +180,18 @@ export default function ErrorFeedImport({
   };
   const clear = () => setPicked({});
 
+  /* The picked cases go through the same import review as Observe traces
+     and uploads — they join only once each one is ready. */
   const commit = () =>
     onAdd(
-      chosen.flatMap(({ issue, cases }) => {
-        const ids = new Set(cases.map((k) => k.id));
-        return issue.drafts.filter((d) => ids.has(d.id));
-      }),
+      issueImportOf(
+        chosen.flatMap(({ issue, cases }) => {
+          const ids = new Set(cases.map((k) => k.id));
+          return issue.drafts
+            .filter((d) => ids.has(d.id))
+            .map((draft) => ({ issue, draft }));
+        }),
+      ),
     );
 
   if (isLoading && !allIssues.length) {
@@ -388,8 +394,8 @@ export default function ErrorFeedImport({
           }}
         >
           {scenarioCount > 0
-            ? `Approve ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`
-            : "Approve scenarios"}
+            ? `Review ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`
+            : "Review scenarios"}
         </Button>
       </Stack>
 

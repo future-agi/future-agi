@@ -36,6 +36,7 @@ import {
   reviewPatch,
   shouldOf,
 } from "../../_mock/traceReview";
+import { selectionNoun } from "../../_mock/observeSelection";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const DOT = {
@@ -88,6 +89,7 @@ export default function TraceReviewDrawer({
   patch,
   importId,
   onApprove,
+  doneLabel = null,
 }) {
   const drafts = useMemo(
     () =>
@@ -146,9 +148,17 @@ export default function TraceReviewDrawer({
             >
               {[
                 (info.ids || []).join(", "),
-                !info.sourceKind || info.sourceKind === "observe"
-                  ? `project ${info.project || "—"}`
+                info.sourceKind === "errorFeed"
+                  ? `Error Feed ${(info.issueIds || []).join(", ")}`
                   : null,
+                (!info.sourceKind ||
+                  ["observe", "simCall", "errorFeed"].includes(
+                    info.sourceKind,
+                  )) &&
+                info.project
+                  ? `project ${info.project}`
+                  : null,
+                info.sourceKind === "simCall" ? "simulated calls" : null,
                 info.range || null,
                 `goal: ${info.goal || "—"}`,
               ]
@@ -728,7 +738,7 @@ export default function TraceReviewDrawer({
             sx={{ typography: "s2", color: "text.secondary", flex: 1 }}
           >
             {[
-              `${drafts.length} draft${drafts.length === 1 ? "" : "s"} from ${(info.ids || []).length} trace${(info.ids || []).length === 1 ? "" : "s"}`,
+              `${drafts.length} draft${drafts.length === 1 ? "" : "s"} from ${(info.ids || []).length} ${selectionNoun(info.unit || "traces", (info.ids || []).length)}`,
               `${ready.length} ready`,
               blocked ? `${blocked} blocked` : null,
               dupes.length
@@ -743,10 +753,10 @@ export default function TraceReviewDrawer({
             size="small"
             variant="contained"
             color="primary"
-            disabled={!ready.length}
+            disabled={!doneLabel && !ready.length}
             onClick={() => onApprove(ready)}
           >
-            {`Add ${ready.length} ready to the environment`}
+            {doneLabel || `Add ${ready.length} ready to the environment`}
           </Button>
         </Stack>
       </Stack>
@@ -761,4 +771,7 @@ TraceReviewDrawer.propTypes = {
   patch: PropTypes.func.isRequired,
   importId: PropTypes.string,
   onApprove: PropTypes.func.isRequired,
+  /* Opened from somewhere that adds the drafts itself (Error Feed → Fix):
+     the footer only goes back there. */
+  doneLabel: PropTypes.string,
 };

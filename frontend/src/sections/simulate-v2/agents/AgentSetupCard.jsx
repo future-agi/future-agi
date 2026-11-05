@@ -26,6 +26,10 @@ import {
 } from "../_mock/integrations";
 import OpenPrDialog from "../integrations/OpenPrDialog";
 import { likelyProjectFor, projectLinkOf } from "../_mock/projectLinks";
+import { observeProjectById } from "../_mock/connectAgent";
+
+/* A project said by name — a Tracing project's ID is a UUID. */
+const nameOf = (id) => observeProjectById(id)?.name || id;
 import { observeProjectOf, pendingProjectOf } from "./observeProject";
 import { resolveObserve } from "../_mock/connectAgent";
 import { ObserveProjectStep } from "./connect/ConnectAboutStep";
@@ -194,8 +198,8 @@ export default function AgentSetupCard({
           ...(pr && { tracingPr: pr }),
         },
         pr
-          ? `Opened PR #${pr.number} on ${pr.repo} — ${chosen.id} links when its first trace arrives.`
-          : `${chosen.id} is linked — it settles when its first trace arrives.`,
+          ? `Opened PR #${pr.number} on ${pr.repo} — ${nameOf(chosen.id)} links when its first trace arrives.`
+          : `${nameOf(chosen.id)} is linked — it settles when its first trace arrives.`,
       );
       /* Saved by hand: start waiting for the first trace straight away. */
       if (pendingVia === "manual") setTraceWait("listening");
@@ -226,7 +230,7 @@ export default function AgentSetupCard({
             project: chosen.id,
           },
         },
-        `Observability on — ${provider} calls are pulled into ${chosen.id}, and Error Feed watches them.`,
+        `Observability on — ${provider} calls are pulled into ${nameOf(chosen.id)}, and Error Feed watches them.`,
       );
       return;
     }
@@ -245,8 +249,8 @@ export default function AgentSetupCard({
           }),
       },
       firstTrace
-        ? `First trace in ${chosen.id} — Error Feed watches its traces now.`
-        : `Linked to ${chosen.id} — Error Feed watches its traces.`,
+        ? `First trace in ${nameOf(chosen.id)} — Error Feed watches its traces now.`
+        : `Linked to ${nameOf(chosen.id)} — Error Feed watches its traces.`,
     );
   };
   saveObserveRef.current = saveObserve;
@@ -680,7 +684,7 @@ export default function AgentSetupCard({
               <Typography
                 sx={{ typography: "s3", color: "text.subtitle", mb: 0.75 }}
               >
-                {`Add traceAI where the agent runs — its calls land in ${chosen.id} from the next one.`}
+                {`Add traceAI where the agent runs — its calls land in ${nameOf(chosen.id)} from the next one.`}
               </Typography>
               {/* Our own runs of this code must never land in its production project. */}
               <Stack
@@ -696,7 +700,7 @@ export default function AgentSetupCard({
                 />
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                   {kind === "endpoint"
-                    ? `Simulations call its endpoint, so they're traced too — they're tagged as simulated, and Error Feed leaves them out of ${chosen.id}.`
+                    ? `Simulations call its endpoint, so they're traced too — they're tagged as simulated, and Error Feed leaves them out of ${nameOf(chosen.id)}.`
                     : `Simulation runs of this code aren't sent here — our sandbox runs it without these keys, and each run keeps its own traces.`}
                 </Typography>
               </Stack>
@@ -757,7 +761,7 @@ export default function AgentSetupCard({
                   minWidth: 0,
                 }}
               >
-                {`${chosen.id} traces ${takenFrom}. Moving it here takes it from ${takenFrom} — its issues are this agent's from now on, and a fix ${takenFrom} already started stays with ${takenFrom}.`}
+                {`${nameOf(chosen.id)} traces ${takenFrom}. Moving it here takes it from ${takenFrom} — its issues are this agent's from now on, and a fix ${takenFrom} already started stays with ${takenFrom}.`}
               </Typography>
             )}
             <Button
@@ -789,8 +793,8 @@ export default function AgentSetupCard({
                 }
               >
                 {takenFrom
-                  ? `Move ${chosen.id} here`
-                  : `Pull calls into ${chosen.id}`}
+                  ? `Move ${nameOf(chosen.id)} here`
+                  : `Pull calls into ${nameOf(chosen.id)}`}
               </Button>
             ) : chosen.mode === "create" && traceWait !== "received" ? (
               <Button
@@ -817,7 +821,10 @@ export default function AgentSetupCard({
                   )
                 }
               >
-                {takenFrom ? `Move ${chosen.id} here` : `Link ${chosen.id}`}
+                {/* By name — a Tracing project's ID is a UUID. */}
+                {takenFrom
+                  ? `Move ${nameOf(chosen.id)} here`
+                  : `Link ${nameOf(chosen.id)}`}
               </Button>
             )}
           </Stack>

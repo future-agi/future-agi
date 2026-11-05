@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
 import { Box, Chip, Stack, TextField, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents, useSimStore } from "../../store";
@@ -10,6 +12,7 @@ import {
   resolveObserve,
 } from "../../_mock/connectAgent";
 import { knownProjects, projectLinkOf } from "../../_mock/projectLinks";
+import { rememberTracingProjects } from "../../_mock/connectAgent";
 import { pendingProjectIds } from "../observeProject";
 import {
   ChipCard,
@@ -53,6 +56,22 @@ export function ObserveProjectStep({
   const { state } = useSimStore();
   const { agents } = useConnectedAgents();
   const [query, setQuery] = useState("");
+  /* The real Tracing projects — the list the Tracing page shows — so a
+     project picked here is the one Create environment test is clicked in.
+     Remembered by ID, so the pick keeps its name everywhere. */
+  useQuery({
+    queryKey: ["simulate-tracing-projects"],
+    queryFn: async ({ signal }) => {
+      const page = await readObserveProjectPage({
+        signal,
+        params: { page_size: 100 },
+      });
+      rememberTracingProjects(page.rows);
+      return page.rows.length;
+    },
+    retry: false,
+    staleTime: 60_000,
+  });
   const chosen = resolveObserve(value, prefillProject, agentName);
   /* Two answers, side by side: an existing project (even before one is
      picked from the list) or a new one. */

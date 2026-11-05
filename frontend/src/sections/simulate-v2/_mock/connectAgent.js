@@ -12,7 +12,8 @@ import { FRAMEWORK_TUNING } from "./agentLifecycle";
 const hash = (s) => {
   let h = 0;
   const str = String(s || "");
-  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < str.length; i += 1)
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
   return Math.abs(h);
 };
 
@@ -24,124 +25,415 @@ const hash = (s) => {
 */
 const ASSISTANTS = {
   vapi: [
-    { id: "asst_7c1e9a42-returns", name: "Returns line", updated: "2 hours ago", phone: "+1 415 555 0142", model: "gpt-4o" },
+    {
+      id: "asst_7c1e9a42-returns",
+      name: "Returns line",
+      updated: "2 hours ago",
+      phone: "+1 415 555 0142",
+      model: "gpt-4o",
+    },
     /* A squad: the entry assistant hands the caller to the others. */
     {
-      id: "asst_2b8f0d17-billing", name: "Billing support", updated: "yesterday", phone: "+1 415 555 0177", model: "gpt-4.1",
+      id: "asst_2b8f0d17-billing",
+      name: "Billing support",
+      updated: "yesterday",
+      phone: "+1 415 555 0177",
+      model: "gpt-4.1",
       squad: "Billing squad",
       members: [
-        { id: "billing-greeter", name: "Billing greeter", role: "Entry · routes the caller", model: "gpt-4.1", promptRef: "Billing greeter · system prompt" },
-        { id: "payments", name: "Payments specialist", role: "Takes failed payments and refunds", model: "gpt-4.1", promptRef: "Payments specialist · system prompt" },
-        { id: "disputes", name: "Disputes specialist", role: "Opens and tracks chargebacks", model: "gpt-4o", promptRef: "Disputes specialist · system prompt" },
+        {
+          id: "billing-greeter",
+          name: "Billing greeter",
+          role: "Entry · routes the caller",
+          model: "gpt-4.1",
+          promptRef: "Billing greeter · system prompt",
+        },
+        {
+          id: "payments",
+          name: "Payments specialist",
+          role: "Takes failed payments and refunds",
+          model: "gpt-4.1",
+          promptRef: "Payments specialist · system prompt",
+        },
+        {
+          id: "disputes",
+          name: "Disputes specialist",
+          role: "Opens and tracks chargebacks",
+          model: "gpt-4o",
+          promptRef: "Disputes specialist · system prompt",
+        },
       ],
     },
-    { id: "asst_91aa3c05-booking", name: "Appointment booking", updated: "4 days ago", phone: "+1 628 555 0110", model: "gpt-4o" },
-    { id: "asst_0d44e6b8-outbound", name: "Renewal reminders (outbound)", updated: "2 weeks ago", phone: null, model: "gpt-4o-mini" },
+    {
+      id: "asst_91aa3c05-booking",
+      name: "Appointment booking",
+      updated: "4 days ago",
+      phone: "+1 628 555 0110",
+      model: "gpt-4o",
+    },
+    {
+      id: "asst_0d44e6b8-outbound",
+      name: "Renewal reminders (outbound)",
+      updated: "2 weeks ago",
+      phone: null,
+      model: "gpt-4o-mini",
+    },
   ],
   retell: [
     /* Retell agents are one of two kinds — a single prompt, or a
        conversation flow of nodes, each with its own instructions. Voice
        and chat agents are separate agents on Retell. */
-    { id: "agent_5f20c1d9e7", name: "Front desk", updated: "3 hours ago", phone: "+1 650 555 0131", model: "gpt-4o", retellKind: "single_prompt", channels: ["voice"] },
-    { id: "agent_chat_3b7e10a4", name: "Website chat", updated: "yesterday", phone: null, model: "gpt-4.1", retellKind: "single_prompt", channels: ["chat"] },
     {
-      id: "agent_chat_9d02c6f1", name: "Claims chat", updated: "4 days ago", phone: null, model: "claude-sonnet-4", channels: ["chat"],
+      id: "agent_5f20c1d9e7",
+      name: "Front desk",
+      updated: "3 hours ago",
+      phone: "+1 650 555 0131",
+      model: "gpt-4o",
+      retellKind: "single_prompt",
+      channels: ["voice"],
+    },
+    {
+      id: "agent_chat_3b7e10a4",
+      name: "Website chat",
+      updated: "yesterday",
+      phone: null,
+      model: "gpt-4.1",
+      retellKind: "single_prompt",
+      channels: ["chat"],
+    },
+    {
+      id: "agent_chat_9d02c6f1",
+      name: "Claims chat",
+      updated: "4 days ago",
+      phone: null,
+      model: "claude-sonnet-4",
+      channels: ["chat"],
       retellKind: "conversation_flow",
       members: [
-        { id: "welcome", name: "Welcome", role: "Start node · finds the policy", model: "claude-sonnet-4", promptRef: "Node: Welcome" },
-        { id: "status", name: "Claim status", role: "Calls get_claim, explains where it stands", model: "claude-sonnet-4", promptRef: "Node: Claim status" },
+        {
+          id: "welcome",
+          name: "Welcome",
+          role: "Start node · finds the policy",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Welcome",
+        },
+        {
+          id: "status",
+          name: "Claim status",
+          role: "Calls get_claim, explains where it stands",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Claim status",
+        },
       ],
     },
     {
-      id: "agent_a81b44f302", name: "Claims intake", updated: "6 days ago", phone: "+1 650 555 0199", model: "claude-sonnet-4", channels: ["voice"],
+      id: "agent_a81b44f302",
+      name: "Claims intake",
+      updated: "6 days ago",
+      phone: "+1 650 555 0199",
+      model: "claude-sonnet-4",
+      channels: ["voice"],
       retellKind: "conversation_flow",
       members: [
-        { id: "welcome", name: "Welcome", role: "Start node · confirms the policy holder", model: "claude-sonnet-4", promptRef: "Node: Welcome" },
-        { id: "incident", name: "Incident details", role: "Collects what happened and when", model: "claude-sonnet-4", promptRef: "Node: Incident details" },
-        { id: "coverage", name: "Coverage check", role: "Calls check_coverage, explains the outcome", model: "claude-sonnet-4", promptRef: "Node: Coverage check" },
-        { id: "handoff", name: "Adjuster handoff", role: "Transfers to a human adjuster", model: "claude-sonnet-4", promptRef: "Node: Adjuster handoff" },
+        {
+          id: "welcome",
+          name: "Welcome",
+          role: "Start node · confirms the policy holder",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Welcome",
+        },
+        {
+          id: "incident",
+          name: "Incident details",
+          role: "Collects what happened and when",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Incident details",
+        },
+        {
+          id: "coverage",
+          name: "Coverage check",
+          role: "Calls check_coverage, explains the outcome",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Coverage check",
+        },
+        {
+          id: "handoff",
+          name: "Adjuster handoff",
+          role: "Transfers to a human adjuster",
+          model: "claude-sonnet-4",
+          promptRef: "Node: Adjuster handoff",
+        },
       ],
     },
   ],
   bland: [
     /* Bland's new agent model — ids are agent ids, not pathway ids. */
-    { id: "agent_3e9d71", name: "Lead qualification", updated: "yesterday", phone: "+1 312 555 0164", model: "gpt-4o", channels: ["voice"] },
-    { id: "agent_c04a28", name: "Delivery rescheduling", updated: "last week", phone: "+1 312 555 0108", model: "gpt-4o" },
+    {
+      id: "agent_3e9d71",
+      name: "Lead qualification",
+      updated: "yesterday",
+      phone: "+1 312 555 0164",
+      model: "gpt-4o",
+      channels: ["voice"],
+    },
+    {
+      id: "agent_c04a28",
+      name: "Delivery rescheduling",
+      updated: "last week",
+      phone: "+1 312 555 0108",
+      model: "gpt-4o",
+    },
     /* A messaging agent — texts rather than calls. */
-    { id: "agent_m7f15b", name: "Appointment reminders (SMS)", updated: "2 days ago", phone: "+1 312 555 0152", model: "gpt-4o-mini", channels: ["chat"] },
+    {
+      id: "agent_m7f15b",
+      name: "Appointment reminders (SMS)",
+      updated: "2 days ago",
+      phone: "+1 312 555 0152",
+      model: "gpt-4o-mini",
+      channels: ["chat"],
+    },
   ],
   elevenlabs: [
     /* A multi-node workflow: each node its own instructions. */
     {
-      id: "agent_01jx8k2m4n", name: "Concierge", updated: "5 hours ago", phone: "+44 20 7946 0811", model: "gemini-2.5-pro",
+      id: "agent_01jx8k2m4n",
+      name: "Concierge",
+      updated: "5 hours ago",
+      phone: "+44 20 7946 0811",
+      model: "gemini-2.5-pro",
       members: [
-        { id: "concierge", name: "Concierge", role: "Start node · greets and routes", model: "gemini-2.5-pro", promptRef: "Workflow node: Concierge" },
-        { id: "reservations", name: "Reservations", role: "Books and changes tables", model: "gemini-2.5-pro", promptRef: "Workflow node: Reservations" },
-        { id: "events", name: "Private events", role: "Takes event enquiries", model: "gpt-4o", promptRef: "Workflow node: Private events" },
+        {
+          id: "concierge",
+          name: "Concierge",
+          role: "Start node · greets and routes",
+          model: "gemini-2.5-pro",
+          promptRef: "Workflow node: Concierge",
+        },
+        {
+          id: "reservations",
+          name: "Reservations",
+          role: "Books and changes tables",
+          model: "gemini-2.5-pro",
+          promptRef: "Workflow node: Reservations",
+        },
+        {
+          id: "events",
+          name: "Private events",
+          role: "Takes event enquiries",
+          model: "gpt-4o",
+          promptRef: "Workflow node: Private events",
+        },
       ],
     },
-    { id: "agent_01jw3p9q7r", name: "Order status", updated: "3 days ago", phone: null, model: "gpt-4o" },
+    {
+      id: "agent_01jw3p9q7r",
+      name: "Order status",
+      updated: "3 days ago",
+      phone: null,
+      model: "gpt-4o",
+    },
     /* Chat only — reached on WhatsApp as well as web chat. */
-    { id: "agent_01jy5t2w8x", name: "WhatsApp concierge", updated: "6 hours ago", phone: "+44 7700 900412", model: "gpt-4.1", channels: ["chat"] },
+    {
+      id: "agent_01jy5t2w8x",
+      name: "WhatsApp concierge",
+      updated: "6 hours ago",
+      phone: "+44 7700 900412",
+      model: "gpt-4.1",
+      channels: ["chat"],
+    },
   ],
   livekit: [
-    { id: "returns-line-agent", name: "returns-line-agent", updated: "1 hour ago", phone: "+1 415 555 0190", model: "gpt-4o" },
-    { id: "triage-agent", name: "triage-agent", updated: "2 days ago", phone: null, model: "gpt-4.1" },
+    {
+      id: "returns-line-agent",
+      name: "returns-line-agent",
+      updated: "1 hour ago",
+      phone: "+1 415 555 0190",
+      model: "gpt-4o",
+    },
+    {
+      id: "triage-agent",
+      name: "triage-agent",
+      updated: "2 days ago",
+      phone: null,
+      model: "gpt-4.1",
+    },
   ],
   /* Platforms with their full configuration behind an API; a change ships
      as a draft version (rsiModel PLATFORM_TESTING). */
   telnyx: [
-    { id: "assistant-7c1e9a42-ba0d", name: "Clinic scheduling", updated: "1 hour ago", phone: "+1 512 555 0123", model: "gpt-4o", channels: ["voice"] },
-    { id: "assistant-1f0e33c8-77aa", name: "Order status line", updated: "3 days ago", phone: "+1 512 555 0186", model: "gpt-4o-mini", channels: ["voice"] },
+    {
+      id: "assistant-7c1e9a42-ba0d",
+      name: "Clinic scheduling",
+      updated: "1 hour ago",
+      phone: "+1 512 555 0123",
+      model: "gpt-4o",
+      channels: ["voice"],
+    },
+    {
+      id: "assistant-1f0e33c8-77aa",
+      name: "Order status line",
+      updated: "3 days ago",
+      phone: "+1 512 555 0186",
+      model: "gpt-4o-mini",
+      channels: ["voice"],
+    },
   ],
   google_cx: [
     {
-      id: "projects/acme-support/locations/global/agents/5f2c1d9e", name: "Account support", updated: "yesterday", phone: "+1 650 555 0144", model: "gemini-2.5-flash",
+      id: "projects/acme-support/locations/global/agents/5f2c1d9e",
+      name: "Account support",
+      updated: "yesterday",
+      phone: "+1 650 555 0144",
+      model: "gemini-2.5-flash",
       members: [
-        { id: "start", name: "Default Start Flow", role: "Start · greets and routes", model: "gemini-2.5-flash", promptRef: "Flow: Default Start Flow" },
-        { id: "billing", name: "Billing", role: "Explains charges, takes disputes", model: "gemini-2.5-flash", promptRef: "Flow: Billing" },
-        { id: "password", name: "Password reset", role: "Verifies and resets", model: "gemini-2.5-flash", promptRef: "Flow: Password reset" },
+        {
+          id: "start",
+          name: "Default Start Flow",
+          role: "Start · greets and routes",
+          model: "gemini-2.5-flash",
+          promptRef: "Flow: Default Start Flow",
+        },
+        {
+          id: "billing",
+          name: "Billing",
+          role: "Explains charges, takes disputes",
+          model: "gemini-2.5-flash",
+          promptRef: "Flow: Billing",
+        },
+        {
+          id: "password",
+          name: "Password reset",
+          role: "Verifies and resets",
+          model: "gemini-2.5-flash",
+          promptRef: "Flow: Password reset",
+        },
       ],
     },
-    { id: "projects/acme-support/locations/global/agents/a81b44f3", name: "Store locator", updated: "last week", phone: null, model: "gemini-2.5-flash", channels: ["chat"] },
+    {
+      id: "projects/acme-support/locations/global/agents/a81b44f3",
+      name: "Store locator",
+      updated: "last week",
+      phone: null,
+      model: "gemini-2.5-flash",
+      channels: ["chat"],
+    },
   ],
   voiceflow: [
     {
-      id: "66f2c1d9e7a0b1c2", name: "Booking assistant", updated: "2 hours ago", phone: "+1 312 555 0119", model: "gpt-4o",
+      id: "66f2c1d9e7a0b1c2",
+      name: "Booking assistant",
+      updated: "2 hours ago",
+      phone: "+1 312 555 0119",
+      model: "gpt-4o",
       members: [
-        { id: "book", name: "Book a table", role: "Workflow · takes the booking", model: "gpt-4o", promptRef: "Workflow: Book a table" },
-        { id: "change", name: "Change a booking", role: "Workflow · moves or cancels", model: "gpt-4o", promptRef: "Workflow: Change a booking" },
+        {
+          id: "book",
+          name: "Book a table",
+          role: "Workflow · takes the booking",
+          model: "gpt-4o",
+          promptRef: "Workflow: Book a table",
+        },
+        {
+          id: "change",
+          name: "Change a booking",
+          role: "Workflow · moves or cancels",
+          model: "gpt-4o",
+          promptRef: "Workflow: Change a booking",
+        },
       ],
     },
-    { id: "66e0aa13b2c4d5e6", name: "Help-centre widget", updated: "5 days ago", phone: null, model: "claude-sonnet-4", channels: ["chat"] },
+    {
+      id: "66e0aa13b2c4d5e6",
+      name: "Help-centre widget",
+      updated: "5 days ago",
+      phone: null,
+      model: "claude-sonnet-4",
+      channels: ["chat"],
+    },
   ],
   agentforce: [
     {
-      id: "Service_Agent", name: "Service Agent", updated: "4 hours ago", phone: null, model: "gpt-4o", channels: ["chat"],
+      id: "Service_Agent",
+      name: "Service Agent",
+      updated: "4 hours ago",
+      phone: null,
+      model: "gpt-4o",
+      channels: ["chat"],
       members: [
-        { id: "orders", name: "Order Inquiries", role: "Topic · order status and changes", model: "gpt-4o", promptRef: "Topic: Order Inquiries" },
-        { id: "cases", name: "Case Management", role: "Topic · opens and updates cases", model: "gpt-4o", promptRef: "Topic: Case Management" },
-        { id: "escalation", name: "Escalation", role: "Topic · hands over to a rep", model: "gpt-4o", promptRef: "Topic: Escalation" },
+        {
+          id: "orders",
+          name: "Order Inquiries",
+          role: "Topic · order status and changes",
+          model: "gpt-4o",
+          promptRef: "Topic: Order Inquiries",
+        },
+        {
+          id: "cases",
+          name: "Case Management",
+          role: "Topic · opens and updates cases",
+          model: "gpt-4o",
+          promptRef: "Topic: Case Management",
+        },
+        {
+          id: "escalation",
+          name: "Escalation",
+          role: "Topic · hands over to a rep",
+          model: "gpt-4o",
+          promptRef: "Topic: Escalation",
+        },
       ],
     },
-    { id: "Returns_Agent", name: "Returns Agent", updated: "last week", phone: null, model: "gpt-4o", channels: ["chat"] },
+    {
+      id: "Returns_Agent",
+      name: "Returns Agent",
+      updated: "last week",
+      phone: null,
+      model: "gpt-4o",
+      channels: ["chat"],
+    },
   ],
   copilot_studio: [
     {
-      id: "cr4f2_itHelpDesk", name: "IT help desk", updated: "yesterday", phone: null, model: "gpt-4o", channels: ["chat"],
+      id: "cr4f2_itHelpDesk",
+      name: "IT help desk",
+      updated: "yesterday",
+      phone: null,
+      model: "gpt-4o",
+      channels: ["chat"],
       members: [
-        { id: "reset", name: "Reset password", role: "Topic · verifies and resets", model: "gpt-4o", promptRef: "Topic: Reset password" },
-        { id: "device", name: "Device request", role: "Topic · orders a laptop or phone", model: "gpt-4o", promptRef: "Topic: Device request" },
+        {
+          id: "reset",
+          name: "Reset password",
+          role: "Topic · verifies and resets",
+          model: "gpt-4o",
+          promptRef: "Topic: Reset password",
+        },
+        {
+          id: "device",
+          name: "Device request",
+          role: "Topic · orders a laptop or phone",
+          model: "gpt-4o",
+          promptRef: "Topic: Device request",
+        },
       ],
     },
-    { id: "cr4f2_hrPolicies", name: "HR policies", updated: "2 weeks ago", phone: null, model: "gpt-4o", channels: ["chat"] },
+    {
+      id: "cr4f2_hrPolicies",
+      name: "HR policies",
+      updated: "2 weeks ago",
+      phone: null,
+      model: "gpt-4o",
+      channels: ["chat"],
+    },
   ],
 };
 
 /** The assistants the account can see with the key it gave us — for one
     agent type, the ones that serve it (an untagged one serves both). */
-export const assistantsFor = (provider, agentType = null) => (ASSISTANTS[provider] || [])
-  .filter((a) => !agentType || !a.channels || a.channels.includes(agentType));
+export const assistantsFor = (provider, agentType = null) =>
+  (ASSISTANTS[provider] || []).filter(
+    (a) => !agentType || !a.channels || a.channels.includes(agentType),
+  );
 
 /*
   What importing the picked assistant brings with it beyond its config:
@@ -153,14 +445,31 @@ export const assistantsFor = (provider, agentType = null) => (ASSISTANTS[provide
 */
 export const importedStructureOf = (provider, assistant) => {
   if (!assistant) return { members: [], retellKind: null, structure: null };
-  const members = (assistant.members || []).map((m) => ({ ...m, instructions: m.promptRef }));
-  const retellKind = provider === "retell" ? assistant.retellKind || "single_prompt" : null;
+  const members = (assistant.members || []).map((m) => ({
+    ...m,
+    instructions: m.promptRef,
+  }));
+  const retellKind =
+    provider === "retell" ? assistant.retellKind || "single_prompt" : null;
   /* What each platform calls the parts of one agent. */
-  const parts = { google_cx: "Flows", voiceflow: "Workflows", agentforce: "Topics", copilot_studio: "Topics" }[provider];
-  const structure = provider === "vapi" && assistant.squad ? `Squad · ${members.length} assistants`
-    : provider === "retell" ? (retellKind === "conversation_flow" ? `Conversation flow · ${members.length} nodes` : "Single prompt agent")
-      : members.length ? (parts ? `${parts} · ${members.length}` : `Workflow · ${members.length} nodes`)
-        : null;
+  const parts = {
+    google_cx: "Flows",
+    voiceflow: "Workflows",
+    agentforce: "Topics",
+    copilot_studio: "Topics",
+  }[provider];
+  const structure =
+    provider === "vapi" && assistant.squad
+      ? `Squad · ${members.length} assistants`
+      : provider === "retell"
+        ? retellKind === "conversation_flow"
+          ? `Conversation flow · ${members.length} nodes`
+          : "Single prompt agent"
+        : members.length
+          ? parts
+            ? `${parts} · ${members.length}`
+            : `Workflow · ${members.length} nodes`
+          : null;
   return { members, retellKind, structure };
 };
 
@@ -192,38 +501,142 @@ export const CALL_LOG_PROVIDERS = ["vapi", "retell", "bland"];
                 integration holds
 */
 export const OBSERVE_PROJECTS = [
-  { id: "returns-refunds-line-agent", name: "Returns & refunds line", traces: "2,140 traces · last 12 min ago", issues: 3 },
-  { id: "customer-support-line-agent", name: "Customer support line", traces: "5,812 traces · last 3 min ago", issues: 6 },
-  { id: "airline-rebooking", name: "Airline rebooking", traces: "1,204 traces · last 20 min ago", issues: 2 },
-  { id: "guest-booking-line", name: "Guest booking line", traces: "3,377 traces · last 6 min ago", issues: 3 },
-  { id: "clinic-appointment-line", name: "Clinic appointment line", traces: "1,486 traces · last 9 min ago", issues: 2 },
   {
-    id: "pickup-dispatch", name: "Pickup dispatch", traces: "918 traces · last 1 hour ago", issues: 3,
-    traced: {
-      via: "traceai", framework: "langgraph", language: "Python", model: "gpt-4.1", channel: "chat",
-      tools: ["book_pickup", "update_pickup_address", "quote_fare"], service: "pickup-dispatch",
-    },
-  },
-  { id: "billing-copilot", name: "Billing copilot", traces: "406 traces · last yesterday", issues: 1 },
-  { id: "rebooking-assistant", name: "Rebooking assistant", traces: "233 traces · last 26 min ago", issues: 1 },
-  {
-    id: "travel-rebooking-chat", name: "Travel rebooking chat", traces: "77 traces · last 48 min ago", issues: 1,
-    traced: {
-      via: "call-logs", provider: "vapi", agentType: "chat", agentId: "asst_trc_51q8", agentName: "Travel rebooking assistant",
-      integration: "Observe → Vapi integration", keyRef: "vault://acme/observe/vapi_api_key",
-    },
+    id: "returns-refunds-line-agent",
+    name: "Returns & refunds line",
+    traces: "2,140 traces · last 12 min ago",
+    issues: 3,
   },
   {
-    id: "storefront-chat", name: "Storefront chat", traces: "412 traces · last 44 min ago", issues: 1,
+    id: "customer-support-line-agent",
+    name: "Customer support line",
+    traces: "5,812 traces · last 3 min ago",
+    issues: 6,
+  },
+  {
+    id: "airline-rebooking",
+    name: "Airline rebooking",
+    traces: "1,204 traces · last 20 min ago",
+    issues: 2,
+  },
+  {
+    id: "guest-booking-line",
+    name: "Guest booking line",
+    traces: "3,377 traces · last 6 min ago",
+    issues: 3,
+  },
+  {
+    id: "clinic-appointment-line",
+    name: "Clinic appointment line",
+    traces: "1,486 traces · last 9 min ago",
+    issues: 2,
+  },
+  {
+    id: "pickup-dispatch",
+    name: "Pickup dispatch",
+    traces: "918 traces · last 1 hour ago",
+    issues: 3,
     traced: {
-      via: "call-logs", provider: "vapi", agentType: "chat", agentId: "asst_sf_2m8x", agentName: "Storefront assistant",
-      integration: "Observe → Vapi integration", keyRef: "vault://acme/observe/vapi_api_key",
+      via: "traceai",
+      framework: "langgraph",
+      language: "Python",
+      model: "gpt-4.1",
+      channel: "chat",
+      tools: ["book_pickup", "update_pickup_address", "quote_fare"],
+      service: "pickup-dispatch",
+    },
+  },
+  {
+    id: "billing-copilot",
+    name: "Billing copilot",
+    traces: "406 traces · last yesterday",
+    issues: 1,
+  },
+  {
+    id: "rebooking-assistant",
+    name: "Rebooking assistant",
+    traces: "233 traces · last 26 min ago",
+    issues: 1,
+  },
+  {
+    id: "travel-rebooking-chat",
+    name: "Travel rebooking chat",
+    traces: "77 traces · last 48 min ago",
+    issues: 1,
+    traced: {
+      via: "call-logs",
+      provider: "vapi",
+      agentType: "chat",
+      agentId: "asst_trc_51q8",
+      agentName: "Travel rebooking assistant",
+      integration: "Observe → Vapi integration",
+      keyRef: "vault://acme/observe/vapi_api_key",
+    },
+  },
+  {
+    id: "storefront-chat",
+    name: "Storefront chat",
+    traces: "412 traces · last 44 min ago",
+    issues: 1,
+    traced: {
+      via: "call-logs",
+      provider: "vapi",
+      agentType: "chat",
+      agentId: "asst_sf_2m8x",
+      agentName: "Storefront assistant",
+      integration: "Observe → Vapi integration",
+      keyRef: "vault://acme/observe/vapi_api_key",
     },
   },
 ];
-export const observeProjectById = (id) => OBSERVE_PROJECTS.find((p) => p.id === id) || null;
+/*
+  Real Tracing projects (the same list the Tracing page reads), remembered by
+  ID so a project picked from it keeps its name everywhere — Connect traces,
+  the agent's link, Observe's Create environment test. Kept in this browser.
+*/
+const TRACING_KEY = "fagi.simulate.tracingProjects";
+const readTracing = () => {
+  try {
+    return JSON.parse(window.localStorage.getItem(TRACING_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+};
+let tracingProjects = readTracing();
+export const rememberTracingProjects = (rows = []) => {
+  const next = { ...tracingProjects };
+  rows.forEach((r) => {
+    if (r?.id == null || !r?.name) return;
+    next[String(r.id)] = { name: r.name, lastActive: r.last_active || null };
+  });
+  tracingProjects = next;
+  try {
+    window.localStorage.setItem(TRACING_KEY, JSON.stringify(next));
+  } catch {
+    /* storage blocked: names last for this visit */
+  }
+};
+export const tracingProjectIds = () => Object.keys(tracingProjects);
+export const observeProjectById = (id) => {
+  const sample = OBSERVE_PROJECTS.find((p) => p.id === id);
+  if (sample) return sample;
+  const real = tracingProjects[String(id)];
+  return real
+    ? {
+        id: String(id),
+        name: real.name,
+        traces: "In Tracing",
+        issues: null,
+        tracing: true,
+      }
+    : null;
+};
 /** The project a new agent gets when none is picked — named after it. */
-export const observeSlugOf = (name) => String(name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "agent";
+export const observeSlugOf = (name) =>
+  String(name || "agent")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "") || "agent";
 
 /**
  * The Observe project a source ends up linked to, or null:
@@ -233,7 +646,12 @@ export const observeSlugOf = (name) => String(name || "agent").toLowerCase().rep
  */
 export const observeChoiceOf = (source, prefillProject) => {
   if (source?.observeProject?.id) return source.observeProject;
-  if (source?.kind === "platform" && source?.agentMode !== "prompt" && source?.observability && CALL_LOG_PROVIDERS.includes(source?.provider)) {
+  if (
+    source?.kind === "platform" &&
+    source?.agentMode !== "prompt" &&
+    source?.observability &&
+    CALL_LOG_PROVIDERS.includes(source?.provider)
+  ) {
     return prefillProject
       ? { mode: "existing", id: prefillProject }
       : { mode: "create", id: observeSlugOf(source.name || source.agentId) };
@@ -256,9 +674,21 @@ export const LANGUAGE_OPTIONS = [
 
 /* Reach defaults: an inbound line the caller opens, four calls at once; a
    chat the user opens, capped at 30 turns. */
-export const DEFAULT_REACH = { direction: "inbound", whoSpeaksFirst: "agent", maxConcurrent: 4, whoWritesFirst: "user", turnLimit: 30 };
+export const DEFAULT_REACH = {
+  direction: "inbound",
+  whoSpeaksFirst: "agent",
+  maxConcurrent: 4,
+  whoWritesFirst: "user",
+  turnLimit: 30,
+};
 
-export const emptyProfile = (owner = "") => ({ owner, languages: ["en"], description: "", channels: null, reach: { ...DEFAULT_REACH } });
+export const emptyProfile = (owner = "") => ({
+  owner,
+  languages: ["en"],
+  description: "",
+  channels: null,
+  reach: { ...DEFAULT_REACH },
+});
 
 /**
  * The Observe step's answer, settled: what was picked, else the project the
@@ -267,7 +697,8 @@ export const emptyProfile = (owner = "") => ({ owner, languages: ["en"], descrip
  */
 export const resolveObserve = (observe, prefillProject, agentName) => {
   if (observe?.mode === "existing" && observe.id) return observe;
-  if (observe?.mode === "create") return { mode: "create", id: observeSlugOf(observe.id || agentName) };
+  if (observe?.mode === "create")
+    return { mode: "create", id: observeSlugOf(observe.id || agentName) };
   if (prefillProject) return { mode: "existing", id: prefillProject };
   return { mode: "create", id: observeSlugOf(agentName) };
 };
@@ -277,14 +708,24 @@ export const resolveObserve = (observe, prefillProject, agentName) => {
  * belong to the chosen channels. `flowReach` is what the flow itself asked
  * (a hosted voice agent's direction and who speaks first) and wins.
  */
-export const profileSourceOf = (profile, { defaultChannel = "chat", owner, flowReach } = {}) => {
+export const profileSourceOf = (
+  profile,
+  { defaultChannel = "chat", owner, flowReach } = {},
+) => {
   const p = profile || emptyProfile();
   const channels = p.channels?.length ? p.channels : [defaultChannel];
   const r = { ...DEFAULT_REACH, ...(p.reach || {}) };
   const num = (x, d) => (Number(x) > 0 ? Math.round(Number(x)) : d);
   const reach = {
-    ...(channels.includes("voice") && { direction: r.direction, whoSpeaksFirst: r.whoSpeaksFirst, maxConcurrent: num(r.maxConcurrent, DEFAULT_REACH.maxConcurrent) }),
-    ...(channels.includes("chat") && { whoWritesFirst: r.whoWritesFirst, turnLimit: num(r.turnLimit, DEFAULT_REACH.turnLimit) }),
+    ...(channels.includes("voice") && {
+      direction: r.direction,
+      whoSpeaksFirst: r.whoSpeaksFirst,
+      maxConcurrent: num(r.maxConcurrent, DEFAULT_REACH.maxConcurrent),
+    }),
+    ...(channels.includes("chat") && {
+      whoWritesFirst: r.whoWritesFirst,
+      turnLimit: num(r.turnLimit, DEFAULT_REACH.turnLimit),
+    }),
     ...(channels.includes("voice") ? flowReach || {} : {}),
   };
   return {
@@ -298,10 +739,16 @@ export const profileSourceOf = (profile, { defaultChannel = "chat", owner, flowR
 
 /* ── repository: branches, folders, what a folder holds ──────────────────── */
 
-const dirOf = (path) => String(path || "").split(":")[0].split("/").slice(0, -1).join("/") || ".";
+const dirOf = (path) =>
+  String(path || "")
+    .split(":")[0]
+    .split("/")
+    .slice(0, -1)
+    .join("/") || ".";
 
 export const repoBranches = (repo) => {
-  const extra = hash(repo?.name) % 2 ? ["feat/handoff-rules"] : ["fix/refund-wording"];
+  const extra =
+    hash(repo?.name) % 2 ? ["feat/handoff-rules"] : ["fix/refund-wording"];
   return ["main", "develop", "release/2026.10", ...extra];
 };
 
@@ -316,9 +763,17 @@ export const repoFolders = (repo) => {
     const path = dirOf(a.entry);
     byPath.set(path, [...(byPath.get(path) || []), a]);
   });
-  const found = [...byPath.entries()].map(([path, agents]) => ({ path, agent: agents[0], agents }));
+  const found = [...byPath.entries()].map(([path, agents]) => ({
+    path,
+    agent: agents[0],
+    agents,
+  }));
   const seen = new Set(found.map((f) => f.path));
-  const rest = (repo?.language === "TypeScript" ? ["src", "scripts"] : ["app", "scripts", "tests"])
+  const rest = (
+    repo?.language === "TypeScript"
+      ? ["src", "scripts"]
+      : ["app", "scripts", "tests"]
+  )
     .filter((p) => !seen.has(p))
     .map((path) => ({ path, agent: null }));
   return [...found, ...rest];
@@ -326,9 +781,31 @@ export const repoFolders = (repo) => {
 
 const TOOL_POOLS = {
   dispatch: ["book_pickup", "update_pickup_address", "quote_fare"],
-  returns: ["lookup_order", "shipment_status", "issue_refund", "escalate_to_human", "check_return_eligibility", "generate_return_label", "cancel_order", "update_shipping_address"],
-  billing: ["verify_identity", "list_transactions", "freeze_card", "raise_dispute", "issue_refund", "escalate_to_human"],
-  travel: ["lookup_booking", "search_flights", "rebook_segment", "check_compensation", "issue_voucher"],
+  returns: [
+    "lookup_order",
+    "shipment_status",
+    "issue_refund",
+    "escalate_to_human",
+    "check_return_eligibility",
+    "generate_return_label",
+    "cancel_order",
+    "update_shipping_address",
+  ],
+  billing: [
+    "verify_identity",
+    "list_transactions",
+    "freeze_card",
+    "raise_dispute",
+    "issue_refund",
+    "escalate_to_human",
+  ],
+  travel: [
+    "lookup_booking",
+    "search_flights",
+    "rebook_segment",
+    "check_compensation",
+    "issue_voucher",
+  ],
   research: ["web_search", "fetch_page", "find_company", "cite"],
 };
 const poolFor = (text) => {
@@ -341,7 +818,10 @@ const poolFor = (text) => {
 };
 
 const entryFile = (entry) => String(entry).split(":")[0];
-const pyOrTs = (entry) => (entryFile(entry).endsWith(".ts") ? `npx tsx ${entryFile(entry)}` : `python ${entryFile(entry)}`);
+const pyOrTs = (entry) =>
+  entryFile(entry).endsWith(".ts")
+    ? `npx tsx ${entryFile(entry)}`
+    : `python ${entryFile(entry)}`;
 const RUNNERS = {
   "LiveKit Agents": (entry) => `python ${entryFile(entry)} start`,
   LangGraph: () => "langgraph up",
@@ -349,7 +829,8 @@ const RUNNERS = {
   /* No framework: the code calls the model API itself. */
   "Direct API calls": pyOrTs,
   Pipecat: (entry) => `python ${entryFile(entry)} --transport webrtc`,
-  "Google ADK": (entry) => `adk api_server ${entryFile(entry).split("/").slice(0, -1).join("/") || "."}`,
+  "Google ADK": (entry) =>
+    `adk api_server ${entryFile(entry).split("/").slice(0, -1).join("/") || "."}`,
   Mastra: () => "npx mastra dev",
   "Vercel AI SDK": () => "npm run dev",
   CrewAI: () => "crewai run",
@@ -370,17 +851,42 @@ export const readAgentFolder = ({ repo, folder, branch, entryId }) => {
   /* A folder the scan found no framework in: the generic path — code that
      calls the model API directly, started where the person says. */
   const framework = agent?.framework || "Direct API calls";
-  const tools = poolFor(`${repo?.name || ""} ${folder}`).slice(0, agent?.tools || 3 + (seed % 2));
+  const tools = poolFor(`${repo?.name || ""} ${folder}`).slice(
+    0,
+    agent?.tools || 3 + (seed % 2),
+  );
   return {
-    name: agent?.name || folder.split("/").pop().replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase()),
+    name:
+      agent?.name ||
+      folder
+        .split("/")
+        .pop()
+        .replace(/[-_]/g, " ")
+        .replace(/^./, (c) => c.toUpperCase()),
     detected: !!agent,
     framework,
     facts: {
-      entry: { value: entry, from: agent ? "Agent constructor" : "Guessed from the folder" },
-      prompts: { value: agent?.prompts || [`${folder}/prompts/system.md`], from: agent ? "Loaded by the entry file" : "Guessed from the folder" },
-      tools: { value: tools, from: `${tools.length} functions registered as tools` },
-      model: { value: agent?.model || ["gpt-4o", "gpt-4.1", "claude-sonnet-4"][seed % 3], from: "Model argument in the entry file" },
-      run: { value: (RUNNERS[framework] || pyOrTs)(entry), from: `${framework} · from ${ts ? "package.json" : "pyproject"} and the README` },
+      entry: {
+        value: entry,
+        from: agent ? "Agent constructor" : "Guessed from the folder",
+      },
+      prompts: {
+        value: agent?.prompts || [`${folder}/prompts/system.md`],
+        from: agent ? "Loaded by the entry file" : "Guessed from the folder",
+      },
+      tools: {
+        value: tools,
+        from: `${tools.length} functions registered as tools`,
+      },
+      model: {
+        value:
+          agent?.model || ["gpt-4o", "gpt-4.1", "claude-sonnet-4"][seed % 3],
+        from: "Model argument in the entry file",
+      },
+      run: {
+        value: (RUNNERS[framework] || pyOrTs)(entry),
+        from: `${framework} · from ${ts ? "package.json" : "pyproject"} and the README`,
+      },
     },
   };
 };
@@ -430,9 +936,18 @@ export const repoDetectionOf = ({ repo, folder, branch, found }) => {
   const livekit = /livekit/i.test(framework);
   const model = found?.facts?.model?.value || "gpt-4o";
   const keys = [
-    /claude|anthropic/i.test(`${framework} ${model}`) ? "ANTHROPIC_API_KEY" : /gemini|adk/i.test(`${framework} ${model}`) ? "GOOGLE_API_KEY"
-      : ts ? "OPENAI_API_KEY" : framework === "LangGraph" && seed % 2 ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY",
-    ...(livekit ? ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DEEPGRAM_API_KEY"] : []),
+    /claude|anthropic/i.test(`${framework} ${model}`)
+      ? "ANTHROPIC_API_KEY"
+      : /gemini|adk/i.test(`${framework} ${model}`)
+        ? "GOOGLE_API_KEY"
+        : ts
+          ? "OPENAI_API_KEY"
+          : framework === "LangGraph" && seed % 2
+            ? "ANTHROPIC_API_KEY"
+            : "OPENAI_API_KEY",
+    ...(livekit
+      ? ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DEEPGRAM_API_KEY"]
+      : []),
     ...keyPoolFor(`${repo?.name || ""} ${folder}`),
   ];
   const slug = promptSlugFor(`${repo?.name || ""} ${folder}`);
@@ -441,30 +956,101 @@ export const repoDetectionOf = ({ repo, folder, branch, found }) => {
   const file = entry.split(":")[0];
   const handoffs = /openai agents/i.test(framework);
   return {
-    language: { value: ts ? "TypeScript · Node 20" : "Python 3.11", from: ts ? "package.json engines" : "pyproject.toml requires-python" },
-    install: { value: ts ? "npm ci" : livekit ? "uv sync" : "pip install -r requirements.txt", from: ts ? "package-lock.json" : livekit ? "uv.lock" : "requirements.txt" },
-    entryPoints: here.map((a) => ({ id: a.id, name: a.name, entry: a.entry, framework: a.framework })),
+    language: {
+      value: ts ? "TypeScript · Node 20" : "Python 3.11",
+      from: ts ? "package.json engines" : "pyproject.toml requires-python",
+    },
+    install: {
+      value: ts
+        ? "npm ci"
+        : livekit
+          ? "uv sync"
+          : "pip install -r requirements.txt",
+      from: ts ? "package-lock.json" : livekit ? "uv.lock" : "requirements.txt",
+    },
+    entryPoints: here.map((a) => ({
+      id: a.id,
+      name: a.name,
+      entry: a.entry,
+      framework: a.framework,
+    })),
     runtimePrompts: [
-      { id: "built", kind: "built", what: "Greeting assembled per call from the customer's account tier", where: `${file} · build_greeting()` },
-      ...(seed % 2 === 0 ? [{ id: "external", kind: "external", what: "Policy text fetched from your CMS when the call starts", where: `${file} · load_policy()` }] : []),
+      {
+        id: "built",
+        kind: "built",
+        what: "Greeting assembled per call from the customer's account tier",
+        where: `${file} · build_greeting()`,
+      },
+      ...(seed % 2 === 0
+        ? [
+            {
+              id: "external",
+              kind: "external",
+              what: "Policy text fetched from your CMS when the call starts",
+              where: `${file} · load_policy()`,
+            },
+          ]
+        : []),
     ],
     modelAtRuntime: {
       value: runtimeModel,
-      from: runtimeModel ? `model=os.environ.get("AGENT_MODEL", "${model}") in ${file}` : `Model hard-coded in ${file}`,
+      from: runtimeModel
+        ? `model=os.environ.get("AGENT_MODEL", "${model}") in ${file}`
+        : `Model hard-coded in ${file}`,
     },
-    credentialKeys: { value: [...new Set(keys)], from: `${ts ? ".env.example" : ".env.example and os.environ reads"} · names only, we never read the values` },
+    credentialKeys: {
+      value: [...new Set(keys)],
+      from: `${ts ? ".env.example" : ".env.example and os.environ reads"} · names only, we never read the values`,
+    },
     fagiPrompts: {
       value: [
-        { promptId: `pr_${slug.replace(/-/g, "_")}`, name: slug, version: `v${3 + (seed % 6)}` },
-        ...(seed % 2 ? [{ promptId: "pr_escalation_rules", name: "escalation-rules", version: "v2" }] : []),
+        {
+          promptId: `pr_${slug.replace(/-/g, "_")}`,
+          name: slug,
+          version: `v${3 + (seed % 6)}`,
+        },
+        ...(seed % 2
+          ? [
+              {
+                promptId: "pr_escalation_rules",
+                name: "escalation-rules",
+                version: "v2",
+              },
+            ]
+          : []),
       ],
       from: `fagi.prompts.get(…) in ${file}`,
     },
-    members: handoffs ? [
-      { id: "triage", name: "triage_agent", role: "Entry · hands off", model, promptRef: `${folder}/prompts/triage.md` },
-      { id: "specialist", name: `${(found?.name || "specialist").toLowerCase().replace(/[^a-z]+/g, "_").replace(/(^_|_$)/g, "")}_agent`, role: "Does the work", model, promptRef: (found?.facts?.prompts?.value || [])[0] || `${folder}/prompts/system.md` },
-      { id: "escalation", name: "escalation_agent", role: "Hands over to a person", model: "gpt-4o-mini", promptRef: `${folder}/prompts/escalation.md` },
-    ] : [],
+    members: handoffs
+      ? [
+          {
+            id: "triage",
+            name: "triage_agent",
+            role: "Entry · hands off",
+            model,
+            promptRef: `${folder}/prompts/triage.md`,
+          },
+          {
+            id: "specialist",
+            name: `${(found?.name || "specialist")
+              .toLowerCase()
+              .replace(/[^a-z]+/g, "_")
+              .replace(/(^_|_$)/g, "")}_agent`,
+            role: "Does the work",
+            model,
+            promptRef:
+              (found?.facts?.prompts?.value || [])[0] ||
+              `${folder}/prompts/system.md`,
+          },
+          {
+            id: "escalation",
+            name: "escalation_agent",
+            role: "Hands over to a person",
+            model: "gpt-4o-mini",
+            promptRef: `${folder}/prompts/escalation.md`,
+          },
+        ]
+      : [],
   };
 };
 
@@ -475,7 +1061,12 @@ export const frameworkMembersOf = (framework, structure, model) => {
   return structure.agents.map((a, i) => ({
     id: a.name,
     name: a.name,
-    role: i === 0 ? `Entry${a.handoffs.length ? ` · hands off to ${a.handoffs.join(", ")}` : ""}` : a.handoffs.length ? `Hands off to ${a.handoffs.join(", ")}` : `${(a.tools || []).length} tools`,
+    role:
+      i === 0
+        ? `Entry${a.handoffs.length ? ` · hands off to ${a.handoffs.join(", ")}` : ""}`
+        : a.handoffs.length
+          ? `Hands off to ${a.handoffs.join(", ")}`
+          : `${(a.tools || []).length} tools`,
     model: model || "gpt-4.1",
     promptRef: a.instructions,
     instructions: a.instructions,
@@ -486,7 +1077,8 @@ export const frameworkMembersOf = (framework, structure, model) => {
 /* ── what must hold before a code agent is simulated ─────────────────────── */
 
 /* Tools that look like they write data or call outside services. */
-const WRITES = /(^|_)(create|update|issue|refund|cancel|send|book|charge|write|delete|post|transfer|apply|modify|rebook|freeze|raise|generate|escalate|voucher)(_|$)/;
+const WRITES =
+  /(^|_)(create|update|issue|refund|cancel|send|book|charge|write|delete|post|transfer|apply|modify|rebook|freeze|raise|generate|escalate|voucher)(_|$)/;
 
 /**
  * The PRD's remaining "What we found" rows for a code agent:
@@ -502,7 +1094,9 @@ export const repoChecksOf = ({ repo, folder, tools = [] }) => {
   const seed = hash(`${repo?.name || repo}:${folder}`);
   const sideEffects = tools.filter((t) => WRITES.test(String(t).toLowerCase()));
   const command = ts ? "npm test" : "pytest tests/";
-  const checks = ts ? ["npm run lint", "tsc --noEmit"] : ["ruff check .", ...(seed % 2 ? ["mypy ."] : [])];
+  const checks = ts
+    ? ["npm run lint", "tsc --noEmit"]
+    : ["ruff check .", ...(seed % 2 ? ["mypy ."] : [])];
   return {
     sideEffects: {
       value: sideEffects,
@@ -513,7 +1107,9 @@ export const repoChecksOf = ({ repo, folder, tools = [] }) => {
     tests: {
       value: command,
       checks,
-      from: ts ? "From package.json scripts and .github/workflows/ci.yml" : "From pyproject.toml and .github/workflows/ci.yml",
+      from: ts
+        ? "From package.json scripts and .github/workflows/ci.yml"
+        : "From pyproject.toml and .github/workflows/ci.yml",
     },
     credentials: {
       value: ts ? ".env.test" : "tests/.env.test",
@@ -535,14 +1131,22 @@ export const repoChecksOf = ({ repo, folder, tools = [] }) => {
 const py = (extra, wraps, lines, entry) => ({
   install: `pip install "futureagi[${extra}]"`,
   wraps,
-  code: [...lines, "", `app = fagi.serve(${lines.serveArg})  # serves /fagi on :8000`].join("\n"),
+  code: [
+    ...lines,
+    "",
+    `app = fagi.serve(${lines.serveArg})  # serves /fagi on :8000`,
+  ].join("\n"),
   run: "uvicorn serve:app --port 8000",
   entry,
 });
-const pyLines = (module, from, what, serveArg) => Object.assign([
-  `from futureagi.adapters import ${module} as fagi`,
-  `from ${from} import ${what.split(" ")[0]}${what.includes(" ") ? `  # ${what.split(" ").slice(1).join(" ")}` : ""}`,
-], { serveArg });
+const pyLines = (module, from, what, serveArg) =>
+  Object.assign(
+    [
+      `from futureagi.adapters import ${module} as fagi`,
+      `from ${from} import ${what.split(" ")[0]}${what.includes(" ") ? `  # ${what.split(" ").slice(1).join(" ")}` : ""}`,
+    ],
+    { serveArg },
+  );
 const ts = (subpath, wraps, importLine, serveArg, entry) => ({
   install: "npm install @futureagi/adapters",
   wraps,
@@ -594,26 +1198,148 @@ export const ADAPTERS = {
     run: "uvicorn serve:app --port 8000",
     entry: "support/crew.py:SupportCrew",
   },
-  "claude-agent-sdk": py("claude-agent-sdk", "your agent's options", pyLines("claude_agent_sdk", "support.agent", "options your ClaudeAgentOptions: system prompt, tools, subagents", "options"), "support/agent.py:options"),
+  "claude-agent-sdk": py(
+    "claude-agent-sdk",
+    "your agent's options",
+    pyLines(
+      "claude_agent_sdk",
+      "support.agent",
+      "options your ClaudeAgentOptions: system prompt, tools, subagents",
+      "options",
+    ),
+    "support/agent.py:options",
+  ),
   livekit: {
-    ...py("livekit", "your agent's entrypoint", pyLines("livekit", "agent", "entrypoint your AgentSession entrypoint", "entrypoint"), "agent.py:entrypoint"),
+    ...py(
+      "livekit",
+      "your agent's entrypoint",
+      pyLines(
+        "livekit",
+        "agent",
+        "entrypoint your AgentSession entrypoint",
+        "entrypoint",
+      ),
+      "agent.py:entrypoint",
+    ),
     run: "python serve.py  # audio over WebRTC",
   },
   pipecat: {
-    ...py("pipecat", "your pipeline", pyLines("pipecat", "bot", "build_pipeline returns your Pipeline", "build_pipeline"), "bot.py:build_pipeline"),
+    ...py(
+      "pipecat",
+      "your pipeline",
+      pyLines(
+        "pipecat",
+        "bot",
+        "build_pipeline returns your Pipeline",
+        "build_pipeline",
+      ),
+      "bot.py:build_pipeline",
+    ),
     run: "python serve.py  # audio over WebRTC",
   },
-  "google-adk": py("google-adk", "your root agent", pyLines("google_adk", "support.agent", "root_agent your root Agent", "root_agent"), "support/agent.py:root_agent"),
-  mastra: ts("mastra", "your Mastra agent", 'import { mastra } from "./src/mastra"; // your Mastra instance', 'mastra.getAgent("supportAgent")', "src/mastra/index.ts:supportAgent"),
-  "vercel-ai": ts("ai-sdk", "your agent", 'import { supportAgent } from "./lib/agent"; // your Agent: model, system and tools', "supportAgent", "lib/agent.ts:supportAgent"),
-  strands: py("strands", "your Strands agent", pyLines("strands", "support.agent", "agent your strands Agent", "agent"), "support/agent.py:agent"),
-  "pydantic-ai": py("pydantic-ai", "your agent", pyLines("pydantic_ai", "support.agent", "support_agent your pydantic_ai Agent", "support_agent"), "support/agent.py:support_agent"),
-  agno: py("agno", "your agent or team", pyLines("agno", "support.team", "support_team your Agent or Team", "support_team"), "support/team.py:support_team"),
-  haystack: py("haystack", "your pipeline", pyLines("haystack", "support.pipeline", "pipeline your Pipeline or Agent", "pipeline"), "support/pipeline.py:pipeline"),
-  llamaindex: py("llamaindex", "your workflow", pyLines("llamaindex", "support.workflow", "SupportAgent your Workflow", "SupportAgent()"), "support/workflow.py:SupportAgent"),
-  smolagents: py("smolagents", "your manager agent", pyLines("smolagents", "support.agent", "manager your CodeAgent", "manager"), "support/agent.py:manager"),
-  dspy: py("dspy", "your compiled program", pyLines("dspy", "support.program", "program your compiled dspy.Module", "program"), "support/program.py:program"),
-  "microsoft-agent-framework": py("agent-framework", "your agent or workflow", pyLines("agent_framework", "support.app", "agent your ChatAgent or Workflow", "agent"), "support/app.py:agent"),
+  "google-adk": py(
+    "google-adk",
+    "your root agent",
+    pyLines(
+      "google_adk",
+      "support.agent",
+      "root_agent your root Agent",
+      "root_agent",
+    ),
+    "support/agent.py:root_agent",
+  ),
+  mastra: ts(
+    "mastra",
+    "your Mastra agent",
+    'import { mastra } from "./src/mastra"; // your Mastra instance',
+    'mastra.getAgent("supportAgent")',
+    "src/mastra/index.ts:supportAgent",
+  ),
+  "vercel-ai": ts(
+    "ai-sdk",
+    "your agent",
+    'import { supportAgent } from "./lib/agent"; // your Agent: model, system and tools',
+    "supportAgent",
+    "lib/agent.ts:supportAgent",
+  ),
+  strands: py(
+    "strands",
+    "your Strands agent",
+    pyLines("strands", "support.agent", "agent your strands Agent", "agent"),
+    "support/agent.py:agent",
+  ),
+  "pydantic-ai": py(
+    "pydantic-ai",
+    "your agent",
+    pyLines(
+      "pydantic_ai",
+      "support.agent",
+      "support_agent your pydantic_ai Agent",
+      "support_agent",
+    ),
+    "support/agent.py:support_agent",
+  ),
+  agno: py(
+    "agno",
+    "your agent or team",
+    pyLines(
+      "agno",
+      "support.team",
+      "support_team your Agent or Team",
+      "support_team",
+    ),
+    "support/team.py:support_team",
+  ),
+  haystack: py(
+    "haystack",
+    "your pipeline",
+    pyLines(
+      "haystack",
+      "support.pipeline",
+      "pipeline your Pipeline or Agent",
+      "pipeline",
+    ),
+    "support/pipeline.py:pipeline",
+  ),
+  llamaindex: py(
+    "llamaindex",
+    "your workflow",
+    pyLines(
+      "llamaindex",
+      "support.workflow",
+      "SupportAgent your Workflow",
+      "SupportAgent()",
+    ),
+    "support/workflow.py:SupportAgent",
+  ),
+  smolagents: py(
+    "smolagents",
+    "your manager agent",
+    pyLines("smolagents", "support.agent", "manager your CodeAgent", "manager"),
+    "support/agent.py:manager",
+  ),
+  dspy: py(
+    "dspy",
+    "your compiled program",
+    pyLines(
+      "dspy",
+      "support.program",
+      "program your compiled dspy.Module",
+      "program",
+    ),
+    "support/program.py:program",
+  ),
+  "microsoft-agent-framework": py(
+    "agent-framework",
+    "your agent or workflow",
+    pyLines(
+      "agent_framework",
+      "support.app",
+      "agent your ChatAgent or Workflow",
+      "agent",
+    ),
+    "support/app.py:agent",
+  ),
 };
 
 export const ADAPTER_ENDPOINT_PLACEHOLDER = "http://localhost:8000/fagi";
@@ -629,7 +1355,12 @@ export const ADAPTER_ENDPOINT_PLACEHOLDER = "http://localhost:8000/fagi";
   `from` says where each structural fact was read.
 */
 const node = (id, prompt, tools) => ({ id, prompt, ...(tools && { tools }) });
-const agt = (name, instructions, handoffs, tools) => ({ name, instructions, handoffs, tools });
+const agt = (name, instructions, handoffs, tools) => ({
+  name,
+  instructions,
+  handoffs,
+  tools,
+});
 const DESCRIBED = {
   langgraph: {
     name: "Support router",
@@ -637,29 +1368,70 @@ const DESCRIBED = {
       flow: "router → refund_agent | order_agent → respond",
       nodes: [
         node("router", "prompts/router.md"),
-        node("refund_agent", "prompts/refund_agent.md", ["lookup_order", "check_return_eligibility", "issue_refund"]),
-        node("order_agent", "prompts/order_agent.md", ["lookup_order", "shipment_status", "update_shipping_address"]),
+        node("refund_agent", "prompts/refund_agent.md", [
+          "lookup_order",
+          "check_return_eligibility",
+          "issue_refund",
+        ]),
+        node("order_agent", "prompts/order_agent.md", [
+          "lookup_order",
+          "shipment_status",
+          "update_shipping_address",
+        ]),
         node("respond", "prompts/respond.md"),
       ],
       edges: 5,
       conditional: 1,
       from: "the compiled StateGraph",
     },
-    tools: ["lookup_order", "check_return_eligibility", "issue_refund", "shipment_status", "update_shipping_address", "escalate_to_human"],
+    tools: [
+      "lookup_order",
+      "check_return_eligibility",
+      "issue_refund",
+      "shipment_status",
+      "update_shipping_address",
+      "escalate_to_human",
+    ],
     model: "gpt-4o",
   },
   "openai-agents": {
     name: "Support triage",
     agents: [
-      agt("triage_agent", "prompts/triage.md", ["refunds_agent", "orders_agent"], []),
-      agt("refunds_agent", "prompts/refunds.md", ["escalation_agent"], ["lookup_order", "issue_refund"]),
-      agt("orders_agent", "prompts/orders.md", [], ["lookup_order", "shipment_status", "cancel_order"]),
-      agt("escalation_agent", "prompts/escalation.md", [], ["escalate_to_human"]),
+      agt(
+        "triage_agent",
+        "prompts/triage.md",
+        ["refunds_agent", "orders_agent"],
+        [],
+      ),
+      agt(
+        "refunds_agent",
+        "prompts/refunds.md",
+        ["escalation_agent"],
+        ["lookup_order", "issue_refund"],
+      ),
+      agt(
+        "orders_agent",
+        "prompts/orders.md",
+        [],
+        ["lookup_order", "shipment_status", "cancel_order"],
+      ),
+      agt(
+        "escalation_agent",
+        "prompts/escalation.md",
+        [],
+        ["escalate_to_human"],
+      ),
     ],
     agentsFrom: "Agent objects reachable from the entry",
     handoffsFrom: "handoffs= on each Agent",
     guardrails: ["input · pii_redaction", "output · refund_limit_check"],
-    tools: ["lookup_order", "issue_refund", "shipment_status", "cancel_order", "escalate_to_human"],
+    tools: [
+      "lookup_order",
+      "issue_refund",
+      "shipment_status",
+      "cancel_order",
+      "escalate_to_human",
+    ],
     model: "gpt-4.1",
   },
   crewai: {
@@ -668,9 +1440,21 @@ const DESCRIBED = {
       name: "SupportCrew",
       process: "sequential",
       agents: [
-        { role: "Triage specialist", goal: "Work out what the customer needs and route it", tools: [] },
-        { role: "Refunds analyst", goal: "Decide refunds within policy and issue them", tools: ["lookup_order", "check_return_eligibility", "issue_refund"] },
-        { role: "Customer writer", goal: "Reply clearly and say exactly what was done", tools: [] },
+        {
+          role: "Triage specialist",
+          goal: "Work out what the customer needs and route it",
+          tools: [],
+        },
+        {
+          role: "Refunds analyst",
+          goal: "Decide refunds within policy and issue them",
+          tools: ["lookup_order", "check_return_eligibility", "issue_refund"],
+        },
+        {
+          role: "Customer writer",
+          goal: "Reply clearly and say exactly what was done",
+          tools: [],
+        },
       ],
       tasks: [
         { name: "classify_request", agent: "Triage specialist" },
@@ -678,19 +1462,44 @@ const DESCRIBED = {
         { name: "draft_reply", agent: "Customer writer" },
       ],
     },
-    tools: ["lookup_order", "check_return_eligibility", "issue_refund", "escalate_to_human"],
+    tools: [
+      "lookup_order",
+      "check_return_eligibility",
+      "issue_refund",
+      "escalate_to_human",
+    ],
     model: "gpt-4o",
   },
   "claude-agent-sdk": {
     name: "Support agent",
     agents: [
-      agt("main", "CLAUDE.md", ["refunds", "orders"], ["mcp__shop__lookup_order"]),
-      agt("refunds", ".claude/agents/refunds.md", [], ["mcp__shop__lookup_order", "mcp__shop__issue_refund"]),
-      agt("orders", ".claude/agents/orders.md", [], ["mcp__shop__lookup_order", "mcp__shop__shipment_status"]),
+      agt(
+        "main",
+        "CLAUDE.md",
+        ["refunds", "orders"],
+        ["mcp__shop__lookup_order"],
+      ),
+      agt(
+        "refunds",
+        ".claude/agents/refunds.md",
+        [],
+        ["mcp__shop__lookup_order", "mcp__shop__issue_refund"],
+      ),
+      agt(
+        "orders",
+        ".claude/agents/orders.md",
+        [],
+        ["mcp__shop__lookup_order", "mcp__shop__shipment_status"],
+      ),
     ],
     agentsFrom: "ClaudeAgentOptions and the subagents in .claude/agents/",
     handoffsFrom: "Subagents the main agent can hand a task to",
-    tools: ["mcp__shop__lookup_order", "mcp__shop__issue_refund", "mcp__shop__shipment_status", "mcp__shop__escalate_to_human"],
+    tools: [
+      "mcp__shop__lookup_order",
+      "mcp__shop__issue_refund",
+      "mcp__shop__shipment_status",
+      "mcp__shop__escalate_to_human",
+    ],
     model: "claude-sonnet-4",
   },
   livekit: {
@@ -699,14 +1508,24 @@ const DESCRIBED = {
       flow: "room audio → stt → llm → tts → room audio",
       nodes: [
         node("stt", null),
-        node("llm", "prompts/returns_system.md", ["lookup_order", "check_return_eligibility", "issue_refund", "escalate_to_human"]),
+        node("llm", "prompts/returns_system.md", [
+          "lookup_order",
+          "check_return_eligibility",
+          "issue_refund",
+          "escalate_to_human",
+        ]),
         node("tts", null),
       ],
       edges: 4,
       conditional: 0,
       from: "the AgentSession and its Agent",
     },
-    tools: ["lookup_order", "check_return_eligibility", "issue_refund", "escalate_to_human"],
+    tools: [
+      "lookup_order",
+      "check_return_eligibility",
+      "issue_refund",
+      "escalate_to_human",
+    ],
     model: "gpt-4o",
   },
   pipecat: {
@@ -715,7 +1534,11 @@ const DESCRIBED = {
       flow: "transport.input → stt → context → llm → tts → transport.output",
       nodes: [
         node("stt", null),
-        node("llm", "flows/concierge_flow.json", ["lookup_booking", "update_booking", "escalate_to_human"]),
+        node("llm", "flows/concierge_flow.json", [
+          "lookup_booking",
+          "update_booking",
+          "escalate_to_human",
+        ]),
         node("tts", null),
       ],
       edges: 5,
@@ -728,9 +1551,24 @@ const DESCRIBED = {
   "google-adk": {
     name: "Concierge planner",
     agents: [
-      agt("root_agent", "root_agent.yaml · instruction", ["booking_agent", "faq_agent"], []),
-      agt("booking_agent", "booking_agent.yaml · instruction", [], ["lookup_booking", "rebook_segment"]),
-      agt("faq_agent", "faq_agent.yaml · instruction", [], ["search_knowledge_base"]),
+      agt(
+        "root_agent",
+        "root_agent.yaml · instruction",
+        ["booking_agent", "faq_agent"],
+        [],
+      ),
+      agt(
+        "booking_agent",
+        "booking_agent.yaml · instruction",
+        [],
+        ["lookup_booking", "rebook_segment"],
+      ),
+      agt(
+        "faq_agent",
+        "faq_agent.yaml · instruction",
+        [],
+        ["search_knowledge_base"],
+      ),
     ],
     agentsFrom: "The root Agent and its sub_agents",
     handoffsFrom: "sub_agents= on each Agent",
@@ -740,8 +1578,18 @@ const DESCRIBED = {
   mastra: {
     name: "Order help",
     agents: [
-      agt("supportAgent", "src/mastra/agents/support.ts · instructions", ["ordersWorkflow"], ["lookupOrder"]),
-      agt("ordersWorkflow", "src/mastra/workflows/orders.ts", [], ["lookupOrder", "cancelOrder", "shipmentStatus"]),
+      agt(
+        "supportAgent",
+        "src/mastra/agents/support.ts · instructions",
+        ["ordersWorkflow"],
+        ["lookupOrder"],
+      ),
+      agt(
+        "ordersWorkflow",
+        "src/mastra/workflows/orders.ts",
+        [],
+        ["lookupOrder", "cancelOrder", "shipmentStatus"],
+      ),
     ],
     agentsFrom: "Agents and workflows registered on the Mastra instance",
     handoffsFrom: "Workflows the agent can start",
@@ -750,7 +1598,14 @@ const DESCRIBED = {
   },
   "vercel-ai": {
     name: "Returns chat",
-    agents: [agt("supportAgent", "lib/prompts/returns.ts · system", [], ["lookupOrder", "checkReturnEligibility", "createReturnLabel"])],
+    agents: [
+      agt(
+        "supportAgent",
+        "lib/prompts/returns.ts · system",
+        [],
+        ["lookupOrder", "checkReturnEligibility", "createReturnLabel"],
+      ),
+    ],
     agentsFrom: "The Agent's model, system prompt and tools",
     tools: ["lookupOrder", "checkReturnEligibility", "createReturnLabel"],
     model: "gpt-4o",
@@ -758,8 +1613,18 @@ const DESCRIBED = {
   strands: {
     name: "Billing helper",
     agents: [
-      agt("billing_agent", "agent.yaml · system_prompt", ["refund_agent"], ["list_transactions"]),
-      agt("refund_agent", "agent.yaml · refund_agent.system_prompt", [], ["issue_refund"]),
+      agt(
+        "billing_agent",
+        "agent.yaml · system_prompt",
+        ["refund_agent"],
+        ["list_transactions"],
+      ),
+      agt(
+        "refund_agent",
+        "agent.yaml · refund_agent.system_prompt",
+        [],
+        ["issue_refund"],
+      ),
     ],
     agentsFrom: "The Agent and the agents it calls as tools",
     handoffsFrom: "Agents passed as tools",
@@ -769,8 +1634,18 @@ const DESCRIBED = {
   "pydantic-ai": {
     name: "Refund checker",
     agents: [
-      agt("refund_agent", "instructions.md", ["policy_agent"], ["lookup_order", "issue_refund"]),
-      agt("policy_agent", "policy_instructions.md", [], ["search_knowledge_base"]),
+      agt(
+        "refund_agent",
+        "instructions.md",
+        ["policy_agent"],
+        ["lookup_order", "issue_refund"],
+      ),
+      agt(
+        "policy_agent",
+        "policy_instructions.md",
+        [],
+        ["search_knowledge_base"],
+      ),
     ],
     agentsFrom: "The Agent and the agents its tools delegate to",
     handoffsFrom: "Agent delegation inside tools",
@@ -780,20 +1655,44 @@ const DESCRIBED = {
   agno: {
     name: "Support team",
     agents: [
-      agt("support_team", "team instructions", ["orders_agent", "billing_agent"], []),
-      agt("orders_agent", "orders_agent.instructions", [], ["lookup_order", "shipment_status"]),
-      agt("billing_agent", "billing_agent.instructions", [], ["list_transactions", "issue_refund"]),
+      agt(
+        "support_team",
+        "team instructions",
+        ["orders_agent", "billing_agent"],
+        [],
+      ),
+      agt(
+        "orders_agent",
+        "orders_agent.instructions",
+        [],
+        ["lookup_order", "shipment_status"],
+      ),
+      agt(
+        "billing_agent",
+        "billing_agent.instructions",
+        [],
+        ["list_transactions", "issue_refund"],
+      ),
     ],
     agentsFrom: "The Team and its members",
     handoffsFrom: "Members the team routes to",
-    tools: ["lookup_order", "shipment_status", "list_transactions", "issue_refund"],
+    tools: [
+      "lookup_order",
+      "shipment_status",
+      "list_transactions",
+      "issue_refund",
+    ],
     model: "gpt-4o",
   },
   haystack: {
     name: "Policy Q&A",
     graph: {
       flow: "query_embedder → retriever → prompt_builder → llm → answer_builder",
-      nodes: [node("retriever", null, ["search_knowledge_base"]), node("prompt_builder", "prompts/answer.jinja"), node("llm", null)],
+      nodes: [
+        node("retriever", null, ["search_knowledge_base"]),
+        node("prompt_builder", "prompts/answer.jinja"),
+        node("llm", null),
+      ],
       edges: 4,
       conditional: 0,
       from: "the Pipeline's components and connections",
@@ -805,7 +1704,11 @@ const DESCRIBED = {
     name: "Docs agent",
     graph: {
       flow: "start → retrieve → answer | escalate → stop",
-      nodes: [node("retrieve", null, ["search_knowledge_base"]), node("answer", "prompts/system.md"), node("escalate", "prompts/escalate.md", ["escalate_to_human"])],
+      nodes: [
+        node("retrieve", null, ["search_knowledge_base"]),
+        node("answer", "prompts/system.md"),
+        node("escalate", "prompts/escalate.md", ["escalate_to_human"]),
+      ],
       edges: 4,
       conditional: 1,
       from: "the Workflow's steps and events",
@@ -828,7 +1731,11 @@ const DESCRIBED = {
     name: "Intent router",
     graph: {
       flow: "classify → route → respond",
-      nodes: [node("classify", "compiled/router.json · classify.signature"), node("route", null, ["lookup_order", "escalate_to_human"]), node("respond", "compiled/router.json · respond.signature")],
+      nodes: [
+        node("classify", "compiled/router.json · classify.signature"),
+        node("route", null, ["lookup_order", "escalate_to_human"]),
+        node("respond", "compiled/router.json · respond.signature"),
+      ],
       edges: 2,
       conditional: 1,
       from: "the Module's predictors, compiled by its optimizer",
@@ -840,8 +1747,18 @@ const DESCRIBED = {
     name: "Escalation desk",
     agents: [
       agt("triage", "instructions.md", ["specialist", "human_handoff"], []),
-      agt("specialist", "specialist_instructions.md", [], ["lookup_order", "issue_refund"]),
-      agt("human_handoff", "handoff_instructions.md", [], ["escalate_to_human"]),
+      agt(
+        "specialist",
+        "specialist_instructions.md",
+        [],
+        ["lookup_order", "issue_refund"],
+      ),
+      agt(
+        "human_handoff",
+        "handoff_instructions.md",
+        [],
+        ["escalate_to_human"],
+      ),
     ],
     agentsFrom: "ChatAgents in the workflow",
     handoffsFrom: "Edges between the workflow's agents",
@@ -865,22 +1782,48 @@ export const describeAdapter = ({ framework, endpoint }) => {
   const a = ADAPTERS[framework] || ADAPTERS.langgraph;
   const local = /localhost|127\.0\.0\.1/.test(endpoint || "");
   const shape = adapterShapeOf(framework);
-  const across = shape === "crew" ? "crew" : shape === "agents" ? "agents" : "steps";
+  const across =
+    shape === "crew" ? "crew" : shape === "agents" ? "agents" : "steps";
   const base = {
     name: { value: d.name, from: "Name passed to serve(), or the module" },
-    entry: { value: a.entry, from: `The object handed to serve()${local ? " · running locally" : ""}` },
-    tools: { value: d.tools, from: `${d.tools.length} tools bound across the ${across}` },
-    model: { value: d.model, from: "Model the adapter saw on the first describe call" },
+    entry: {
+      value: a.entry,
+      from: `The object handed to serve()${local ? " · running locally" : ""}`,
+    },
+    tools: {
+      value: d.tools,
+      from: `${d.tools.length} tools bound across the ${across}`,
+    },
+    model: {
+      value: d.model,
+      from: "Model the adapter saw on the first describe call",
+    },
   };
   if (shape === "agents") {
     const handing = d.agents.filter((x) => x.handoffs.length);
     return {
-      structure: { agents: d.agents, ...(d.guardrails && { guardrails: d.guardrails }) },
+      structure: {
+        agents: d.agents,
+        ...(d.guardrails && { guardrails: d.guardrails }),
+      },
       facts: {
         ...base,
-        agents: { value: d.agents.map((x) => `${x.name} · ${x.instructions}`), from: `${d.agents.length} ${d.agents.length === 1 ? "agent" : "agents"} · ${d.agentsFrom || "reachable from the entry"}` },
-        ...(handing.length && { handoffs: { value: handing.map((x) => `${x.name} → ${x.handoffs.join(" | ")}`), from: d.handoffsFrom || "Handoffs on each agent" } }),
-        ...(d.guardrails && { guardrails: { value: d.guardrails, from: "input_guardrails and output_guardrails" } }),
+        agents: {
+          value: d.agents.map((x) => `${x.name} · ${x.instructions}`),
+          from: `${d.agents.length} ${d.agents.length === 1 ? "agent" : "agents"} · ${d.agentsFrom || "reachable from the entry"}`,
+        },
+        ...(handing.length && {
+          handoffs: {
+            value: handing.map((x) => `${x.name} → ${x.handoffs.join(" | ")}`),
+            from: d.handoffsFrom || "Handoffs on each agent",
+          },
+        }),
+        ...(d.guardrails && {
+          guardrails: {
+            value: d.guardrails,
+            from: "input_guardrails and output_guardrails",
+          },
+        }),
       },
     };
   }
@@ -890,9 +1833,18 @@ export const describeAdapter = ({ framework, endpoint }) => {
       structure: { crew: c },
       facts: {
         ...base,
-        crew: { value: `${c.name} · ${c.process} process · ${c.agents.length} agents · ${c.tasks.length} tasks`, from: "The Crew handed to serve()" },
-        agents: { value: c.agents.map((x) => `${x.role} — ${x.goal}`), from: "Role and goal from config/agents.yaml" },
-        tasks: { value: c.tasks.map((t) => `${t.name} → ${t.agent}`), from: "config/tasks.yaml, in run order" },
+        crew: {
+          value: `${c.name} · ${c.process} process · ${c.agents.length} agents · ${c.tasks.length} tasks`,
+          from: "The Crew handed to serve()",
+        },
+        agents: {
+          value: c.agents.map((x) => `${x.role} — ${x.goal}`),
+          from: "Role and goal from config/agents.yaml",
+        },
+        tasks: {
+          value: c.tasks.map((t) => `${t.name} → ${t.agent}`),
+          from: "config/tasks.yaml, in run order",
+        },
       },
     };
   }
@@ -901,14 +1853,24 @@ export const describeAdapter = ({ framework, endpoint }) => {
     structure: { graph: g },
     facts: {
       ...base,
-      graph: { value: g.flow, from: `${g.nodes.length} steps · ${g.edges} edges · ${g.conditional} conditional — from ${g.from || "the compiled graph"}` },
-      prompts: { value: g.nodes.filter((n) => n.prompt).map((n) => `${n.id} · ${n.prompt}`), from: "What each step loads its instructions from" },
+      graph: {
+        value: g.flow,
+        from: `${g.nodes.length} steps · ${g.edges} edges · ${g.conditional} conditional — from ${g.from || "the compiled graph"}`,
+      },
+      prompts: {
+        value: g.nodes
+          .filter((n) => n.prompt)
+          .map((n) => `${n.id} · ${n.prompt}`),
+        from: "What each step loads its instructions from",
+      },
     },
   };
 };
 
 /* Frameworks a repository scan names that the adapter doesn't wrap. */
-const TUNING_BY_NAME = { "Direct API calls": "Direct OpenAI, Anthropic or Gemini calls" };
+const TUNING_BY_NAME = {
+  "Direct API calls": "Direct OpenAI, Anthropic or Gemini calls",
+};
 
 /**
  * What improvements edit for a framework (an adapter id like "google-adk",
@@ -921,7 +1883,12 @@ export const frameworkTuningOf = (framework) => {
   const key = meta?.tuning || TUNING_BY_NAME[framework];
   const row = key ? FRAMEWORK_TUNING.find((t) => t.edits?.[key]) : null;
   if (!row) return null;
-  return { label: meta?.label || framework, edits: row.edits[key], tuned: !!row.tuned, traced: meta?.traced !== false };
+  return {
+    label: meta?.label || framework,
+    edits: row.edits[key],
+    tuned: !!row.tuned,
+    traced: meta?.traced !== false,
+  };
 };
 
 /* ── built in Future AGI ──────────────────────────────────────────────────── */
@@ -936,12 +1903,36 @@ export const BUILTIN_MODELS = [
 
 /* Tools teams start from; any of them can be renamed or described again. */
 export const BUILTIN_TOOL_LIBRARY = [
-  { name: "lookup_order", desc: "Fetch an order by ID, email or phone", args: ["order_id"] },
-  { name: "issue_refund", desc: "Refund up to the order total", args: ["order_id", "amount"] },
-  { name: "check_return_eligibility", desc: "Confirm a return fits the policy", args: ["order_id"] },
-  { name: "lookup_booking", desc: "Find a booking by reference or email", args: ["reference"] },
-  { name: "search_knowledge_base", desc: "Search help articles and policies", args: ["query"] },
-  { name: "escalate_to_human", desc: "Hand the conversation to a person", args: ["reason"] },
+  {
+    name: "lookup_order",
+    desc: "Fetch an order by ID, email or phone",
+    args: ["order_id"],
+  },
+  {
+    name: "issue_refund",
+    desc: "Refund up to the order total",
+    args: ["order_id", "amount"],
+  },
+  {
+    name: "check_return_eligibility",
+    desc: "Confirm a return fits the policy",
+    args: ["order_id"],
+  },
+  {
+    name: "lookup_booking",
+    desc: "Find a booking by reference or email",
+    args: ["reference"],
+  },
+  {
+    name: "search_knowledge_base",
+    desc: "Search help articles and policies",
+    args: ["query"],
+  },
+  {
+    name: "escalate_to_human",
+    desc: "Hand the conversation to a person",
+    args: ["reason"],
+  },
 ];
 
 export const BUILTIN_PROMPT_PLACEHOLDER = [
@@ -957,12 +1948,18 @@ export const BUILTIN_PROMPT_PLACEHOLDER = [
 /** Whether the limits differ from the safe defaults — only then are they saved. */
 export const limitsCustomised = (limits) => {
   const d = DEFAULT_LIMITS;
-  const same = (a, b) => [...(a || [])].sort().join("|") === [...(b || [])].sort().join("|");
+  const same = (a, b) =>
+    [...(a || [])].sort().join("|") === [...(b || [])].sort().join("|");
   return !(
-    limits.model?.mode === d.model.mode && same(limits.model?.approved, d.model.approved)
-    && limits.costCeiling === d.costCeiling && (limits.costMode || "pct") === "pct" && limits.latencyCeiling === d.latencyCeiling
-    && same(limits.allowed, d.allowed) && same(limits.protected, d.protected)
-    && limits.budget?.dollars === d.budget.dollars && limits.budget?.minutes === d.budget.minutes
+    limits.model?.mode === d.model.mode &&
+    same(limits.model?.approved, d.model.approved) &&
+    limits.costCeiling === d.costCeiling &&
+    (limits.costMode || "pct") === "pct" &&
+    limits.latencyCeiling === d.latencyCeiling &&
+    same(limits.allowed, d.allowed) &&
+    same(limits.protected, d.protected) &&
+    limits.budget?.dollars === d.budget.dollars &&
+    limits.budget?.minutes === d.budget.minutes
   );
 };
 
@@ -970,20 +1967,37 @@ export const limitsCustomised = (limits) => {
 export const phoneParts = (phone) => {
   const m = /^(\+\d+)\s+(.*)$/.exec(String(phone || "").trim());
   if (!m) return { countryIso: "US", number: "" };
-  return { countryIso: { "+1": "US", "+44": "GB", "+91": "IN", "+61": "AU" }[m[1]] || "US", number: m[2] };
+  return {
+    countryIso:
+      { "+1": "US", "+44": "GB", "+91": "IN", "+61": "AU" }[m[1]] || "US",
+    number: m[2],
+  };
 };
-
 
 /* ── matching a repository to an Observe project's traces ─────────────────── */
 
-const fwKey = (x) => String(x || "").toLowerCase().replace(/[^a-z]/g, "");
+const fwKey = (x) =>
+  String(x || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
 /* "langgraph" (traces) vs "LangGraph" (code); "openai-agents" vs "OpenAI Agents SDK". */
 const sameFramework = (traced, found) => {
   const a = fwKey(traced);
   const b = fwKey(found);
-  return !!a && !!b && (a === b || a.startsWith(b) || b.startsWith(a) || b.startsWith(a.replace(/sdk$/, "")));
+  return (
+    !!a &&
+    !!b &&
+    (a === b ||
+      a.startsWith(b) ||
+      b.startsWith(a) ||
+      b.startsWith(a.replace(/sdk$/, "")))
+  );
 };
-const repoWords = (name) => String(name || "").split("/").pop().toLowerCase();
+const repoWords = (name) =>
+  String(name || "")
+    .split("/")
+    .pop()
+    .toLowerCase();
 
 /**
  * Does what we read in the code match what the project's traces said? The
@@ -1000,7 +2014,9 @@ export const traceMatchOf = (traced, found) => {
   const toolsTraced = (traced.tools || []).length;
   return {
     ok: frameworkOk && toolsFound >= Math.ceil(toolsTraced / 2),
-    frameworkOk, toolsFound, toolsTraced,
+    frameworkOk,
+    toolsFound,
+    toolsTraced,
     modelOk: !traced.model || !found.model || traced.model === found.model,
   };
 };
@@ -1008,17 +2024,25 @@ export const traceMatchOf = (traced, found) => {
 /** The repository the traces most likely come from: named like the traced service, else holding an agent of that framework. */
 export const repoForTraces = (traced, repos = []) => {
   if (!traced) return null;
-  const byName = repos.find((r) => repoWords(r.name) === String(traced.service || "").toLowerCase());
+  const byName = repos.find(
+    (r) => repoWords(r.name) === String(traced.service || "").toLowerCase(),
+  );
   if (byName) return byName.name;
   return null;
 };
 
 /** The folder of the agent in a repository that matches the traces' framework. */
 export const folderForTraces = (traced, repo) => {
-  const a = (repo?.agents || []).find((x) => sameFramework(traced?.framework, x.framework));
+  const a = (repo?.agents || []).find((x) =>
+    sameFramework(traced?.framework, x.framework),
+  );
   return a ? dirOf(a.entry) : null;
 };
 
 /** The entry point in a folder that matches the traces' framework. */
-export const entryForTraces = (traced, repo, folder) => (repo?.agents || [])
-  .find((x) => dirOf(x.entry) === folder && sameFramework(traced?.framework, x.framework))?.id || null;
+export const entryForTraces = (traced, repo, folder) =>
+  (repo?.agents || []).find(
+    (x) =>
+      dirOf(x.entry) === folder &&
+      sameFramework(traced?.framework, x.framework),
+  )?.id || null;

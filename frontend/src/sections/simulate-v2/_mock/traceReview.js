@@ -16,10 +16,25 @@ export const draftSourcesOf = (row, env, envState) => {
   const ids = row?.traceImport?.sourceIds || [];
   /* Every kind of evidence reviews the same way (evidence.md). */
   const kind = row?.traceImport?.sourceKind || "observe";
+  /* Handed over with the import (Observe's Create environment test). */
+  if (row?.traceImport?.sources?.length)
+    return ids
+      .map((id) => row.traceImport.sources.find((t) => t.traceId === id))
+      .filter(Boolean);
+  /* An Error Feed issue's traces: failing production traces whose starting
+     state the feed doesn't hold. */
+  if (kind === "errorFeed")
+    return ids.map((id) => ({
+      id,
+      traceId: id,
+      outcome: "failed",
+      at: row?.traceImport?.at,
+      evidence: { transcript: true, tools: true, startingState: false },
+    }));
   const all =
     kind === "simulation"
       ? failedSimulationsOf(env, envState)
-      : kind === "observe"
+      : kind === "observe" || kind === "simCall"
         ? productionTracesOf(env, envState)
         : envState?.evidenceUploads || [];
   return ids.map((id) => all.find((t) => t.traceId === id)).filter(Boolean);
@@ -71,14 +86,12 @@ export const reviewOf = (row, sources) => {
 /** Seeded records a fixture can point at — the world's tables. */
 export const fixtureOptionsOf = (env) => {
   const tables = Array.isArray(env?.seed) ? env.seed : env?.seed?.tables || [];
-  return tables
-    .slice(0, 4)
-    .flatMap((t, i) => [
-      {
-        id: `${t.name}:a`,
-        label: `${t.name} · seeded row ${1001 + i * 7}${t.note ? ` (${t.note.split(",")[0]})` : ""}`,
-      },
-    ]);
+  return tables.slice(0, 4).flatMap((t, i) => [
+    {
+      id: `${t.name}:a`,
+      label: `${t.name} · seeded row ${1001 + i * 7}${t.note ? ` (${t.note.split(",")[0]})` : ""}`,
+    },
+  ]);
 };
 
 /** Redaction: each kind found, what replaces it, and the rule. */
@@ -180,6 +193,9 @@ export const mappingsOf = (row, env, sources) => {
 
 /** The two separate fields, prefilled: what the trace shows, and what the policy asks for. */
 export const happenedOf = (row, sources) => {
+  /* An Error Feed issue already names what went wrong in its traces. */
+  if (row?.errorFeedIssue?.title)
+    return `In these traces: ${row.errorFeedIssue.title.replace(/\.$/, "")}.`;
   const failed = sources.some((s) => s.outcome === "failed");
   return failed
     ? `The agent said "Let me look into that for you" and the call ended without the caller's ${String(row?.useCase || "request").replace(/^Caller chasing their /i, "")} being resolved — it claimed progress it hadn't made.`
@@ -198,7 +214,9 @@ export const assumptionsOf = (row) => [
   },
   {
     id: "intent",
-    line: `They want the ${String(row?.useCase || "request").replace(/^Caller chasing their /i, "")} resolved today — inferred, not stated as a deadline`,
+    line: row?.errorFeedIssue
+      ? "They want it sorted today — inferred, not stated as a deadline"
+      : `They want the ${String(row?.useCase || "request").replace(/^Caller chasing their /i, "")} resolved today — inferred, not stated as a deadline`,
   },
 ];
 

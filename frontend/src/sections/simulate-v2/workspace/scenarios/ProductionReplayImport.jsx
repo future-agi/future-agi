@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -25,6 +25,11 @@ import {
   traceDraftsOf,
   traceProjectOf,
 } from "../../_mock/traceImport";
+import {
+  observeSelectionOf,
+  selectionNoun,
+  selectionTracesOf,
+} from "../../_mock/observeSelection";
 import { ensureTag, groupPatch, groupsOf } from "../../_mock/scenarioOrg";
 import {
   EVIDENCE_KINDS,
@@ -73,14 +78,25 @@ export default function ProductionReplayImport({
   ];
   const [src, setSrc] = useState(kinds[0]);
   const fileRef = useRef(null);
+  const navigate = useNavigate();
+  /* The exact sessions, traces or calls picked in Observe — they open frozen,
+     so nothing is picked twice from another list (evidence.md, step 1). */
+  const sel = useMemo(() => observeSelectionOf(searchParams), [searchParams]);
+  const selTraces = useMemo(
+    () => selectionTracesOf(sel, productionTracesOf(env, envState)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sel, env?.id],
+  );
   const traces = useMemo(() => {
-    if (src === "observe") return productionTracesOf(env, envState);
+    if (src === "observe")
+      return sel ? selTraces : productionTracesOf(env, envState);
     return (envState?.evidenceUploads || []).filter(
       (u) => u.sourceKind === src,
     );
-  }, [src, env, envState]);
+  }, [src, env, envState, sel, selTraces]);
   const noun = EVIDENCE_KINDS[src].noun;
-  const project = traceProjectOf(env, envState);
+  const project = sel?.project || traceProjectOf(env, envState);
+  const unit = sel?.kind || "traces";
   /* What each becomes as a replay, already scrubbed — the only form shown. */
   const drafts = useMemo(
     () => new Map(traces.map((c) => [c.id, replayScenarioOf(c, env)])),
@@ -91,8 +107,8 @@ export default function ProductionReplayImport({
     [selected],
   );
   const [picked, setPicked] = useState({});
-  const [step, setStep] = useState("pick");
-  const [frozen, setFrozen] = useState([]);
+  const [step, setStep] = useState(sel ? "freeze" : "pick");
+  const [frozen, setFrozen] = useState(() => selTraces.map((t) => t.id));
   const [goal, setGoal] = useState("reproduce");
   const [group, setGroup] = useState("");
   const [tags, setTags] = useState("");
@@ -178,12 +194,38 @@ export default function ProductionReplayImport({
 
   const create = () => {
     const importInfo = {
-      sourceKind: src,
+      sourceKind: src === "observe" && unit === "calls" ? "simCall" : src,
+      unit: src === "observe" ? unit : undefined,
       id: `imp_${Date.now().toString(36)}`,
       at: new Date().toISOString(),
       project,
       range: rangeOf(frozenTraces),
       ids: frozenTraces.map((t) => t.traceId),
+      /* What Observe handed over travels with the drafts, so each one's
+         review reads the evidence of exactly what was picked. */
+      ...(sel && {
+        sources: frozenTraces.map(
+          ({
+            id,
+            traceId,
+            outcome,
+            at,
+            evidence,
+            agentVersion,
+            spans,
+            unit: u,
+          }) => ({
+            id,
+            traceId,
+            outcome,
+            at,
+            evidence,
+            agentVersion,
+            spans,
+            unit: u,
+          }),
+        ),
+      }),
     };
     /* A dataset row's expected behaviour is the draft's claim to review. */
     const expectedOf = new Map(
@@ -237,7 +279,9 @@ export default function ProductionReplayImport({
         asProposal(
           tagIds.length ? { ...r, tagIds } : r,
           src === "observe"
-            ? "production"
+            ? unit === "calls"
+              ? "simulation"
+              : "production"
             : {
                 transcript: "transcript",
                 dataset: "dataset-import",
@@ -378,17 +422,22 @@ export default function ProductionReplayImport({
             >
               <Stack direction="row" alignItems="baseline" spacing={1}>
                 <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
-                  {`${frozenTraces.length} trace${frozenTraces.length === 1 ? "" : "s"} frozen`}
+                  {sel
+                    ? `${frozenTraces.length} ${selectionNoun(unit, frozenTraces.length)} from Observe`
+                    : `${frozenTraces.length} trace${frozenTraces.length === 1 ? "" : "s"} frozen`}
                 </Typography>
-                <TextLink onClick={() => setStep("pick")}>
-                  Change selection
+                {/* Picked in Observe: the selection is changed there. */}
+                <TextLink
+                  onClick={() => (sel ? navigate(-1) : setStep("pick"))}
+                >
+                  {sel ? "Change in Observe" : "Change selection"}
                 </TextLink>
               </Stack>
               <Typography sx={{ typography: "s2", fontFamily: MONO, mt: 0.25 }}>
                 {frozenTraces.map((t) => t.traceId).join(", ")}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {`Project ${project} · ${rangeOf(frozenTraces)} · only these traces — new ones arriving or a changed filter won't change this import`}
+                {`${project ? `Project ${project} · ` : ""}${sel?.all ? `every ${selectionNoun(unit, 1)} matching your filter in Observe · ` : ""}${unit === "calls" ? "simulated calls, not production · " : ""}only these — new ones arriving or a changed filter won't change this import`}
               </Typography>
             </Box>
 
@@ -530,10 +579,10 @@ export default function ProductionReplayImport({
         >
           <Button
             size="small"
-            onClick={() => setStep("pick")}
+            onClick={() => (sel ? navigate(-1) : setStep("pick"))}
             sx={{ color: "text.secondary" }}
           >
-            Back
+            {sel ? "Back to Observe" : "Back"}
           </Button>
           <Button
             variant="outlined"
@@ -581,7 +630,7 @@ export default function ProductionReplayImport({
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {src === "observe"
-              ? `Observe project ${project} · ${rangeOf(traces)} · pick the exact traces — personal data is already replaced`
+              ? `${project ? `Observe project ${project}` : "The agent's Observe traces"} · ${rangeOf(traces)} · pick the exact traces — personal data is already replaced`
               : src === "transcript"
                 ? "Upload transcripts with Customer: / Agent: lines — personal data is replaced at review"
                 : "Upload CSV or JSON with a prompt column (and expected, if you have it) — a row isn't a whole conversation"}

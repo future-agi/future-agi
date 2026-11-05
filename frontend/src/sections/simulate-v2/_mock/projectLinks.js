@@ -26,7 +26,11 @@
     watching   — the agent's own production calls land there
     seeded     — a demo agent that reports into the project
 */
-import { OBSERVE_PROJECTS, observeProjectById } from "./connectAgent";
+import {
+  OBSERVE_PROJECTS,
+  observeProjectById,
+  tracingProjectIds,
+} from "./connectAgent";
 import { observabilityOf } from "./observability";
 
 /* Demo agents that report into these projects even where their saved copy
@@ -54,14 +58,38 @@ export const projectLinkOf = (project, state, agents = []) => {
   /* "Not an agent" is a link set to no agent — an unlinked project stays
      unlinked, rather than falling back to the agent its name or seed
      suggested. */
-  if (state?.projectLinks?.[project] === NO_AGENT) return { ...base, status: "unlinked" };
+  if (state?.projectLinks?.[project] === NO_AGENT)
+    return { ...base, status: "unlinked" };
   const explicit = state?.projectLinks?.[project];
   const byKey = (k) => agents.find((a) => a.key === k) || null;
-  if (explicit) return { ...base, status: "linked", agentKey: explicit, agent: byKey(explicit), how: "set" };
+  if (explicit)
+    return {
+      ...base,
+      status: "linked",
+      agentKey: explicit,
+      agent: byKey(explicit),
+      how: "set",
+    };
   /* Watching only counts once it's on — a name-shaped default isn't a link. */
-  const own = agents.find((a) => observabilityOf(a).on && observabilityOf(a).project === project);
-  if (own) return { ...base, status: "linked", agentKey: own.key, agent: own, how: "watching" };
-  if (SEEDED_PROJECTS[project]) return { ...base, status: "linked", agentKey: SEEDED_PROJECTS[project], agent: byKey(SEEDED_PROJECTS[project]), how: "seeded" };
+  const own = agents.find(
+    (a) => observabilityOf(a).on && observabilityOf(a).project === project,
+  );
+  if (own)
+    return {
+      ...base,
+      status: "linked",
+      agentKey: own.key,
+      agent: own,
+      how: "watching",
+    };
+  if (SEEDED_PROJECTS[project])
+    return {
+      ...base,
+      status: "linked",
+      agentKey: SEEDED_PROJECTS[project],
+      agent: byKey(SEEDED_PROJECTS[project]),
+      how: "seeded",
+    };
   return { ...base, status: "unlinked" };
 };
 
@@ -69,12 +97,20 @@ export const projectLinkOf = (project, state, agents = []) => {
     its link is set; a read-only list for older stored state that held more. */
 export const projectsOfAgent = (agent, state, agents = []) => {
   if (!agent) return [];
-  const ids = new Set([
-    observabilityOf(agent).on ? observabilityOf(agent).project : null,
-    ...Object.entries(state?.projectLinks || {}).filter(([, k]) => k === agent.key).map(([p]) => p),
-    ...Object.entries(SEEDED_PROJECTS).filter(([, k]) => k === agent.key).map(([p]) => p),
-  ].filter(Boolean));
-  const all = agents.some((a) => a.key === agent.key) ? agents : [...agents, agent];
+  const ids = new Set(
+    [
+      observabilityOf(agent).on ? observabilityOf(agent).project : null,
+      ...Object.entries(state?.projectLinks || {})
+        .filter(([, k]) => k === agent.key)
+        .map(([p]) => p),
+      ...Object.entries(SEEDED_PROJECTS)
+        .filter(([, k]) => k === agent.key)
+        .map(([p]) => p),
+    ].filter(Boolean),
+  );
+  const all = agents.some((a) => a.key === agent.key)
+    ? agents
+    : [...agents, agent];
   return [...ids]
     .map((p) => projectLinkOf(p, state, all))
     .filter((l) => l.status === "linked" && l.agentKey === agent.key);
@@ -83,29 +119,57 @@ export const projectsOfAgent = (agent, state, agents = []) => {
 /** The workspace's known projects — the catalogue plus any set up here. */
 export const knownProjects = (state, agents = []) => {
   const ids = new Set([
+    /* Real Tracing projects first — the ones Tracing lists. */
+    ...tracingProjectIds(),
     ...OBSERVE_PROJECTS.map((p) => p.id),
     ...Object.keys(state?.projectLinks || {}),
-    ...agents.map((a) => (observabilityOf(a).on ? observabilityOf(a).project : null)).filter(Boolean),
+    ...agents
+      .map((a) => (observabilityOf(a).on ? observabilityOf(a).project : null))
+      .filter(Boolean),
   ]);
-  return [...ids].map((id) => ({ ...(observeProjectById(id) || { id, name: id }), link: projectLinkOf(id, state, agents) }));
+  return [...ids].map((id) => ({
+    ...(observeProjectById(id) || { id, name: id }),
+    link: projectLinkOf(id, state, agents),
+  }));
 };
 
 /* The likeliest agent for a project: the one whose name shares words with it
    ("pickup-dispatch" → "Pickup dispatch agent"). Null when nothing matches. */
 export const likelyAgentFor = (project, agents = []) => {
-  const words = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !["agent", "line", "the", "and"].includes(w)));
+  const words = (x) =>
+    new Set(
+      String(x || "")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(
+          (w) => w.length > 2 && !["agent", "line", "the", "and"].includes(w),
+        ),
+    );
   const p = words(project);
   let best = null;
   let score = 0;
   agents.forEach((a) => {
     const s = [...words(a.name)].filter((w) => p.has(w)).length;
-    if (s > score) { score = s; best = a; }
+    if (s > score) {
+      score = s;
+      best = a;
+    }
   });
   return best;
 };
 
 /* The words that name a thing — "Pickup dispatch agent" → pickup, dispatch. */
-const nameWords = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !["agent", "assistant", "the", "and", "acme", "inc"].includes(w)));
+const nameWords = (x) =>
+  new Set(
+    String(x || "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(
+        (w) =>
+          w.length > 2 &&
+          !["agent", "assistant", "the", "and", "acme", "inc"].includes(w),
+      ),
+  );
 
 /**
  * The existing Observe project an agent's traces most likely land in: one
@@ -116,14 +180,22 @@ const nameWords = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9]+
  */
 export const likelyProjectFor = (agent, state, agents = []) => {
   if (!agent) return null;
-  const want = new Set([...nameWords(agent.name), ...nameWords(agent.definition?.repoUrl || agent.values?.repo || "")]);
+  const want = new Set([
+    ...nameWords(agent.name),
+    ...nameWords(agent.definition?.repoUrl || agent.values?.repo || ""),
+  ]);
   let best = null;
   let score = 0;
   OBSERVE_PROJECTS.forEach((p) => {
     const link = projectLinkOf(p.id, state, agents);
     if (link.status === "linked" && link.agentKey !== agent.key) return;
-    const got = [...nameWords(`${p.id} ${p.name}`)].filter((w) => want.has(w)).length;
-    if (got > score) { score = got; best = p; }
+    const got = [...nameWords(`${p.id} ${p.name}`)].filter((w) =>
+      want.has(w),
+    ).length;
+    if (got > score) {
+      score = got;
+      best = p;
+    }
   });
   return best;
 };

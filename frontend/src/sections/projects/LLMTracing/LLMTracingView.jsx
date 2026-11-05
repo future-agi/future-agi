@@ -228,6 +228,7 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
+import { observeImportHref } from "src/sections/simulate-v2/_mock/observeSelection";
 import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -3199,58 +3200,59 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               </Box>
               {/* Filter Button */}
               <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                {projectSource === PROJECT_SOURCE.SIMULATOR && (
-                  <LoadingButton
-                    color={selectedCallIds.length > 0 ? "primary" : "inherit"}
-                    loading={isCreatingReplaySessions}
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/navbar/ic_get_started.svg"
-                        width={16}
-                      />
-                    }
-                    onClick={() => {
-                      if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
-                        setIsReplayDrawerCollapsed(
-                          REPLAY_MODULES.TRACES,
-                          false,
-                        );
-                        return;
+                {projectSource === PROJECT_SOURCE.SIMULATOR &&
+                  !envsForObserveProject(observeId).length && (
+                    <LoadingButton
+                      color={selectedCallIds.length > 0 ? "primary" : "inherit"}
+                      loading={isCreatingReplaySessions}
+                      startIcon={
+                        <SvgColor
+                          src="/assets/icons/navbar/ic_get_started.svg"
+                          width={16}
+                        />
                       }
-                      createReplaySessions(
-                        {
-                          project_id: observeId,
-                          replay_type: REPLAY_MODULES.TRACES,
-                          ids: selectedCallIds,
-                          select_all: false,
-                        },
-                        {
-                          onSuccess: (data) => {
-                            useSessionsGridStore
-                              .getState()
-                              .setToggledNodes(selectedCallIds);
-                            setCreatedReplay(data?.data?.result);
-                            setReplayType(REPLAY_TYPES.NEW_GROUP);
-                            setOpenReplaySessionDrawer(
-                              REPLAY_MODULES.TRACES,
-                              true,
-                            );
+                      onClick={() => {
+                        if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
+                          setIsReplayDrawerCollapsed(
+                            REPLAY_MODULES.TRACES,
+                            false,
+                          );
+                          return;
+                        }
+                        createReplaySessions(
+                          {
+                            project_id: observeId,
+                            replay_type: REPLAY_MODULES.TRACES,
+                            ids: selectedCallIds,
+                            select_all: false,
                           },
-                        },
-                      );
-                    }}
-                    size="small"
-                    variant="outlined"
-                    disabled={
-                      selectedCallIds.length === 0 ||
-                      Object.values(openReplaySessionDrawer).some(
-                        (open) => open,
-                      )
-                    }
-                  >
-                    {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
-                  </LoadingButton>
-                )}
+                          {
+                            onSuccess: (data) => {
+                              useSessionsGridStore
+                                .getState()
+                                .setToggledNodes(selectedCallIds);
+                              setCreatedReplay(data?.data?.result);
+                              setReplayType(REPLAY_TYPES.NEW_GROUP);
+                              setOpenReplaySessionDrawer(
+                                REPLAY_MODULES.TRACES,
+                                true,
+                              );
+                            },
+                          },
+                        );
+                      }}
+                      size="small"
+                      variant="outlined"
+                      disabled={
+                        selectedCallIds.length === 0 ||
+                        Object.values(openReplaySessionDrawer).some(
+                          (open) => open,
+                        )
+                      }
+                    >
+                      {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
+                    </LoadingButton>
+                  )}
                 <Button
                   sx={{
                     minWidth: "fit-content",
@@ -4031,13 +4033,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               allowWorkspaceScope={isUserMode}
               agentGraphEnabled={Boolean(primaryAgentGraphProjectId)}
               bulkActions={(() => {
+                /* Linked to an agent's environment: calls become tests only
+                   through its review, so the old Replay isn't offered too. */
+                const feedsEnv = envsForObserveProject(observeId).length > 0;
                 if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                   return [
-                    {
-                      id: "replay",
-                      label: "Replay Calls",
-                      icon: "solar:play-linear",
-                    },
+                    ...(feedsEnv
+                      ? []
+                      : [
+                          {
+                            id: "replay",
+                            label: "Replay Calls",
+                            icon: "solar:play-linear",
+                          },
+                        ]),
                     {
                       id: "environment-test",
                       label: "Create environment test",
@@ -4157,8 +4166,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     navigate("/dashboard/simulate/environments");
                     return;
                   }
+                  /* The exact traces or calls picked here — the review opens
+                     on them. A Simulator project's calls are simulated, and
+                     import as simulated, not as production. */
+                  const calls = projectSource === PROJECT_SOURCE.SIMULATOR;
                   navigate(
-                    `/dashboard/simulate/environments/${target.envId}/scenarios?add=replay&from=observe`,
+                    observeImportHref(target.envId, {
+                      kind: calls ? "calls" : "traces",
+                      ids: calls ? selectedCallIds || [] : selectedTraces || [],
+                      all: calls ? false : !!allTracesSelected,
+                      project: target.projectName,
+                    }),
                   );
                   return;
                 }

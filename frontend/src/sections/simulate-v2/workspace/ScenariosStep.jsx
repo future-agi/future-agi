@@ -794,6 +794,32 @@ export default function ScenariosStep({
         },
       ].slice(-12);
       const kept = batch.rows.length;
+      /* Imported evidence (Observe, Error Feed, uploads) joins only through
+         its review: open it now, on this import, and say one thing that
+         matches what it shows — never "added" and "kept" for the same draft. */
+      const importId = fresh.every((r) => r.traceImport)
+        ? fresh[0].traceImport.id
+        : null;
+      if (importId) {
+        const all = [
+          ...batch.rows.map((r) =>
+            r.proposed
+              ? r
+              : { ...r, proposed: { at: at0, source: stampSource } },
+          ),
+          ...blockedRows,
+        ];
+        patch({
+          scenarios: [...selected, ...all],
+          importHistory: history,
+        });
+        enqueueSnackbar(
+          `${all.length} draft${all.length === 1 ? "" : "s"} to review${blockedRows.length ? ` · ${blockedRows.length} blocked until its evidence is settled` : ""} — only ready ones join the environment.`,
+          { variant: "info" },
+        );
+        setTraceReview(importId);
+        return;
+      }
       if (!kept) {
         patch({
           scenarios: [...selected, ...blockedRows],
