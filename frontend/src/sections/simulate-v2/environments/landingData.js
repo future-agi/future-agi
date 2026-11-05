@@ -10,7 +10,13 @@
 import { gatewayServerForHost } from "../_mock/gatewayMcp";
 import { mcpServerHost } from "../_mock/mcpServers";
 import { ENVIRONMENT_TEMPLATES } from "../_mock/environments";
-import { CATALOGUE, CATALOGUE_ALL } from "../_mock/catalogue";
+import {
+  CATALOGUE,
+  CATALOGUE_ALL,
+  rlOpenOf,
+  sourceOf,
+  splitsOf,
+} from "../_mock/catalogue";
 import { packStats } from "../_mock/scenarios";
 import { TWIN_CATALOG } from "../_mock/twins";
 
@@ -595,6 +601,10 @@ const worldCardOf = (t, entry = null) => {
       release: entry.release,
       readiness: entry.release.status,
       launch: !!entry.launch,
+      source: sourceOf(entry),
+      host: entry.host || null,
+      splits: splitsOf(entry, packStats(t).scenarios),
+      rl: rlOpenOf(entry, packStats(t).scenarios),
       entry,
     }),
   };
@@ -638,12 +648,21 @@ export const prebuiltWorlds = () => {
 /** Worlds a search, a type, a domain and a readiness leave. Search covers the task, its ID and its tools. */
 export const filterWorlds = (
   worlds,
-  { query = "", type = "all", domain = "all", readiness = "all" } = {},
+  {
+    query = "",
+    type = "all",
+    domain = "all",
+    readiness = "all",
+    split = "all",
+    source = "all",
+  } = {},
 ) => {
   const q = query.trim().toLowerCase();
   return worlds.filter(
     (w) =>
       (type === "all" || w.type === type) &&
+      (split === "all" || !!w.splits?.[split]) &&
+      (source === "all" || (w.source || "futureagi") === source) &&
       (domain === "all" || w.domain === domain) &&
       (readiness === "all" || (w.readiness || "ready") === readiness) &&
       (!q ||

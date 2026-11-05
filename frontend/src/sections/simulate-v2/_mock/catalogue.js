@@ -734,6 +734,56 @@ CATALOGUE_TEMPLATES.push({
   ],
 });
 
+/* Third-party worlds (T29): hosted elsewhere, listed here with their source. */
+CATALOGUE_TEMPLATES.push(
+  world(
+    "env-3p-travel",
+    "chat",
+    "travel",
+    "Flight Change Desk",
+    "Change or cancel a booked flight under fare rules",
+    "An airline's change desk, hosted on OpenReward. Fare rules, waivers and seat availability decide what the agent can offer.",
+    [
+      ["bookings", 5000, "300 on restricted fares"],
+      ["flights", 1200, "40 cancelled today"],
+    ],
+    [
+      ["get_booking", "Find a booking by reference"],
+      ["search_flights", "Search alternative flights"],
+      ["change_booking", "Move the booking to another flight"],
+    ],
+    ["Never waive a change fee without a published waiver"],
+  ),
+  world(
+    "env-3p-claims",
+    "chat",
+    "insurance",
+    "Claims First Notice",
+    "Take a first notice of loss and open the claim",
+    "A home-insurance claims line, listed on OpenReward. Policy cover and excess decide the claim.",
+    [["policies", 3000, "120 lapsed"]],
+    [
+      ["lookup_policy", "Find the caller's policy"],
+      ["open_claim", "Open a claim"],
+    ],
+    ["Check cover before opening a claim"],
+  ),
+  world(
+    "env-3p-warehouse",
+    "chat",
+    "logistics",
+    "Warehouse Returns",
+    "Receive a return, inspect it and restock or write it off",
+    "A warehouse returns bench, published in a public GitHub repository.",
+    [["returns", 900, "60 damaged"]],
+    [
+      ["scan_return", "Scan a returned item"],
+      ["restock", "Put an item back in stock"],
+    ],
+    ["Damaged items are written off, never restocked"],
+  ),
+);
+
 /* Releases: the version each task ships at, how ready it is, and anything
    that stops new adoption. `proved` is starter cases proved out of five. */
 const R = (version, status = "ready", proved = 5, extra = {}) => ({
@@ -1256,6 +1306,82 @@ CATALOGUE_ALL.push(
   },
 );
 
+/* Third-party worlds (T29). Listing one is not supporting it: only a world
+   with a tested adapter runs here; the rest say where they live and stop. */
+CATALOGUE_ALL.push(
+  {
+    id: "X01",
+    domain: "Flight changes",
+    task: "Change or cancel a booked flight under fare rules",
+    templateId: "env-3p-travel",
+    host: { name: "OpenReward", support: "runs" },
+    release: R("1.4.0", "ready", 5, {
+      splits: { train: 160, test: 40, validation: 20 },
+    }),
+    scoring: "The host's own grader, pinned at 1.4.0",
+    requests: ["I need to move my Friday flight to Sunday."],
+    actors: ["Fare desk supervisor"],
+    recipe: { model: "gpt-4.1", limitations: ["Waives fees it shouldn't"] },
+  },
+  {
+    id: "X02",
+    domain: "Home insurance",
+    task: "Take a first notice of loss and open the claim",
+    templateId: "env-3p-claims",
+    host: { name: "OpenReward", support: "listed" },
+    release: R("0.9.2", "unsupported", 0, {
+      splits: { train: 80, test: 20 },
+      note: "Listed on OpenReward. We haven't tested an adapter for it, so it can't run here yet.",
+    }),
+    requests: ["A pipe burst in my kitchen last night."],
+    actors: ["Claims handler"],
+    recipe: { model: "gpt-4.1", limitations: [] },
+  },
+  {
+    id: "X03",
+    domain: "Warehouse returns",
+    task: "Receive a return, inspect it and restock or write it off",
+    templateId: "env-3p-warehouse",
+    host: { name: "GitHub · acme-labs/returns-env", support: "listed" },
+    release: R("0.3.0", "unsupported", 0, {
+      note: "Found in a public repository. It has no splits or tested adapter, so it can't run here.",
+    }),
+    requests: ["Box 4471 came back with a cracked screen."],
+    actors: ["Returns lead"],
+    recipe: { model: "gpt-4.1-mini", limitations: [] },
+  },
+);
+
+/** Where a world comes from: our catalogue, or a third-party host. */
+export const SOURCES = {
+  futureagi: "Future AGI",
+  third_party: "Third party",
+};
+export const sourceOf = (entry) => (entry?.host ? "third_party" : "futureagi");
+
+/** Support for a third-party world, as a person reads it. */
+export const HOST_SUPPORT = {
+  runs: "Runs here",
+  listed: "Listed only",
+};
+
+/**
+ * A world's splits by size — { train, test, validation? } — or null. Our
+ * ready worlds split their cases (test = at least 4, about a fifth); a
+ * third-party world brings its own; a world still being checked has none.
+ */
+export const splitsOf = (entry, scenarios = 40) => {
+  if (!entry) return null;
+  if (entry.release.splits) return entry.release.splits;
+  if (entry.release.status !== "ready" || entry.host) return null;
+  const test = Math.max(4, Math.round(scenarios * 0.2));
+  return { train: scenarios - test, test };
+};
+
+/** RL access is open on a ready, split world that runs here. */
+export const rlOpenOf = (entry, scenarios) =>
+  entry?.release?.status === "ready" && !!splitsOf(entry, scenarios);
+
 const LAUNCH_IDS = [
   "V02",
   "V01",
@@ -1273,6 +1399,7 @@ export const CATALOGUE = CATALOGUE_ALL.filter(
   (c) =>
     LAUNCH_IDS.includes(c.id) ||
     c.newDomain ||
+    c.host ||
     ["unsupported", "access"].includes(c.release.status),
 );
 
@@ -1366,9 +1493,11 @@ export const worldFactsOf = (entry, template) => {
   const status = entry?.release?.status;
   const untested = !entry || ["soon", "unsupported", "access"].includes(status);
   return {
-    source: entry
-      ? `${status === "unsupported" ? "Discovered source" : "Future AGI catalogue"} · release ${entry.release.version}`
-      : "Future AGI template · not released",
+    source: entry?.host
+      ? `${entry.host.name} · ${HOST_SUPPORT[entry.host.support]} · release ${entry.release.version}`
+      : entry
+        ? `${status === "unsupported" ? "Discovered source" : "Future AGI catalogue"} · release ${entry.release.version}`
+        : "Future AGI template · not released",
     scoring:
       entry?.scoring ||
       (rules

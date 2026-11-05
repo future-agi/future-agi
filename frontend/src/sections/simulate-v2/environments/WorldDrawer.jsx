@@ -8,7 +8,12 @@ import TemplateBuildPanel from "./TemplateBuildPanel";
 import WorldPreview from "./WorldPreview";
 import WorldRlAccess from "./WorldRlAccess";
 import { QuietTag } from "./LandingBits";
-import { READINESS, adoptBlockOf, catalogueById } from "../_mock/catalogue";
+import {
+  HOST_SUPPORT,
+  READINESS,
+  adoptBlockOf,
+  catalogueById,
+} from "../_mock/catalogue";
 
 /*
   A prebuilt world, opened from its card (catalogue.md): what it is first —
@@ -55,17 +60,24 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
                   {world.name}
                 </Typography>
                 <QuietTag>{world.typeLabel}</QuietTag>
-                {entry && entry.release.status !== "ready" && (
-                  <QuietTag>{READINESS[entry.release.status].label}</QuietTag>
+                {entry?.host ? (
+                  <QuietTag>{HOST_SUPPORT[entry.host.support]}</QuietTag>
+                ) : (
+                  entry &&
+                  entry.release.status !== "ready" && (
+                    <QuietTag>{READINESS[entry.release.status].label}</QuietTag>
+                  )
                 )}
               </Stack>
               <Typography
                 noWrap
                 sx={{ typography: "s2", color: "text.secondary" }}
               >
-                {entry
-                  ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
-                  : "Use it with one of your agents."}
+                {entry?.host
+                  ? `${entry.host.name} · ${entry.task} · release ${entry.release.version}`
+                  : entry
+                    ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
+                    : "Use it with one of your agents."}
               </Typography>
             </Box>
             <IconButton

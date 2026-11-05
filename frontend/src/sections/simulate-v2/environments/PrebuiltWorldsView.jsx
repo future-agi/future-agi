@@ -28,7 +28,14 @@ import { QuietTag, WorldCard } from "./LandingBits";
 import { AGENT_TYPES } from "./connectOptions";
 import WorldDrawer from "./WorldDrawer";
 import CopyCommandButton from "../components/CopyCommandButton";
-import { CATALOGUE_CLI, READINESS } from "../_mock/catalogue";
+import { CATALOGUE_CLI, READINESS, SOURCES } from "../_mock/catalogue";
+
+/* Splits a world can offer (catalogue.md: train and test at least). */
+const SPLITS = [
+  { id: "train", label: "Train" },
+  { id: "validation", label: "Validation" },
+  { id: "test", label: "Test" },
+];
 
 /*
   Every prebuilt world, filterable. A world is the world only — open one to
@@ -48,11 +55,18 @@ export default function PrebuiltWorldsView({
   const [domain, setDomain] = useState("all");
   /* Ready, Coming soon (starter cases not proved), Retired or Withdrawn. */
   const [readiness, setReadiness] = useState("all");
+  /* T29: browse by split, and by where a world comes from. */
+  const [split, setSplit] = useState("all");
+  const [source, setSource] = useState("all");
   const [open, setOpen] = useState(null);
   const shown = useMemo(
-    () => filterWorlds(worlds, { query, type, domain, readiness }),
-    [worlds, query, type, domain, readiness],
+    () =>
+      filterWorlds(worlds, { query, type, domain, readiness, split, source }),
+    [worlds, query, type, domain, readiness, split, source],
   );
+  const splitCount = (id) => worlds.filter((w) => !!w.splits?.[id]).length;
+  const sourceCount = (id) =>
+    worlds.filter((w) => (w.source || "futureagi") === id).length;
   const readinessCount = (id) =>
     worlds.filter((w) => (w.readiness || "ready") === id).length;
   const domains = useMemo(
@@ -66,6 +80,8 @@ export default function PrebuiltWorldsView({
   const total = worldTotal();
   const withSandbox =
     (readiness === "all" || readiness === "ready") &&
+    split === "all" &&
+    source !== "third_party" &&
     sandboxMatches({ query, type, domain });
   const countOf = (id) =>
     id === "all"
@@ -74,7 +90,7 @@ export default function PrebuiltWorldsView({
         ? 1
         : worlds.filter((w) => w.type === id).length;
   const types = [
-    { id: "all", label: "All types" },
+    { id: "all", label: "All task types" },
     { ...SANDBOX_TYPE, icon: "solar:widget-4-linear" },
     ...WORLD_TYPES.map((t) => ({
       ...t,
@@ -236,11 +252,11 @@ export default function PrebuiltWorldsView({
           size="small"
           value={domain}
           onChange={(e) => setDomain(e.target.value)}
-          inputProps={{ "aria-label": "Domain" }}
+          inputProps={{ "aria-label": "Category" }}
           sx={{ ...selectSx, minWidth: 150 }}
         >
           <MenuItem value="all" sx={{ typography: "s2" }}>
-            All domains
+            All categories
           </MenuItem>
           {domains.map((d) => (
             <MenuItem key={d} value={d} sx={{ typography: "s2" }}>
@@ -272,6 +288,62 @@ export default function PrebuiltWorldsView({
                 }}
               >
                 {readinessCount(id)}
+              </Box>
+            </MenuItem>
+          ))}
+        </Select>
+
+        <Select
+          size="small"
+          value={split}
+          onChange={(e) => setSplit(e.target.value)}
+          inputProps={{ "aria-label": "Split" }}
+          sx={{ ...selectSx, minWidth: 130 }}
+        >
+          <MenuItem value="all" sx={{ typography: "s2" }}>
+            Any split
+          </MenuItem>
+          {SPLITS.map((sp) => (
+            <MenuItem key={sp.id} value={sp.id} sx={{ typography: "s2" }}>
+              {sp.label}
+              <Box
+                component="span"
+                sx={{
+                  ml: "auto",
+                  pl: 1.5,
+                  color: "text.disabled",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {splitCount(sp.id)}
+              </Box>
+            </MenuItem>
+          ))}
+        </Select>
+
+        <Select
+          size="small"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          inputProps={{ "aria-label": "Source" }}
+          sx={{ ...selectSx, minWidth: 140 }}
+        >
+          <MenuItem value="all" sx={{ typography: "s2" }}>
+            Any source
+          </MenuItem>
+          {Object.entries(SOURCES).map(([id, label]) => (
+            <MenuItem key={id} value={id} sx={{ typography: "s2" }}>
+              {label}
+              <Box
+                component="span"
+                sx={{
+                  ml: "auto",
+                  pl: 1.5,
+                  color: "text.disabled",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {sourceCount(id)}
               </Box>
             </MenuItem>
           ))}
@@ -321,6 +393,8 @@ export default function PrebuiltWorldsView({
                   setType("all");
                   setDomain("all");
                   setReadiness("all");
+                  setSplit("all");
+                  setSource("all");
                 }}
               >
                 Clear filters

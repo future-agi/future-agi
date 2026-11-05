@@ -9,7 +9,14 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { REWARD_VERSIONS, TOOL_FORMATS, rlCodeOf } from "../_mock/release";
+import {
+  REWARD_VERSIONS,
+  TOOL_FORMATS,
+  orsCodeOf,
+  rlCodeOf,
+} from "../_mock/release";
+import { rlOpenOf, splitsOf } from "../_mock/catalogue";
+import { RlClientCode, RlScaleFacts } from "../workspace/RlScaleFacts";
 
 /*
   RL access from the catalogue (rl.md step 1: Catalogue → environment → RL
@@ -48,7 +55,9 @@ Row.propTypes = { label: PropTypes.node, children: PropTypes.node };
 
 export default function WorldRlAccess({ world }) {
   const entry = world.entry;
-  const ready = entry?.release?.status === "ready";
+  const n = world.scenarios || 40;
+  const ready = rlOpenOf(entry, n);
+  const host = entry?.host || null;
   const [split, setSplit] = useState("train");
   const [format, setFormat] = useState("openai");
   const [reward, setReward] = useState("v1");
@@ -57,14 +66,14 @@ export default function WorldRlAccess({ world }) {
   if (!ready)
     return (
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-        RL access opens once this world passes its release checks and ships as a
-        locked release with train and test splits.
+        {host
+          ? `Listed on ${host.name} only. RL access opens here once it has a tested adapter and train and test splits.`
+          : "RL access opens once this world passes its release checks and ships as a locked release with train and test splits."}
       </Typography>
     );
 
-  const n = world.scenarios || 40;
-  const test = Math.max(4, Math.round(n * 0.2));
-  const train = n - test;
+  const sp = splitsOf(entry, n);
+  const { train, test, validation } = sp;
   const code = rlCodeOf(
     { id: entry.id, tools: world.template?.tools || [] },
     {
@@ -89,21 +98,34 @@ export default function WorldRlAccess({ world }) {
           borderRadius: "8px",
         }}
       >
-        <Row label="Release">{`${entry.release.version} · locked · scorer v1`}</Row>
+        {host && (
+          <Row label="Source">{`${host.name} · runs here through a tested adapter`}</Row>
+        )}
+        <Row label="Release">
+          {`${entry.release.version} · locked · ${host ? "its own grader" : "scorer v1"}`}
+        </Row>
         <Row label="Splits">
-          {`Train ${train} tasks · Test ${test} tasks (answers and hidden checks stay with us)`}
+          {`Train ${train}${validation ? ` · Validation ${validation}` : ""} · Test ${test} tasks (test answers and hidden checks stay hidden)`}
         </Row>
-        <Row label="Reward">
-          From the same sub-goal checks and judged criteria that decide a
-          run&apos;s pass or fail. A scoring failure is a grading error, never
-          0.
-        </Row>
-        <Row label="Reward checks">
-          <Box component="span" sx={{ color: "status.success.fg" }}>
-            Passed
-          </Box>
-          {" — repeating an action earns nothing (negative control)"}
-        </Row>
+        {host ? (
+          <Row label="Reward">
+            {entry.scoring}. A scoring failure is a grading error, never 0.
+          </Row>
+        ) : (
+          <>
+            <Row label="Reward">
+              From the same sub-goal checks and judged criteria that decide a
+              run&apos;s pass or fail. A scoring failure is a grading error,
+              never 0.
+            </Row>
+            <Row label="Reward checks">
+              <Box component="span" sx={{ color: "status.success.fg" }}>
+                Passed
+              </Box>
+              {" — repeating an action earns nothing (negative control)"}
+            </Row>
+          </>
+        )}
       </Box>
 
       <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: "wrap" }}>
@@ -116,6 +138,9 @@ export default function WorldRlAccess({ world }) {
           sx={{ width: 180 }}
         >
           <MenuItem value="train">{`Train · ${train} tasks`}</MenuItem>
+          {validation && (
+            <MenuItem value="validation">{`Validation · ${validation} tasks`}</MenuItem>
+          )}
           <MenuItem value="test">{`Test · ${test} tasks`}</MenuItem>
         </TextField>
         <TextField
@@ -132,21 +157,26 @@ export default function WorldRlAccess({ world }) {
             </MenuItem>
           ))}
         </TextField>
-        <TextField
-          select
-          size="small"
-          label="Reward version"
-          value={reward}
-          onChange={(e) => setReward(e.target.value)}
-          sx={{ width: 150 }}
-        >
-          {REWARD_VERSIONS.map((v) => (
-            <MenuItem key={v} value={v}>
-              {v}
-            </MenuItem>
-          ))}
-        </TextField>
+        {/* A third-party world keeps its own grader, so there is no version to pick. */}
+        {!host && (
+          <TextField
+            select
+            size="small"
+            label="Reward version"
+            value={reward}
+            onChange={(e) => setReward(e.target.value)}
+            sx={{ width: 150 }}
+          >
+            {REWARD_VERSIONS.map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
       </Stack>
+
+      <RlScaleFacts />
 
       <Stack direction="row" alignItems="center" spacing={1.5}>
         <Typography
@@ -176,21 +206,10 @@ export default function WorldRlAccess({ world }) {
         </Button>
       </Stack>
 
-      <Box
-        component="pre"
-        sx={{
-          m: 0,
-          p: 1.5,
-          borderRadius: "8px",
-          bgcolor: "background.neutral",
-          typography: "s3",
-          fontFamily: "ui-monospace, Menlo, monospace",
-          overflow: "auto",
-          whiteSpace: "pre",
-        }}
-      >
-        {code}
-      </Box>
+      <RlClientCode
+        sdk={code}
+        ors={orsCodeOf(entry.id, entry.release.version, split)}
+      />
     </Stack>
   );
 }

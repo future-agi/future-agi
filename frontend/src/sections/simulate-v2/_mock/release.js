@@ -11,14 +11,35 @@
 import { currentEnvVersion } from "./versions";
 
 export const RELEASE_CHECKS = [
-  { id: "starts", label: "Starts", proves: "A fresh world starts with its seed data and tools." },
-  { id: "resets", label: "Resets", proves: "Two sessions in a row start from the same state." },
-  { id: "reference", label: "Reference passes", proves: "The reference solution passes every scenario." },
-  { id: "wrong", label: "Wrong answer fails", proves: "A deliberately wrong answer fails the checks." },
-  { id: "leaks", label: "No leaks", proves: "Hidden checks and reference answers never reach the agent." },
+  {
+    id: "starts",
+    label: "Starts",
+    proves: "A fresh world starts with its seed data and tools.",
+  },
+  {
+    id: "resets",
+    label: "Resets",
+    proves: "Two sessions in a row start from the same state.",
+  },
+  {
+    id: "reference",
+    label: "Reference passes",
+    proves: "The reference solution passes every scenario.",
+  },
+  {
+    id: "wrong",
+    label: "Wrong answer fails",
+    proves: "A deliberately wrong answer fails the checks.",
+  },
+  {
+    id: "leaks",
+    label: "No leaks",
+    proves: "Hidden checks and reference answers never reach the agent.",
+  },
 ];
 
-const versionOf = (env, envState) => currentEnvVersion(env, envState)?.label || "v1";
+const versionOf = (env, envState) =>
+  currentEnvVersion(env, envState)?.label || "v1";
 
 /** Where the checks stand on this version: { version, checkedVersion, stale, ready, results }. */
 export const checksStateOf = (env, envState) => {
@@ -26,7 +47,10 @@ export const checksStateOf = (env, envState) => {
   const rec = envState?.releaseChecks || null;
   const stale = !!rec && rec.version !== version;
   const results = Object.fromEntries(
-    RELEASE_CHECKS.map((c) => [c.id, rec && !stale ? rec.results?.[c.id] || "pending" : "pending"]),
+    RELEASE_CHECKS.map((c) => [
+      c.id,
+      rec && !stale ? rec.results?.[c.id] || "pending" : "pending",
+    ]),
   );
   return {
     version,
@@ -45,7 +69,10 @@ export const runChecksPatch = (env, envState) => {
       version: versionOf(env, envState),
       at: new Date().toISOString(),
       results: Object.fromEntries(
-        RELEASE_CHECKS.map((c) => [c.id, c.id === "reference" && !hasScenarios ? "failed" : "passed"]),
+        RELEASE_CHECKS.map((c) => [
+          c.id,
+          c.id === "reference" && !hasScenarios ? "failed" : "passed",
+        ]),
       ),
     },
   };
@@ -54,17 +81,21 @@ export const runChecksPatch = (env, envState) => {
 /* A small seeded hash, so the same scenarios always land in the same split. */
 const hash = (s) => {
   let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  for (let i = 0; i < s.length; i += 1)
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 };
 
 /** Lock: freeze this version, split its scenarios about 80/20 into train and test. */
 export const lockPatch = (env, envState) => {
-  const ids = (envState?.scenarios || []).filter((s) => !s.archived).map((s) => s.id);
+  const ids = (envState?.scenarios || [])
+    .filter((s) => !s.archived)
+    .map((s) => s.id);
   const test = ids.filter((id) => hash(id) % 5 === 0);
   const train = ids.filter((id) => !test.includes(id));
   if (!test.length && train.length > 1) test.push(train.pop());
-  const titleOf = (id) => (envState.scenarios || []).find((s) => s.id === id)?.title || id;
+  const titleOf = (id) =>
+    (envState.scenarios || []).find((s) => s.id === id)?.title || id;
   const now = Date.now();
   /* A trainer already tried it: what the sessions table looks like in use. */
   const rlSessions = [
@@ -143,7 +174,8 @@ export const openSessionPatch = (envState, split, rewardVersion) => {
   const ids = (envState?.lockedRelease?.splits || {})[split] || [];
   const sessions = envState?.rlSessions || [];
   const id = ids[sessions.length % Math.max(1, ids.length)];
-  const task = (envState?.scenarios || []).find((s) => s.id === id)?.title || id || "Task";
+  const task =
+    (envState?.scenarios || []).find((s) => s.id === id)?.title || id || "Task";
   return {
     rlSessions: [
       {
@@ -166,7 +198,12 @@ export const rlKeyPatch = (envState, split) => {
   const tail = Math.random().toString(36).slice(2, 6);
   return {
     rlKeys: [
-      { id: `rlk-${Date.now().toString(36)}`, masked: `fi_rl_••••••••${tail}`, split, createdAt: new Date().toISOString() },
+      {
+        id: `rlk-${Date.now().toString(36)}`,
+        masked: `fi_rl_••••••••${tail}`,
+        split,
+        createdAt: new Date().toISOString(),
+      },
       ...(envState?.rlKeys || []),
     ],
   };
@@ -188,4 +225,57 @@ for task in envr.tasks():
     result = session.call_tool("${tool}", {...})
     print(result.output, result.reward, result.finished)
     session.close()                           # final reward, reward ${envState?.rlReward || rewardLabelOf(r?.rewardVersion)}`;
+};
+
+/* ── at scale (T46; rl.md "What the environment must expose") ─────────────── */
+
+/** Sessions one environment runs at once, and what a session costs. */
+export const RL_SCALE = { limit: 200, creditsPerSession: 12 };
+
+/** The isolation check (rl.md RL-2): many sessions, one record, no sharing. */
+export const RL_ISOLATION =
+  "200 sessions changed the same record at once; each saw only its own world.";
+
+/** The clients a trainer can call the endpoint with. */
+export const RL_CLIENTS = [
+  { id: "sdk", label: "futureagi SDK" },
+  { id: "ors", label: "Any ORS client" },
+];
+
+/** The same calls over the Open Reward Standard HTTP API, for existing ORS clients. */
+export const orsCodeOf = (envId, release, split) =>
+  `# Point any Open Reward Standard client at this base URL
+BASE=https://api.futureagi.com/rl/ors/v1
+KEY="Authorization: Bearer $FI_API_KEY"   # your RL access key
+
+curl -H "$KEY" "$BASE/environments/${envId}/tasks?split=${split}&release=${release}"
+curl -H "$KEY" -X POST "$BASE/environments/${envId}/sessions" -d '{"task_index": 0}'
+curl -H "$KEY" -X POST "$BASE/sessions/<session-id>/tools/<tool>" -d '{...}'
+#   → output, reward, finished`;
+
+/** The full loop, many sessions at once: the guide's example (rl.md worked example). */
+export const rlLoopCodeOf = (env, envState) => {
+  const r = envState?.lockedRelease;
+  return `import asyncio
+from futureagi import AsyncClient
+
+client = AsyncClient()  # FI_API_KEY: your RL access key
+envr = client.rl.environment(
+    "${env?.id || "<environment-id>"}", release="${r?.version || "v1"}", split="train"
+)
+
+async def episode(task):
+    # its own copy of the world
+    async with envr.open_session(task.id) as session:
+        prompt = await session.prompt()
+        while True:
+            call = my_policy(prompt)  # your model
+            result = await session.call_tool(call.name, call.args)
+            if result.finished:
+                return result.reward
+
+tasks = await envr.tasks()
+batch = tasks[:${RL_SCALE.limit}]
+rewards = await asyncio.gather(*(episode(t) for t in batch))
+train_step(rewards)  # your training code`;
 };

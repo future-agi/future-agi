@@ -11,7 +11,6 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CodeBlock from "src/components/code-block";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { SectionCard } from "../components/primitives";
@@ -21,8 +20,10 @@ import {
   REWARD_VERSIONS,
   RL_REFUSALS,
   TOOL_FORMATS,
+  RL_SCALE,
   isToolFormat,
   lockPatch,
+  orsCodeOf,
   openSessionPatch,
   rewardLabelOf,
   rlCodeOf,
@@ -30,6 +31,8 @@ import {
   runChecksPatch,
 } from "../_mock/release";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import { RlClientCode, RlScaleFacts } from "./RlScaleFacts";
+import RlGuideDrawer from "./RlGuideDrawer";
 
 /*
   An environment release (catalogue.md, rl.md): five release checks gate
@@ -376,6 +379,8 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
   const format = envState.rlToolFormat || params.get("rl_format") || "openai";
   const reward = envState.rlReward || rewardLabelOf(locked.rewardVersion);
   const badFormat = !isToolFormat(format);
+  const running = sessions.filter((s) => s.status === "Running").length;
+  const [guide, setGuide] = useState(false);
   const cell = {
     typography: "s2",
     py: 0.75,
@@ -514,8 +519,40 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
         </Button>
       </Stack>
 
-      <CodeBlock
-        code={rlCodeOf(env, envState, split, badFormat ? "openai" : format)}
+      <RlClientCode
+        sdk={rlCodeOf(env, envState, split, badFormat ? "openai" : format)}
+        ors={orsCodeOf(env.id, locked.version, split)}
+      />
+
+      {/* At scale (T46): many sessions, never sharing a world, on credits. */}
+      <RlScaleFacts
+        running={running}
+        credits={credits}
+        action={
+          <>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
+            >
+              The full loop on this environment: many sessions at once, then the
+              test split.
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setGuide(true)}
+              startIcon={<Iconify icon="solar:book-2-linear" width={16} />}
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Read the guide
+            </Button>
+          </>
+        }
+      />
+      <RlGuideDrawer
+        open={guide}
+        onClose={() => setGuide(false)}
+        env={env}
+        envState={envState}
       />
 
       <Box>
@@ -531,21 +568,11 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              mr: 1.5,
               alignSelf: "center",
             }}
           >
             Open a session
           </Button>
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {`${credits.toLocaleString()} credits used`}
-          </Typography>
         </Stack>
         {sessions.length === 0 ? (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -561,6 +588,7 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                   "Release",
                   "Reward version",
                   "Status",
+                  "Credits",
                   "Final reward",
                 ].map((h, i) => (
                   <Box
@@ -571,7 +599,7 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                       typography: "s3",
                       color: "text.tertiary",
                       fontWeight: 500,
-                      textAlign: i === 5 ? "right" : "left",
+                      textAlign: i >= 5 ? "right" : "left",
                     }}
                   >
                     {h}
@@ -605,6 +633,17 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                     }}
                   >
                     {s.status}
+                  </Box>
+                  <Box
+                    component="td"
+                    sx={{
+                      ...cell,
+                      textAlign: "right",
+                      color: "text.secondary",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {s.credits ?? RL_SCALE.creditsPerSession}
                   </Box>
                   <Box
                     component="td"

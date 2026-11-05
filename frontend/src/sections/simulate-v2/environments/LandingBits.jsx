@@ -147,6 +147,17 @@ SectionHead.propTypes = {
  * One prebuilt world: name, type, what it is, what's inside. A world for an
  * agent type that's Coming soon (computer use) is shown, named, and inert.
  */
+/* "Train 32 · Test 8", in split order. */
+const splitLine = (sp) =>
+  [
+    ["train", "Train"],
+    ["validation", "Val"],
+    ["test", "Test"],
+  ]
+    .filter(([k]) => sp[k])
+    .map(([k, l]) => `${l} ${sp[k]}`)
+    .join(" · ");
+
 export function WorldCard({ world, onOpen, selected = false, soon = false }) {
   return (
     <ButtonBase
@@ -193,19 +204,30 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
         </Typography>
         {soon && <QuietTag>Coming soon</QuietTag>}
         {/* A task that can't be adopted, or a retired release, says so on the card. */}
-        {!soon && world.readiness && world.readiness !== "ready" && (
+        {/* A third-party world says whether it runs here: listing isn't support. */}
+        {!soon && world.host && (
           <QuietTag>
-            {world.readiness === "soon"
-              ? "Checks pending"
-              : world.readiness === "retired"
-                ? "Retired"
-                : world.readiness === "unsupported"
-                  ? "Discovered · Unsupported"
-                  : world.readiness === "access"
-                    ? "Needs access"
-                    : "Withdrawn"}
+            {world.host.support === "runs" ? "Runs here" : "Listed only"}
           </QuietTag>
         )}
+        {!soon &&
+          !world.host &&
+          world.readiness &&
+          world.readiness !== "ready" && (
+            <QuietTag>
+              {world.readiness === "soon"
+                ? "Checks pending"
+                : world.readiness === "retired"
+                  ? "Retired"
+                  : world.readiness === "unsupported"
+                    ? "Discovered · Unsupported"
+                    : world.readiness === "access"
+                      ? "Needs access"
+                      : "Withdrawn"}
+            </QuietTag>
+          )}
+        {/* RL access shown per world (T29). */}
+        {world.rl && <QuietTag>RL</QuietTag>}
         <QuietTag>{world.typeLabel}</QuietTag>
       </Stack>
       <Typography
@@ -244,7 +266,13 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
           {world.readiness === "access" && world.release?.owner
             ? `Ask ${world.release.owner.name} · ${world.release.owner.role}`
             : world.catalogueId
-              ? `${world.catalogueId} · ${world.release.version} · ${world.tools} tools · ${world.scenarios} cases`
+              ? [
+                  world.host ? world.host.name : world.catalogueId,
+                  /* With splits the version waits for the drawer, so the splits fit. */
+                  ...(world.splits
+                    ? [splitLine(world.splits)]
+                    : [world.release.version, `${world.scenarios} cases`]),
+                ].join(" · ")
               : `${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
         </Typography>
         <Typography
