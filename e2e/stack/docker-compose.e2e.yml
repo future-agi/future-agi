@@ -15,11 +15,20 @@ services:
       SQL_VIS_MAX_IDLE_CONNS: "1"
   backend:
     restart: "no"
-    # The managed-mock attestation requires application containers to have no
-    # mounts. Telemetry is disabled for E2E, so remove the production outbox
-    # volume inherited from docker-compose.distributed.yml.
-    volumes: !reset []
+    # Replace the production outbox: the ONLY application mount permitted by
+    # managed-mock is this public, read-only status directory (never the worker).
+    # bin/e2e creates the default directory when no override is supplied.
+    volumes: !override
+      - type: bind
+        source: ${E2E_HOST_UPDATE_STATUS_DIR:-${HOME}/.cache/futureagi-e2e/${E2E_COMPOSE_PROJECT:-futureagi-e2e}/host-update-status}
+        target: /run/futureagi-host-update
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
+      FI_HOST_UPDATE_STATUS_FILE: /run/futureagi-host-update/status.json
+      # Synthetic slot pinned from api_contracts/host-update/fixtures.json.
+      FI_HOST_UPDATE_STATUS_SLOT: "0123456789abcdef0123456789abcdef"
       BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"

@@ -101,7 +101,31 @@ build_target() {
   esac
 }
 
+# Repo-independent and HOME-reachable for Docker VMs which do not share /Volumes.
+# Export for BOTH Compose and the Playwright process, including separate up/test
+# invocations. Standalone keeps its existing topology and never mounts this slot.
+if [[ "${E2E_STACK:-distributed}" != standalone ]]; then
+  export E2E_HOST_UPDATE_STATUS_DIR="${E2E_HOST_UPDATE_STATUS_DIR:-${HOME}/.cache/futureagi-e2e/${E2E_COMPOSE_PROJECT:-futureagi-e2e}/host-update-status}"
+fi
+prepare_host_update_status() {
+  [[ "${E2E_STACK:-distributed}" != standalone ]] || return 0
+  [[ "$E2E_HOST_UPDATE_STATUS_DIR" == /* && ! -L "$E2E_HOST_UPDATE_STATUS_DIR" ]] \
+    || die "E2E_HOST_UPDATE_STATUS_DIR must be an absolute, non-symlink directory"
+  mkdir -p "$E2E_HOST_UPDATE_STATUS_DIR"
+  chmod 0755 "$E2E_HOST_UPDATE_STATUS_DIR"
+  # Never seed, rewrite, chmod or remove a pre-existing report here. The flow
+  # publishes its own 0644 file atomically and refuses somebody else's report.
+}
+
 cmd="${1:-}"; shift || true
+case "$cmd" in
+  up|test|ui) prepare_host_update_status ;;
+  compose)
+    # Global Compose flags may precede the subcommand (e.g. --profile peerdb).
+    for arg in "$@"; do
+      case "$arg" in up|create|run) prepare_host_update_status; break ;; esac
+    done ;;
+esac
 case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
