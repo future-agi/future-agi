@@ -955,6 +955,161 @@ class HarnessCapabilityReportSerializer(serializers.Serializer):
     computed_at = serializers.CharField()
 
 
+_BUCKETS = ("eligible", "blocked", "stale", "untested")
+_CAPABILITY_ROWS = (
+    "start",
+    "message",
+    "continuity",
+    "streaming",
+    "tool_discovery",
+    "tool_routing",
+    "state",
+    "audio",
+    "files",
+    "browser",
+    "children",
+    "hidden_material",
+    "reset",
+    "resume",
+    "cancel",
+    "cost",
+)
+
+
+class HarnessCapabilitySelectionQuerySerializer(HarnessCapabilityQuerySerializer):
+    """The pairing and the cases to read it for; no ``keys`` selects the whole suite."""
+
+    keys = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,
+        max_length=200,
+        help_text="Scenario keys; more than 200 go in the POST body as scenario_ids.",
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+
+
+class HarnessCapabilitySelectionSerializer(HarnessCapabilityQuerySerializer):
+    """The pairing and a large selection of cases to read it for."""
+
+    scenario_ids = serializers.ListField(
+        child=serializers.CharField(max_length=255), max_length=1000
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+
+
+class HarnessCapabilityCasesQuerySerializer(HarnessCapabilitySelectionQuerySerializer):
+    """One page of the selected cases in a bucket, or held back by a row."""
+
+    bucket = serializers.ChoiceField(choices=_BUCKETS, required=False)
+    row = serializers.ChoiceField(choices=_CAPABILITY_ROWS, required=False)
+    cursor = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="The previous page's next: the number it ended on.",
+    )
+
+
+class HarnessCapabilityCaseListSerializer(serializers.Serializer):
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField(help_text="More than 200 cases; page them.")
+
+
+class HarnessCapabilityCaseListsSerializer(serializers.Serializer):
+    eligible = HarnessCapabilityCaseListSerializer()
+    blocked = HarnessCapabilityCaseListSerializer()
+    stale = HarnessCapabilityCaseListSerializer()
+    untested = HarnessCapabilityCaseListSerializer()
+
+
+class HarnessCapabilityDroppedCaseSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    code = serializers.ChoiceField(
+        choices=("scenario_dropped", "scenario_ungradable"),
+        help_text="scenario_dropped: certifying the pair dropped it."
+        " scenario_ungradable: it grades no sub-goal, so a run refuses it.",
+    )
+    reason = serializers.CharField()
+
+
+class HarnessCapabilityNotGradableSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    reason = serializers.ChoiceField(
+        choices=("check_unreadable", "no_checks", "evidence_not_supported")
+    )
+
+
+class HarnessCapabilityGradingSerializer(serializers.Serializer):
+    gradable = serializers.IntegerField(min_value=0)
+    not_gradable = HarnessCapabilityNotGradableSerializer(many=True)
+    truncated = serializers.BooleanField(
+        help_text="More than 200 cases cannot be graded; the first 200 are listed."
+    )
+
+
+class HarnessCapabilitySelectionCountsSerializer(serializers.Serializer):
+    """The selected cases, each in one bucket: requested is their sum. Cases
+    certifying dropped, or that grade no sub-goal, are listed under dropped and
+    never counted."""
+
+    requested = serializers.IntegerField(min_value=0)
+    eligible = serializers.IntegerField(min_value=0)
+    blocked = serializers.IntegerField(min_value=0)
+    stale = serializers.IntegerField(min_value=0)
+    untested = serializers.IntegerField(min_value=0)
+    lists = HarnessCapabilityCaseListsSerializer()
+    dropped = HarnessCapabilityDroppedCaseSerializer(many=True)
+    grading = HarnessCapabilityGradingSerializer()
+    requirements_recorded = serializers.BooleanField(
+        help_text="Every selected case's needs were read from its stored documents."
+    )
+
+
+class HarnessCapabilityAffectedSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    of = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+
+
+class HarnessCapabilitySelectionRowSerializer(HarnessCapabilityRowSerializer):
+    needed_by = serializers.IntegerField(
+        min_value=0, help_text="Selected cases that need this row."
+    )
+    affected = HarnessCapabilityAffectedSerializer(
+        help_text="Selected cases this row holds back."
+    )
+
+
+class HarnessCapabilitySelectionReportSerializer(HarnessCapabilityReportSerializer):
+    """A pairing's run readiness and what it means for the selected cases."""
+
+    rows = HarnessCapabilitySelectionRowSerializer(many=True)
+    selection = HarnessCapabilitySelectionCountsSerializer()
+
+
+class HarnessCapabilityCaseSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    number = serializers.IntegerField()
+    name = serializers.CharField(allow_blank=True)
+    persona = serializers.CharField(allow_blank=True)
+    by = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=(
+            "The rows that put the case in its bucket, or pair_validating (the"
+            " pairing is being checked, so runs are refused until it ends),"
+            " pair_failed (a validation failed the pairing, so runs are refused),"
+            " not_proved_here or unknown_need."
+        ),
+    )
+
+
+class HarnessCapabilityCasePageSerializer(serializers.Serializer):
+    items = HarnessCapabilityCaseSerializer(many=True)
+    next = serializers.CharField(
+        allow_null=True, help_text="The cursor for the next page; null on the last."
+    )
+
+
 class HarnessRunPlanQuerySerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(required=False)
     environment_version_id = serializers.UUIDField(required=False)

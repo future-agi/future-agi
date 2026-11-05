@@ -12,7 +12,11 @@ from simulate.models import (
     HarnessEnvironmentVersion,
     HostedHarnessJob,
 )
-from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
+from simulate.serializers.harness_environment import (
+    HarnessCapabilityCasesQuerySerializer,
+    HarnessCapabilityReportSerializer,
+    HarnessCapabilitySelectionReportSerializer,
+)
 from simulate.services import harness_readiness
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
@@ -89,11 +93,20 @@ def _with_a2(user, workspace, storage, key):
 
 
 def _certify(
-    environment, storage, *, agent=None, checks=None, tools=None, actions=None
+    environment,
+    storage,
+    *,
+    agent=None,
+    checks=None,
+    tools=None,
+    actions=None,
+    pairing=None,
+    warnings=(),
 ):
-    """Make the pairing of ``agent`` (the default when absent) with the defaults a
-    certified bundle holding this certificate and these per-tool and per-action files."""
-    pairing = _pairing(environment, agent)
+    """Make the pairing of ``agent`` (the default when absent) with the defaults, or
+    ``pairing``, a certified bundle holding this certificate, these per-tool and
+    per-action files and these warnings."""
+    pairing = pairing or _pairing(environment, agent)
     key = assembly.bundle_key(
         pairing.runtime, pairing.environment_version, pairing.suite_version
     )
@@ -119,6 +132,7 @@ def _certify(
             "state": "ready",
             "object_key": object_key,
             "certificate": {"checks": PASSED if checks is None else checks},
+            "warnings": list(warnings),
             "error": None,
         },
     )
@@ -651,6 +665,29 @@ class TestApi:
             "catalog_version",
             "rules_version",
             "computed_at",
+            "selection",
+        }
+        assert set(body["selection"]) == {
+            "requested",
+            "eligible",
+            "blocked",
+            "stale",
+            "untested",
+            "lists",
+            "dropped",
+            "grading",
+            "requirements_recorded",
+        }
+        assert set(body["selection"]["lists"]) == {
+            "eligible",
+            "blocked",
+            "stale",
+            "untested",
+        }
+        assert set(body["selection"]["grading"]) == {
+            "gradable",
+            "not_gradable",
+            "truncated",
         }
         assert set(body["pairing"]) == {
             "agent_version",
@@ -694,8 +731,20 @@ class TestApi:
                     "evidence",
                     "checked_at",
                     "fix",
+                    "needed_by",
+                    "affected",
                 }
             )
+        }
+        assert {frozenset(row["affected"]) for row in body["rows"]} == {
+            frozenset({"count", "of", "keys", "truncated"})
+        }
+        cases_query = HarnessCapabilityCasesQuerySerializer().fields
+        assert cases_query["row"].choices == {
+            one.id: one.id for one in harness_readiness.CATALOGUE
+        }
+        assert cases_query["bucket"].choices == {
+            one: one for one in harness_readiness.BUCKETS
         }
         assert len(body["rows"]) == 16
         assert sum(body["counts"].values()) == 16
@@ -708,7 +757,7 @@ class TestApi:
             "supported": 6,
         }
         assert body["validation"]["state"] == "ready"
-        contract = HarnessCapabilityReportSerializer(data=body)
+        contract = HarnessCapabilitySelectionReportSerializer(data=body)
         assert contract.is_valid(), contract.errors
 
     def test_unknown_environment_is_404(self, auth_client):
