@@ -58,12 +58,15 @@ export default function ChatTranscriptPane({ turns, customerName }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
   const others = otherParties(turns);
+  // The pane stays mounted across calls, and the next call may have no others.
+  const activeFilter =
+    roleFilter === "others" && !others.length ? "all" : roleFilter;
 
   const shown = turns.filter((s) => {
     if (
-      roleFilter === "others"
+      activeFilter === "others"
         ? !isOtherRole(s.role)
-        : roleFilter !== "all" && s.role !== roleFilter
+        : activeFilter !== "all" && s.role !== activeFilter
     )
       return false;
     if (query && !s.text?.toLowerCase().includes(query.toLowerCase())) return false;
@@ -92,7 +95,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
             ),
           }}
         />
-        <SegmentedTabs value={roleFilter} onChange={(_, v) => setRoleFilter(v)} sx={{ flexShrink: 0 }}>
+        <SegmentedTabs value={activeFilter} onChange={(_, v) => setRoleFilter(v)} sx={{ flexShrink: 0 }}>
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
           <Tab value="customer" label="Customer" />
@@ -114,11 +117,16 @@ export default function ChatTranscriptPane({ turns, customerName }) {
               py: 1.25,
             }}
           >
+            {/* One line: a long role is cut rather than dropping below the stamp. */}
             <Typography
               sx={{
                 typography: "s3",
                 color: "text.subtitle",
                 fontVariantNumeric: "tabular-nums",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                whiteSpace: "nowrap",
               }}
             >
               {turnStamp(s, i)} ·{" "}

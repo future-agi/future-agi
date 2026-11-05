@@ -102,7 +102,6 @@ describe("executionToRun", () => {
       outcome_no_score: 3,
     });
     expect(run.status).toBe("no_score");
-    expect(run.pending).toBe(0);
   });
 
   it("maps a completed, fully-passing execution to `passed`", () => {
@@ -244,7 +243,6 @@ describe("executionToRun", () => {
       total: 6,
       passed: 2,
       failed: 1,
-      pending: 3,
       scenarioCount: 2,
       trials: 3,
       scenarioIds: ["scenario-a", "scenario-b"],
@@ -269,7 +267,6 @@ describe("executionToRun", () => {
       passed: 3,
       failed: 3,
       skipped: 1,
-      pending: 0,
       status: "failed",
     });
   });

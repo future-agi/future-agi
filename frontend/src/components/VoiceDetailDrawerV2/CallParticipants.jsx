@@ -1,56 +1,44 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
 import OtherPartyName from "./OtherPartyName";
 import { CALL_PARTICIPANTS_HEADING, DEFAULT_ROLE_LABELS } from "./constants";
 
-const Person = ({ children }) => (
-  <Typography component="span" variant="s3" sx={{ fontWeight: 600 }}>
-    {children}
-  </Typography>
-);
-Person.propTypes = { children: PropTypes.node };
+const customerParty = (customerName) =>
+  customerName
+    ? { speakerName: customerName, actorRole: DEFAULT_ROLE_LABELS.user }
+    : { speakerName: DEFAULT_ROLE_LABELS.user };
 
 // Who was on the call, shown only when someone besides the agent and the customer was. A world actor acts in the
-// world and never joins the call, so it is left out here; its actions are in the transcript under Others.
+// world and never joins the call, so it is left out here; its actions are in the transcript.
+// Each person is one unit: they wrap whole, and a long role is cut rather than broken.
 export default function CallParticipants({ others, customerName }) {
   const speakers = others.filter((party) => party.role !== "world_actor");
   if (speakers.length === 0) return null;
-  const entries = [
-    <Person key="customer">
-      {customerName
-        ? `${customerName} · ${DEFAULT_ROLE_LABELS.user}`
-        : DEFAULT_ROLE_LABELS.user}
-    </Person>,
-    ...speakers.map((party) => (
-      <OtherPartyName
-        key={`${party.role}:${party.speakerName}`}
-        party={party}
-      />
-    )),
-    <Person key="agent">{DEFAULT_ROLE_LABELS.assistant}</Person>,
+  const line = [
+    { key: "customer", party: customerParty(customerName) },
+    ...speakers.map((party) => ({
+      key: `${party.role}:${party.speakerName}`,
+      party,
+    })),
+    { key: "agent", party: { speakerName: DEFAULT_ROLE_LABELS.assistant } },
   ];
   return (
-    <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.5}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      columnGap={1.5}
+      rowGap={0.5}
+    >
       <Typography variant="s3" sx={{ color: "text.secondary" }}>
         {`${CALL_PARTICIPANTS_HEADING}:`}
       </Typography>
-      {entries.map((entry, i) => (
-        <Box
-          key={entry.key}
-          component="span"
-          sx={{ display: "inline-flex", minWidth: 0, maxWidth: "100%" }}
-        >
-          {entry}
-          {i < entries.length - 1 && (
-            <Typography
-              component="span"
-              variant="s3"
-              sx={{ color: "text.secondary" }}
-            >
-              ,
-            </Typography>
-          )}
-        </Box>
+      {line.map(({ key, party }) => (
+        <OtherPartyName
+          key={key}
+          party={party}
+          fontWeight="fontWeightRegular"
+        />
       ))}
     </Stack>
   );

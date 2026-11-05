@@ -37,6 +37,20 @@ describe("ChatTranscriptPane", () => {
     expect(screen.queryByText("Booked")).toBeNull();
   });
 
+  it("falls back to All when Others was picked and the next call has none", async () => {
+    const { rerender } = render(
+      <ChatTranscriptPane
+        turns={[...plainChat, { role: "sub_actor", text: "Hello?" }]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Others" }));
+    rerender(<ChatTranscriptPane turns={plainChat} />);
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "All",
+    );
+    expect(screen.getByText("Booked")).toBeInTheDocument();
+  });
+
   it("shows just Someone for a sub-actor an older call kept no name for", () => {
     render(
       <ChatTranscriptPane
