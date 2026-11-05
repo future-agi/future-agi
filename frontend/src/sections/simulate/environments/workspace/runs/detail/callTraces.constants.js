@@ -89,5 +89,13 @@ export const CALL_WORKERS_COPY = {
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
   workersNotObserved: (names) => `Not observed: ${names}`,
+  // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
+  cutShort: {
+    timed_out: "timed out",
+    cancel_requested: "cancel requested",
+    cancelled: "cancelled",
+    infrastructure: "infrastructure fault",
+  },
+  workersCutShort: (list) => `Cut short: ${list}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
 };

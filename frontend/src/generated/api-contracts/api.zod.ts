@@ -53331,6 +53331,17 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       instance_ids: zod.array(zod.string().min(1)),
       model: zod.string().min(1).optional(),
       tokens: zod.number().optional(),
+      state: zod
+        .enum([
+          "completed",
+          "failed",
+          "timed_out",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+        ])
+        .optional(),
     }),
   ),
   events: zod.array(

@@ -667,6 +667,19 @@ class CallWorkerSerializer(serializers.Serializer):
     # The model the worker's own model calls used, and the tokens they spent, when the app sent traces.
     model = serializers.CharField(required=False)
     tokens = serializers.IntegerField(required=False)
+    # How it ended; absent on a timeline read before end states were recorded.
+    state = serializers.ChoiceField(
+        choices=[
+            "completed",
+            "failed",
+            "timed_out",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+        ],
+        required=False,
+    )
 
 
 class CallWorkerEventSerializer(serializers.Serializer):

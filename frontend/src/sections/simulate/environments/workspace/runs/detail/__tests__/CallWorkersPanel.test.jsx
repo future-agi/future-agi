@@ -600,6 +600,27 @@ describe("CallWorkersPanel", () => {
       expect(onOpenTrace).toHaveBeenCalledWith("tr-1");
     });
 
+    it("marks a worker the trial cut short, keeping its steps so far, and leaves a finished one unmarked", () => {
+      result = {
+        data: {
+          ...twoTurns(),
+          workers: TIMELINE.workers.map((one) =>
+            one.worker_id === handoff.worker_id
+              ? { ...one, state: "timed_out" }
+              : { ...one, state: "not_observed" },
+          ),
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(2);
+      expect(
+        screen.getByText("Cut short: Order-lookup worker (timed out)"),
+      ).toBeInTheDocument();
+      expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
+    });
+
     it("says when nothing was recorded for the participants", () => {
       result = {
         data: {

@@ -25453,6 +25453,19 @@ export const CallWorkersResponseApiCollection = {
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
 
+export type CallWorkerApiState =
+  (typeof CallWorkerApiState)[keyof typeof CallWorkerApiState];
+
+export const CallWorkerApiState = {
+  completed: "completed",
+  failed: "failed",
+  timed_out: "timed_out",
+  cancel_requested: "cancel_requested",
+  cancelled: "cancelled",
+  infrastructure: "infrastructure",
+  not_observed: "not_observed",
+} as const;
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -25466,6 +25479,7 @@ export interface CallWorkerApi {
   /** @minLength 1 */
   model?: string;
   tokens?: number;
+  state?: CallWorkerApiState;
 }
 
 export type CallWorkerEventApiType =

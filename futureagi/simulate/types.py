@@ -147,6 +147,18 @@ class HarnessWorker(TypedDict):
     instance_ids: list[str]
     model: NotRequired[str]
     tokens: NotRequired[int]
+    # How the worker ended in this call; absent on a timeline read before end states were recorded.
+    state: NotRequired[
+        Literal[
+            "completed",
+            "failed",
+            "timed_out",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+        ]
+    ]
 
 
 class WorkerEvent(TypedDict, total=False):

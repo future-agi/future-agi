@@ -95584,6 +95584,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Tokens",
           type: "integer",
         },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "completed",
+            "failed",
+            "timed_out",
+            "cancel_requested",
+            "cancelled",
+            "infrastructure",
+            "not_observed",
+          ],
+        },
       },
     },
     CallWorkerCoordinator: {

@@ -20,7 +20,7 @@ from simulate.types import (
 )
 
 if TYPE_CHECKING:
-    from simulate.models import HostedHarnessJob
+    from simulate.models import CallExecution, HostedHarnessJob
 
 AGENT_KIND = "agent"
 TOOL_KIND = "tool"
@@ -488,9 +488,7 @@ def worker_timeline(
         # Observed with no parent: nothing handed this work out, so it sits at the top.
         parent = str(row.get("parent_span_id") or "")
         return (
-            {"parent_delegation_id": parent}
-            if parent
-            else {"relationship": "observed"}
+            {"parent_delegation_id": parent} if parent else {"relationship": "observed"}
         )
 
     def own_id(row: Mapping[str, Any], index: int) -> str:
@@ -710,6 +708,76 @@ def _span_dict(span: Any) -> WorkerSpan:
     }
 
 
+# How a trial ended, for the workers still out when it did: it ran to its end (the inherited deadline, so they timed
+# out), it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it).
+_STILL_OUT = {
+    "ended": "timed_out",
+    "infrastructure": "infrastructure",
+    "cancel_requested": "cancel_requested",
+    "cancelled": "cancelled",
+}
+
+
+def worker_states(
+    timeline: WorkerTimeline, *, trial: str, past_deadline: Iterable[str] = ()
+) -> WorkerTimeline:
+    """The timeline with each worker's end state: `completed` or `failed` once it returned, `timed_out` when the world
+    refused it past its deadline (`past_deadline`, by worker id), `not_observed` when it sent nothing, else what the trial's own ending makes it. Every
+    partial event stays (MA-1: no return is invented)."""
+    returned = {
+        event["worker_id"]: event
+        for event in timeline["events"]
+        if event["type"] == "returned"
+    }
+    late = set(past_deadline)
+    workers = []
+    for worker in timeline["workers"]:
+        back = returned.get(worker["worker_id"])
+        if not worker["observed"]:
+            state = "not_observed"
+        elif worker["id"] in late:
+            state = "timed_out"
+        elif back is not None:
+            state = "failed" if back.get("status") == "error" else "completed"
+        else:
+            state = _STILL_OUT.get(trial, "timed_out")
+        workers.append({**worker, "state": state})
+    return {**timeline, "workers": workers}
+
+
+def deadline_refused(call: CallExecution) -> set[str]:
+    """The workers the world refused past their deadline in this call's trial, by id, from its world changes."""
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    trial = (call.call_metadata or {}).get(TRIAL_STATE_KEY) or {}
+    return {
+        str(entry["who"])[len("worker:") :]
+        for entry in trial.get("state_changes") or []
+        if isinstance(entry, dict)
+        and str(entry.get("who") or "").startswith("worker:")
+        and any(
+            isinstance(one, dict) and one.get("code") == "deadline_passed"
+            for one in entry.get("refused_actions") or []
+        )
+    }
+
+
+def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
+    """How one call's trial ended, from the call row, its receipt and the job."""
+    from simulate.models import CallExecution, HostedHarnessJob
+
+    if call.status == CallExecution.CallStatus.CANCELLED:
+        # Confirmed only once the platform has stopped the run; stopping our observation is not a confirmed cancel.
+        confirmed = job is not None and job.state == HostedHarnessJob.State.CANCELED
+        return "cancelled" if confirmed else "cancel_requested"
+    receipt = (call.call_metadata or {}).get("hosted_harness_receipt")
+    # A call the job closed without a receipt ended the way the job did.
+    failure = (
+        receipt.get("failure") if receipt else (getattr(job, "failure", None) or {})
+    ) or {}
+    return "infrastructure" if failure.get("domain") not in (None, "agent") else "ended"
+
+
 def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
     """The workers the contract of the version the run was pinned to declares."""
     version = job.environment_version or (
@@ -830,13 +898,19 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         finally:
             reader.close()
     timeline: WorkerTimeline = {
-        **worker_timeline(
-            [_span_dict(one) for one in spans],
-            declared,
-            run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
-            traced_calls=traced_calls,
-            turns=_call_turns(call, sealed),
-            started_at=_call_start(call, sealed),
+        **worker_states(
+            worker_timeline(
+                [_span_dict(one) for one in spans],
+                declared,
+                run_key=(
+                    str(job.run_id) if job is not None else str(call.test_execution_id)
+                ),
+                traced_calls=traced_calls,
+                turns=_call_turns(call, sealed),
+                started_at=_call_start(call, sealed),
+            ),
+            trial=trial_ending(call, job),
+            past_deadline=deadline_refused(call),
         ),
         "collected_at": timezone.now().isoformat(),
         # `no_evidence` when neither the app's spans nor the sandbox's record had anything to read yet.
