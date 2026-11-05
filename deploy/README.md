@@ -524,6 +524,11 @@ topics, volumes and obsolete workloads until their explicit retirement is approv
 
 ### Signed updates with bin/update
 
+**This is a manual upgrade flow, not automatic apply.** One-time
+[automatic-update setup](update/README.md#automatic-updates-standalone) supports
+only the qualified base Standalone layout. Production and Distributed upgrades
+remain operator-run; Helm uses its [own upgrade flow](helm/futureagi/README.md#upgrading).
+
 `./bin/update --production` does the same upgrade with a signed release, in
 two steps around your initialization jobs. `apply --stage` runs your backup
 hook, writes only the seven version pins in `deploy/.env.production`, pulls the
