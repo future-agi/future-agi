@@ -41144,7 +41144,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
 checked next, then made this environment's default unless make_default is
-false. A coding agent key's version is never made the default.
+false. A coding agent key pushes only an upload, never made the default.
  */
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionParams =
   zod.object({

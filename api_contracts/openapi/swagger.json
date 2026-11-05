@@ -52443,7 +52443,7 @@
         "/simulate/api/harness-environments/{id}/versions/agent/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_create_agent_version",
-                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse. A coding agent key's version is never made the default.",
+                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse. A coding agent key pushes only an upload, never made the default.",
                 "parameters": [
                     {
                         "name": "data",
