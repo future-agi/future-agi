@@ -357,6 +357,32 @@ class TestCodingAgentPush:
         assert AgentVersion._base_manager.count() == before
         assert _defaults(environment) == [a1.id]
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"prompt": "Answer every question in one sentence."},
+            {"agent_payload": {"config": {"target_speaks_first": True}}},
+        ],
+    )
+    def test_only_an_uploaded_folder_is_pushed(
+        self, api_client, auth_client, user, workspace, storage, scheduled, body
+    ):
+        environment = _environment(
+            user, workspace, "src-coder-phone", storage, edit=_phone
+        )
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+        before = AgentVersion._base_manager.count()
+
+        response = self._push(api_client, coder, environment, body)
+
+        assert response.status_code == 403, response.content
+        assert response.json()["code"] == "coding_agent_candidate_unsupported"
+        assert AgentVersion._base_manager.count() == before
+        assert _defaults(environment) == [a1.id]
+        # A person's push of the same change is unaffected.
+        _made(_post(auth_client, environment, body))
+
 
 class TestPrompt:
     def test_a_phone_prompt_reaches_the_run(

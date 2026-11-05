@@ -323,7 +323,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def create_agent_version(self, request, pk=None):
         """A new agent version from an upload, a prompt edit or a settings edit; it is
         checked next, then made this environment's default unless make_default is
-        false. A coding agent key's version is never made the default."""
+        false. A coding agent key pushes only an upload, never made the default."""
         from simulate.services.harness_agent_changes import change_agent_source
 
         version_reads.require_versioning()
@@ -332,6 +332,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         change = dict(request.validated_data)
         if coding_agent_key(request) is not None:
+            if "archive_artifact_id" not in change:
+                # The loop is built for uploaded-folder agents; their prompt and
+                # settings stay with people.
+                raise PermissionDenied(
+                    "A coding agent key can push only an uploaded folder",
+                    code="coding_agent_candidate_unsupported",
+                )
             # Shipping a version stays with people; a coding agent pushes candidates.
             if change.get("make_default"):
                 raise PermissionDenied(
