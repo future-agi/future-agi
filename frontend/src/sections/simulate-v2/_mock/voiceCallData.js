@@ -1,7 +1,8 @@
 import { localizeEval } from "./errorLocalization";
 import { endedReasonFor } from "./endedReason";
 import { voiceFlowOf } from "./voiceFlow";
-import { subActorsInTrial } from "./subActors";
+import { callerCastOf, subActorsInTrial } from "./subActors";
+import { actorEventsOf } from "./actorEvents";
 
 /**
  * Shape a revamped-flow run task into the `data` object the real
@@ -149,7 +150,8 @@ function formatToolTurnContent({ name, args, result, latencyMs }) {
 const subActorTurn = (line, task, cursor) => {
   const words = String(line.text).split(/\s+/).filter(Boolean).length;
   const dur = Math.round((0.6 + words / 2.6) * 10) / 10;
-  const message = `${line.actor.name} (not the person being served) · ${line.role} · ${line.how}${line.reached ? "" : " · not picked up by the agent"}: ${line.text}`;
+  /* Who it is on its own line, then what they said. */
+  const message = `**${line.actor.name}** · not the person being served · ${line.how}${line.reached ? "" : " · not picked up by the agent"}\n\n${line.text}`;
   return {
     id: line.id,
     speaker_role: "user",
@@ -163,7 +165,27 @@ const subActorTurn = (line, task, cursor) => {
   };
 };
 
-function buildTranscriptWithTools(steps, env, task, subLines = []) {
+/* A world actor's step or action, as an event row (the drawer's tool style:
+   a system event, not another voice). */
+const eventTurn = (id, text, cursor) => ({
+  id,
+  speaker_role: "tool",
+  role: "tool",
+  message: text,
+  content: text,
+  start_time_seconds: cursor,
+  end_time_seconds: cursor + 0.3,
+  duration_seconds: 0.3,
+  actor_event: true,
+});
+
+function buildTranscriptWithTools(
+  steps,
+  env,
+  task,
+  subLines = [],
+  { events = [], callerIds = new Set() } = {},
+) {
   const allowedTools = (env?.tools || [])
     .map((t) => t.id || t.name)
     .filter(Boolean);
@@ -192,7 +214,39 @@ function buildTranscriptWithTools(steps, env, task, subLines = []) {
       });
   addSubLines(-1);
 
+  /* World actors' actions that follow turn `i`. */
+  const addEvents = (i) =>
+    events
+      .filter((e) => e.after === i)
+      .forEach((e) => {
+        out.push(
+          eventTurn(
+            e.id,
+            `**${e.name} · ${e.role}** — ${e.outcome} \`${e.action}\``,
+            cursor,
+          ),
+        );
+        cursor += 0.9;
+      });
+
   steps.forEach((s, i) => {
+    /* Caller-side people speak through their own lines (addSubLines); a world
+       actor's generic step reads as an event, with their name. */
+    if (s.role === "actor") {
+      if (!callerIds.has(s.actorId) && s.actorName) {
+        out.push(
+          eventTurn(
+            s.id || `${task?.id}-a${i}`,
+            `**${s.actorName}** ${s.text.charAt(0).toLowerCase()}${s.text.slice(1)}`,
+            cursor,
+          ),
+        );
+        cursor += 0.9;
+      }
+      addSubLines(i);
+      addEvents(i);
+      return;
+    }
     const role = speakerRole(s.role);
     /* Speech pace (~2.6 words a second) and a short, varied pause before each
        turn, so the transcript shows real turn lengths and silences. */
@@ -245,6 +299,7 @@ function buildTranscriptWithTools(steps, env, task, subLines = []) {
 
     cursor += 1; // 1s pause before the next speaker
     addSubLines(i);
+    addEvents(i);
   });
 
   return out;
@@ -363,7 +418,10 @@ export function taskToVoiceData(
      are synthesised at a steady cadence so the analytics view has
      something to plot; a simulated call has no real per-word timing. */
   const sub = subActorsInTrial({ task, env, envState });
-  const transcript = buildTranscriptWithTools(steps, env, task, sub.lines);
+  const transcript = buildTranscriptWithTools(steps, env, task, sub.lines, {
+    events: actorEventsOf({ env, envState, task }),
+    callerIds: new Set(callerCastOf(env, envState).map((a) => a.id)),
+  });
   /* The transcript, recording and analytics run at the call's real length —
      the one billed and shown everywhere else. */
   const lastEnd = transcript.length

@@ -135,6 +135,7 @@ import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
+import { OnTheCall } from "./SubActorRows";
 import HandoffTimeline from "./HandoffTimeline";
 import SharedState from "./SharedState";
 import { trialArtifactsOf } from "../_mock/trialEvidence";
@@ -3672,6 +3673,20 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                             )}
                           </Stack>
                         ),
+                        simTranscriptNote: (() => {
+                          const sub = subActorsInTrial({
+                            task: openTask,
+                            env,
+                            envState,
+                          });
+                          return sub.joined.length || sub.missed.length ? (
+                            <OnTheCall
+                              joined={sub.joined}
+                              missed={sub.missed}
+                              sx={{ px: 0, pt: 0, pb: 1 }}
+                            />
+                          ) : null;
+                        })(),
                         simHandoffs:
                           membersOf(envState?.agent).length > 1 ? (
                             <HandoffTimeline

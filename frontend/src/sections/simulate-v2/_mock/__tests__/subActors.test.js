@@ -281,7 +281,7 @@ describe("the voice transcript", () => {
     const data = taskToVoiceData(task, { env: voiceEnv, envState: voiceState });
     const labelled = data.transcript.filter((t) => t.sub_actor);
     expect(labelled.length).toBeGreaterThan(0);
-    expect(labelled[0].message).toContain("(not the person being served)");
+    expect(labelled[0].message).toContain("not the person being served");
     /* the caller and the agent still have all their turns */
     expect(
       data.transcript.filter((t) => !t.sub_actor && t.role !== "tool").length,

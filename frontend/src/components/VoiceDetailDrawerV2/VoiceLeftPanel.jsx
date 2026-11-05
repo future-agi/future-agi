@@ -207,6 +207,8 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
                   </ShowComponent>
                   <VoiceAudioBridge data={data} />
                 </Box>
+                {/* Simulate only: who was on the call. Observe never sets it. */}
+                {data?.simTranscriptNote}
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
                     <TranscriptView

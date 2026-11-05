@@ -8,9 +8,9 @@ const MONO = "ui-monospace, Menlo, monospace";
  * came in, and the agent. A sub-actor the scenario had but who never came in is
  * named after, so a quiet transcript isn't taken for a missing one.
  */
-export function OnTheCall({ joined = [], missed = [] }) {
+export function OnTheCall({ joined = [], missed = [], sx }) {
   return (
-    <Box sx={{ px: 2, pt: 1.25 }}>
+    <Box sx={{ px: 2, pt: 1.25, ...sx }}>
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         <Box component="span" sx={{ color: "text.tertiary" }}>
           On the call:{" "}
@@ -28,6 +28,7 @@ export function OnTheCall({ joined = [], missed = [] }) {
 OnTheCall.propTypes = {
   joined: PropTypes.array,
   missed: PropTypes.array,
+  sx: PropTypes.object,
 };
 
 /**
