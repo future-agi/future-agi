@@ -234,7 +234,7 @@ def test_semantic_support_facts_are_narrow(text, n, d, proportionality):
 
 
 @pytest.fixture
-def saved(auth_client, observe_project):
+def saved(auth_client, observe_project, enabled_metrics):
     data = body(observe_project)
     # The test freezes synthetic weighted rows; formula semantics are persisted,
     # not injected proof flags. The denominator is a proven indicator superset.

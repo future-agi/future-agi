@@ -791,7 +791,12 @@ INTERACTIVE_READ_SETTING_SPECS = {
     ),
 }
 
+# Deployment rollout switches use bounded integers so the existing settings
+# loader validates them at startup: 0 is off, 1 is on. These are not plan gates.
+METRICS_FEATURE_SETTING_SPECS = _specs((("METRICS_ENABLED", 0, 0, 1),))
+
 RUNTIME_NUMERIC_SETTING_SPECS = {
+    **METRICS_FEATURE_SETTING_SPECS,
     **PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
     **DATASET_READ_SETTING_SPECS,
     **INTERACTIVE_READ_SETTING_SPECS,
@@ -802,6 +807,7 @@ if len(RUNTIME_NUMERIC_SETTING_SPECS) != sum(
     map(
         len,
         (
+            METRICS_FEATURE_SETTING_SPECS,
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
             DATASET_READ_SETTING_SPECS,
             INTERACTIVE_READ_SETTING_SPECS,

@@ -14,6 +14,9 @@ from tracer.services.derived_metrics.queries import PREVIEW_QUERY_SETTINGS
 from tracer.tests import test_derived_metric_clickhouse as metric_fixtures
 from tracer.tests.test_derived_metric_spec import sentence
 
+# Preview exercises the enabled API; unrelated tests keep the rollout default.
+pytestmark = pytest.mark.usefixtures("enabled_metrics")
+
 ROOT = "/tracer/derived-metrics/"
 
 
@@ -83,7 +86,7 @@ def window(**overrides):
 
 
 @pytest.fixture
-def preview_url(auth_client, observe_project):
+def preview_url(auth_client, observe_project, enabled_metrics):
     response = auth_client.post(ROOT, sentence(observe_project.id), format="json")
     assert response.status_code == 201, response.data
     return f"{ROOT}{response.data['id']}/preview/"

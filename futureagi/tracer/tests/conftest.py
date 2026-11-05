@@ -68,6 +68,12 @@ def _stub_eval_task_workflow(monkeypatch):
 
 
 @pytest.fixture
+def enabled_metrics(settings):
+    """Opt enabled-feature scenarios in without changing the test-wide default."""
+    settings.METRICS_ENABLED = 1
+
+
+@pytest.fixture
 def ch_seed():
     """Seed ObservationSpan rows directly into the CH ``spans`` table.
 

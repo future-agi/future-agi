@@ -42,6 +42,9 @@ metric_ch = metric_fixtures.metric_ch
 seed_span = metric_fixtures.seed_span
 seed_eval = metric_fixtures.seed_eval
 
+# Exercise enabled-feature validation and delivery, not rollout denial.
+pytestmark = pytest.mark.usefixtures("enabled_metrics")
+
 ROOT = "/tracer/derived-metrics/"
 RUNS = "/tracer/derived-metric-runs/"
 RATIO = "ratio(resolved == 1 and escalated == 0, resolved >= 0)"
@@ -104,7 +107,7 @@ def clean_admission_cache():
 
 
 @pytest.fixture
-def saved(auth_client, observe_project):
+def saved(auth_client, observe_project, enabled_metrics):
     response = auth_client.post(ROOT, span_body(observe_project), format="json")
     assert response.status_code == 201, response.data
     return response.data

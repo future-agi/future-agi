@@ -41,6 +41,7 @@ from tracer.services.derived_metrics import service
 from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.cursor import newest_first_page
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
+from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.formula import FormulaError
 from tracer.services.derived_metrics.queries import Scope
 from tracer.utils.workspace_scope import (
@@ -86,6 +87,13 @@ def _enqueue(run):
 
 
 class MetricViewSet(viewsets.GenericViewSet):
+    def initial(self, request, *args, **kwargs):
+        # Hide every recipe/run action, including OPTIONS, before permissions,
+        # validation, or storage work. Enabling leaves normal auth/RBAC intact.
+        if not metrics_enabled(org=getattr(request, "organization", None)):
+            raise Http404
+        return super().initial(request, *args, **kwargs)
+
     def handle_exception(self, exc):
         if isinstance(exc, service.MetricUnavailableError):
             return Response(
