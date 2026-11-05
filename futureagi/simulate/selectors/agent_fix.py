@@ -269,11 +269,11 @@ def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
 _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
 # Certification reports every failure as the environment's. A chat that timed out waiting
 # for the agent's reply, or an agent slower to come up than the wait (infrastructure on any
-# other run), says nothing about the agent. A reply that failed, or a refused connection
-# to the agent's own process, stays the user's.
+# other run), says nothing about the agent. A reply that failed, or a connection the
+# agent's own process refused or never accepted, stays the user's.
 _CERTIFY_FAILED = "authoring_runtime_validation_failed"
 _CERTIFY_TIMED_OUT = re.compile(
-    r"chat_target_failed: (?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
+    r"chat_target_failed: (?!Connect)(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
     r"|depends_on/depends_on_timeout"
 )
 

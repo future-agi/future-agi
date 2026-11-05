@@ -1267,6 +1267,8 @@ class TestCheckRunStatus:
                 FailureOwner.OURS,
             ),
             ("chat_target_failed: ReadTimeout: ", FailureOwner.OURS),
+            ("chat_target_failed: ReadTimeout: timed out", FailureOwner.OURS),
+            ("chat_target_failed: ConnectTimeout: timed out", FailureOwner.USER),
             (
                 "depends_on/depends_on_timeout (agent): agent: started_check did not "
                 "pass within 180.0s; last output",
@@ -1295,6 +1297,8 @@ class TestCheckRunStatus:
         ids=[
             "chat-timed-out",
             "chat-timeout-error",
+            "agent-slow-to-reply",
+            "agent-never-accepted",
             "agent-slow-to-start",
             "duplicate-tool-ids",
             "agent-model-refused",
