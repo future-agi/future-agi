@@ -53,57 +53,74 @@ class _Block:
             self.end = at if self.end is None else max(self.end, at)
 
 
-def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block]]:
+def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]]:
+    """The events as a tree, and the keys of events whose place was not recorded (kept at the top)."""
     root = _Block(-1, None, 0, None)
+    unknown: set[int] = set()
     open_: dict[str | None, list[_Block]] = {}
-    latest: dict[str | None, _Block] = {}
+    made: dict[str | None, list[_Block]] = {}
     blocks: list[_Block] = []
 
-    def open_for(event: WorkerEvent) -> _Block | None:
-        waiting = open_.get(event.get("worker_id"), [])
-        wanted = event.get("delegation_id")
-        if not wanted:
-            return waiting[-1] if waiting else None
-        return next(
-            (
-                one
-                for one in waiting
-                if (one.handoff or {}).get("delegation_id") == wanted
-            ),
-            None,
-        )
+    by_id: dict[str, _Block] = {}
 
-    def holder(worker: str | None, at: float | None) -> _Block:
+    def open_for(event: WorkerEvent) -> _Block | None:
+        """The open hand-off an event belongs to: the one its recorded id names, else the worker's only open one.
+
+        With several open and no id, the relationship is not recorded, so the event stays at the top as unknown
+        rather than being given to the latest one.
+        """
+        if event.get("relationship") == "unknown":
+            return None
+        wanted = event.get("delegation_id")
+        if wanted:
+            found = by_id.get(str(wanted))
+            return found if found is not None and found.returned is None else None
+        waiting = open_.get(event.get("worker_id"), [])
+        return waiting[0] if len(waiting) == 1 else None
+
+    def holder(event: WorkerEvent, at: float | None) -> _Block | None:
+        """The hand-off a new hand-off was made inside: its recorded parent, else the maker's only candidate."""
+        parent = event.get("parent_delegation_id")
+        if parent:
+            return by_id.get(str(parent))
+        worker = event.get("by")
         if not worker:
             return root
-        containing = next(
-            (
-                one
-                for one in reversed(open_.get(worker, []))
-                if at is None or one.start is None or one.start <= at
-            ),
-            None,
-        )
-        return containing or latest.get(worker) or root
+        candidates = [
+            one
+            for one in open_.get(worker, [])
+            if at is None or one.start is None or one.start <= at
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates and len(made.get(worker, [])) == 1:
+            return made[worker][0]
+        return None
 
     for event in events:
         at = _seconds(event.get("at"))
         worker = event.get("worker_id")
         if event["type"] in _HAND_OFF_TYPES:
-            parent = holder(event.get("by"), at)
+            parent = holder(event, at)
+            if parent is None:
+                parent = root
+                unknown.add(event.get("seq", len(blocks)))
             block = _Block(event.get("seq", len(blocks)), worker, parent.depth + 1, at)
             block.handoff = event
             parent.items.append(block)
             blocks.append(block)
             open_.setdefault(worker, []).append(block)
-            latest[worker] = block
+            made.setdefault(worker, []).append(block)
+            if event.get("delegation_id"):
+                by_id[str(event["delegation_id"])] = block
         elif event["type"] == "returned":
             block = open_for(event)
             if block is not None:
-                open_[worker].remove(block)
+                open_[block.worker_id].remove(block)
                 block.returned = event
                 block.reach(at)
             else:
+                unknown.add(event.get("seq", len(blocks)))
                 orphan = _Block(event.get("seq", len(blocks)), worker, 1, at)
                 orphan.returned = event
                 root.items.append(orphan)
@@ -111,10 +128,12 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block]]:
         else:
             # A call with no worker is the coordinator's own, even with control passed back to it.
             block = open_for(event) if worker else None
+            if worker and block is None and open_.get(worker):
+                unknown.add(event.get("seq", -1))
             (block or root).items.append(event)
             if block is not None:
                 block.reach(at)
-    return root, blocks
+    return root, blocks, unknown
 
 
 def _close(node: _Block) -> None:
@@ -148,7 +167,16 @@ def _mark_parallel(node: _Block) -> bool:
     return unknown
 
 
-def _flatten(node: _Block, parent: int | None, out: list[WorkerStep]) -> None:
+def _relationship(event: WorkerEvent | None, key: int, unknown: set[int]) -> str:
+    """`unknown` when the record does not say where this step belongs; otherwise `observed`."""
+    if key in unknown or (event or {}).get("relationship") == "unknown":
+        return "unknown"
+    return "observed"
+
+
+def _flatten(
+    node: _Block, parent: int | None, out: list[WorkerStep], unknown: set[int]
+) -> None:
     for item in node.items:
         if isinstance(item, _Block):
             out.append(
@@ -164,9 +192,12 @@ def _flatten(node: _Block, parent: int | None, out: list[WorkerStep]) -> None:
                     "started_at": _iso(item.start),
                     "ended_at": _iso(item.end),
                     "parallel": item.parallel,
+                    "relationship": _relationship(
+                        item.handoff or item.returned, item.key, unknown
+                    ),
                 }
             )
-            _flatten(item, item.key, out)
+            _flatten(item, item.key, out, unknown)
         else:
             out.append(
                 {
@@ -176,6 +207,7 @@ def _flatten(node: _Block, parent: int | None, out: list[WorkerStep]) -> None:
                     "depth": node.depth,
                     "worker_id": item.get("worker_id"),
                     "call": item,
+                    "relationship": _relationship(item, item.get("seq", -1), unknown),
                 }
             )
 
@@ -260,11 +292,11 @@ def worker_steps(
     step's turn with that turn's request and reply. A record kept before turns were stored is one turn, with the
     record's own `request` and `response`."""
     turns = list(turns)
-    root, blocks = _tree(events)
+    root, blocks, unknown = _tree(events)
     _close(root)
     overlap_unknown = _mark_parallel(root)
     steps: list[WorkerStep] = []
-    _flatten(root, None, steps)
+    _flatten(root, None, steps, unknown)
     rounds = _by_turn(steps, turns)
     if not turns and rounds:
         rounds = [{"turn": 0, "request": request, "response": response}]

@@ -56766,6 +56766,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        collection: {
+          title: "Collection",
+          type: "string",
+          enum: ["complete", "no_evidence"],
+        },
         steps: {
           type: "array",
           items: {
@@ -92909,6 +92914,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        model: {
+          title: "Model",
+          type: "string",
+          minLength: 1,
+        },
+        tokens: {
+          title: "Tokens",
+          type: "integer",
+        },
       },
     },
     CallWorkerCoordinator: {
@@ -92975,6 +92989,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["ok", "error"],
         },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
         input: {
           title: "Input",
           type: "object",
@@ -92985,9 +93009,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
-        payload_omitted: {
-          title: "Payload omitted",
+        input_omitted: {
+          title: "Input omitted",
           type: "boolean",
+        },
+        output_omitted: {
+          title: "Output omitted",
+          type: "boolean",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
         },
         at: {
           title: "At",
@@ -93019,7 +93052,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     CallWorkerStep: {
-      required: ["kind", "key", "parent", "depth", "worker_id", "turn"],
+      required: [
+        "kind",
+        "key",
+        "parent",
+        "depth",
+        "worker_id",
+        "turn",
+        "relationship",
+      ],
       type: "object",
       properties: {
         kind: {
@@ -93078,6 +93119,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         turn: {
           title: "Turn",
           type: "integer",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
         },
       },
     },

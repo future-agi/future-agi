@@ -590,6 +590,9 @@ class CallWorkerSerializer(serializers.Serializer):
     observed = serializers.BooleanField()
     undeclared = serializers.BooleanField()
     instance_ids = serializers.ListField(child=serializers.CharField())
+    # The model the worker's own model calls used, and the tokens they spent, when the app sent traces.
+    model = serializers.CharField(required=False)
+    tokens = serializers.IntegerField(required=False)
 
 
 class CallWorkerEventSerializer(serializers.Serializer):
@@ -604,11 +607,17 @@ class CallWorkerEventSerializer(serializers.Serializer):
     result = serializers.CharField(allow_null=True, required=False)
     tool = serializers.CharField(required=False)
     status = serializers.ChoiceField(choices=("ok", "error"), required=False)
+    # The span and trace this step was read from, for opening it in Traces; absent for the sandbox's own record.
+    span_id = serializers.CharField(required=False)
+    trace_id = serializers.CharField(required=False)
     # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
     input = serializers.JSONField(allow_null=True, required=False)
     output = serializers.JSONField(allow_null=True, required=False)
-    # True when the record's size limit was reached before this step, so its input and output were not kept.
-    payload_omitted = serializers.BooleanField(required=False)
+    # True when the record's size limit was reached before this step, so that part was not kept.
+    input_omitted = serializers.BooleanField(required=False)
+    output_omitted = serializers.BooleanField(required=False)
+    # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
+    relationship = serializers.ChoiceField(choices=("observed", "unknown"), required=False)
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
 
@@ -641,6 +650,8 @@ class CallWorkerStepSerializer(serializers.Serializer):
     call = CallWorkerEventSerializer(required=False)
     # The call's turn this row happened in: turn n starts at the caller's nth message, 0 is before they spoke.
     turn = serializers.IntegerField()
+    # `unknown` when the record does not say which hand-off this step belongs to: it stays at the top, never guessed.
+    relationship = serializers.ChoiceField(choices=("observed", "unknown"))
 
 
 class CallWorkerRoundSerializer(serializers.Serializer):
@@ -663,6 +674,8 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     started_at = serializers.CharField(allow_null=True, required=False)
     spans_received = serializers.BooleanField(required=False)
     collected_at = serializers.CharField()
+    # `no_evidence`: the app declares workers but nothing was read for this call yet; each worker reads not observed.
+    collection = serializers.ChoiceField(choices=("complete", "no_evidence"), required=False)
     steps = CallWorkerStepSerializer(many=True)
     turns = CallWorkerRoundSerializer(many=True)
     # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.

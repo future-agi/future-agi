@@ -128,7 +128,7 @@ def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
             size = len(json.dumps(event[key], default=str))
             if spent + size > _PAYLOAD_BUDGET:
                 event[key] = None
-                event["payload_omitted"] = True
+                event[f"{key}_omitted"] = True
             else:
                 spent += size
     return kept, len(events) - len(kept)
@@ -278,6 +278,9 @@ def worker_timeline(
             str(agent["span_id"]),
         )
 
+    def delegation_of(agent: Mapping[str, Any]) -> str:
+        return str((launcher_of(agent) or agent)["span_id"])
+
     events: list[WorkerEvent] = []
     delegating = set()
     for span in by_id.values():
@@ -288,13 +291,21 @@ def worker_timeline(
         if launcher is not None:
             delegating.add(launcher["span_id"])
         delegation_id = str((launcher or span)["span_id"])
-        by = worker_of(agent_ancestor(span))
+        maker = agent_ancestor(span)
+        by = worker_of(maker)
         events.append(
             {
                 "type": "delegated",
                 "worker_id": worker_id,
                 "by": by,
                 "delegation_id": delegation_id,
+                # The hand-off the maker was itself running in, read from the span tree.
+                **(
+                    {"parent_delegation_id": delegation_of(maker)}
+                    if by is not None
+                    else {}
+                ),
+                "trace_id": str(span.get("trace_id") or ""),
                 "task": _summary(span.get("input"))
                 or _summary((launcher or {}).get("input"), argument=True),
                 "at": span.get("start_time"),
@@ -318,12 +329,20 @@ def worker_timeline(
         if _kind(span) != TOOL_KIND or span["span_id"] in delegating:
             continue
         owner = agent_ancestor(span)
+        owner_worker = worker_of(owner)
         events.append(
             {
                 "type": "tool_call",
-                "worker_id": worker_of(owner),
+                "worker_id": owner_worker,
+                # The hand-off the call ran in, read from the span tree.
+                **(
+                    {"delegation_id": delegation_of(owner)}
+                    if owner_worker is not None
+                    else {}
+                ),
                 "tool": str(span.get("name") or ""),
                 "span_id": str(span["span_id"]),
+                "trace_id": str(span.get("trace_id") or ""),
                 "status": _status(span),
                 "input": _payload(span.get("input")),
                 "output": _payload(span.get("output")),
@@ -332,6 +351,17 @@ def worker_timeline(
                 "attribution": "reported" if owner is not None else "unattributed",
             }
         )
+    # Each worker's own model calls: the model it used and the tokens it spent, as the spans recorded them.
+    for span in by_id.values():
+        if _kind(span) != "llm" or agent_ancestor(span) is None:
+            continue
+        worker_id = worker_of(nearest_agent(span))
+        if worker_id is None:
+            continue
+        entry = workers[worker_id]
+        if span.get("model"):
+            entry["model"] = str(span["model"])
+        entry["tokens"] = int(entry.get("tokens") or 0) + int(span.get("tokens") or 0)
     # A sealed call or hand-off a span already showed is not repeated.
     shown = Counter(
         (one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call"
@@ -386,10 +416,20 @@ def worker_timeline(
             None,
         )
 
+    # A harness that records each event's kind and parent is read as recorded; only older rows are inferred.
+    recorded = any(row.get("kind") for row in rows)
     transfers = {
         index: target
         for index, row in enumerate(rows)
-        if (target := passes_control(row))
+        if (
+            target := (
+                str(row.get("delegated_to") or "").strip()
+                if row.get("kind") == "transferred"
+                else None
+            )
+            if recorded
+            else passes_control(row)
+        )
     }
     controlled = set(transfers.values())
     # The agent that hands work out and is never handed any is the coordinator, unless it is a declared worker.
@@ -439,6 +479,23 @@ def worker_timeline(
             return None
         return when(at)
 
+    def placed_in(row: Mapping[str, Any]) -> dict[str, str]:
+        """Where the harness recorded this event ran: the hand-off it belongs to, or that it does not know."""
+        if not recorded:
+            return {}
+        if row.get("relationship") != "observed":
+            return {"relationship": "unknown"}
+        # Observed with no parent: it ran in the coordinator itself, at the top.
+        parent = str(row.get("parent_span_id") or "")
+        return {"parent_delegation_id": parent} if parent else {}
+
+    def own_id(row: Mapping[str, Any], index: int) -> str:
+        return str(
+            row.get("span_id")
+            or (row.get("runtime_ids") or {}).get("event_id")
+            or f"traced-{index}"
+        )
+
     for index, call in enumerate(rows):
         by = by_of(call)
         if not by and not call.get("delegated_to"):
@@ -460,11 +517,10 @@ def worker_timeline(
                         labels.get(target, target), labels.get(target, target)
                     ),
                     "by": worker_id,
-                    "delegation_id": str(
-                        runtime_ids.get("event_id") or f"traced-{index}"
-                    ),
+                    "delegation_id": own_id(call, index),
                     "at": started(call) or when(call.get("ended_at")),
                     "attribution": "reported",
+                    **placed_in(call),
                 }
             )
             continue
@@ -475,7 +531,7 @@ def worker_timeline(
             if shown_delegations[handed_to]:
                 shown_delegations[handed_to] -= 1
                 continue
-            delegation_id = str(runtime_ids.get("event_id") or f"traced-{index}")
+            delegation_id = own_id(call, index)
             arguments = call.get("arguments")
             events.append(
                 {
@@ -491,6 +547,7 @@ def worker_timeline(
                     ),
                     "at": started(call),
                     "attribution": "reported",
+                    **placed_in(call),
                 }
             )
             if when(call.get("ended_at")):
@@ -524,6 +581,14 @@ def worker_timeline(
             "at": started(call) or when(call.get("ended_at")),
             "attribution": "reported",
         }
+        place = placed_in(call)
+        if "parent_delegation_id" in place:
+            event["delegation_id"] = place["parent_delegation_id"]
+        elif place.get("relationship"):
+            event["relationship"] = "unknown"
+        for key in ("input_omitted", "output_omitted"):
+            if call.get(key):
+                event[key] = True
         if call.get("task_label") or call.get("task_id"):
             event["task"] = str(call.get("task_label") or call["task_id"])
         if runtime_ids.get("event_id"):
@@ -635,6 +700,9 @@ def _span_dict(span: Any) -> WorkerSpan:
         "input": span.input,
         "output": span.output,
         "attributes": dict(span.attrs_string or {}),
+        "trace_id": str(span.trace_id or ""),
+        "model": span.model or "",
+        "tokens": int(span.total_tokens or 0),
     }
 
 
@@ -740,11 +808,14 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         for one in sealed
         if one.get("worker_id") or one.get("worker_label") or one.get("delegated_to")
     ]
-    if traces.project_id is None and not traced_calls:
-        return None
     job = HostedHarnessJob.no_workspace_objects.filter(
         test_execution=call.test_execution
     ).first()
+    declared = declared_workers(job) if job is not None else []
+    # A multi-agent app whose call left no spans and no attributed rows is still recorded, with every declared
+    # worker not observed, so it never reads like a single-agent call and the later read runs.
+    if traces.project_id is None and not traced_calls and not declared:
+        return None
     spans = []
     if traces.project_id is not None:
         reader = get_reader()
@@ -757,13 +828,15 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     timeline: WorkerTimeline = {
         **worker_timeline(
             [_span_dict(one) for one in spans],
-            declared_workers(job) if job is not None else [],
+            declared,
             run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
             traced_calls=traced_calls,
             turns=_call_turns(call, sealed),
             started_at=_call_start(call, sealed),
         ),
         "collected_at": timezone.now().isoformat(),
+        # `no_evidence` when neither the app's spans nor the sandbox's record had anything to read yet.
+        "collection": "complete" if (spans or traced_calls) else "no_evidence",
     }
     if not timeline["workers"] and not any(
         one["type"] in _HAND_OFF_TYPES for one in timeline["events"]

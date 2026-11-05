@@ -144697,6 +144697,15 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tokens": {
+                    "title": "Tokens",
+                    "type": "integer"
                 }
             }
         },
@@ -144766,6 +144775,16 @@
                         "error"
                     ]
                 },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "minLength": 1
+                },
                 "input": {
                     "title": "Input",
                     "type": "object",
@@ -144776,9 +144795,21 @@
                     "type": "object",
                     "x-nullable": true
                 },
-                "payload_omitted": {
-                    "title": "Payload omitted",
+                "input_omitted": {
+                    "title": "Input omitted",
                     "type": "boolean"
+                },
+                "output_omitted": {
+                    "title": "Output omitted",
+                    "type": "boolean"
+                },
+                "relationship": {
+                    "title": "Relationship",
+                    "type": "string",
+                    "enum": [
+                        "observed",
+                        "unknown"
+                    ]
                 },
                 "at": {
                     "title": "At",
@@ -144839,7 +144870,8 @@
                 "parent",
                 "depth",
                 "worker_id",
-                "turn"
+                "turn",
+                "relationship"
             ],
             "type": "object",
             "properties": {
@@ -144902,6 +144934,14 @@
                 "turn": {
                     "title": "Turn",
                     "type": "integer"
+                },
+                "relationship": {
+                    "title": "Relationship",
+                    "type": "string",
+                    "enum": [
+                        "observed",
+                        "unknown"
+                    ]
                 }
             }
         },
@@ -144978,6 +145018,14 @@
                     "title": "Collected at",
                     "type": "string",
                     "minLength": 1
+                },
+                "collection": {
+                    "title": "Collection",
+                    "type": "string",
+                    "enum": [
+                        "complete",
+                        "no_evidence"
+                    ]
                 },
                 "steps": {
                     "type": "array",

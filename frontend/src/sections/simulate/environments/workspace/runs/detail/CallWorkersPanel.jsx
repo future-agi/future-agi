@@ -213,12 +213,12 @@ function ToolRow({ event, who, start }) {
           <Payload
             label={C.input}
             value={event.input}
-            omitted={event.payload_omitted}
+            omitted={event.input_omitted || event.payload_omitted}
           />
           <Payload
             label={C.output}
             value={event.output}
-            omitted={event.payload_omitted}
+            omitted={event.output_omitted || event.payload_omitted}
           />
         </Stack>
       </Collapse>

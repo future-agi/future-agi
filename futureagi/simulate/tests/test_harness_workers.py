@@ -140,7 +140,8 @@ def test_a_worker_nested_without_a_launching_tool_call_and_an_undeclared_one_are
     # Still running when the spans were read: delegated, no return.
     assert [(one["type"], one.get("delegation_id")) for one in timeline["events"]] == [
         ("delegated", "b"),
-        ("tool_call", None),
+        # The call names the hand-off it ran in, read from the span tree.
+        ("tool_call", "b"),
     ]
     assert timeline["events"][1]["worker_id"] == "run-1/researcher"
 
@@ -186,6 +187,10 @@ class _Span:
         self.input = raw.get("input", "")
         self.output = raw.get("output", "")
         self.attrs_string = raw["attributes"]
+        # The reader's span record (`CHSpan`) carries these too.
+        self.trace_id = raw.get("trace_id", "t1")
+        self.model = raw.get("model", "")
+        self.total_tokens = raw.get("tokens", 0)
 
 
 class _Reader:
@@ -255,10 +260,16 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     )
     assert workers["audit"]["observed"] is False
 
+    # A declared multi-agent call with no spans and no attributed rows is still recorded: every declared worker
+    # reads not observed (Rishav, #3699 review point 1), so the later read runs and the API never answers 204.
     with patch(
         "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
     ):
-        assert harness_workers.record_call_workers(str(call.id)) is None
+        unseen = harness_workers.record_call_workers(str(call.id))
+    assert unseen is not None and unseen["collection"] == "no_evidence"
+    assert unseen["events"] == []
+    assert {one["id"] for one in unseen["workers"]} >= {"order_lookup", "audit"}
+    assert not any(one["observed"] for one in unseen["workers"])
 
     # No spans reach us, but the runtime named the worker of a sealed tool call: that alone is a timeline.
     call.provider_call_data = {
@@ -466,8 +477,10 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "audit",
     }
     # The response carries the documented fields only, not every key the stored record keeps, plus the arranged steps.
-    assert set(found.json()) == set(timeline) | {
+    # The call's messages are stored for grouping only: the API returns them as `turns`.
+    assert set(found.json()) == (set(timeline) - {"messages"}) | {
         "steps",
+        "turns",
         "depth",
         "parallel",
         "overlap_unknown",
@@ -476,10 +489,9 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
     first = found.json()["steps"][0]
     assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
     assert found.json()["depth"] >= 1
-    assert (
-        "span_id" in timeline["events"][1]
-        and "span_id" not in found.json()["events"][1]
-    )
+    # A step read from a span carries its span id, for opening it in Traces; stored-only keys stay out.
+    assert found.json()["events"][1]["span_id"] == timeline["events"][1]["span_id"]
+    assert "runtime_event_id" not in found.json()["events"][1]
 
 
 @pytest.mark.django_db
@@ -1172,11 +1184,12 @@ def test_a_large_team_s_record_stays_bounded():
     assert len(timeline["events"]) <= harness_workers._MAX_EVENTS
     assert (
         len(json.dumps(timeline))
-        < harness_workers._PAYLOAD_BUDGET + 300 * harness_workers._MAX_EVENTS
+        # Each step now also carries its hand-off and trace ids for placement and Open in Traces.
+        < harness_workers._PAYLOAD_BUDGET + 400 * harness_workers._MAX_EVENTS
     )
     # The first calls keep their input and output; past the size limit a call keeps its tool, worker and time.
-    assert calls[0]["input"] == "y" * 2000 and "payload_omitted" not in calls[0]
-    assert calls[-1]["input"] is None and calls[-1]["payload_omitted"] is True
+    assert calls[0]["input"] == "y" * 2000 and "input_omitted" not in calls[0]
+    assert calls[-1]["input"] is None and calls[-1]["input_omitted"] is True
     assert calls[-1]["tool"] == "lookup" and calls[-1]["worker_id"] and calls[-1]["at"]
 
 
@@ -1443,3 +1456,191 @@ def test_escaped_line_breaks_in_an_answer_read_as_line_breaks():
         _summary("Line one\nLine two with a literal \\n kept")
         == "Line one\nLine two with a literal \\n kept"
     )
+
+
+def _sealed(
+    name, at, *, by, kind, span, parent="", relationship="observed", to=None, ended=None
+):
+    """A sealed tool-trace row as the harness writes it with recorded relationships."""
+    row = {
+        "name": name,
+        "ok": True,
+        "at": at,
+        "arguments": {},
+        "result": "ok",
+        "worker_label": by,
+        "kind": kind,
+        "span_id": span,
+        "parent_span_id": parent,
+        "relationship": relationship,
+    }
+    if to:
+        row["delegated_to"] = to
+    if ended:
+        row["ended_at"] = ended
+    return row
+
+
+def _placed(timeline):
+    from simulate.services.harness_worker_steps import worker_steps
+
+    steps = worker_steps(timeline["events"])["steps"]
+    keys = {s["key"]: s for s in steps}
+    return [
+        (
+            s["kind"],
+            (s.get("call") or {}).get("tool") or s["worker_id"],
+            (
+                (s["handoff"] or {}).get("delegation_id")
+                if s["kind"] == "handoff"
+                else None
+            ),
+            (
+                (keys[s["parent"]]["handoff"] or {}).get("delegation_id")
+                if s["parent"] is not None
+                else None
+            ),
+            s["relationship"],
+        )
+        for s in steps
+    ]
+
+
+def test_two_overlapping_hand_offs_to_one_worker_place_each_call_by_its_recorded_parent():
+    # Rishav's case: delegated A, delegated B, search_b, search_a, returned B, returned A.
+    rows = [
+        _sealed(
+            "search",
+            1.0,
+            by="Lead",
+            kind="delegated",
+            span="A",
+            to="Searcher",
+            ended=6.0,
+        ),
+        _sealed(
+            "search",
+            2.0,
+            by="Lead",
+            kind="delegated",
+            span="B",
+            to="Searcher",
+            ended=5.0,
+        ),
+        _sealed(
+            "search_b", 3.0, by="Searcher", kind="tool_call", span="t1", parent="B"
+        ),
+        _sealed(
+            "search_a", 4.0, by="Searcher", kind="tool_call", span="t2", parent="A"
+        ),
+    ]
+    placed = _placed(worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows))
+    tools = {name: parent for kind, name, _, parent, _ in placed if kind == "tool_call"}
+    assert tools == {"search_b": "B", "search_a": "A"}
+
+
+def test_a_control_pass_is_read_from_the_recorded_kind_and_the_leaf_tool_sits_under_it():
+    rows = [
+        _sealed(
+            "transfer_to_agent",
+            1.0,
+            by="root",
+            kind="transferred",
+            span="T",
+            to="researcher",
+            relationship="unknown",
+        ),
+        _sealed(
+            "search", 2.0, by="researcher", kind="tool_call", span="t1", parent="T"
+        ),
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows)
+    assert [e["type"] for e in timeline["events"]] == ["transferred", "tool_call"]
+    placed = _placed(timeline)
+    assert [(kind, parent) for kind, _, _, parent, _ in placed] == [
+        ("handoff", None),
+        ("tool_call", "T"),
+    ]
+
+
+def test_a_call_the_harness_could_not_place_stays_at_the_top_as_unknown():
+    rows = [
+        _sealed(
+            "lookup",
+            1.0,
+            by="Lead",
+            kind="delegated",
+            span="A",
+            to="Searcher",
+            ended=5.0,
+        ),
+        _sealed(
+            "search",
+            2.0,
+            by="Searcher",
+            kind="tool_call",
+            span="t1",
+            relationship="unknown",
+        ),
+    ]
+    placed = _placed(worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows))
+    assert [(kind, parent, rel) for kind, _, _, parent, rel in placed] == [
+        ("handoff", None, "observed"),
+        ("tool_call", None, "unknown"),
+    ]
+
+
+def test_per_field_omitted_flags_are_kept_from_the_harness():
+    rows = [
+        _sealed(
+            "lookup",
+            1.0,
+            by="Lead",
+            kind="delegated",
+            span="A",
+            to="Searcher",
+            ended=5.0,
+        ),
+        {
+            **_sealed(
+                "search", 2.0, by="Searcher", kind="tool_call", span="t1", parent="A"
+            ),
+            "input_omitted": True,
+        },
+    ]
+    events = worker_timeline([], DECLARED, run_key=RUN, traced_calls=rows)["events"]
+    tool = next(e for e in events if e["type"] == "tool_call")
+    assert tool.get("input_omitted") is True and not tool.get("output_omitted")
+
+
+def test_each_worker_carries_the_model_and_tokens_of_its_own_model_calls():
+    spans = [
+        _span("a", None, "agent", "coordinator", "t1", "t9"),
+        _span("al", "a", "llm", "plan", "t1", "t1", model="coord-model", tokens=50),
+        _span("b", "a", "agent", "researcher", "t2", "t8"),
+        _span("bl1", "b", "llm", "think", "t3", "t3", model="worker-model", tokens=100),
+        _span("bl2", "b", "llm", "answer", "t4", "t4", model="worker-model", tokens=20),
+    ]
+    [worker] = worker_timeline(spans, [], run_key=RUN)["workers"]
+    # The coordinator's own model call is not the worker's.
+    assert (worker["model"], worker["tokens"]) == ("worker-model", 120)
+
+
+def test_a_nested_hand_off_from_spans_names_the_hand_off_its_maker_ran_in():
+    spans = [
+        _span("a", None, "agent", "coordinator", "t1", "t9"),
+        _span("al", "a", "llm", "route", "t1", "t1"),
+        _span("b", "a", "agent", "planner", "t2", "t8"),
+        _span("bl", "b", "llm", "plan", "t2", "t2"),
+        _span("c", "b", "agent", "searcher", "t3", "t7"),
+        _span("ct", "c", "tool", "search", "t4", "t4", trace_id="tr1"),
+    ]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    nested = next(
+        e
+        for e in events
+        if e["type"] == "delegated" and e["worker_id"] == "run-1/searcher"
+    )
+    tool = next(e for e in events if e["type"] == "tool_call")
+    assert (nested["delegation_id"], nested["parent_delegation_id"]) == ("c", "b")
+    assert (tool["delegation_id"], tool["trace_id"]) == ("c", "tr1")

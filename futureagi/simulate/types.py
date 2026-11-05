@@ -100,6 +100,9 @@ class WorkerSpan(TypedDict):
     input: NotRequired[Any]
     output: NotRequired[Any]
     attributes: dict[str, str]
+    trace_id: NotRequired[str]
+    model: NotRequired[str]
+    tokens: NotRequired[int]
 
 
 class DeclaredWorker(TypedDict):
@@ -125,6 +128,8 @@ class HarnessWorker(TypedDict):
     observed: bool
     undeclared: bool
     instance_ids: list[str]
+    model: NotRequired[str]
+    tokens: NotRequired[int]
 
 
 class WorkerEvent(TypedDict, total=False):
@@ -137,10 +142,14 @@ class WorkerEvent(TypedDict, total=False):
     result: str | None
     tool: str
     span_id: str
+    trace_id: str
     status: Literal["ok", "error"]
     input: Any
     output: Any
-    payload_omitted: bool
+    input_omitted: bool
+    output_omitted: bool
+    relationship: Literal["observed", "unknown"]
+    parent_delegation_id: str
     runtime_event_id: str
     runtime_parent_event_id: str
     at: Required[str | None]
@@ -163,6 +172,7 @@ class WorkerStep(TypedDict, total=False):
     parallel: bool
     call: WorkerEvent
     turn: int
+    relationship: Literal["observed", "unknown"]
 
 
 class WorkerTurn(TypedDict):
@@ -199,4 +209,5 @@ class WorkerTimeline(TypedDict):
     started_at: str | None
     # The caller's and the agent's messages on the steps' clock, so the steps can be grouped by turn.
     messages: NotRequired[list[CallTurn]]
+    collection: NotRequired[Literal["complete", "no_evidence"]]
     collected_at: NotRequired[str]

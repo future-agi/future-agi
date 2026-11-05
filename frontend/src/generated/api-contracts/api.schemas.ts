@@ -24407,6 +24407,14 @@ export interface CallExecutionV3DetailResponseApi {
   csat_reason: string;
 }
 
+export type CallWorkersResponseApiCollection =
+  (typeof CallWorkersResponseApiCollection)[keyof typeof CallWorkersResponseApiCollection];
+
+export const CallWorkersResponseApiCollection = {
+  complete: "complete",
+  no_evidence: "no_evidence",
+} as const;
+
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
 
 export interface CallWorkerApi {
@@ -24419,6 +24427,9 @@ export interface CallWorkerApi {
   observed: boolean;
   undeclared: boolean;
   instance_ids: string[];
+  /** @minLength 1 */
+  model?: string;
+  tokens?: number;
 }
 
 export type CallWorkerEventApiType =
@@ -24437,6 +24448,14 @@ export type CallWorkerEventApiStatus =
 export const CallWorkerEventApiStatus = {
   ok: "ok",
   error: "error",
+} as const;
+
+export type CallWorkerEventApiRelationship =
+  (typeof CallWorkerEventApiRelationship)[keyof typeof CallWorkerEventApiRelationship];
+
+export const CallWorkerEventApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
 } as const;
 
 export type CallWorkerEventApiAttribution =
@@ -24467,9 +24486,15 @@ export interface CallWorkerEventApi {
   /** @minLength 1 */
   tool?: string;
   status?: CallWorkerEventApiStatus;
+  /** @minLength 1 */
+  span_id?: string;
+  /** @minLength 1 */
+  trace_id?: string;
   input?: CallWorkerEventApiInput;
   output?: CallWorkerEventApiOutput;
-  payload_omitted?: boolean;
+  input_omitted?: boolean;
+  output_omitted?: boolean;
+  relationship?: CallWorkerEventApiRelationship;
   /** @minLength 1 */
   at: string;
   attribution: CallWorkerEventApiAttribution;
@@ -24495,6 +24520,14 @@ export const CallWorkerStepApiKind = {
   tool_call: "tool_call",
 } as const;
 
+export type CallWorkerStepApiRelationship =
+  (typeof CallWorkerStepApiRelationship)[keyof typeof CallWorkerStepApiRelationship];
+
+export const CallWorkerStepApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
+} as const;
+
 export interface CallWorkerStepApi {
   kind: CallWorkerStepApiKind;
   key: number;
@@ -24512,6 +24545,7 @@ export interface CallWorkerStepApi {
   parallel?: boolean;
   call?: CallWorkerEventApi;
   turn: number;
+  relationship: CallWorkerStepApiRelationship;
 }
 
 export interface CallWorkerRoundApi {
@@ -24532,6 +24566,7 @@ export interface CallWorkersResponseApi {
   spans_received?: boolean;
   /** @minLength 1 */
   collected_at: string;
+  collection?: CallWorkersResponseApiCollection;
   steps: CallWorkerStepApi[];
   turns: CallWorkerRoundApi[];
   depth: number;

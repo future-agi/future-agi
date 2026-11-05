@@ -160,13 +160,27 @@ class TestWorkerSteps:
             (None, "someone else's"),
         ]
 
-    def test_files_a_tool_call_by_its_delegation_id_and_by_the_latest_open_without_one(
+    def test_files_a_tool_call_by_its_delegation_id_and_keeps_one_without_an_id_at_the_top_as_unknown(
         self,
     ):
+        # Rishav's case: two hand-offs to one worker open at once; only a recorded id places a call under one.
         result = worker_steps([HOTELS, FLIGHTS, call(3, "A"), call(4)])
         assert [
-            (s["key"], s["parent"]) for s in result["steps"] if s["kind"] == "tool_call"
-        ] == [(3, 1), (4, 2)]
+            (s["key"], s["parent"], s["relationship"])
+            for s in result["steps"]
+            if s["kind"] == "tool_call"
+        ] == [
+            (3, 1, "observed"),
+            (4, None, "unknown"),
+        ]
+
+    def test_a_call_with_no_id_goes_under_the_worker_s_only_open_hand_off(self):
+        result = worker_steps([HOTELS, call(2)])
+        assert [
+            (s["key"], s["parent"], s["relationship"])
+            for s in result["steps"]
+            if s["kind"] == "tool_call"
+        ] == [(2, 1, "observed")]
 
     def test_takes_a_missing_start_from_the_first_step_and_says_when_overlap_cannot_be_known(
         self,
@@ -217,7 +231,7 @@ class TestWorkerSteps:
             ("tool_call", None),
         ]
 
-    def test_falls_back_to_the_latest_open_hand_off_for_a_return_with_no_delegation_id(
+    def test_a_return_with_no_id_and_two_open_hand_offs_stays_at_the_top_as_unknown(
         self,
     ):
         result = worker_steps(
@@ -228,8 +242,13 @@ class TestWorkerSteps:
             ]
         )
         assert [
-            (s["returned"] or {}).get("seq") for s in handoffs(result["steps"])
-        ] == [None, 3]
+            (s["key"], (s["returned"] or {}).get("seq"), s["relationship"])
+            for s in handoffs(result["steps"])
+        ] == [
+            (1, None, "observed"),
+            (2, None, "observed"),
+            (3, 3, "unknown"),
+        ]
 
     def test_reads_a_timestamp_with_a_zone_as_that_instant(self):
         result = worker_steps(
@@ -259,15 +278,67 @@ class TestWorkerSteps:
     ):
         result = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "a", "at": at(1)},
-                {"seq": 2, "type": "delegated", "worker_id": "a", "at": at(2)},
-                {"seq": 3, "type": "returned", "worker_id": "a", "at": at(3)},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "a",
+                    "delegation_id": "x",
+                    "at": at(1),
+                },
+                {
+                    "seq": 2,
+                    "type": "delegated",
+                    "worker_id": "a",
+                    "delegation_id": "y",
+                    "at": at(2),
+                },
+                {
+                    "seq": 3,
+                    "type": "returned",
+                    "worker_id": "a",
+                    "delegation_id": "y",
+                    "at": at(3),
+                },
                 {"seq": 4, "type": "returned", "worker_id": "a", "at": at(4)},
             ]
         )
         assert [
             (s["key"], s["returned"]["seq"]) for s in handoffs(result["steps"])
         ] == [(1, 4), (2, 3)]
+
+    def test_a_nested_hand_off_goes_under_its_recorded_parent_not_the_maker_s_latest(
+        self,
+    ):
+        result = worker_steps(
+            [
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "lead",
+                    "delegation_id": "p1",
+                    "at": at(1),
+                },
+                {
+                    "seq": 2,
+                    "type": "delegated",
+                    "worker_id": "lead",
+                    "delegation_id": "p2",
+                    "at": at(2),
+                },
+                {
+                    "seq": 3,
+                    "type": "delegated",
+                    "worker_id": "helper",
+                    "by": "lead",
+                    "delegation_id": "c",
+                    "parent_delegation_id": "p1",
+                    "at": at(3),
+                },
+            ]
+        )
+        assert [(s["key"], s["parent"]) for s in result["steps"] if s["key"] == 3] == [
+            (3, 1)
+        ]
 
     def test_a_hand_off_with_no_start_starts_at_its_first_nested_hand_off(self):
         result = worker_steps(
