@@ -420,20 +420,16 @@ const TurnRow = React.forwardRef(
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "2px",
-                  px: 0.5,
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? theme.palette.warning.darker
-                      : theme.palette.warning.lighter,
+                  // Same weight as the timestamp and duration beside it:
+                  // monospace, small, regular, no fill; only the warning
+                  // color makes it noticeable.
+                  fontFamily: "monospace",
+                  fontSize: 10,
+                  fontWeight: 400,
                   color: (theme) =>
                     theme.palette.mode === "dark"
                       ? theme.palette.warning.main
                       : theme.palette.warning.darker,
-                  borderRadius: "2px",
-                  fontSize: 9,
-                  fontWeight: 600,
-                  letterSpacing: "0.02em",
-                  textTransform: "uppercase",
                 }}
               >
                 <Iconify icon="mdi:timer-sand" width={10} />
