@@ -56,6 +56,10 @@ license.json
 **/eval_orchestrator/*_test_results.txt
 
 
+# bin/update: its host-only settings and its state (lock, journal, receipts)
+/update.conf
+/.futureagi-updates/
+
 # ----------------------------------------------------------------------------
 # Python
 # ----------------------------------------------------------------------------

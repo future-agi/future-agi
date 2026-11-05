@@ -542,9 +542,21 @@ def _public_settings(settings) -> dict:
 
 
 def _error_code(run) -> str:
-    """Why a failed run ended when running it again can't help as it is:
-    "license" or "model_setup" (an administrator must fix the licence or the
-    model settings), "stopped" (someone stopped it); else ""."""
+    """A failed run's reason, or a completed analysis's incomplete summary.
+
+    Keep the existing lifecycle vocabulary: a completed analysis is still
+    readable, but list responses must not hide that its summary failed.
+    Older partial reports already carry ``summary.error``.
+    """
+    if run.status == "completed":
+        summary = (run.result or {}).get("summary") or {}
+        if summary.get("error") or summary.get("status") == "failed":
+            return "summary_unavailable"
+        if summary.get("status") == "unverified" or (
+            summary.get("verification") or {}
+        ).get("status") in {"failed", "incomplete"}:
+            return "summary_unverified"
+        return ""
     if run.status != "failed":
         return ""
     return str((run.progress or {}).get("error_code") or "")
@@ -1401,7 +1413,9 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
         try:
             retention_cutoff = trace_retention_cutoff(org.id)
         except RetentionPolicyUnavailable as exc:
-            return self._gm.custom_error_response(503, str(exc), code="retention_policy_unavailable")
+            return self._gm.custom_error_response(
+                503, str(exc), code="retention_policy_unavailable"
+            )
         population = data.get("population")
         resolved = None
         if not population:
