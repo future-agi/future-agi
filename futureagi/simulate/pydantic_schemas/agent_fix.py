@@ -222,6 +222,8 @@ class EngineReport(BaseModel):
     # The models this launch stopped using because their calls were lost, and the last
     # error it could not recover from. The fix keeps both across launches.
     lost_models: list[str] = Field(default_factory=list)
+    # The user reads last_error in the failure message: the engine sends one of its
+    # fixed sentences (lastErrorOf, workers/agent-fix/util.mjs), never its own text.
     last_error: str | None = None
 
 
