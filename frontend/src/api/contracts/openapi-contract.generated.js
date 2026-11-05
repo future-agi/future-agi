@@ -93059,6 +93059,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "depth",
         "worker_id",
         "turn",
+        "order",
         "relationship",
       ],
       type: "object",
@@ -93118,6 +93119,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         turn: {
           title: "Turn",
+          type: "integer",
+        },
+        order: {
+          title: "Order",
           type: "integer",
         },
         relationship: {

@@ -24545,6 +24545,7 @@ export interface CallWorkerStepApi {
   parallel?: boolean;
   call?: CallWorkerEventApi;
   turn: number;
+  order: number;
   relationship: CallWorkerStepApiRelationship;
 }
 

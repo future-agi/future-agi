@@ -172,6 +172,7 @@ class WorkerStep(TypedDict, total=False):
     parallel: bool
     call: WorkerEvent
     turn: int
+    order: int
     relationship: Literal["observed", "unknown"]
 
 

@@ -427,6 +427,15 @@ class TestWorkerStepsByTurn:
             (5, 3),
         ]
 
+    def test_each_step_is_numbered_in_reading_order_within_its_turn(self):
+        result = worker_steps(self.EVENTS, self.TURNS)
+        assert [(s["turn"], s["order"]) for s in result["steps"]] == [
+            (1, 1),
+            (1, 2),
+            (3, 1),
+            (3, 2),
+        ]
+
     def test_each_turn_with_steps_carries_its_request_and_the_reply_after_its_last_step(
         self,
     ):

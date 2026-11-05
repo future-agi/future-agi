@@ -617,7 +617,9 @@ class CallWorkerEventSerializer(serializers.Serializer):
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
     # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
-    relationship = serializers.ChoiceField(choices=("observed", "unknown"), required=False)
+    relationship = serializers.ChoiceField(
+        choices=("observed", "unknown"), required=False
+    )
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
 
@@ -650,6 +652,8 @@ class CallWorkerStepSerializer(serializers.Serializer):
     call = CallWorkerEventSerializer(required=False)
     # The call's turn this row happened in: turn n starts at the caller's nth message, 0 is before they spoke.
     turn = serializers.IntegerField()
+    # Position within its turn, from 1, in reading order.
+    order = serializers.IntegerField()
     # `unknown` when the record does not say which hand-off this step belongs to: it stays at the top, never guessed.
     relationship = serializers.ChoiceField(choices=("observed", "unknown"))
 
@@ -675,7 +679,9 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     spans_received = serializers.BooleanField(required=False)
     collected_at = serializers.CharField()
     # `no_evidence`: the app declares workers but nothing was read for this call yet; each worker reads not observed.
-    collection = serializers.ChoiceField(choices=("complete", "no_evidence"), required=False)
+    collection = serializers.ChoiceField(
+        choices=("complete", "no_evidence"), required=False
+    )
     steps = CallWorkerStepSerializer(many=True)
     turns = CallWorkerRoundSerializer(many=True)
     # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.

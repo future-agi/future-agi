@@ -51504,6 +51504,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         })
         .optional(),
       turn: zod.number(),
+      order: zod.number(),
       relationship: zod.enum(["observed", "unknown"]),
     }),
   ),

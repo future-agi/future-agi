@@ -247,6 +247,7 @@ def _by_turn(steps: list[WorkerStep], turns: Iterable[CallTurn]) -> list[WorkerT
     turn_of: dict[int, int] = {}
     last_turn = 1 if asked else 0
     latest: dict[int, float] = {}
+    order: dict[int, int] = {}
     for step in steps:
         parent = step["parent"]
         if parent is not None and parent in turn_of:
@@ -256,6 +257,8 @@ def _by_turn(steps: list[WorkerStep], turns: Iterable[CallTurn]) -> list[WorkerT
             turn = bisect_right(asked_at, at) if at is not None else last_turn
             last_turn = turn
         step["turn"] = turn
+        # Reading order within the turn, stable for a given record: steps are already in that order.
+        step["order"] = order[turn] = order.get(turn, 0) + 1
         if step["kind"] == "handoff":
             turn_of[step["key"]] = turn
         moment = _seconds(step.get("ended_at")) if step["kind"] == "handoff" else None

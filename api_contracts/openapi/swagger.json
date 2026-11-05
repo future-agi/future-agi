@@ -144871,6 +144871,7 @@
                 "depth",
                 "worker_id",
                 "turn",
+                "order",
                 "relationship"
             ],
             "type": "object",
@@ -144933,6 +144934,10 @@
                 },
                 "turn": {
                     "title": "Turn",
+                    "type": "integer"
+                },
+                "order": {
+                    "title": "Order",
                     "type": "integer"
                 },
                 "relationship": {
