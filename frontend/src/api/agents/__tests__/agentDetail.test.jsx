@@ -140,6 +140,8 @@ describe("toVersion", () => {
       createdAt: "2026-10-15T09:00:00Z",
       origin: null,
       check: null,
+      checkStep: null,
+      checkFailure: null,
       environmentsCount: 0,
       source: null,
     });

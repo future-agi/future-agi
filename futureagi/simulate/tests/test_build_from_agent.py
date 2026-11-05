@@ -9,6 +9,7 @@ from rest_framework import status
 
 from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
 from simulate.models.run_test import RunTest
+from simulate.services.agent_connect import found_check
 from simulate.services.harness_agent_versions import POLICY_KEY
 from simulate.tests.test_harness_agent_creation import (
     _body,
@@ -54,6 +55,7 @@ def agent(user, workspace):
 @pytest.fixture
 def production(agent):
     version = _connect(agent)
+    found_check(agent)
     with patch(NUDGE):
         _preflight(version)
     version.refresh_from_db()
@@ -65,7 +67,12 @@ def _creation(agent, **metadata):
 
 
 def test_an_environment_binds_to_the_agents_production_version(
-    client, user, workspace, gates, agent, production  # noqa: F811
+    client,
+    user,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
 ):
     job = _job(_post(client, workspace, _creation(agent)))
 
@@ -83,7 +90,11 @@ def test_an_environment_binds_to_the_agents_production_version(
 
 
 def test_an_environment_follows_production_only_when_asked(
-    client, workspace, gates, agent, production  # noqa: F811
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
 ):
     job = _job(_post(client, workspace, _creation(agent, agent_policy="follow")))
 
@@ -92,7 +103,11 @@ def test_an_environment_follows_production_only_when_asked(
 
 
 def test_a_creation_can_pin_a_specific_ready_version(
-    client, workspace, gates, agent, production  # noqa: F811
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
 ):
     second = _connect(agent, parent=production, commit="b")
     with patch(NUDGE):
@@ -121,7 +136,10 @@ def test_a_creation_can_pin_a_specific_ready_version(
 
 
 def test_an_agent_without_a_version_cannot_be_built_from(
-    client, workspace, gates, agent  # noqa: F811
+    client,
+    workspace,
+    gates,
+    agent,  # noqa: F811
 ):
     response = _post(client, workspace, _creation(agent))
 
@@ -172,7 +190,11 @@ def test_build_preflight_on_an_agent_with_no_version(auth_client, agent):
 
 
 def test_a_guest_named_agent_never_replaces_the_connected_agent(
-    client, workspace, gates, agent, production  # noqa: F811
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
 ):
     environment = _job(_post(client, workspace, _creation(agent)))
     other = AgentDefinition.objects.create(
