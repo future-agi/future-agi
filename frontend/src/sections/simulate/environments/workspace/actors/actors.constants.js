@@ -21,13 +21,16 @@ export const ACTORS_COPY = {
     loading: "Loading the actors…",
     loadFailedTitle: "Couldn't load the actors",
     loadFailed: "Try again, or refresh the page.",
+    viewFailedTitle: "Couldn't load what they see",
+    saveFailed: "Couldn't save the change. Try again in a moment.",
     subtitle:
       "Everyone the agent deals with who is not the agent: people beside the caller on the call, and people and systems in the world. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
     callerSide: "On the caller's side",
     callerSideAbout:
       "People with the caller who speak on the call. They know the caller's situation, never the caller's own details.",
-    callerSideEmpty: "No one with the caller yet.",
+    callerSideEmpty:
+      "No one with the caller yet. Add one, or ask the builder chat.",
     addCallerSide: "Add someone on the caller's side",
     worldSide: "In the world",
     worldSideAbout:
@@ -54,6 +57,26 @@ export const ACTORS_COPY = {
     loudnessAutomatic: "Loudness automatic",
     atStart: "From the start",
     whenCalled: (action) => `When the agent calls ${action}`,
+    // Every trigger kind in its own words; a kind a newer release adds shows by its own name.
+    comesInLabel: (trigger) => {
+      const { kind, tool, seconds, on_call: onCall, p } = trigger || {};
+      switch (kind || "always") {
+        case "always":
+          return ACTORS_COPY.worldActors.atStart;
+        case "on_tool":
+          return onCall > 1
+            ? `On call ${onCall} of ${tool}`
+            : ACTORS_COPY.worldActors.whenCalled(tool);
+        case "after_seconds":
+          return `After ${seconds ?? 0} second${seconds === 1 ? "" : "s"}`;
+        case "contacted":
+          return "When contacted";
+        case "probability":
+          return `In about ${Math.round((p ?? 1) * 100)}% of calls`;
+        default:
+          return kind.replace(/_/g, " ");
+      }
+    },
     ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
     othersPrivate: (fields, count) =>
@@ -83,11 +106,12 @@ export const ACTORS_COPY = {
       createCallerTitle: "Add someone on the caller's side",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
-      idHelp:
-        "Made from the name; change it now if you like. 1 to 64 lowercase letters, digits or underscores. It never changes once saved.",
+      // The rule's words are the schema's own, when it sends them.
+      idHelp: (rule) =>
+        `Made from the name; change it now if you like. ${rule ? `${rule.charAt(0).toUpperCase()}${rule.slice(1)}. ` : ""}It never changes once saved.`,
       idTaken: (name) => `Already used by ${name}; choose another id`,
-      idInvalid:
-        "Use 1 to 64 lowercase letters, digits or underscores, such as sam_lee",
+      idInvalid: (rule) =>
+        rule ? `Use ${rule}` : "This id isn't allowed; choose another",
       permittedUnknown: (ids) =>
         `${ids.join(", ")} ${ids.length === 1 ? "is not an action" : "are not actions"} of this world, so a run cannot use ${ids.length === 1 ? "it" : "them"}; remove ${ids.length === 1 ? "it" : "them"} or pick from the list`,
       idFixed:
@@ -155,6 +179,10 @@ export const ACTORS_COPY = {
       accent: "Accent",
       accents: ["", "American", "British", "Indian", "Australian", "Neutral"],
       anyAccent: "Any",
+      changedElsewhere:
+        "The actors were changed elsewhere while you were editing. This form now has the latest version with your edits kept. Check them and save again.",
+      removedElsewhere:
+        "This actor was removed elsewhere while you were editing, so these edits can't be saved.",
       cancel: "Cancel",
       discardTitle: "Discard changes?",
       discardBody: "What you typed here won't be saved.",

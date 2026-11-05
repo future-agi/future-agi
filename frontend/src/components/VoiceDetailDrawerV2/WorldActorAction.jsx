@@ -7,11 +7,17 @@ import { WORLD_ACTION_DETAILS } from "./constants";
 // A world actor's action as an event: what they did and how it went, with its raw record folded away.
 export default function WorldActorAction({
   text,
+  query = "",
   renderText = (line) => line,
 }) {
-  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
   const detailsId = useId();
   const [event, ...details] = text.split("\n");
+  const hidden = details.join("\n");
+  // A search that matched inside the fold has to show why this row stayed.
+  const needle = query.trim().toLowerCase();
+  const open =
+    opened || (Boolean(needle) && hidden.toLowerCase().includes(needle));
   return (
     <Box>
       <Stack direction="row" alignItems="center" gap={1}>
@@ -25,7 +31,7 @@ export default function WorldActorAction({
             aria-label={`${WORLD_ACTION_DETAILS}: ${event}`}
             onClick={(e) => {
               e.stopPropagation();
-              setOpen((was) => !was);
+              setOpened((was) => !was);
             }}
             sx={{ typography: "s3", color: "text.secondary", gap: 0.25 }}
           >
@@ -53,7 +59,7 @@ export default function WorldActorAction({
             overflowWrap: "anywhere",
           }}
         >
-          {renderText(details.join("\n"))}
+          {renderText(hidden)}
         </Box>
       </Collapse>
     </Box>
@@ -62,5 +68,6 @@ export default function WorldActorAction({
 
 WorldActorAction.propTypes = {
   text: PropTypes.string.isRequired,
+  query: PropTypes.string,
   renderText: PropTypes.func,
 };

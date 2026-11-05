@@ -130,7 +130,7 @@ export default function ChatTranscriptPane({ turns, customerName }) {
             </Typography>
             {s.role === "world_actor" && s.text ? (
               <Box sx={{ mt: 0.25 }}>
-                <WorldActorAction text={s.text} />
+                <WorldActorAction text={s.text} query={query} />
               </Box>
             ) : (
               s.text && (

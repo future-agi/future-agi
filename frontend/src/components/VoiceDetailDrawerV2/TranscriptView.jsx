@@ -484,6 +484,7 @@ const TurnRow = React.forwardRef(
           ) : turn.role === "world_actor" ? (
             <WorldActorAction
               text={turn.content}
+              query={query}
               renderText={(text) => highlightMatches(text, query)}
             />
           ) : query ? (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enrichTurns } from "../transcriptUtils";
+import { computeCallMetrics, enrichTurns } from "../transcriptUtils";
 
 describe("enrichTurns", () => {
   it("preserves structured function calls through normalization", () => {
@@ -47,5 +47,19 @@ describe("enrichTurns", () => {
     ]);
 
     expect(turns[1].overlapsPrev).toBe(true);
+  });
+
+  it("does not count a world action as speech: no interruption, and the gap between the turns around it stays", () => {
+    const turns = enrichTurns([
+      { role: "assistant", content: "One moment", start: 0, end: 6 },
+      { role: "world_actor", content: "Committed · crm.note", start: 3 },
+      { role: "user", content: "Thanks", start: 7, end: 8 },
+    ]);
+
+    const [agent, action, user] = turns;
+    expect(agent.role).toBe("assistant");
+    expect(action.overlapsPrev).toBe(false);
+    expect(user.silenceBefore).toBe(1);
+    expect(computeCallMetrics(turns).interruptionCount).toBe(0);
   });
 });

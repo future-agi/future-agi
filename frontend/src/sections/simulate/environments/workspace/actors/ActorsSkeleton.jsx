@@ -5,7 +5,16 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 
-// Sized to a real one-line row (ActorRow), so a short cast doesn't jump when it arrives.
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+};
+
+// Sized to a row with no Wants line (ActorRow), so a short cast doesn't jump much when it arrives.
 function RowSkeleton({ locked }) {
   return (
     <Stack
@@ -101,13 +110,10 @@ GroupSkeleton.propTypes = {
 /** The tab while its cast loads: the words are known, so only the rows are placeholders. */
 export default function ActorsSkeleton({ callerSide = false, locked = false }) {
   return (
-    <Box
-      role="progressbar"
-      aria-busy="true"
-      aria-live="polite"
-      aria-label={C.loading}
-      sx={{ p: 2 }}
-    >
+    <Box aria-busy="true" sx={{ p: 2 }}>
+      <Box role="status" sx={VISUALLY_HIDDEN}>
+        {C.loading}
+      </Box>
       <Typography
         sx={{ typography: "s2", color: "text.secondary", maxWidth: 780, mb: 2 }}
       >

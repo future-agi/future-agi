@@ -791,8 +791,8 @@ export function useActorView(envId, actorId, { enabled = true } = {}) {
 
 /**
  * Create, replace or remove one actor in the draft. The answer is the cast, so it seeds the list; the
- * drafts (the Save bar) are asked again. A refusal because the draft moved on refreshes the cast so the
- * user edits what is current.
+ * drafts (the Save bar) are asked again. A refusal because the draft moved on refreshes the drafts, and
+ * the cast under them, so the user edits what is current and the Save bar counts it.
  * @param {string} envId
  */
 export function useEditActor(envId) {
@@ -806,7 +806,7 @@ export function useEditActor(envId) {
     },
     onError: (error) => {
       if (DRAFTS_REFRESH_CODES.has(error?.error)) {
-        queryClient.invalidateQueries({ queryKey: actorsKey(envId) });
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
       }
     },
   });

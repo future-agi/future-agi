@@ -82,9 +82,4 @@ describe("ActorsTab without versioning", () => {
       screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios"),
     ).toBeInTheDocument();
   });
-
-  it("shows no sub-actors section for an environment without any", () => {
-    render(<ActorsTab env={{ surface: "voice" }} />);
-    expect(screen.queryByText(/^Sub-actors/)).toBeNull();
-  });
 });

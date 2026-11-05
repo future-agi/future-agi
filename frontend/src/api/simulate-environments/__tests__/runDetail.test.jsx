@@ -691,6 +691,9 @@ describe("callTranscript", () => {
           result: {},
         },
         { name: "approve", actor_id: "manager" },
+        { name: "approve", actor_id: "manager", outcome: "duplicate" },
+        // A row logged before the world kept outcomes says only whether it was refused.
+        { name: "approve", actor_id: "manager", refused: true },
       ],
     });
     expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
@@ -698,11 +701,15 @@ describe("callTranscript", () => {
       "Refused · approve",
       "Committed · approve",
       "approve",
+      "Duplicate · approve",
+      "Refused · approve",
     ]);
     expect(turns.map((turn) => turn.actorRole)).toEqual([
       "",
       "",
       "store manager",
+      "",
+      "",
       "",
     ]);
     expect(turns[0].text).toContain("× error: crm returned 503");

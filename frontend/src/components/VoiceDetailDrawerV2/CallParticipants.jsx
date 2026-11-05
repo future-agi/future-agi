@@ -10,16 +10,18 @@ const Person = ({ children }) => (
 );
 Person.propTypes = { children: PropTypes.node };
 
-// Who was on the call, shown only when someone besides the agent and the customer was.
+// Who was on the call, shown only when someone besides the agent and the customer was. A world actor acts in the
+// world and never joins the call, so it is left out here; its actions are in the transcript under Others.
 export default function CallParticipants({ others, customerName }) {
-  if (others.length === 0) return null;
+  const speakers = others.filter((party) => party.role !== "world_actor");
+  if (speakers.length === 0) return null;
   const entries = [
     <Person key="customer">
       {customerName
         ? `${customerName} · ${DEFAULT_ROLE_LABELS.user}`
         : DEFAULT_ROLE_LABELS.user}
     </Person>,
-    ...others.map((party) => (
+    ...speakers.map((party) => (
       <OtherPartyName
         key={`${party.role}:${party.speakerName}`}
         party={party}

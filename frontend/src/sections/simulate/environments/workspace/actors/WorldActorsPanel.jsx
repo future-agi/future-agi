@@ -18,13 +18,14 @@ import {
   useActorView,
   useEditActor,
 } from "src/api/simulate-environments/versions";
+import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
-import EmptyState from "../../components/EmptyState";
 import SectionCard from "../../components/SectionCard";
+import { refusalText } from "../evals/refusalText";
 import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
 import ActorsSkeleton from "./ActorsSkeleton";
-import { hidden, readable, speaks } from "./actorUtils";
+import { hidden, seenValue, speaks } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
@@ -54,17 +55,30 @@ export default function WorldActorsPanel({
 }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
+  const [inUse, setInUse] = useState(null);
+  // The record and the revision it was read at, taken together when the form opens: a refresh under an open form must
+  // not move the revision, or a save would overwrite an edit it never saw.
   const [editing, setEditing] = useState(null);
   const openForm = (actor) => {
     // An error from a remove belongs to that remove, not to the form opening now.
     edit.reset();
-    setEditing(actor);
+    setInUse(null);
+    setEditing({ actor, revision });
   };
   const cast = data?.actors || [];
   const caller = cast.filter(speaks);
   // Without a channel an actor cannot speak on the call, whatever side it is on: it acts in the world.
   const world = cast.filter((one) => !speaks(one));
   const revision = data?.revision ?? 0;
+  // A refused save moves the form onto the record the refusal refreshed. Its key stays, so what was typed stays too.
+  const conflicted = Boolean(editing) && edit.error?.error === "draft_changed";
+  const fresh = conflicted
+    ? cast.find((one) => one.id === editing.actor.id)
+    : null;
+  const gone = conflicted && Boolean(editing.actor.id) && !fresh;
+  const form = conflicted
+    ? { actor: fresh || editing.actor, revision }
+    : editing;
   const context = {
     records: data?.record_schemas || {},
     actions: data?.actions || [],
@@ -73,7 +87,6 @@ export default function WorldActorsPanel({
     others: cast,
   };
 
-  const [inUse, setInUse] = useState(null);
   // Kept after the dialog closes, so its title doesn't blank while it fades out.
   const [removing, setRemoving] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -105,6 +118,7 @@ export default function WorldActorsPanel({
         actionIds={actionIds}
         loudChannels={context.loudness.channels || []}
         deleting={actor.id === deletingId}
+        busy={edit.isPending}
       />
     ));
 
@@ -141,7 +155,7 @@ export default function WorldActorsPanel({
         )}
         {edit.error && !editing && (
           <Alert severity="error" onClose={() => edit.reset()}>
-            {edit.error.message}
+            {refusalText(edit.error, C.saveFailed)}
           </Alert>
         )}
       </Stack>
@@ -151,6 +165,7 @@ export default function WorldActorsPanel({
           about={C.callerSideAbout}
           empty={C.callerSideEmpty}
           locked={locked || !firstChannel}
+          busy={edit.isPending}
           addLabel={C.addCallerSide}
           onAdd={() => openForm({ channel: firstChannel })}
         >
@@ -162,6 +177,7 @@ export default function WorldActorsPanel({
         about={C.worldSideAbout}
         empty={C.empty}
         locked={locked}
+        busy={edit.isPending}
         addLabel={C.add}
         onAdd={() => openForm({})}
       >
@@ -169,29 +185,36 @@ export default function WorldActorsPanel({
       </Group>
       <ActorForm
         key={
-          editing
-            ? editing.id || `new-${editing.channel ? "caller" : "world"}`
+          form
+            ? form.actor.id || `new-${form.actor.channel ? "caller" : "world"}`
             : "closed"
         }
-        actor={editing}
+        actor={form?.actor ?? null}
         context={context}
         busy={edit.isPending}
-        error={editing ? edit.error?.message : null}
+        error={
+          editing && edit.error && !conflicted
+            ? refusalText(edit.error, C.saveFailed)
+            : null
+        }
+        conflict={gone ? "removed" : conflicted ? "changed" : null}
         onClose={() => {
           setEditing(null);
           edit.reset();
         }}
-        onSave={(actor) =>
+        onSave={(actor) => {
+          // A new save clears the refusal, so what it refreshed has to stay.
+          setEditing(form);
           edit.mutate(
             {
-              op: editing?.id ? "replace" : "create",
+              op: form.actor.id ? "replace" : "create",
               actor,
-              actorId: editing?.id,
-              revision,
+              actorId: form.actor.id,
+              revision: form.revision,
             },
             { onSuccess: () => setEditing(null) },
-          )
-        }
+          );
+        }}
       />
       <ConfirmDialog
         open={confirmRemove}
@@ -223,7 +246,16 @@ WorldActorsPanel.propTypes = {
   callerSide: PropTypes.bool,
 };
 
-function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
+function Group({
+  title,
+  about,
+  empty,
+  locked,
+  busy,
+  addLabel,
+  onAdd,
+  children,
+}) {
   const count = Array.isArray(children) ? children.length : 0;
   return (
     <SectionCard
@@ -235,6 +267,7 @@ function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
           <Button
             size="small"
             variant="outlined"
+            disabled={busy}
             onClick={onAdd}
             startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
             sx={OUTLINED}
@@ -245,7 +278,11 @@ function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
       }
     >
       {count === 0 ? (
-        <EmptyState icon="solar:users-group-two-rounded-linear" title={empty} />
+        <Typography
+          sx={{ px: 1.5, py: 1.5, typography: "s2", color: "text.secondary" }}
+        >
+          {empty}
+        </Typography>
       ) : (
         <Stack
           divider={
@@ -264,6 +301,7 @@ Group.propTypes = {
   about: PropTypes.string,
   empty: PropTypes.string,
   locked: PropTypes.bool,
+  busy: PropTypes.bool,
   addLabel: PropTypes.string,
   onAdd: PropTypes.func,
   children: PropTypes.node,
@@ -285,7 +323,6 @@ function summary(actor, actionIds, loudChannels) {
       .filter(Boolean)
       .join(" · ");
   const permitted = actor.permitted_actions || [];
-  const tool = actor.activation?.trigger?.tool;
   const fallback = actor.activation?.fallback || "silent";
   return [
     `${C.mayDo}: ${
@@ -297,7 +334,7 @@ function summary(actor, actionIds, loudChannels) {
             .join(", ")
         : C.nothing
     }`,
-    `${C.comesIn}: ${tool ? C.whenCalled(tool) : C.atStart}`,
+    `${C.comesIn}: ${C.comesInLabel(actor.activation?.trigger)}`,
     `${C.ifNoAnswer}: ${C.form.fallbackLabel(fallback)}`,
   ].join(" · ");
 }
@@ -311,10 +348,16 @@ function ActorRow({
   actionIds,
   loudChannels,
   deleting,
+  busy,
 }) {
   const [open, setOpen] = useState(false);
   // Off while it is being removed, so the removed actor's view is not read again.
-  const { data: view } = useActorView(envId, actor.id, {
+  const {
+    data: view,
+    isLoading: viewLoading,
+    isError: viewFailed,
+    refetch: retryView,
+  } = useActorView(envId, actor.id, {
     enabled: open && !deleting,
   });
   const shown = hidden(view?.never_sees);
@@ -375,7 +418,7 @@ function ActorRow({
                 <Typography
                   noWrap
                   sx={{
-                    typography: "s1",
+                    typography: "s2",
                     color: "text.secondary",
                     ...ONE_LINE,
                   }}
@@ -407,36 +450,50 @@ function ActorRow({
           {!locked && (
             <>
               <CustomTooltip show size="small" arrow title={C.edit}>
-                <IconButton
-                  size="small"
-                  aria-label={C.editNamed(actor.name || actor.id)}
-                  onClick={onEdit}
-                >
-                  <Iconify
-                    icon="solar:pen-new-square-linear"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                </IconButton>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={C.editNamed(actor.name || actor.id)}
+                    disabled={busy}
+                    onClick={onEdit}
+                  >
+                    <Iconify
+                      icon="solar:pen-new-square-linear"
+                      width={16}
+                      sx={{ color: busy ? "text.disabled" : "text.secondary" }}
+                    />
+                  </IconButton>
+                </span>
               </CustomTooltip>
               <CustomTooltip show size="small" arrow title={C.remove}>
-                <IconButton
-                  size="small"
-                  aria-label={C.removeNamed(actor.name || actor.id)}
-                  onClick={onRemove}
-                >
-                  <Iconify
-                    icon="solar:trash-bin-trash-linear"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                </IconButton>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={C.removeNamed(actor.name || actor.id)}
+                    disabled={busy}
+                    onClick={onRemove}
+                  >
+                    <Iconify
+                      icon="solar:trash-bin-trash-linear"
+                      width={16}
+                      sx={{ color: busy ? "text.disabled" : "text.secondary" }}
+                    />
+                  </IconButton>
+                </span>
               </CustomTooltip>
             </>
           )}
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
+        {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
+        {viewFailed && !view && (
+          <ErrorState
+            title={C.viewFailedTitle}
+            detail={C.loadFailed}
+            onRetry={() => retryView()}
+          />
+        )}
         {view && (
           <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1.5 }}>
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -445,7 +502,7 @@ function ActorRow({
             {view.sees.map((one) => (
               <Typography key={one.input} sx={quiet}>
                 {`${C.inputs[one.input] || one.input}: `}
-                {readable(one.value) || (
+                {seenValue(one.input, one.value) || (
                   <Box component="span" sx={{ color: "text.disabled" }}>
                     {C.notSet}
                   </Box>
@@ -481,4 +538,5 @@ ActorRow.propTypes = {
   actionIds: PropTypes.arrayOf(PropTypes.string),
   loudChannels: PropTypes.arrayOf(PropTypes.string),
   deleting: PropTypes.bool,
+  busy: PropTypes.bool,
 };

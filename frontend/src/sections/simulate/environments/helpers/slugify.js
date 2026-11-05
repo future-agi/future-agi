@@ -6,6 +6,6 @@ export const slugify = (
   String(name || fallback)
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .replace(/[^a-z0-9]+/g, separator)
     .replace(new RegExp(`^${separator}+|${separator}+$`, "g"), "") || fallback;

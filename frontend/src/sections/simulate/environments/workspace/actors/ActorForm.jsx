@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -17,7 +17,17 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
 import { ACTORS_COPY } from "./actors.constants";
-import { idFrom, idRule, lines, speaks } from "./actorUtils";
+import {
+  KEPT_TRIGGER,
+  actorId,
+  hasEdits,
+  idFrom,
+  idRule,
+  idRuleText,
+  initialFields,
+  speaks,
+  toRecord,
+} from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
 const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
@@ -75,15 +85,18 @@ Loudness.propTypes = {
   onChange: PropTypes.func,
 };
 
-const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
-// The persona fields a sub-actor's voice is picked from.
-const VOICE_FIELDS = ["gender", "age_group", "accent"];
+// A value the record starts from stays listed even when the options don't have it, so a select never goes blank on it.
+const withStart = (options, start, label = start) =>
+  start && !options.some(([id]) => id === start)
+    ? [...options, [start, label]]
+    : options;
 
 export default function ActorForm({
   actor,
   context,
   busy,
   error,
+  conflict,
   onClose,
   onSave,
 }) {
@@ -92,171 +105,96 @@ export default function ActorForm({
   const callerSide = speaks(actor);
   const [fields, setFields] = useState({});
   const [more, setMore] = useState(false);
-  // What each field started from, so typing something and deleting it again is no change.
-  const started = useRef({});
-  const value = (name, fallback = "") => {
-    started.current[name] = fallback;
-    return name in fields ? fields[name] : fallback;
-  };
-  const set = (name) => (event) =>
-    setFields((current) => ({ ...current, [name]: event.target.value }));
+  const initial = initialFields(actor);
+  const value = (name) => (name in fields ? fields[name] : initial[name]);
   const put = (name, next) =>
     setFields((current) => ({ ...current, [name]: next }));
-  const close = () => {
-    setFields({});
-    onClose();
-  };
+  const set = (name) => (event) => put(name, event.target.value);
+  const changed = hasEdits(actor, fields);
   // Escape, the close button and a click outside can all be accidents; Cancel is not, so it never asks.
   const [leaving, setLeaving] = useState(false);
-  const changed = Object.entries(fields).some(
-    ([name, one]) => String(one ?? "") !== String(started.current[name] ?? ""),
-  );
   const leave = () => {
     // A save in flight lands whatever happens here, so nothing can be discarded yet.
     if (busy) return;
     if (changed) setLeaving(true);
-    else close();
+    else onClose();
   };
-  const constraints = actor?.constraints || {};
   const activation = actor?.activation || {};
-  const timing = actor?.behaviour?.response_timing || {};
-  const knowledge = actor?.knowledge || [];
-  const facts = knowledge.filter((one) => one?.kind === "facts");
   const actions = context.actions;
   const actionIds = actions.map((one) => one.action);
   const others = context.others.filter(
     (one) => one.id !== actor?.id && !speaks(one),
   );
+  const nameOf = (id) =>
+    context.others.find((one) => one.id === id)?.name || id;
 
   // A new actor's id follows its name until someone types an id of their own; a saved id never changes.
   const madeId = existing
     ? actor.id
-    : idFrom(value("name", ""), new Set(context.others.map((one) => one.id)));
+    : idFrom(value("name"), new Set(context.others.map((one) => one.id)));
   // An emptied id falls back to the one made from the name.
-  const typedId = existing ? actor.id : value("id", "").trim() || madeId;
+  const typedId = actorId(actor, fields, context);
+  // Before a name is typed the fallback id isn't anyone's id yet, so nothing shows.
+  const suggestedId = value("name").trim() ? madeId : "";
   const takenBy = existing
     ? null
     : context.others.find((one) => one.id === typedId);
   const rule = idRule(context.records);
+  const ruleText = idRuleText(context.records);
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
-  const nameMissing = !value("name", actor?.name || "").trim();
+  const nameMissing = !value("name").trim();
   // The record schema this actor is checked against, as its environment's rules declare it.
   const schema =
     context.records[callerSide ? "sub_actors.json" : "actors.json"] || {};
   const needsRole = (schema.required || []).includes("role");
-  const roleMissing = needsRole && !value("role", actor?.role || "").trim();
+  const roleMissing = needsRole && !value("role").trim();
   // The channels with a loudness, as the rules give them.
   const loud = (one) => (context.loudness.channels || []).includes(one);
-  const save = () => {
-    const base = {
-      ...actor,
-      id: typedId,
-      name: value("name", actor?.name || ""),
-      role: value("role", actor?.role || ""),
-    };
-    if (callerSide) {
-      const channel = value("channel", actor.channel);
-      const loudness = value("loudness_ratio", actor.loudness_ratio ?? null);
-      const persona = { ...(actor.persona || {}) };
-      for (const name of VOICE_FIELDS) {
-        const chosen = value(name, persona[name] || "");
-        if (chosen) persona[name] = chosen;
-        else delete persona[name];
-      }
-      onSave({
-        ...base,
-        side: "caller",
-        channel,
-        persona,
-        loudness_ratio: loud(channel) ? loudness : null,
-      });
-      return;
-    }
-    const tool = value("tool", activation.trigger?.tool || "");
-    // Only an edit to "Comes in" changes the trigger; any other kind (delay, contact, chance) is kept as it was.
-    const trigger =
-      "tool" in fields || !activation.trigger
-        ? tool
-          ? { kind: "on_tool", tool }
-          : { kind: "always" }
-        : activation.trigger;
-    const kind = value("timing", timing.kind || "immediate");
-    const parent = value("parent", actor?.parent || "");
-    const wait = value("timeout", activation.timeout_seconds ?? 0);
-    onSave({
-      ...base,
-      kind: value("kind", actor?.kind || "person"),
-      parent: parent || null,
-      goal: value("goal", actor?.goal || ""),
-      constraints: {
-        ...constraints,
-        ...Object.fromEntries(
-          CONSTRAINTS.map((name) => [
-            name,
-            lines(value(name, (constraints[name] || []).join("\n"))),
-          ]),
-        ),
-      },
-      knowledge: [
-        ...knowledge.filter((one) => one?.kind !== "facts"),
-        ...lines(value("facts", facts.map((one) => one.text).join("\n"))).map(
-          (text) => ({ kind: "facts", text }),
-        ),
-      ],
-      behaviour: {
-        ...(actor?.behaviour || {}),
-        style: value("style", actor?.behaviour?.style || ""),
-        response_timing:
-          kind === "delayed"
-            ? {
-                kind,
-                seconds: Number(value("seconds", timing.seconds ?? 0)) || 0,
-              }
-            : { kind: "immediate", seconds: 0 },
-      },
-      permitted_actions: value("permitted", actor?.permitted_actions || []),
-      activation: {
-        ...activation,
-        trigger,
-        timeout_seconds: Number(wait) || 0,
-        fallback: value("fallback", activation.fallback || "silent"),
-      },
-    });
-  };
 
   // A field's length limit is the one its record's schema declares, when it declares one.
   const limit = (name) => schema.properties?.[name]?.maxLength;
-  const bounded = (name, initial, helperText) => {
+  const bounded = (name, helperText) => {
     const max = limit(name);
     return {
       inputProps: { maxLength: max },
       helperText:
-        max && String(value(name, initial)).length >= max
-          ? F.atLimit(max)
-          : helperText,
+        max && String(value(name)).length >= max ? F.atLimit(max) : helperText,
     };
   };
-  const text = (name, label, initial, extra = {}) => (
+  const text = (name, label, extra = {}) => (
     <TextField
       size="small"
       label={label}
-      value={value(name, initial)}
+      value={value(name)}
       onChange={set(name)}
       {...extra}
     />
   );
-  const many = (name, label, initial, helperText) =>
-    text(name, label, (initial || []).join("\n"), {
-      multiline: true,
-      minRows: 2,
-      helperText,
-    });
-  const permitted = value("permitted", actor?.permitted_actions || []);
+  const many = (name, label, helperText) =>
+    text(name, label, { multiline: true, minRows: 2, helperText });
+  const choice = (name, label, options, { startLabel, ...extra } = {}) => (
+    <TextField
+      select
+      size="small"
+      label={label}
+      value={value(name)}
+      onChange={set(name)}
+      SelectProps={{ displayEmpty: true }}
+      {...extra}
+    >
+      {withStart(options, initial[name], startLabel).map(([id, words]) => (
+        <MenuItem key={id || "empty"} value={id}>
+          {words}
+        </MenuItem>
+      ))}
+    </TextField>
+  );
+  const permitted = value("permitted");
   const unknownActions = permitted.filter((one) => !actionIds.includes(one));
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
-  const channel = value("channel", actor?.channel);
-  const timingKind = value("timing", timing.kind || "immediate");
+  const channel = value("channel");
+  const timingKind = value("timing");
 
   return (
     <SideDrawer
@@ -291,96 +229,80 @@ export default function ActorForm({
               {error}
             </Alert>
           )}
+          {conflict && (
+            <Alert severity="warning" sx={{ mx: 2.5, mt: 1.5, flexShrink: 0 }}>
+              {conflict === "removed" ? F.removedElsewhere : F.changedElsewhere}
+            </Alert>
+          )}
           <Stack
             spacing={2}
             sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}
           >
-            {text(
-              "name",
-              F.name,
-              actor.name || "",
-              bounded("name", actor.name || "", F.nameHelp),
-            )}
-            {text("id", F.id, madeId, {
+            {text("name", F.name, bounded("name", F.nameHelp))}
+            {text("id", F.id, {
+              value: existing
+                ? actor.id
+                : "id" in fields
+                  ? fields.id
+                  : suggestedId,
               helperText: existing
                 ? F.idFixed
                 : takenBy
                   ? F.idTaken(takenBy.name)
                   : idInvalid
-                    ? F.idInvalid
-                    : F.idHelp,
+                    ? F.idInvalid(ruleText)
+                    : F.idHelp(ruleText),
               error: Boolean(takenBy) || idInvalid,
               disabled: existing,
-              placeholder: madeId,
-              InputLabelProps: { shrink: true },
+              placeholder: suggestedId,
             })}
             {text(
               "role",
               needsRole ? F.roleRequired : F.role,
-              actor.role || "",
-              bounded("role", actor.role || "", F.roleHelp),
+              bounded("role", F.roleHelp),
             )}
             {callerSide ? (
               <>
-                <TextField
-                  select
-                  size="small"
-                  label={F.channel}
-                  value={channel}
-                  onChange={set("channel")}
-                  helperText={context.channels[channel]}
-                >
-                  {Object.keys(context.channels).map((id) => (
-                    <MenuItem key={id} value={id}>
-                      {CHANNEL_LABELS[id] || id}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                {choice(
+                  "channel",
+                  F.channel,
+                  Object.keys(context.channels).map((id) => [
+                    id,
+                    CHANNEL_LABELS[id] || id,
+                  ]),
+                  {
+                    helperText: context.channels[channel],
+                    startLabel: CHANNEL_LABELS[initial.channel],
+                  },
+                )}
                 <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                   {F.voice}
                 </Typography>
                 <Stack direction="row" spacing={1}>
-                  {[
-                    ["gender", F.gender, Object.entries(F.genders)],
-                    ["age_group", F.ageGroup, Object.entries(F.ageGroups)],
-                    [
-                      "accent",
-                      F.accent,
-                      F.accents.map((one) => [one, one || F.anyAccent]),
-                    ],
-                  ].map(([name, label, options]) => {
-                    const current = value(name, actor.persona?.[name] || "");
-                    const shown = options.some(([id]) => id === current)
-                      ? options
-                      : [...options, [current, current]];
-                    return (
-                      <TextField
-                        key={name}
-                        select
-                        fullWidth
-                        size="small"
-                        label={label}
-                        value={current}
-                        onChange={set(name)}
-                      >
-                        {shown.map(([id, text]) => (
-                          <MenuItem key={id || "any"} value={id}>
-                            {text}
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                    );
+                  {choice("gender", F.gender, Object.entries(F.genders), {
+                    fullWidth: true,
                   })}
+                  {choice(
+                    "age_group",
+                    F.ageGroup,
+                    Object.entries(F.ageGroups),
+                    {
+                      fullWidth: true,
+                    },
+                  )}
+                  {choice(
+                    "accent",
+                    F.accent,
+                    F.accents.map((one) => [one, one || F.anyAccent]),
+                    { fullWidth: true },
+                  )}
                 </Stack>
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   {F.voiceHelp}
                 </Typography>
                 {loud(channel) && context.loudness.automatic && (
                   <Loudness
-                    value={value(
-                      "loudness_ratio",
-                      actor.loudness_ratio ?? null,
-                    )}
+                    value={value("loudness_ratio")}
                     automatic={context.loudness.automatic}
                     onChange={(next) => put("loudness_ratio", next)}
                   />
@@ -388,39 +310,20 @@ export default function ActorForm({
               </>
             ) : (
               <>
-                <TextField
-                  select
-                  size="small"
-                  label={F.kind}
-                  value={value("kind", actor.kind || "person")}
-                  onChange={set("kind")}
-                >
-                  {Object.entries(F.kinds).map(([id, label]) => (
-                    <MenuItem key={id} value={id}>
-                      {label}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                {many(
-                  "facts",
-                  F.facts,
-                  facts.map((one) => one.text),
-                  F.factsHelp,
-                )}
+                {choice("kind", F.kind, Object.entries(F.kinds))}
+                {many("facts", F.facts, F.factsHelp)}
                 <Stack direction="row" spacing={1}>
-                  <TextField
-                    select
-                    size="small"
-                    label={F.answers}
-                    sx={{ flex: 1 }}
-                    value={timingKind}
-                    onChange={set("timing")}
-                  >
-                    <MenuItem value="immediate">{F.immediately}</MenuItem>
-                    <MenuItem value="delayed">{F.afterDelay}</MenuItem>
-                  </TextField>
+                  {choice(
+                    "timing",
+                    F.answers,
+                    [
+                      ["immediate", F.immediately],
+                      ["delayed", F.afterDelay],
+                    ],
+                    { sx: { flex: 1 } },
+                  )}
                   {timingKind === "delayed" &&
-                    text("seconds", F.seconds, timing.seconds ?? 0, {
+                    text("seconds", F.seconds, {
                       type: "number",
                       sx: { width: 140 },
                       inputProps: { min: 0 },
@@ -461,51 +364,35 @@ export default function ActorForm({
                     />
                   )}
                 />
-                <TextField
-                  select
-                  size="small"
-                  label={F.trigger}
-                  value={value("tool", activation.trigger?.tool || "")}
-                  onChange={set("tool")}
-                  helperText={F.triggerHelp}
-                >
-                  <MenuItem value="">{C.atStart}</MenuItem>
-                  {[
-                    ...new Set([
-                      ...actionIds,
-                      ...(activation.trigger?.tool
-                        ? [activation.trigger.tool]
-                        : []),
-                    ]),
-                  ].map((id) => (
-                    <MenuItem key={id} value={id}>
-                      {C.whenCalled(id)}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                {text("timeout", F.timeout, activation.timeout_seconds ?? 0, {
+                {choice(
+                  "tool",
+                  F.trigger,
+                  [
+                    ["", C.atStart],
+                    ...actionIds.map((id) => [id, C.whenCalled(id)]),
+                  ],
+                  {
+                    helperText: F.triggerHelp,
+                    startLabel:
+                      initial.tool === KEPT_TRIGGER
+                        ? C.comesInLabel(activation.trigger)
+                        : C.whenCalled(initial.tool),
+                  },
+                )}
+                {text("timeout", F.timeout, {
                   type: "number",
                   helperText: F.timeoutHelp,
                   inputProps: { min: 0 },
                 })}
-                <TextField
-                  select
-                  size="small"
-                  label={F.fallback}
-                  value={value("fallback", activation.fallback || "silent")}
-                  onChange={set("fallback")}
-                >
-                  {Object.entries(F.fallbacks).map(([id, label]) => (
-                    <MenuItem key={id} value={id}>
-                      {label}
-                    </MenuItem>
-                  ))}
-                  {others.map((one) => (
-                    <MenuItem key={one.id} value={one.id}>
-                      {F.answeredBy(one.name)}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                {choice(
+                  "fallback",
+                  F.fallback,
+                  [
+                    ...Object.entries(F.fallbacks),
+                    ...others.map((one) => [one.id, F.answeredBy(one.name)]),
+                  ],
+                  { startLabel: F.answeredBy(nameOf(initial.fallback)) },
+                )}
                 {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
                 <Button
                   size="small"
@@ -521,39 +408,29 @@ export default function ActorForm({
                     >
                       {F.moreDetailsHelp}
                     </Typography>
-                    {others.length > 0 && (
-                      <TextField
-                        select
-                        size="small"
-                        label={F.parent}
-                        value={value("parent", actor.parent || "")}
-                        onChange={set("parent")}
-                        helperText={F.parentHelp}
-                      >
-                        <MenuItem value="">{F.nobody}</MenuItem>
-                        {others.map((one) => (
-                          <MenuItem key={one.id} value={one.id}>
-                            {one.name}
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                    )}
-                    {text("goal", F.goal, actor.goal || "", {
+                    {(others.length > 0 || initial.parent) &&
+                      choice(
+                        "parent",
+                        F.parent,
+                        [
+                          ["", F.nobody],
+                          ...others.map((one) => [one.id, one.name]),
+                        ],
+                        {
+                          helperText: F.parentHelp,
+                          startLabel: nameOf(initial.parent),
+                        },
+                      )}
+                    {text("goal", F.goal, {
                       multiline: true,
                       minRows: 2,
                       helperText: F.goalHelp,
                     })}
-                    {many("may_agree", F.mayAgree, constraints.may_agree)}
-                    {many("private", F.private, constraints.private)}
-                    {many(
-                      "escalate_when",
-                      F.escalateWhen,
-                      constraints.escalate_when,
-                    )}
-                    {many("stop_when", F.stopWhen, constraints.stop_when)}
-                    {text("style", F.style, actor.behaviour?.style || "", {
-                      helperText: F.styleHelp,
-                    })}
+                    {many("may_agree", F.mayAgree)}
+                    {many("private", F.private)}
+                    {many("escalate_when", F.escalateWhen)}
+                    {many("stop_when", F.stopWhen)}
+                    {text("style", F.style, { helperText: F.styleHelp })}
                   </Stack>
                 </Collapse>
               </>
@@ -571,19 +448,22 @@ export default function ActorForm({
               borderColor: "divider",
             }}
           >
-            <Button onClick={close} disabled={busy}>
+            <Button onClick={onClose} disabled={busy}>
               {F.cancel}
             </Button>
             <Button
               variant="contained"
+              color="primary"
               disabled={
                 busy ||
+                conflict === "removed" ||
+                (existing && !changed) ||
                 Boolean(takenBy) ||
                 idInvalid ||
                 nameMissing ||
                 roleMissing
               }
-              onClick={save}
+              onClick={() => onSave(toRecord(actor, fields, context))}
             >
               {F.save}
             </Button>
@@ -602,7 +482,7 @@ export default function ActorForm({
             color="error"
             onClick={() => {
               setLeaving(false);
-              close();
+              onClose();
             }}
           >
             {F.discard}
@@ -630,6 +510,8 @@ ActorForm.propTypes = {
   }).isRequired,
   busy: PropTypes.bool,
   error: PropTypes.string,
+  // The draft moved under this form: its record is the fresh one with the typed fields kept, or it is gone.
+  conflict: PropTypes.oneOf(["changed", "removed"]),
   onClose: PropTypes.func,
   onSave: PropTypes.func,
 };

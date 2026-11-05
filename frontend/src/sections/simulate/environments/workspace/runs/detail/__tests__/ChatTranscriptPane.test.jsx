@@ -69,14 +69,35 @@ describe("ChatTranscriptPane", () => {
       />,
     );
 
-    expect(screen.getAllByText("Pat Lee · store manager")).toHaveLength(2);
-    expect(screen.getAllByText("Someone")).toHaveLength(2);
+    // On their own turns only: acting in the world doesn't put them on the call.
+    expect(screen.getByText("Pat Lee · store manager")).toBeInTheDocument();
+    expect(screen.getByText("Someone")).toBeInTheDocument();
+    expect(screen.queryByText("On the call:")).toBeNull();
     expect(
       screen.getByText("Refused · crm.approve_discount"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/args:/)).toBeNull();
     expect(screen.queryByText(/world_actor|in the world/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /^Details/ }));
+    expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
+
+  it("opens a world action's fold when a search matched inside it", async () => {
+    render(
+      <ChatTranscriptPane
+        turns={[
+          {
+            role: "world_actor",
+            speakerName: "Pat Lee",
+            text: 'crm.approve_discount\n→ args: {"percent":20}',
+          },
+        ]}
+      />,
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Search transcript"),
+      "percent",
+    );
     expect(screen.getByText(/args:/)).toBeInTheDocument();
   });
 });
