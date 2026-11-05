@@ -95590,6 +95590,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: [
             "completed",
             "failed",
+            "no_return",
             "timed_out",
             "cancel_requested",
             "cancelled",

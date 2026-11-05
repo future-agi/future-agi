@@ -57,23 +57,44 @@ class TestWorkerSteps:
     ):
         result = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "lead", "at": at(1)},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "lead",
+                    "delegation_id": "L",
+                    "at": at(1),
+                },
                 {
                     "seq": 2,
                     "type": "delegated",
                     "worker_id": "helper",
                     "by": "lead",
+                    "delegation_id": "H",
+                    "parent_delegation_id": "L",
                     "at": at(2),
                 },
                 {
                     "seq": 3,
                     "type": "tool_call",
                     "worker_id": "helper",
+                    "delegation_id": "H",
                     "tool": "t",
                     "at": at(3),
                 },
-                {"seq": 4, "type": "returned", "worker_id": "helper", "at": at(4)},
-                {"seq": 5, "type": "returned", "worker_id": "lead", "at": at(5)},
+                {
+                    "seq": 4,
+                    "type": "returned",
+                    "worker_id": "helper",
+                    "delegation_id": "H",
+                    "at": at(4),
+                },
+                {
+                    "seq": 5,
+                    "type": "returned",
+                    "worker_id": "lead",
+                    "delegation_id": "L",
+                    "at": at(5),
+                },
                 {
                     "seq": 6,
                     "type": "tool_call",
@@ -114,10 +135,34 @@ class TestWorkerSteps:
     ):
         result = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "a", "at": at(1)},
-                {"seq": 2, "type": "transferred", "worker_id": "b", "at": at(2)},
-                {"seq": 3, "type": "returned", "worker_id": "a", "at": at(4)},
-                {"seq": 4, "type": "returned", "worker_id": "b", "at": at(5)},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(1),
+                },
+                {
+                    "seq": 2,
+                    "type": "transferred",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": at(2),
+                },
+                {
+                    "seq": 3,
+                    "type": "returned",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(4),
+                },
+                {
+                    "seq": 4,
+                    "type": "returned",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": at(5),
+                },
                 {"seq": 5, "type": "returned", "worker_id": "c", "at": at(6)},
             ]
         )
@@ -174,30 +219,56 @@ class TestWorkerSteps:
             (4, None, "unknown"),
         ]
 
-    def test_a_call_with_no_id_goes_under_the_worker_s_only_open_hand_off(self):
+    def test_a_call_with_no_id_stays_at_the_top_even_with_one_hand_off_open(self):
+        # One open hand-off for its worker is not a record that the call ran in it.
         result = worker_steps([HOTELS, call(2)])
         assert [
             (s["key"], s["parent"], s["relationship"])
             for s in result["steps"]
             if s["kind"] == "tool_call"
-        ] == [(2, 1, "observed")]
+        ] == [(2, None, "unknown")]
 
     def test_takes_a_missing_start_from_the_first_step_and_says_when_overlap_cannot_be_known(
         self,
     ):
         known = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "a", "at": at(1)},
-                {"seq": 2, "type": "returned", "worker_id": "a", "at": at(5)},
-                {"seq": 3, "type": "delegated", "worker_id": "b", "at": None},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(1),
+                },
+                {
+                    "seq": 2,
+                    "type": "returned",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(5),
+                },
+                {
+                    "seq": 3,
+                    "type": "delegated",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": None,
+                },
                 {
                     "seq": 4,
                     "type": "tool_call",
                     "worker_id": "b",
+                    "delegation_id": "b1",
                     "tool": "t",
                     "at": at(3),
                 },
-                {"seq": 5, "type": "returned", "worker_id": "b", "at": at(6)},
+                {
+                    "seq": 5,
+                    "type": "returned",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": at(6),
+                },
             ]
         )
         assert (known["parallel"], known["overlap_unknown"]) == (2, False)
@@ -205,10 +276,34 @@ class TestWorkerSteps:
 
         unknown = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "a", "at": at(1)},
-                {"seq": 2, "type": "returned", "worker_id": "a", "at": at(5)},
-                {"seq": 3, "type": "delegated", "worker_id": "b", "at": None},
-                {"seq": 4, "type": "returned", "worker_id": "b", "at": at(6)},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(1),
+                },
+                {
+                    "seq": 2,
+                    "type": "returned",
+                    "worker_id": "a",
+                    "delegation_id": "a1",
+                    "at": at(5),
+                },
+                {
+                    "seq": 3,
+                    "type": "delegated",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": None,
+                },
+                {
+                    "seq": 4,
+                    "type": "returned",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": at(6),
+                },
             ]
         )
         assert (unknown["parallel"], unknown["overlap_unknown"]) == (0, True)
@@ -273,7 +368,7 @@ class TestWorkerSteps:
             "worker_depths": {},
         }
 
-    def test_a_return_closes_its_hand_off_so_the_next_one_goes_to_the_one_still_open(
+    def test_a_return_without_an_id_is_never_given_to_the_hand_off_still_open(
         self,
     ):
         result = worker_steps(
@@ -302,9 +397,11 @@ class TestWorkerSteps:
                 {"seq": 4, "type": "returned", "worker_id": "a", "at": at(4)},
             ]
         )
+        # A return with no id is not given to the hand-off still open: it stays at the top, unknown.
         assert [
-            (s["key"], s["returned"]["seq"]) for s in handoffs(result["steps"])
-        ] == [(1, 4), (2, 3)]
+            (s["key"], (s["returned"] or {}).get("seq"), s["relationship"])
+            for s in handoffs(result["steps"])
+        ] == [(1, None, "observed"), (2, 3, "observed"), (4, 4, "unknown")]
 
     def test_a_nested_hand_off_goes_under_its_recorded_parent_not_the_maker_s_latest(
         self,
@@ -343,12 +440,20 @@ class TestWorkerSteps:
     def test_a_hand_off_with_no_start_starts_at_its_first_nested_hand_off(self):
         result = worker_steps(
             [
-                {"seq": 1, "type": "delegated", "worker_id": "b", "at": None},
+                {
+                    "seq": 1,
+                    "type": "delegated",
+                    "worker_id": "b",
+                    "delegation_id": "b1",
+                    "at": None,
+                },
                 {
                     "seq": 2,
                     "type": "delegated",
                     "worker_id": "c",
                     "by": "b",
+                    "delegation_id": "c1",
+                    "parent_delegation_id": "b1",
                     "at": at(3),
                 },
             ]
@@ -368,6 +473,7 @@ class TestWorkerStepsByTurn:
     EVENTS = [
         {
             "seq": 1,
+            "delegation_id": "r1",
             "type": "delegated",
             "worker_id": "refunds",
             "task": "refund 6109",
@@ -375,6 +481,7 @@ class TestWorkerStepsByTurn:
         },
         {
             "seq": 2,
+            "delegation_id": "r1",
             "type": "tool_call",
             "worker_id": "refunds",
             "tool": "issue_refund",
@@ -382,6 +489,7 @@ class TestWorkerStepsByTurn:
         },
         {
             "seq": 3,
+            "delegation_id": "r1",
             "type": "returned",
             "worker_id": "refunds",
             "result": "refunded",
@@ -389,6 +497,7 @@ class TestWorkerStepsByTurn:
         },
         {
             "seq": 4,
+            "delegation_id": "s1",
             "type": "delegated",
             "worker_id": "shipping",
             "task": "cancel 6110",
@@ -396,6 +505,7 @@ class TestWorkerStepsByTurn:
         },
         {
             "seq": 5,
+            "delegation_id": "n1",
             "type": "delegated",
             "worker_id": "notify",
             "task": "email the caller",
@@ -403,6 +513,7 @@ class TestWorkerStepsByTurn:
         },
         {
             "seq": 6,
+            "delegation_id": "n1",
             "type": "returned",
             "worker_id": "notify",
             "result": "sent",
@@ -452,11 +563,18 @@ class TestWorkerStepsByTurn:
         self,
     ):
         events = [
-            {"seq": 1, "type": "delegated", "worker_id": "coder", "at": at(2)},
+            {
+                "seq": 1,
+                "type": "delegated",
+                "worker_id": "coder",
+                "delegation_id": "c1",
+                "at": at(2),
+            },
             {
                 "seq": 2,
                 "type": "tool_call",
                 "worker_id": "coder",
+                "delegation_id": "c1",
                 "tool": "run",
                 "at": at(9),
             },

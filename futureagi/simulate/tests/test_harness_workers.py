@@ -865,6 +865,9 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_tha
             "at": 1730454600.0,
             "worker_label": "root_agent",
             "arguments": {"agent_name": "researcher"},
+            # As the harness records a control pass: its kind and the agent it went to.
+            "kind": "transferred",
+            "delegated_to": "researcher",
         },
         {
             "name": "find_sources",
@@ -872,6 +875,7 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_tha
             "at": 1730454601.0,
             "ended_at": 1730454603.0,
             "worker_label": "researcher",
+            "kind": "delegated",
             "delegated_to": "source_finder",
             "arguments": {"request": "tides"},
             "result": "three sources",
@@ -962,7 +966,8 @@ def test_a_record_says_whether_the_app_s_spans_were_received():
     )
 
 
-def test_a_control_pass_named_by_the_tool_itself_is_found_too():
+def test_a_tool_named_like_a_control_pass_is_an_ordinary_call_without_the_recorded_kind():
+    # A tool's name is not a record that control passed: only the harness's recorded kind is (MA-2).
     traced = [
         {
             "name": "transfer_to_billing_agent",
@@ -981,9 +986,9 @@ def test_a_control_pass_named_by_the_tool_itself_is_found_too():
         },
     ]
     events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
-    assert [(one["type"], one["worker_id"], one.get("by")) for one in events][:2] == [
-        ("transferred", "run-1/billing_agent", None),
-        ("delegated", "run-1/ledger_agent", "run-1/billing_agent"),
+    assert "transferred" not in [one["type"] for one in events]
+    assert ("delegated", "run-1/ledger_agent") in [
+        (one["type"], one["worker_id"]) for one in events
     ]
 
 
@@ -997,6 +1002,8 @@ def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_star
             "ended_at": 1730454614.0,
             "worker_label": "root_agent",
             "arguments": {"agent_name": "inspiration_agent"},
+            "kind": "transferred",
+            "delegated_to": "inspiration_agent",
         },
         {
             "name": "place_agent",
@@ -1004,6 +1011,7 @@ def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_star
             "at": 1730454620.9,
             "ended_at": 1730454618.9,
             "worker_label": "inspiration_agent",
+            "kind": "delegated",
             "delegated_to": "place_agent",
             "result": "three places",
         },
@@ -1013,6 +1021,7 @@ def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_star
             "at": 1730454636.9,
             "ended_at": 1730454634.7,
             "worker_label": "inspiration_agent",
+            "kind": "delegated",
             "delegated_to": "poi_agent",
             "result": "five sights",
         },
@@ -1691,11 +1700,12 @@ def _ended(trial, past_deadline=()):
 
 def test_each_worker_ends_in_one_state_and_a_worker_still_out_takes_the_trial_s_ending():
     states, timeline = _ended("ended")
-    # Returned: done, or failed when its return carries an error. Still out when the trial ended: timed out.
+    # Returned: done, or failed when its return carries an error. Still out when the trial ended: no return, nothing
+    # more claimed about why.
     assert states == {
         "order_lookup": "completed",
         "refund": "failed",
-        "audit": "timed_out",
+        "audit": "no_return",
         "notifier": "not_observed",
     }
     # Its partial events are kept, and no return is made up for it (MA-1).

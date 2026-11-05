@@ -392,44 +392,14 @@ def worker_timeline(
         for row in rows
         if by_of(row)
     }
-    delegators = {
-        _slug(by_of(row)) for row in rows if row.get("delegated_to") and by_of(row)
-    }
-
-    def passes_control(row: Mapping[str, Any]) -> str | None:
-        # An agent never handed work got control another way: a call naming it, as an argument or `transfer_to_<name>`.
-        if row.get("delegated_to") or not by_of(row):
-            return None
-        arguments = row.get("arguments")
-        values = {
-            _slug(one)
-            for one in (arguments.values() if isinstance(arguments, Mapping) else ())
-            if isinstance(one, str)
-        }
-        tool = _slug(str(row.get("name") or ""))
-        return next(
-            (
-                name
-                for name in sorted(delegators - handed)
-                if name != _slug(by_of(row)) and (name in values or tool.endswith(name))
-            ),
-            None,
-        )
-
-    # A harness that records each event's kind and parent is read as recorded; only older rows are inferred.
+    # A harness that records each event's kind and parent is read as recorded. A control pass is only ever the one
+    # the harness recorded: never read from a tool's name or arguments.
     recorded = any(row.get("kind") for row in rows)
     transfers = {
         index: target
         for index, row in enumerate(rows)
-        if (
-            target := (
-                str(row.get("delegated_to") or "").strip()
-                if row.get("kind") == "transferred"
-                else None
-            )
-            if recorded
-            else passes_control(row)
-        )
+        if row.get("kind") == "transferred"
+        and (target := str(row.get("delegated_to") or "").strip())
     }
     controlled = set(transfers.values())
     # The agent that hands work out and is never handed any is the coordinator, unless it is a declared worker.
@@ -708,10 +678,11 @@ def _span_dict(span: Any) -> WorkerSpan:
     }
 
 
-# How a trial ended, for the workers still out when it did: it ran to its end (the inherited deadline, so they timed
-# out), it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it).
+# How a trial ended, for the workers still out when it did, as the call recorded it: it ended with no return from them,
+# it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it). `timed_out` is only
+# ever the world's own record that it refused a worker past its deadline.
 _STILL_OUT = {
-    "ended": "timed_out",
+    "ended": "no_return",
     "infrastructure": "infrastructure",
     "cancel_requested": "cancel_requested",
     "cancelled": "cancelled",
@@ -747,7 +718,7 @@ def worker_states(
         elif back is not None:
             state = "failed" if back.get("status") == "error" else "completed"
         elif worker["worker_id"] in handed:
-            state = _STILL_OUT.get(trial, "timed_out")
+            state = _STILL_OUT.get(trial, "no_return")
         else:
             workers.append(dict(worker))
             continue

@@ -152,6 +152,7 @@ class HarnessWorker(TypedDict):
         Literal[
             "completed",
             "failed",
+            "no_return",
             "timed_out",
             "cancel_requested",
             "cancelled",

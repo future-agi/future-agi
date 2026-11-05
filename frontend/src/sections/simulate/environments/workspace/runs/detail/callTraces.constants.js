@@ -91,6 +91,7 @@ export const CALL_WORKERS_COPY = {
   workersNotObserved: (names) => `Not observed: ${names}`,
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
+    no_return: "no return before the call ended",
     timed_out: "timed out",
     cancel_requested: "cancel requested",
     cancelled: "cancelled",

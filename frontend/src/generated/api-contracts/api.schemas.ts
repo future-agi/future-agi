@@ -25459,6 +25459,7 @@ export type CallWorkerApiState =
 export const CallWorkerApiState = {
   completed: "completed",
   failed: "failed",
+  no_return: "no_return",
   timed_out: "timed_out",
   cancel_requested: "cancel_requested",
   cancelled: "cancelled",

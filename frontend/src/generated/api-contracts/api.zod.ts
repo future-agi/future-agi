@@ -53335,6 +53335,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         .enum([
           "completed",
           "failed",
+          "no_return",
           "timed_out",
           "cancel_requested",
           "cancelled",

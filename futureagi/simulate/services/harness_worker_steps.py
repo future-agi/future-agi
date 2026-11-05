@@ -58,54 +58,35 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
     root = _Block(-1, None, 0, None)
     unknown: set[int] = set()
     open_: dict[str | None, list[_Block]] = {}
-    made: dict[str | None, list[_Block]] = {}
     blocks: list[_Block] = []
 
     by_id: dict[str, _Block] = {}
 
     def open_for(event: WorkerEvent) -> _Block | None:
-        """The open hand-off an event belongs to: the one its recorded id names, else the worker's only open one.
-
-        With several open and no id, the relationship is not recorded, so the event stays at the top as unknown
-        rather than being given to the latest one.
-        """
+        """The open hand-off an event's recorded id names. Without one the record does not say, so the event stays
+        at the top: never given to an open hand-off by its worker or its timing."""
         wanted = event.get("delegation_id")
-        if event.get("relationship") in ("unknown", "observed") and not wanted:
-            # Recorded as not knowing its hand-off, or as running outside any: never given to an open one.
+        if not wanted:
             return None
-        if wanted:
-            found = by_id.get(str(wanted))
-            return found if found is not None and found.returned is None else None
-        waiting = open_.get(event.get("worker_id"), [])
-        return waiting[0] if len(waiting) == 1 else None
+        found = by_id.get(str(wanted))
+        return found if found is not None and found.returned is None else None
 
-    def holder(event: WorkerEvent, at: float | None) -> _Block | None:
-        """The hand-off a new hand-off was made inside: its recorded parent, else the maker's only candidate."""
+    def holder(event: WorkerEvent) -> _Block | None:
+        """The hand-off a new hand-off was made inside, as recorded: its parent's id, the top when the record says
+        so or the coordinator made it, else none (unknown). Never guessed from the maker's open hand-offs.
+        """
         parent = event.get("parent_delegation_id")
         if parent:
             return by_id.get(str(parent))
-        if event.get("relationship") == "observed":
-            # Recorded as handed out at the top: never re-parented under the maker's open hand-off.
+        if event.get("relationship") == "observed" or not event.get("by"):
             return root
-        worker = event.get("by")
-        if not worker:
-            return root
-        candidates = [
-            one
-            for one in open_.get(worker, [])
-            if at is None or one.start is None or one.start <= at
-        ]
-        if len(candidates) == 1:
-            return candidates[0]
-        if not candidates and len(made.get(worker, [])) == 1:
-            return made[worker][0]
         return None
 
     for event in events:
         at = _seconds(event.get("at"))
         worker = event.get("worker_id")
         if event["type"] in _HAND_OFF_TYPES:
-            parent = holder(event, at)
+            parent = holder(event)
             if parent is None:
                 parent = root
                 unknown.add(event.get("seq", len(blocks)))
@@ -114,7 +95,6 @@ def _tree(events: Iterable[WorkerEvent]) -> tuple[_Block, list[_Block], set[int]
             parent.items.append(block)
             blocks.append(block)
             open_.setdefault(worker, []).append(block)
-            made.setdefault(worker, []).append(block)
             if event.get("delegation_id"):
                 by_id[str(event["delegation_id"])] = block
         elif event["type"] == "returned":
