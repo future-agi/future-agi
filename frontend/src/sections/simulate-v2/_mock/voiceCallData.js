@@ -1,6 +1,7 @@
 import { localizeEval } from "./errorLocalization";
 import { endedReasonFor } from "./endedReason";
 import { voiceFlowOf } from "./voiceFlow";
+import { subActorsInTrial } from "./subActors";
 
 /**
  * Shape a revamped-flow run task into the `data` object the real
@@ -142,7 +143,27 @@ function formatToolTurnContent({ name, args, result, latencyMs }) {
  * Returns entries with the observability-drawer shape (speaker_role: "tool"
  * for tool turns) plus `tool_meta` so downstream views can key off it.
  */
-function buildTranscriptWithTools(steps, env, task) {
+/* A sub-actor's line in the voice transcript, which has no third speaker: it
+   reads as a customer-side turn and says who it is, so nobody takes it for the
+   person being served. */
+const subActorTurn = (line, task, cursor) => {
+  const words = String(line.text).split(/\s+/).filter(Boolean).length;
+  const dur = Math.round((0.6 + words / 2.6) * 10) / 10;
+  const message = `${line.actor.name} (not the person being served) · ${line.role} · ${line.how}${line.reached ? "" : " · not picked up by the agent"}: ${line.text}`;
+  return {
+    id: line.id,
+    speaker_role: "user",
+    role: "user",
+    message,
+    content: message,
+    start_time_seconds: cursor,
+    end_time_seconds: cursor + dur,
+    duration_seconds: dur,
+    sub_actor: line.actor.id,
+  };
+};
+
+function buildTranscriptWithTools(steps, env, task, subLines = []) {
   const allowedTools = (env?.tools || [])
     .map((t) => t.id || t.name)
     .filter(Boolean);
@@ -160,6 +181,16 @@ function buildTranscriptWithTools(steps, env, task) {
 
   const out = [];
   let cursor = 0;
+  /* The sub-actors' lines that follow turn `i` (-1: before the first). */
+  const addSubLines = (i) =>
+    subLines
+      .filter((l) => l.after === i)
+      .forEach((l) => {
+        const turn = subActorTurn(l, task, cursor);
+        out.push(turn);
+        cursor = turn.end_time_seconds + 0.6;
+      });
+  addSubLines(-1);
 
   steps.forEach((s, i) => {
     const role = speakerRole(s.role);
@@ -213,6 +244,7 @@ function buildTranscriptWithTools(steps, env, task) {
     }
 
     cursor += 1; // 1s pause before the next speaker
+    addSubLines(i);
   });
 
   return out;
@@ -306,6 +338,7 @@ export function taskToVoiceData(
   task,
   {
     env,
+    envState = null,
     voice = true,
     scenario = null,
     failedGoal = null,
@@ -329,7 +362,8 @@ export function taskToVoiceData(
      before it — same speaker-timeline surface, no separate tab. Timings
      are synthesised at a steady cadence so the analytics view has
      something to plot; a simulated call has no real per-word timing. */
-  const transcript = buildTranscriptWithTools(steps, env, task);
+  const sub = subActorsInTrial({ task, env, envState });
+  const transcript = buildTranscriptWithTools(steps, env, task, sub.lines);
   /* The transcript, recording and analytics run at the call's real length —
      the one billed and shown everywhere else. */
   const lastEnd = transcript.length

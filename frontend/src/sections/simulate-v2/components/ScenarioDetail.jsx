@@ -39,6 +39,8 @@ import {
 import { protectionOf } from "../_mock/mustPassProtection";
 import { personalDataDetail, REPLAY_NOTE } from "../_mock/scenarioSources";
 import { assumptionOf } from "../_mock/scenarioProvenance";
+import { callerCastOf, subActorsOf } from "../_mock/subActors";
+import { roleOf } from "../_mock/actors";
 import TestConditionRow from "./TestConditionRow";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
@@ -101,6 +103,8 @@ export default function ScenarioDetail({
     envState,
   );
   const path = conversationPath(row);
+  /* Who on the caller's side comes in on this scenario (TH-8651). */
+  const subActors = subActorsOf(row, callerCastOf(env, envState), env);
   const connect = isConnectOnly(env);
   const gates = proofGatesOf(row, env, {
     stale: proof.stale,
@@ -126,6 +130,7 @@ export default function ScenarioDetail({
         s={s}
         brief={brief}
         goals={goals}
+        subActors={subActors}
         path={path}
         connect={connect}
         gates={gates}
@@ -254,6 +259,12 @@ export default function ScenarioDetail({
                     .filter(Boolean)
                     .map((part) => ` · ${part}`)}
                 </Typography>
+              </Field>
+            )}
+
+            {subActors.length > 0 && (
+              <Field label="Sub-actors">
+                <SubActorLines subs={subActors} />
               </Field>
             )}
 
@@ -517,6 +528,23 @@ Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
 
 /* ── pieces ─────────────────────────────────────────────────────────────── */
 
+/* Who is on the caller's side, and when they come in: one line each. */
+function SubActorLines({ subs }) {
+  return (
+    <Stack spacing={0.25}>
+      {subs.map(({ actor, line }) => (
+        <Typography key={actor.id} className="sd-val">
+          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+            {actor.name}
+          </Box>
+          {` · ${roleOf(actor)} · ${line}`}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+SubActorLines.propTypes = { subs: PropTypes.array.isRequired };
+
 /* One labelled row: quiet label in the gutter, content beside it. */
 function Field({ label, children }) {
   return (
@@ -651,6 +679,7 @@ function DrawerSheet({
   s,
   brief,
   goals,
+  subActors = [],
   path,
   connect,
   gates,
@@ -816,6 +845,11 @@ function DrawerSheet({
                   .map((part) => ` · ${part}`)}
               </Typography>
             </Stack>
+          </Row>
+        )}
+        {subActors.length > 0 && (
+          <Row label="Sub-actors">
+            <SubActorLines subs={subActors} />
           </Row>
         )}
         {hasBrief(brief) && (
@@ -1095,6 +1129,7 @@ DrawerSheet.propTypes = {
   s: PropTypes.object,
   brief: PropTypes.object,
   goals: PropTypes.array,
+  subActors: PropTypes.array,
   path: PropTypes.object,
   connect: PropTypes.bool,
   gates: PropTypes.array,

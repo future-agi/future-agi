@@ -39,6 +39,7 @@ import { envLineage, holdsInEnv, savedWorldEnv } from "./versions";
 import { replicationOf } from "./replication";
 import { proofKindOf } from "./rsiModel";
 import { secretsUsedOf } from "./envConfig";
+import { subActorGoalsOf } from "./subActors";
 
 const short = (s) =>
   hashSeed(String(s || ""))
@@ -715,6 +716,18 @@ export const subGoalsOfScenario = (row, env, envState) => {
       mark: row.subGoalMarks?.[`SG-rule-${rule.id}`] || "critical",
     });
   }
+  /* A sub-actor on the caller's side adds a sub-goal about them (TH-8651). */
+  subActorGoalsOf(row, env, envState).forEach((g) =>
+    items.push({
+      key: `${row.id}:sub-${g.subActorId}`,
+      index: items.length,
+      id: g.id,
+      text: g.text,
+      subActorId: g.subActorId,
+      subActorName: g.subActorName,
+      mark: g.mark,
+    }),
+  );
   /* At least one critical — a scenario with none can't fail. */
   if (items.length && !items.some((x) => x.mark === "critical"))
     items[0] = { ...items[0], mark: "critical" };
@@ -726,7 +739,9 @@ export const subGoalsOfScenario = (row, env, envState) => {
  * one makes it inconclusive (never a pass); a supporting one is reported —
  * shown, and it lowers the score — but never fails it.
  */
-export const rollupOf = (items = []) => {
+export const rollupOf = (allItems = []) => {
+  /* Not applicable (a sub-actor who didn't come in) is left out of the score. */
+  const items = allItems.filter((x) => x.status !== "not-applicable");
   const crit = items.filter((x) => x.mark === "critical");
   const sup = items.filter((x) => x.mark !== "critical");
   const criticalFailed = crit.filter((x) => x.status === "failed").length;

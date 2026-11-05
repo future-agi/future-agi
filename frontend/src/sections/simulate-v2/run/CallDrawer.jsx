@@ -33,6 +33,10 @@ import { toolCallsOf } from "../_mock/participants";
 import HandoffTimeline from "./HandoffTimeline";
 import SharedState from "./SharedState";
 import ApprovalTimeline from "./ApprovalTimeline";
+import ActorEventRow from "./ActorEventRow";
+import { OnTheCall, SubActorTurn } from "./SubActorRows";
+import { callerCastOf, subActorsInTrial } from "../_mock/subActors";
+import { actorEventsOf } from "../_mock/actorEvents";
 import { approvalOf } from "../_mock/approvals";
 import { runEnvVersion } from "../_mock/toolFit";
 import { sourceRevisionsLine } from "../_mock/sourceRevisions";
@@ -182,6 +186,38 @@ export default function CallDrawer({
     unsupportedClaim: null,
   };
   const turns = useMemo(() => task.steps || [], [task.steps]);
+  /* What world actors did, at the turn it followed (PR #3698). */
+  const actorEvents = useMemo(
+    () => (env ? actorEventsOf({ env, envState, task }) : []),
+    [env, envState, task],
+  );
+  /* Who on the caller's side came in on this trial, and what they said. */
+  const subActors = useMemo(
+    () => (env ? subActorsInTrial({ task, env, envState }) : null),
+    [env, envState, task],
+  );
+  /* Their line follows turn `i` (-1: before the first). Off while the
+     transcript is narrowed to one speaker or a search. */
+  const subLinesAfter = (i) =>
+    roleFilter === "all" && !query && subActors
+      ? subActors.lines
+          .filter((l) => l.after === i)
+          .map((l) => (
+            <SubActorTurn
+              key={l.id}
+              line={l}
+              time={`0:${String(Math.max(0, i)).padStart(2, "0")}`}
+            />
+          ))
+      : null;
+  /* The generic "also on the call" step stands in for a sub-actor who now has
+     lines of their own. */
+  const subIds = new Set((subActors?.planned || []).map((p) => p.actor.id));
+  /* Caller-side people speak only through the sub-actor lines; a stored run
+     from before that may still carry a generic step for one. */
+  const callerIds = new Set(
+    (env ? callerCastOf(env, envState) : []).map((a) => a.id),
+  );
   const shown = turns.filter((s) => {
     if (roleFilter !== "all" && s.role !== roleFilter) return false;
     if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
@@ -280,27 +316,15 @@ export default function CallDrawer({
             borderColor: { md: "divider" },
           }}
         >
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{ px: 2, pt: 1.5 }}
-          >
-            <Iconify
-              icon={surface.icon}
-              width={16}
-              sx={{ color: "text.tertiary" }}
-            />
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {surface.label}
-            </Typography>
-          </Stack>
-
           <Box
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
             <CustomTabs
-              sx={{ boxShadow: "none" }}
+              sx={{
+                boxShadow: "none",
+                /* A hidden scroll arrow still holds its 40px; drop it. */
+                "& .MuiTabs-scrollButtons.Mui-disabled": { display: "none" },
+              }}
               value={pane}
               onChange={(_, v) => setPane(v)}
             >
@@ -348,6 +372,12 @@ export default function CallDrawer({
               <>
                 {voice && <Recording turns={turns.length} />}
                 {voice && <TalkRatio agent={talk} />}
+                {subActors?.planned.length > 0 && (
+                  <OnTheCall
+                    joined={subActors.joined}
+                    missed={subActors.missed}
+                  />
+                )}
 
                 <Stack
                   direction="row"
@@ -386,71 +416,92 @@ export default function CallDrawer({
                 </Stack>
 
                 <Stack sx={{ px: 2, pb: 2 }}>
-                  {shown.map((s, i) => (
-                    <React.Fragment key={s.id || i}>
-                      <Box
-                        sx={{
-                          borderLeft: "2px solid",
-                          borderColor: (t) =>
-                            s.role === "agent"
-                              ? t.palette.primary.main
-                              : t.palette.text.disabled,
-                          bgcolor:
-                            s.role === "agent"
-                              ? "status.discovery.bg"
-                              : "background.neutral",
-                          px: 1.75,
-                          py: 1.25,
-                        }}
-                      >
-                        <Typography
+                  {subLinesAfter(-1)}
+                  {shown.map((s, i) =>
+                    s.role === "actor" &&
+                    (subIds.has(s.actorId) ||
+                      callerIds.has(s.actorId)) ? null : (
+                      <React.Fragment key={s.id || i}>
+                        <Box
                           sx={{
-                            typography: "s3",
-                            color: "text.tertiary",
-                            fontFamily: "ui-monospace, Menlo, monospace",
+                            borderLeft: "2px solid",
+                            borderColor: (t) =>
+                              s.role === "agent"
+                                ? t.palette.primary.main
+                                : t.palette.text.disabled,
+                            bgcolor:
+                              s.role === "agent"
+                                ? "status.discovery.bg"
+                                : "background.neutral",
+                            px: 1.75,
+                            py: 1.25,
                           }}
                         >
-                          {`0:${String(i).padStart(2, "0")}`} ·{" "}
-                          {ROLE_LABEL[s.role] || s.role}
-                        </Typography>
-                        <Typography sx={{ typography: "s1", mt: 0.25 }}>
-                          {s.text}
-                        </Typography>
-                      </Box>
-                      {/* Dead air is part of a voice call's state, so it is a
-                          row in the transcript rather than a gap between rows. */}
-                      {voice && i < shown.length - 1 && (
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          spacing={0.75}
-                          sx={{ px: 1.75, py: 0.5 }}
-                        >
-                          <Iconify
-                            icon="solar:hourglass-line-linear"
-                            width={12}
-                            sx={{ color: "text.disabled" }}
-                          />
                           <Typography
                             sx={{
                               typography: "s3",
-                              color: "text.disabled",
+                              color: "text.tertiary",
                               fontFamily: "ui-monospace, Menlo, monospace",
                             }}
                           >
-                            1.0s silence
+                            {`0:${String(i).padStart(2, "0")}`} ·{" "}
+                            {ROLE_LABEL[s.role] ||
+                              (s.role === "actor" && s.actorName
+                                ? s.actorName
+                                : s.role)}
                           </Typography>
-                          <Box
-                            sx={{
-                              flex: 1,
-                              borderBottom: "1px dashed",
-                              borderColor: "divider",
-                            }}
-                          />
-                        </Stack>
-                      )}
-                    </React.Fragment>
-                  ))}
+                          <Typography sx={{ typography: "s1", mt: 0.25 }}>
+                            {s.text}
+                          </Typography>
+                        </Box>
+                        {subLinesAfter(turns.indexOf(s))}
+                        {/* A world actor's action, at the turn it followed. */}
+                        {roleFilter === "all" &&
+                          !query &&
+                          actorEvents
+                            .filter((e) => e.after === turns.indexOf(s))
+                            .map((e) => (
+                              <ActorEventRow
+                                key={e.id}
+                                event={e}
+                                time={`0:${String(e.after).padStart(2, "0")}`}
+                              />
+                            ))}
+                        {/* Dead air is part of a voice call's state, so it is a
+                          row in the transcript rather than a gap between rows. */}
+                        {voice && i < shown.length - 1 && (
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.75}
+                            sx={{ px: 1.75, py: 0.5 }}
+                          >
+                            <Iconify
+                              icon="solar:hourglass-line-linear"
+                              width={12}
+                              sx={{ color: "text.disabled" }}
+                            />
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.disabled",
+                                fontFamily: "ui-monospace, Menlo, monospace",
+                              }}
+                            >
+                              1.0s silence
+                            </Typography>
+                            <Box
+                              sx={{
+                                flex: 1,
+                                borderBottom: "1px dashed",
+                                borderColor: "divider",
+                              }}
+                            />
+                          </Stack>
+                        )}
+                      </React.Fragment>
+                    ),
+                  )}
                 </Stack>
               </>
             )}
@@ -1772,11 +1823,25 @@ const SUBGOAL_STATUS = {
     color: "text.tertiary",
     label: "Unmeasured",
   },
+  /* A sub-goal about a sub-actor who didn't come in: nothing to grade. */
+  "not-applicable": {
+    icon: "solar:minus-circle-linear",
+    color: "text.disabled",
+    label: "Not applicable",
+  },
 };
 
 function SubGoalRollup({ task, env, envState }) {
-  const { items, rollup } = checkEvidenceOf(task, env, envState);
-  if (!items.length || !rollup) return null;
+  const {
+    items: graded,
+    rollup,
+    notApplicable = [],
+  } = checkEvidenceOf(task, env, envState);
+  if (!graded.length || !rollup) return null;
+  /* Counted: the graded ones. Not applicable is listed after them and left out
+     of the counts and the score. */
+  const items = graded;
+  const listed = [...graded, ...notApplicable];
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
       <Box
@@ -1803,7 +1868,7 @@ function SubGoalRollup({ task, env, envState }) {
             : `${items.filter((x) => x.status === "met").length} of ${items.length} sub-goals met · score ${rollup.score}`}
         </Typography>
       </Box>
-      {items.map((x) => {
+      {listed.map((x) => {
         const st = SUBGOAL_STATUS[x.status];
         return (
           <Stack
@@ -1836,9 +1901,11 @@ function SubGoalRollup({ task, env, envState }) {
                   color: x.missing ? "status.warning.fg" : "text.tertiary",
                 }}
               >
-                {x.missing
-                  ? `Needs ${x.evidence} · missing ${x.missing}`
-                  : `Evidence: ${x.evidence}`}
+                {x.status === "not-applicable"
+                  ? `${x.subActorName || "The sub-actor"} did not come in on this call`
+                  : x.missing
+                    ? `Needs ${x.evidence} · missing ${x.missing}`
+                    : `Evidence: ${x.evidence}`}
               </Typography>
             </Box>
             <Typography

@@ -276,7 +276,7 @@ export const nextEnvVersion = (env, envState, { changed = [], note, now, from, r
   seed, what a run may never call, whether the sandbox resets. Kept on every
   version, so rolling back restores them too.
 */
-export const WORLD_CONFIG_KEYS = ["toolEnv", "toolLinks", "actors", "actorEdits", "twinBacking", "twinResetBetween", "toolArgEdits", "egressDomains"];
+export const WORLD_CONFIG_KEYS = ["toolEnv", "toolLinks", "actors", "actorEdits", "customActors", "primaryActor", "twinBacking", "twinResetBetween", "toolArgEdits", "egressDomains"];
 export const worldConfigOf = (envState) => Object.fromEntries(WORLD_CONFIG_KEYS
   .filter((k) => envState?.[k] !== undefined)
   .map((k) => [k, envState[k]]));

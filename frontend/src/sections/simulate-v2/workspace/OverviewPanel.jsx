@@ -10,6 +10,7 @@ import {
   Chip,
   Tooltip,
   CircularProgress,
+  Collapse,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface, getDomain } from "../_mock/surfaces";
@@ -62,7 +63,7 @@ import { clickable, focusRing } from "../components/clickable";
  * labels, not content, and they were taking a column from things that are.
  */
 const seedBlurb = (rows) =>
-  `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`;
+  `${rows.toLocaleString()} rows, rebuilt fresh for every task.`;
 
 export default function OverviewPanel({
   buildMode,
@@ -184,7 +185,7 @@ export default function OverviewPanel({
                 >
                   {envState?.removedAgent
                     ? "Scenarios, evaluations and past runs are all still here."
-                    : `${surface.blurb} We handle the ${surface.transports.join(", ")} side — you point us at your agent.`}
+                    : surface.blurb}
                 </Typography>
               </Box>
               <Button
@@ -369,11 +370,7 @@ export default function OverviewPanel({
                 sx={{ mb: 3 }}
               >
                 <Grid item xs={12} md={7}>
-                  <SectionCard
-                    dense
-                    title="Use cases"
-                    subtitle="What it is actually for"
-                  >
+                  <SectionCard dense title="Use cases">
                     <Stack sx={{ p: 1.5 }} spacing={1}>
                       {useCases.map((u) => (
                         <Stack
@@ -405,11 +402,7 @@ export default function OverviewPanel({
 
                 <Grid item xs={12} md={5}>
                   {!buildMode && (
-                    <SectionCard
-                      dense
-                      title="Amendments"
-                      subtitle="Changed after reading, each with its reason"
-                    >
+                    <SectionCard dense title="Amendments">
                       <Stack sx={{ p: 1.5 }} spacing={1.25}>
                         {contract.amendments.map((a) => (
                           <Box
@@ -2370,31 +2363,13 @@ function SourceToSandboxMap({ env, envState, progress }) {
         >
           {streaming
             ? "Filling in as the builder reads your agent: tools, then rules, then data."
-            : "Every derived fact carries where it was read from and what it became in the sandbox."}
+            : "Where each tool, rule and store came from. Open a group to see it."}
         </Typography>
-      </Box>
-
-      {/* Column headers, on the same tracks as rows */}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: MAP_GRID,
-          columnGap: 2,
-          alignItems: "center",
-          px: MAP_PX,
-          py: 0.75,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <ColHead>Read from source</ColHead>
-        <Box />
-        <Box />
-        <ColHead>In the sandbox world</ColHead>
       </Box>
 
       {/* Groups */}
       <MapGroup
+        defaultOpen={streaming}
         label="Tools"
         hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
         right={found(tools.length, allTools.length, `${tools.length} mapped`)}
@@ -2417,6 +2392,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </MapGroup>
 
       <MapGroup
+        defaultOpen={streaming}
         label="Rules"
         hint={
           fromDescription
@@ -2457,6 +2433,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </MapGroup>
 
       <MapGroup
+        defaultOpen={streaming}
         label="Stores"
         hint={
           fromDescription
@@ -2493,6 +2470,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
 
       {!streaming && !fromDescription && (
         <MapGroup
+          defaultOpen={streaming}
           label="Other parties"
           hint="from the call-graph & prompt"
           right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
@@ -2603,45 +2581,49 @@ function ruleTarget(subject, origin, live = false) {
   return "enforced at the sandbox boundary";
 }
 
-function MapGroup({ label, hint, right, children, first }) {
+function MapGroup({ label, hint, right, children, first, defaultOpen }) {
+  /* Folded by default: the counts are the summary, rows are one click away. */
+  const [open, setOpen] = useState(!!defaultOpen);
   return (
     <Box>
       <Box
+        {...clickable(() => setOpen((o) => !o), { expanded: open })}
+        title={hint}
         sx={{
+          ...focusRing,
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr) auto",
           columnGap: 2,
-          alignItems: "baseline",
+          alignItems: "center",
           px: MAP_PX,
-          pt: first ? 1.25 : 1.5,
-          pb: 0.5,
+          py: 1,
+          cursor: "pointer",
           borderTop: first ? "none" : "1px solid",
           borderColor: "divider",
+          "&:hover": { bgcolor: "action.hover" },
         }}
       >
-        <Stack
-          direction="row"
-          alignItems="baseline"
-          spacing={1}
-          sx={{ minWidth: 0 }}
-        >
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Iconify
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
+            width={14}
+            sx={{ color: "text.tertiary" }}
+          />
           <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {label}
           </Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {hint}
-          </Typography>
         </Stack>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-          }}
-        >
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {right}
         </Typography>
       </Box>
-      <Box sx={{ pb: 0.5 }}>{children}</Box>
+      <Collapse in={open} unmountOnExit>
+        <Box sx={{ pb: 0.5 }}>{children}</Box>
+      </Collapse>
     </Box>
   );
 }
@@ -2651,6 +2633,7 @@ MapGroup.propTypes = {
   right: PropTypes.string,
   children: PropTypes.node,
   first: PropTypes.bool,
+  defaultOpen: PropTypes.bool,
 };
 
 function MapRow({ index, name, origin, target, mono, derived, trailing }) {

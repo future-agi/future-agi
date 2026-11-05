@@ -36,6 +36,7 @@ import {
   archivedOf,
 } from "../../_mock/scenarioStates";
 import { subGoalResultsOf } from "../../_mock/scenarioSubGoals";
+import { callerCastOf, subActorsOf, withLineOf } from "../../_mock/subActors";
 import { envLabelOf } from "../../_mock/envVersionKinds";
 import { clickable, focusRing } from "../../components/clickable";
 import { scenarioTitle } from "../../_mock/scenarios";
@@ -441,6 +442,8 @@ export default function ScenarioTable({
 }) {
   /* Stored env labels read as major.minor ("v3" → "v2.1"). */
   const vl = (label) => (envState ? envLabelOf(env, envState, label) : label);
+  /* Caller-side cast: a scenario that includes one reads "With <Name>". */
+  const callers = useMemo(() => callerCastOf(env, envState), [env, envState]);
   const { stateOf, onStateAction, onOpen, historyOf, latestOf } =
     useContext(ScenarioRowContext);
   /*
@@ -653,6 +656,7 @@ export default function ScenarioTable({
                 const personaMeta = [p?.ageGroup, !p?.ageGroup && p?.role]
                   .filter(Boolean)
                   .join(" · ");
+                const withLine = withLineOf(subActorsOf(row, callers, env));
                 const open = onOpen ? () => onOpen(row) : undefined;
                 const stop = (e) => e.stopPropagation();
                 return (
@@ -790,6 +794,16 @@ export default function ScenarioTable({
                           </Box>
                         )}
                       </Stack>
+                      {/* Someone on the caller's side comes in (TH-8651). */}
+                      {withLine && (
+                        <Typography
+                          noWrap
+                          title={withLine}
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          {withLine}
+                        </Typography>
+                      )}
                     </TableCell>
 
                     {/* PERSONA — who calls, in one line. */}

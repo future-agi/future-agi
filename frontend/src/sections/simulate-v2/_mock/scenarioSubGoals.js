@@ -17,6 +17,7 @@ import {
   isConnectOnly,
 } from "./envModel";
 import { hashSeed } from "./runStream";
+import { joinedIdsOf, NOT_APPLICABLE } from "./subActors";
 
 export const SUBGOAL_MIN = 2;
 export const SUBGOAL_MAX = 7;
@@ -124,8 +125,19 @@ const cruxOf = (task, crit, h) => {
  */
 export const subGoalResultsOf = (task, env, envState) => {
   if (!task || task.status === "unmeasured") return { items: [], rollup: null };
-  const goals = subGoalsOfScenario(task, env, envState);
-  if (!goals.length) return { items: [], rollup: null };
+  const all = subGoalsOfScenario(task, env, envState);
+  if (!all.length) return { items: [], rollup: null };
+  /* A sub-goal about a sub-actor who didn't come in on this trial isn't
+     applicable (TH-8651): it is listed, and left out of every count, rate
+     and the roll-up. It is not Unmeasured — nothing went missing. */
+  const joined = all.some((g) => g.subActorId)
+    ? joinedIdsOf(task, env, envState)
+    : null;
+  const notApplicable = all
+    .filter((g) => g.subActorId && !joined.has(g.subActorId))
+    .map((g) => ({ ...g, status: NOT_APPLICABLE }));
+  const goals = all.filter((g) => !(g.subActorId && !joined.has(g.subActorId)));
+  if (!goals.length) return { items: [], rollup: null, notApplicable };
   const crit = goals.filter((g) => g.mark === "critical");
   const sup = goals.filter((g) => g.mark !== "critical");
   const h = hashSeed(String(task.id || ""));
@@ -155,6 +167,7 @@ export const subGoalResultsOf = (task, env, envState) => {
   if (task.failedBy === "required-evaluation" && task.status !== "passed") {
     return {
       items,
+      notApplicable,
       rollup: {
         ...rollup,
         verdict: "failed",
@@ -166,6 +179,7 @@ export const subGoalResultsOf = (task, env, envState) => {
   if (task.duplicateWrite && task.status !== "passed") {
     return {
       items,
+      notApplicable,
       rollup: {
         ...rollup,
         verdict: "failed",
@@ -176,10 +190,11 @@ export const subGoalResultsOf = (task, env, envState) => {
   if (task.turnLimit && task.status !== "passed") {
     return {
       items,
+      notApplicable,
       rollup: { ...rollup, verdict: "failed", turnLimit: task.turnLimit.limit },
     };
   }
-  return { items, rollup };
+  return { items, notApplicable, rollup };
 };
 
 /* What a check rests on: the end state and tool calls, or the conversation. */

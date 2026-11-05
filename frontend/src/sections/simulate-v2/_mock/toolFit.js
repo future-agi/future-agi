@@ -306,6 +306,19 @@ export const scenariosInEnvVersion = (envState, envLabel) => (envState?.scenario
  * run and every later replay of it read the same inputs, so the numbers you
  * watched are the numbers the run keeps.
  */
+/* A new run takes the saved cast: actor edits still waiting in the draft
+   (TH-8927) don't reach a run until the draft is saved. */
+const savedActorState = (envState) => {
+  const base = envState?.draftBase;
+  if (!base || !(envState?.unsavedEnvChanges || []).length) return envState;
+  return {
+    ...envState,
+    actors: base.actors ?? envState.actors,
+    actorEdits: base.actorEdits ?? envState.actorEdits,
+    customActors: base.customActors ?? envState.customActors,
+  };
+};
+
 export const runInputs = (env, envState, { agent, envVersion, actors, actorEdits, toolFaults, admissionGates = 3, outcomes = 0, requiredEvals = 0, gradingRule = 0, turnLimits = 0, turnLimit = undefined }) => ({
   admissionGates,
   /* "Environments, defined" — sub-goals decide (gradingRule 2) and the turn
@@ -326,9 +339,9 @@ export const runInputs = (env, envState, { agent, envVersion, actors, actorEdits
   phrasing: versionNumber(agent),
   /* The cast the run had — a stored run carries its own, so a later edit to
      the actors doesn't replay history differently. */
-  actors: (actors || actorsOf(env, envState))
+  actors: (actors || actorsOf(env, savedActorState(envState)))
     /* …and the actor edits it pinned, not today's. */
-    .map((id) => getActor(id, actorEdits !== undefined ? { ...envState, actorEdits: actorEdits || {} } : envState))
+    .map((id) => getActor(id, actorEdits !== undefined ? { ...envState, actorEdits: actorEdits || {} } : savedActorState(envState)))
     .filter(Boolean),
   /* Injected faults: a stored run replays the ones it pinned (none, for runs
      from before the dial); a new run takes the current dial. */

@@ -47,6 +47,13 @@ import {
   wrapTrials,
 } from "../_mock/evalEvidence";
 import { actorsInRun, trialActorOf } from "../_mock/trialFilters";
+import {
+  callerCastOf,
+  subActorsInTrial,
+  trialSubActorNames,
+  trialSubActorOptions,
+  trialMatchesSubActor,
+} from "../_mock/subActors";
 import { scenarioTitle } from "../_mock/scenarios";
 import { SectionCard, StatusChip, EmptyState } from "../components/primitives";
 import RunAnalytics from "./RunAnalyticsV2";
@@ -949,6 +956,23 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     [tasks],
   );
   const actorOptions = useMemo(() => actorsInRun(tasks), [tasks]);
+  /* Sub-actors (caller side): a call counts for one only when at least one of
+     their lines reached the agent. */
+  const subNamesByTask = useMemo(() => {
+    const callers = callerCastOf(env, envState);
+    return new Map(
+      tasks.map((t) => [
+        t.id,
+        trialSubActorNames(
+          subActorsInTrial({ task: t, env, envState, callers }),
+        ),
+      ]),
+    );
+  }, [tasks, env, envState]);
+  const subActorOptions = useMemo(
+    () => trialSubActorOptions([...subNamesByTask.values()]),
+    [subNamesByTask],
+  );
 
   const filterFields = useMemo(
     () => [
@@ -1009,6 +1033,19 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             },
           ]
         : []),
+      ...(subActorOptions.length
+        ? [
+            {
+              value: "subActor",
+              label: "Sub-actor",
+              type: "enum",
+              choices: subActorOptions.map((o) => o.id),
+              choiceLabels: Object.fromEntries(
+                subActorOptions.map((o) => [o.id, o.label]),
+              ),
+            },
+          ]
+        : []),
     ],
     /* eslint-disable react-hooks/exhaustive-deps */
     [
@@ -1017,6 +1054,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       ruleOptions,
       scenarioOptions,
       actorOptions,
+      subActorOptions,
       CAUSE_LABELS.join("|"),
     ],
     /* eslint-enable react-hooks/exhaustive-deps */
@@ -1086,6 +1124,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     if (filters.scenario?.length && !filters.scenario.includes(d.scenarioLabel))
       return false;
     if (filters.actor?.length && !filters.actor.includes(d.actorLabel))
+      return false;
+    if (
+      filters.subActor?.length &&
+      !trialMatchesSubActor(subNamesByTask.get(t.id) || [], filters.subActor)
+    )
       return false;
     if (
       filters.subGoal?.length &&
@@ -2746,6 +2789,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     }
                     columns={visibleColumns}
                     env={env}
+                    envState={envState}
                     onToggle={toggle}
                     onToggleAll={() =>
                       setSelected((prev) =>
@@ -3637,6 +3681,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           ) : null,
                         ...taskToVoiceData(openTask, {
                           env,
+                          envState,
                           voice: true,
                           provider: envState?.agent?.values?.provider || null,
                           textRehearsal: isTextRehearsal(env, envState?.agent),

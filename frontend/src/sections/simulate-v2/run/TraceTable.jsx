@@ -281,8 +281,8 @@ const failSubGoalOf = (task, env) => {
   roll-up: one failed critical sub-goal fails it, an unsure critical one makes
   it inconclusive, supporting misses only lower the score.
 */
-function subGoalStatuses(task, env) {
-  return subGoalResultsOf(task, env);
+function subGoalStatuses(task, env, envState) {
+  return subGoalResultsOf(task, env, envState);
 }
 
 /*
@@ -533,6 +533,8 @@ export default function TraceTable({
   groupBy = "useCase",
   columns,
   env,
+  /* The environment's state — the cast decides which sub-goals apply. */
+  envState,
   onRerunEval,
   onHideEval,
   onEditEval,
@@ -914,7 +916,12 @@ export default function TraceTable({
                     {`${((t.durationMs || 0) / 1000).toFixed(1)}s ${env?.surface === "voice" ? "call" : "conversation"}`}
                   </Typography>
                 </Stack>
-                <SubGoalsSummary task={t} env={env} basis={gradingBasis} />
+                <SubGoalsSummary
+                  task={t}
+                  env={env}
+                  envState={envState}
+                  basis={gradingBasis}
+                />
               </Box>
             </TableCell>
           );
@@ -1403,6 +1410,7 @@ export default function TraceTable({
 TraceTable.propTypes = {
   onOpenTrace: PropTypes.func,
   gradingBasis: PropTypes.object,
+  envState: PropTypes.object,
   expandCommand: PropTypes.shape({
     open: PropTypes.bool,
     at: PropTypes.number,
@@ -2357,9 +2365,13 @@ MetricValue.propTypes = {
  * met"), the ones that weren't met listed under it, and the full checklist
  * one click away. A row that met every sub-goal stays a single line.
  */
-function SubGoalsSummary({ task, env, basis = null }) {
+function SubGoalsSummary({ task, env, envState, basis = null }) {
   const [expanded, setExpanded] = useState(false);
-  const { items: rows, rollup } = subGoalStatuses(task, env);
+  const {
+    items: rows,
+    rollup,
+    notApplicable = [],
+  } = subGoalStatuses(task, env, envState);
   if (rows.length === 0) return null;
 
   /* One line says how the sub-goals rolled up; only the ones that weren't
@@ -2367,7 +2379,8 @@ function SubGoalsSummary({ task, env, basis = null }) {
      sub-goal is one click away. */
   const met = rows.filter((r) => r.status === "met").length;
   const missed = rows.filter((r) => r.status !== "met");
-  const list = expanded ? rows : missed;
+  /* A sub-actor who didn't come in: listed with the rest, in no count. */
+  const list = expanded ? [...rows, ...notApplicable] : missed;
   const verdictIcon = {
     failed: "solar:close-linear",
     inconclusive: "solar:question-circle-linear",
@@ -2494,6 +2507,18 @@ function SubGoalsSummary({ task, env, basis = null }) {
               sx={{ color: "status.danger.fg", flexShrink: 0 }}
             />
           )}
+          {r.status === "not-applicable" && (
+            <Tooltip
+              arrow
+              title={`Not applicable — ${r.subActorName || "the sub-actor"} did not come in`}
+            >
+              <Iconify
+                icon="solar:minus-circle-linear"
+                width={12}
+                sx={{ color: "text.disabled", flexShrink: 0 }}
+              />
+            </Tooltip>
+          )}
           {r.status === "inconclusive" && (
             <Tooltip arrow title="Unmeasured — the grader couldn't tell">
               <Iconify
@@ -2511,6 +2536,7 @@ function SubGoalsSummary({ task, env, basis = null }) {
 SubGoalsSummary.propTypes = {
   task: PropTypes.object,
   env: PropTypes.object,
+  envState: PropTypes.object,
   basis: PropTypes.object,
 };
 

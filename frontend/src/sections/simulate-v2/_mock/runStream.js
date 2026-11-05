@@ -685,14 +685,17 @@ export function buildRun({
        otherwise one of the environment's actors joins about one in four.
        Picked by hash, not by the run's random stream, so adding actors never
        reshuffles the rest of the run. */
+    /* Caller-side people are sub-actors, with lines of their own
+       (subActors.js); only world actors get a step here. */
+    const worldActors = actors.filter((a) => a.side !== "caller");
     const ownCast = (sc.actors || [])
-      .map((id) => actors.find((a) => a.id === id))
+      .map((id) => worldActors.find((a) => a.id === id))
       .filter(Boolean);
     const actorHash = hashSeed(`${sc.id}:actor`);
     const actor =
       ownCast[0] ||
-      (actors.length && actorHash % 4 === 0
-        ? actors[actorHash % actors.length]
+      (worldActors.length && actorHash % 4 === 0
+        ? worldActors[actorHash % worldActors.length]
         : null);
     if (actor) {
       /* When they come in is who they are: someone present speaks from the

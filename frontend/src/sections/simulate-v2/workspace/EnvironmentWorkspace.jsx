@@ -3738,11 +3738,15 @@ export default function EnvironmentWorkspace() {
           requestSave(after, note);
         }}
       />
-      {nextStep && (
-        <Box sx={{ px: 3, pt: 1.5 }}>
-          <NextStepBanner {...nextStep} />
-        </Box>
-      )}
+      {/* On Overview its own Connect card says the same thing. */}
+      {nextStep &&
+        !(
+          activeTab === "overview" && nextStep.actionLabel === "Open Overview"
+        ) && (
+          <Box sx={{ px: 3, pt: 1.5 }}>
+            <NextStepBanner {...nextStep} />
+          </Box>
+        )}
       {/* The world's release: a newer one to review, or a withdrawn/retired notice. */}
       {(() => {
         if (readOnlyEnv || viewingOlder) return null;

@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  callStatusOf,
   clock,
   didLineOf,
   didOf,
+  durationLabel,
+  fullAnswerOf,
+  handoffMessageOf,
   kvOf,
   participantsOf,
+  rawEventsOf,
   replyOf,
   resultSentenceOf,
+  spanLabelOf,
   summaryOf,
   toolCallsOf,
+  toolDurationOf,
+  tokensOf,
+  workerJsonOf,
 } from "../participants";
 
 const squad = (extra = {}) => ({
@@ -372,5 +381,140 @@ describe("participantsOf", () => {
       expect(r.summary).toMatch(/\(timed out\)/);
       expect(r.duration).toBeGreaterThan(gone.endedAt);
     });
+  });
+});
+
+describe("engineer detail", () => {
+  it("carries model, order and seed on every worker", () => {
+    const a = squad();
+    a.definition.members[1].model = "gpt-4o";
+    a.definition.members[2].model = { name: "gpt-4.1" };
+    const ws = all(a, "passed").flatMap((p) => p.workers);
+    expect(ws.find((w) => w.id === "refunds")?.model).toBe("gpt-4o");
+    expect(ws.find((w) => w.id === "escalations")?.model).toBe("gpt-4.1");
+    expect(ws.every((w) => w.order && w.seed)).toBe(true);
+  });
+  it("words the hand-off message from the worker's tools", () => {
+    const w = {
+      state: "returned",
+      order: 9891,
+      calls: [
+        { name: "check_return_eligibility" },
+        { name: "lookup_order" },
+        { name: "lookup_order" },
+      ],
+    };
+    expect(handoffMessageOf(w)).toBe(
+      "Check return eligibility and look up the order for order 9891. Reply with eligibility and days left and the order status and item count.",
+    );
+    expect(handoffMessageOf({ state: "unobserved", calls: [] })).toBeNull();
+    expect(handoffMessageOf({ state: "returned", calls: [] })).toMatch(
+      /^Handle the caller's request/,
+    );
+  });
+  it("gives the full answer, or none after a timeout", () => {
+    const w = {
+      state: "returned",
+      calls: [
+        {
+          name: "check_return_eligibility",
+          input: { order_id: 9891 },
+          output: { status: "eligible", days_left: 13 },
+        },
+        { name: "issue_refund", blocked: true, output: { status: "blocked" } },
+      ],
+    };
+    const text = fullAnswerOf(w);
+    expect(text.split("\n")[0]).toBe(resultSentenceOf(w));
+    expect(text).toContain("Checked return eligibility — Status: eligible");
+    expect(text).toContain("Wasn't allowed to issue the refund — outside");
+    expect(fullAnswerOf({ state: "timeout", calls: [] })).toBe(
+      "No answer — timed out after 30.0 s",
+    );
+    expect(fullAnswerOf({ state: "unobserved" })).toBeNull();
+  });
+  it("times and states each call", () => {
+    const done = { id: "a", output: { status: "ok" } };
+    expect(toolDurationOf(done)).toBe(toolDurationOf({ ...done }));
+    expect(toolDurationOf(done)).toBeGreaterThanOrEqual(90);
+    expect(toolDurationOf({ id: "b", output: null })).toBeNull();
+    expect(toolDurationOf({ id: "c", blocked: true, output: {} })).toBeLessThan(
+      90,
+    );
+    expect(durationLabel(180)).toBe("180 ms");
+    expect(durationLabel(1250)).toBe("1.3 s");
+    expect(durationLabel(null)).toBe("—");
+    expect(callStatusOf(done)).toEqual({ kind: "ok", text: "ok" });
+    expect(callStatusOf({ blocked: true }).kind).toBe("error");
+    expect(callStatusOf({ output: null })).toEqual({
+      kind: "none",
+      text: "no response",
+    });
+  });
+  it("counts tokens deterministically", () => {
+    const w = { seed: "s1:refunds", state: "returned", calls: [{}, {}] };
+    expect(tokensOf(w)).toBe(tokensOf({ ...w }));
+    expect(tokensOf(w)).toBeGreaterThan(800);
+    expect(tokensOf({ state: "unobserved" })).toBeNull();
+  });
+  it("labels a worker's span", () => {
+    expect(spanLabelOf({ delegatedAt: 2.4, endedAt: 6.4 })).toBe(
+      "0:02 → 0:06 · 4.0 s",
+    );
+    expect(spanLabelOf({ delegatedAt: null, endedAt: null })).toBeNull();
+  });
+  it("builds a worker's JSON record", () => {
+    const p = all(squad(), "passed").find((x) => x.workers.length);
+    const w = p.workers[0];
+    const j = workerJsonOf(w);
+    expect(Object.keys(j)).toEqual([
+      "id",
+      "name",
+      "model",
+      "task",
+      "handoff_message",
+      "calls",
+      "answer",
+    ]);
+    expect(j.calls).toHaveLength(w.calls.length);
+    expect(j.calls[0]).toHaveProperty("duration_ms");
+    expect(JSON.parse(JSON.stringify(j))).toEqual(j);
+  });
+  it("lists every event in time order, workers under their hand-off", () => {
+    const ps = all(squad4(), "failed");
+    const timedOut = ps.find((p) =>
+      p.workers.some((w) => w.state === "timeout"),
+    );
+    const p = ps.find((x) => x.workers.length >= 2) || timedOut;
+    const ev = rawEventsOf(p);
+    expect(ev[0].type).toBe("Message");
+    expect(ev[ev.length - 1].type).toBe("Reply");
+    expect(ev.map((e) => e.at)).toEqual(
+      [...ev.map((e) => e.at)].sort((a, b) => a - b),
+    );
+    const types = new Set(ev.map((e) => e.type));
+    expect(types.has("Hand-off")).toBe(true);
+    expect(ev.filter((e) => e.type === "Hand-off")).toHaveLength(
+      p.workers.length,
+    );
+    expect(
+      ev.filter((e) => e.type === "Tool call").every((e) => e.depth === 1),
+    ).toBe(true);
+    expect(
+      ev.filter((e) => e.type === "Hand-off").every((e) => e.depth === 0),
+    ).toBe(true);
+    const calls = ev.filter((e) => e.type === "Tool call");
+    expect(calls).toHaveLength(
+      p.workers.reduce((n, w) => n + w.calls.length, 0),
+    );
+    if (timedOut) {
+      const t = rawEventsOf(timedOut).filter((e) => e.type === "Timed out");
+      expect(t).toHaveLength(1);
+      expect(t[0].text).toBe("No answer — timed out after 30.0 s");
+    }
+  });
+  it("gives no raw events for an unobserved squad", () => {
+    expect(rawEventsOf(null)).toEqual([]);
+    expect(rawEventsOf({ observed: false })).toEqual([]);
   });
 });

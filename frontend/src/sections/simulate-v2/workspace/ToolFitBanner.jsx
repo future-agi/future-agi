@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Alert, AlertTitle, Button, Typography } from "@mui/material";
+import { useState } from "react";
+import { Alert, AlertTitle, Box, Button, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { currentAgentVersion } from "../_mock/versions";
 import { latestEnvVersion, scenariosCalling, toolFit } from "../_mock/toolFit";
@@ -30,6 +31,8 @@ export default function ToolFitBanner({
   deferToCard = false,
 }) {
   const rebuild = useRebuildForAgent(env, envState, patch);
+  /* The tool names stay folded: the count in the title is the message. */
+  const [showTools, setShowTools] = useState(false);
   const agentV = currentAgentVersion(envState);
   if (!agentV) return null;
 
@@ -118,21 +121,35 @@ export default function ToolFitBanner({
               {`Environment ${envLabelOf(env, envState, latest.label)} already answers the new arguments; switch to it to run ${agentV.label}.`}
             </>
           )
-        ) : latestFits ? (
-          <>
-            <ToolList tools={added} /> {added.length === 1 ? "is" : "are"} new
-            in {agentV.label}. Environment{" "}
-            {envLabelOf(env, envState, latest.label)} already answers{" "}
-            {n === 1 ? "it" : "them"} — switch to it for a clean run of{" "}
-            {agentV.label}.
-          </>
         ) : (
           <>
-            <ToolList tools={added} /> {added.length === 1 ? "is" : "are"} new
-            in {agentV.label}. Rebuild so the world learns{" "}
-            {added.length === 1 ? "it" : "them"} — until then, scenarios where{" "}
-            {agentV.label} calls {added.length === 1 ? "it" : "them"} here get
-            no answer and come back not measured.
+            {latestFits
+              ? `Environment ${envLabelOf(env, envState, latest.label)} already answers ${n === 1 ? "it" : "them"}.`
+              : `Scenarios that call ${added.length === 1 ? "it" : "them"} come back unmeasured until you rebuild.`}{" "}
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setShowTools((o) => !o)}
+              sx={{
+                ml: 0.5,
+                height: 20,
+                minWidth: 0,
+                px: 0.75,
+                fontSize: 11,
+                color: "text.secondary",
+                borderColor: "divider",
+                verticalAlign: "baseline",
+              }}
+            >
+              {showTools
+                ? "Hide tools"
+                : `Show ${added.length === 1 ? "tool" : `${added.length} tools`}`}
+            </Button>
+            {showTools && (
+              <Box sx={{ mt: 0.75 }}>
+                <ToolList tools={added} />
+              </Box>
+            )}
           </>
         )}
       </Typography>

@@ -353,6 +353,10 @@ const ioOf = (name, order, seed) => {
   };
 };
 
+/* A member's model, whether the definition spells it "gpt-4o" or { name }. */
+const modelOf = (m) =>
+  (typeof m.model === "string" ? m.model : m.model?.name) || null;
+
 /* One call from a worker's own tools — a lookup only when it has nothing else.
    A tool several members share may go to any of them. */
 const ownCallsOf = (m, key) => {
@@ -444,6 +448,9 @@ export const participantsOf = ({ agent, task }) => {
       id: m.id,
       name: m.name,
       wid: `run/${m.id}`,
+      model: modelOf(m),
+      order,
+      seed: `${seed}:${m.id}`,
       task: `Handle the caller's request for ${(m.role || m.name).toLowerCase()} on order ${order}.`,
     };
     if (!observed)
@@ -637,4 +644,197 @@ export const participantsOf = ({ agent, task }) => {
       boundary: c.boundary,
     })),
   };
+};
+
+/* ── Engineer detail: the exact words, sizes and timings behind each row ── */
+
+export const TIMEOUT_S = 30;
+export const TRACES_SOON =
+  "Coming soon — linking a tool call to its span (TH-9024)";
+
+/* What the coordinator asks for, in the imperative, and what to reply with. */
+const askOf = (name) => {
+  if (isHandoff(name)) return "transfer the call to a person";
+  const [verb, rest] = phraseOf(name, 1);
+  return (verb ? `${verb} ${rest}` : rest).trim();
+};
+const replyWithOf = (name) =>
+  /refund/i.test(name)
+    ? "the refund amount and status"
+    : /eligib/i.test(name)
+      ? "eligibility and days left"
+      : /label/i.test(name)
+        ? "the label ID"
+        : isHandoff(name)
+          ? "the queue it went to"
+          : /shipment|delivery/i.test(name)
+            ? "the delivery status and arrival day"
+            : /address|cancel/i.test(name)
+              ? "confirmation of the change"
+              : /lookup|status|find|get/i.test(name)
+                ? "the order status and item count"
+                : "the result";
+
+/**
+ * The exact text the coordinator sent a worker, built from the tools it was
+ * given:
+ *   "Check return eligibility and look up the order for order 9891. Reply
+ *    with eligibility and days left and the order status and item count."
+ * Null when the worker's events were not recorded.
+ */
+export const handoffMessageOf = (w) => {
+  if (!w || w.state === "unobserved") return null;
+  const names = [...new Set((w.calls || []).map((c) => c.name))];
+  const order = w.order != null ? ` order ${w.order}` : "";
+  if (!names.length)
+    return `Handle the caller's request on${order || " this call"}. Reply with one sentence on what you did.`;
+  const acts = names.map(askOf).map((s, i) => (i ? s : capital(s)));
+  const list =
+    acts.length > 1
+      ? `${acts.slice(0, -1).join(", ")} and ${acts[acts.length - 1]}`
+      : acts[0];
+  const reply = names.map(replyWithOf);
+  const replyList = [...new Set(reply)].join(" and ");
+  return `${list} for${order || " this call"}. Reply with ${replyList}.`;
+};
+
+/**
+ * The worker's raw return text — the one-line result plus a line per finished
+ * call. A worker that timed out has no answer.
+ */
+export const fullAnswerOf = (w) => {
+  if (!w || w.state === "unobserved") return null;
+  if (w.state === "timeout")
+    return `No answer — timed out after ${TIMEOUT_S.toFixed(1)} s`;
+  const lines = [resultSentenceOf(w)];
+  const calls = w.calls || [];
+  if (calls.length) lines.push("");
+  calls.forEach((c) => {
+    if (c.blocked)
+      lines.push(`${didOf(c.name, { blocked: true })} — outside my tools.`);
+    else if (c.output)
+      lines.push(
+        `${didOf(c.name)} — ${kvOf(c.output)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ")}.`,
+      );
+    else lines.push(`${didOf(c.name, { attempt: true })} — no response.`);
+  });
+  return lines.join("\n");
+};
+
+/** Milliseconds a call took; null when it never answered. */
+export const toolDurationOf = (call) => {
+  if (!call || (call.output == null && !call.blocked)) return null;
+  const h = hashSeed(`${call.id}:ms`);
+  return call.blocked ? 8 + (h % 40) : 90 + (h % 760);
+};
+
+/** "180 ms" · "1.2 s" · "—". */
+export const durationLabel = (ms) =>
+  ms == null ? "—" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+
+/** How a call ended: ok, an error with its message, or no response. */
+export const callStatusOf = (call) => {
+  if (call?.blocked)
+    return {
+      kind: "error",
+      text: "error: blocked — outside this worker's tools",
+    };
+  if (call?.output == null) return { kind: "none", text: "no response" };
+  return { kind: "ok", text: "ok" };
+};
+
+/** Tokens a worker used, deterministic from its seed; null when unobserved. */
+export const tokensOf = (w) => {
+  if (!w || w.state === "unobserved") return null;
+  const h = hashSeed(`${w.seed || w.id}:tokens`);
+  return 520 + (h % 900) + 160 * (w.calls || []).length;
+};
+
+/** "0:02 → 0:06 · 4.0 s" — when a worker started and finished. */
+export const spanLabelOf = (w) =>
+  w?.delegatedAt == null || w?.endedAt == null
+    ? null
+    : `${clock(w.delegatedAt)} → ${clock(w.endedAt)} · ${(w.endedAt - w.delegatedAt).toFixed(1)} s`;
+
+/** The worker's whole record, as it is copied to the clipboard. */
+export const workerJsonOf = (w) => ({
+  id: w.id,
+  name: w.name,
+  model: w.model ?? null,
+  task: w.task,
+  handoff_message: handoffMessageOf(w),
+  calls: (w.calls || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    input: c.input ?? null,
+    output: c.output ?? null,
+    duration_ms: toolDurationOf(c),
+    status: callStatusOf(c).text,
+  })),
+  answer: fullAnswerOf(w),
+});
+
+/**
+ * Every event in time order for the Raw events view:
+ *   { key, at, actor, type, depth, text?, input?, output?, duration?, status? }
+ * type: Caller · Hand-off · Tool call · Answer · Timed out · Reply. Worker
+ * events sit one level under their hand-off. Empty when no worker's events
+ * were recorded.
+ */
+export const rawEventsOf = (p) => {
+  if (!p || !p.observed) return [];
+  const out = [
+    {
+      key: "caller",
+      at: 0,
+      actor: "Caller",
+      type: "Message",
+      depth: 0,
+      text: p.request,
+    },
+  ];
+  p.workers.forEach((w) => {
+    out.push({
+      key: `handoff-${w.id}`,
+      at: w.delegatedAt,
+      actor: p.coordinator.name,
+      type: "Hand-off",
+      depth: 0,
+      to: w.name,
+      text: handoffMessageOf(w),
+    });
+    w.calls.forEach((c) =>
+      out.push({
+        key: c.id,
+        at: c.at,
+        actor: w.name,
+        type: "Tool call",
+        depth: 1,
+        tool: c.name,
+        input: c.input ?? null,
+        output: c.output ?? null,
+        duration: toolDurationOf(c),
+        status: callStatusOf(c),
+      }),
+    );
+    out.push({
+      key: `end-${w.id}`,
+      at: w.endedAt,
+      actor: w.name,
+      type: w.state === "timeout" ? "Timed out" : "Answer",
+      depth: 1,
+      text: fullAnswerOf(w),
+    });
+  });
+  out.push({
+    key: "reply",
+    at: p.duration ?? 1.8,
+    actor: p.coordinator.name,
+    type: "Reply",
+    depth: 0,
+    text: p.reply,
+  });
+  return out.sort((a, b) => a.at - b.at);
 };

@@ -13,8 +13,6 @@ import {
   TextField,
   MenuItem,
   Chip,
-  Switch,
-  FormControlLabel,
   Menu,
 } from "@mui/material";
 import CopyCommandButton from "../components/CopyCommandButton";
@@ -24,33 +22,35 @@ import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
 import { stampNewBatch } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
-import SideDrawer from "../components/SideDrawer";
 import { textTone } from "../components/textTone";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { envChangePatch } from "../_mock/versions";
-import { sideEffectOf } from "../_mock/toolEnv";
 import {
   ACTOR_LIBRARY,
-  ENTRY_KINDS,
-  PRESSURE_KINDS,
-  MODALITIES,
+  SIDES,
+  NOT_A_WORLD_ACTION,
   actorsOf,
   castOf,
+  castBySide,
+  sideOf,
+  roleOf,
+  arrivalLineOf,
+  actorActionsOf,
+  actorViewOf,
   getPressure,
   getEntry,
-  BEHAVIOURS,
-  FALLBACKS,
   createActorPatch,
   relationsOf,
-  actorContextOf,
   actorCli,
-  ACTOR_KINDS,
   actorKindOf,
   primaryActorOf,
   actorEditPatch,
   resetActorPatch,
 } from "../_mock/actors";
+import { callerCastOf, scenarioCountsByActor } from "../_mock/subActors";
+import ActorEditor from "./ActorEditor";
+import ActorSees from "./ActorSees";
 import { SectionCard, EmptyState } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
 
@@ -218,6 +218,70 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     );
   };
   const reset = (id) => patch(resetActorPatch(envState, id));
+  /* Every id in use, so a new actor's id is checked against all of them. */
+  const takenIds = [
+    ...library.map((a) => a.id),
+    ...cast,
+    ...(envState.customActors || []).map((a) => a.id),
+  ];
+  const bySide = castBySide(inCast);
+  /* How many scenarios include each sub-actor (the caller-side group). */
+  const subActorUse = useMemo(
+    () =>
+      scenarioCountsByActor(
+        envState.scenarios || [],
+        callerCastOf(env, envState),
+        env,
+      ),
+    [env, envState],
+  );
+  const [addAnchor, setAddAnchor] = useState(null);
+  /* Actors are read from the environment; "loading" and "failed" are the
+     states the card has to be able to say. */
+  const loadState = envState.actorsLoad || "ready";
+
+  /* One actor's row, with what it takes to edit, reset, accept or remove it. */
+  const renderRow = (a) => (
+    <Box key={a.id} sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+      <ActorRow
+        actor={a}
+        env={env}
+        envState={envState}
+        cast={inCast}
+        proposed={!locked && unreviewed.includes(a.id)}
+        scenarioCount={
+          sideOf(a) === "caller" ? subActorUse.get(a.id) ?? 0 : null
+        }
+        onAccept={() =>
+          patch({
+            actorsReviewed: [...(envState.actorsReviewed || []), a.id],
+          })
+        }
+        onEdit={locked ? null : () => setEditing(a)}
+        onReset={locked || !a.edited ? null : () => reset(a.id)}
+        onBranches={locked ? null : () => proposeBranches(a)}
+        inLibrary={
+          !a.custom || a.fromLibrary || teamLibrary.some((x) => x.id === a.id)
+        }
+        onSaveToLibrary={
+          locked || !a.custom || a.fromLibrary ? null : () => saveToLibrary(a)
+        }
+        action={
+          !locked && (
+            <Tooltip arrow title="Remove from this environment">
+              <IconButton size="small" onClick={() => drop(a.id)}>
+                <Iconify
+                  icon="solar:trash-bin-trash-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary" }}
+                />
+              </IconButton>
+            </Tooltip>
+          )
+        }
+      />
+    </Box>
+  );
 
   return (
     <Box sx={{ p: 2 }}>
@@ -232,11 +296,20 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           <Typography
             sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}
           >
-            Every simulated person in this world, the customer included — what
-            each knows, when they join and what they&apos;re allowed to do. A
-            persona is how one of them behaves.
+            Everyone simulated in this world, the customer included. Your
+            agent&apos;s own workers aren&apos;t actors.
           </Typography>
         </Box>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() =>
+            navigate(`${paths.dashboard.simulate.environments}?tab=personas`)
+          }
+          sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+        >
+          Personas
+        </Button>
         <CopyCommandButton command={actorCli.list(env)} />
         {!locked && notInCast.length > 0 && (
           <>
@@ -346,174 +419,142 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           </>
         )}
         {!locked && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() =>
-              setEditing({
-                kind: "person",
-                entry: "present",
-                pressure: "competing",
-                name: "",
-                goal: "",
-                blurb: "",
-                traits: [],
-                modalities: [env.surface],
-              })
-            }
-            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-            sx={{ flexShrink: 0 }}
-          >
-            Create actor
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={(e) => setAddAnchor(e.currentTarget)}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+              sx={{ flexShrink: 0 }}
+            >
+              Add actor
+            </Button>
+            <Menu
+              anchorEl={addAnchor}
+              open={!!addAnchor}
+              onClose={() => setAddAnchor(null)}
+              slotProps={{ paper: { sx: { width: 320 } } }}
+            >
+              {[
+                [
+                  "caller",
+                  "Someone nearby, who takes the phone, or a second person in the chat",
+                ],
+                [
+                  "world",
+                  "A manager who approves, a teammate on Slack, another company's system",
+                ],
+              ].map(([side, note]) => (
+                <MenuItem
+                  key={side}
+                  onClick={() => {
+                    setAddAnchor(null);
+                    setEditing({ side });
+                  }}
+                  sx={{ display: "block", whiteSpace: "normal" }}
+                >
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {SIDES.find((x) => x.id === side).label}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {note}
+                  </Typography>
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
         )}
       </Stack>
 
-      {/* The one thing a reader has to leave with. */}
-      <Box
-        sx={{
-          p: 1.75,
-          mb: 2,
-          borderRadius: "8px",
-          border: "1px solid",
-          borderColor: "divider",
-          bgcolor: "background.neutral",
-        }}
-      >
-        <Stack direction="row" spacing={1.25} alignItems="flex-start">
-          <Iconify
-            icon="solar:lightbulb-linear"
-            width={16}
-            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
-          />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            <Box
-              component="span"
-              sx={{ fontWeight: 600, color: "text.primary" }}
-            >
-              Actors and personas.
-            </Box>{" "}
-            An actor is any simulated person here, the customer included; a
-            persona is how one of them behaves — impatient, terse, in Spanish.
-            Your agent&apos;s own sub-agents aren&apos;t actors.{" "}
-            <Box
-              component="span"
-              {...clickable(
-                () =>
-                  navigate(
-                    `${paths.dashboard.simulate.environments}?tab=personas`,
-                  ),
-                { role: "link" },
-              )}
-              sx={{
-                ...focusRing,
-                color: "primary.main",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              See personas
-            </Box>
-          </Typography>
-        </Stack>
-      </Box>
-
       <SectionCard
-        title={`In this environment (${inCast.length + 1})`}
+        title={`Actors (${inCast.length + 1})`}
         subtitle={
-          unreviewed.length
-            ? `${unreviewed.length} proposed by the builder — check what each knows and can do, then accept.`
-            : "Injected into every run, at the version pinned here"
+          unreviewed.length ? `${unreviewed.length} to review` : "In every run"
         }
         sx={{ mb: 2 }}
       >
-        {/* The customer is an actor too: the one each scenario's task belongs to. */}
-        <Stack
-          direction="row"
-          spacing={1.5}
-          alignItems="center"
-          sx={{
-            px: 2.5,
-            py: 1.25,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Iconify
-            icon="solar:user-speak-rounded-linear"
-            width={16}
-            sx={{ color: "text.secondary", flexShrink: 0 }}
-          />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              Customer
-            </Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.secondary" }}
-            >
-              Starts the conversation · has the scenario&apos;s task · its
-              persona sets how it behaves
-            </Typography>
-          </Box>
+        {loadState === "loading" && (
           <Typography
-            sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+            sx={{ typography: "s2", color: "text.secondary", px: 2.5, py: 1.5 }}
           >
-            present from the start
+            Loading actors…
           </Typography>
-        </Stack>
-        {inCast.length === 0 ? (
-          <EmptyState
-            icon="solar:users-group-two-rounded-linear"
-            title="No actors yet"
-            body="Without one, every run is a clean two-party conversation — which is rarely what happens in the wild."
-          />
-        ) : (
+        )}
+        {loadState === "error" && (
           <Stack
-            divider={
-              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-            }
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ px: 2.5, py: 1.25 }}
           >
-            {inCast.map((a) => (
-              <ActorRow
-                key={a.id}
-                actor={a}
-                proposed={!locked && unreviewed.includes(a.id)}
-                onAccept={() =>
-                  patch({
-                    actorsReviewed: [...(envState.actorsReviewed || []), a.id],
-                  })
-                }
-                onEdit={locked ? null : () => setEditing(a)}
-                onReset={locked || !a.edited ? null : () => reset(a.id)}
-                onBranches={locked ? null : () => proposeBranches(a)}
-                inLibrary={
-                  !a.custom ||
-                  a.fromLibrary ||
-                  teamLibrary.some((x) => x.id === a.id)
-                }
-                onSaveToLibrary={
-                  locked || !a.custom || a.fromLibrary
-                    ? null
-                    : () => saveToLibrary(a)
-                }
-                action={
-                  !locked && (
-                    <Tooltip arrow title="Remove from this environment">
-                      <IconButton size="small" onClick={() => drop(a.id)}>
-                        <Iconify
-                          icon="solar:trash-bin-trash-linear"
-                          width={16}
-                          sx={{ color: "text.tertiary" }}
-                        />
-                      </IconButton>
-                    </Tooltip>
-                  )
-                }
-              />
-            ))}
+            <Typography
+              sx={{ typography: "s2", color: "status.danger.fg", flex: 1 }}
+            >
+              Couldn&apos;t load actors.
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => patch({ actorsLoad: undefined })}
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Try again
+            </Button>
           </Stack>
+        )}
+        {loadState === "ready" && (
+          <>
+            <GroupHeader
+              title={SIDES[0].label}
+              count={bySide.caller.length + 1}
+            />
+            {/* The customer is an actor too: the one each scenario's task belongs to. */}
+            <Stack
+              direction="row"
+              spacing={1.5}
+              alignItems="center"
+              sx={{
+                px: 2.5,
+                py: 1.25,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Iconify
+                icon="solar:user-speak-rounded-linear"
+                width={16}
+                sx={{ color: "text.secondary", flexShrink: 0 }}
+              />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  Customer
+                </Typography>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.secondary" }}
+                >
+                  Has the scenario&apos;s task · behaves as its persona
+                </Typography>
+              </Box>
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+              >
+                From the start
+              </Typography>
+            </Stack>
+            {bySide.caller.map((a) => renderRow(a))}
+            <GroupHeader title={SIDES[1].label} count={bySide.world.length} />
+            {bySide.world.length === 0 ? (
+              <EmptyState
+                icon="solar:users-group-two-rounded-linear"
+                title="No one in the world yet"
+                body="A manager who approves, a teammate on Slack, another company's system — add one and see what it sees."
+              />
+            ) : (
+              bySide.world.map((a) => renderRow(a))
+            )}
+          </>
         )}
       </SectionCard>
 
@@ -540,7 +581,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               sx={{ width: 260 }}
             >
               <MenuItem value="caller" sx={{ typography: "s2" }}>
-                The caller (the scenario&apos;s persona)
+                The caller
               </MenuItem>
               {inCast.map((a) => (
                 <MenuItem key={a.id} value={a.id} sx={{ typography: "s2" }}>
@@ -549,7 +590,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               ))}
             </TextField>
           }
-          subtitle="Who can reach whom in a run. Everyone acts on one shared world; an activated actor never sees the hidden scenario."
+          subtitle="Who can reach whom in a run"
           sx={{ mb: 2 }}
         >
           <Box>
@@ -606,6 +647,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         env={env}
         envState={envState}
         cast={inCast}
+        takenIds={takenIds.filter((id) => id !== editing?.id)}
       />
     </Box>
   );
@@ -622,6 +664,9 @@ ActorsPanel.propTypes = {
 
 function ActorRow({
   actor,
+  env,
+  envState,
+  cast = [],
   action,
   onEdit,
   onReset,
@@ -630,10 +675,15 @@ function ActorRow({
   onAccept,
   inLibrary = true,
   onSaveToLibrary = null,
+  scenarioCount = null,
 }) {
   const [open, setOpen] = useState(false);
   const pressure = getPressure(actor.pressure);
   const entry = getEntry(actor.entry);
+  /* When they come in, as this side says it. */
+  const comes = arrivalLineOf(actor) || entry.label.toLowerCase();
+  const actions = actorActionsOf(actor, env, envState);
+  const view = actorViewOf(actor, { env, envState, cast });
 
   return (
     <Box>
@@ -672,11 +722,17 @@ function ActorRow({
             <Typography noWrap sx={{ typography: "s2_1", fontWeight: 500 }}>
               {actor.name}
             </Typography>
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-            >
-              · {actor.version}
-            </Typography>
+            {/* Skip the role when the name already says it. */}
+            {!actor.name
+              .toLowerCase()
+              .includes(roleOf(actor).toLowerCase()) && (
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+              >
+                · {roleOf(actor)}
+              </Typography>
+            )}
             {proposed && (
               <Typography
                 sx={{
@@ -685,7 +741,7 @@ function ActorRow({
                   flexShrink: 0,
                 }}
               >
-                · Proposed by the builder
+                · New
               </Typography>
             )}
             {actor.kind === "external-agent" && (
@@ -693,13 +749,6 @@ function ActorRow({
                 sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
               >
                 · External agent
-              </Typography>
-            )}
-            {actor.owner === "system" && (
-              <Typography
-                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-              >
-                · built in
               </Typography>
             )}
             {actor.edited && (
@@ -745,21 +794,17 @@ function ActorRow({
               </Typography>
             )}
           </Stack>
-          {/* Role, what they know and what they may do lead; a goal of
-              their own is optional. */}
+          {/* What they know and may do is in the open row. */}
           <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-            {[
-              actor.blurb || actorKindOf(actor).label,
-              actor.knowledge?.length
-                ? `knows ${actor.knowledge.length} fact${actor.knowledge.length === 1 ? "" : "s"}`
-                : "knows only what the scenario gives them",
-              actor.actions?.length
-                ? `can ${actor.actions.join(", ")}`
-                : "no actions of their own",
-              actor.goal ? `wants: ${actor.goal}` : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+            {actor.blurb || actorKindOf(actor).label}
+            {actions.some((x) => !x.known) && (
+              <Box component="span" sx={{ color: "status.danger.fg" }}>
+                {` · ${actions
+                  .filter((x) => !x.known)
+                  .map((x) => x.name)
+                  .join(", ")}: ${NOT_A_WORLD_ACTION}`}
+              </Box>
+            )}
           </Typography>
         </Box>
 
@@ -781,10 +826,11 @@ function ActorRow({
             color: "text.tertiary",
             flexShrink: 0,
             display: { xs: "none", lg: "block" },
-            width: 118,
+            width: 150,
+            whiteSpace: "nowrap",
           }}
         >
-          {entry.label.toLowerCase()}
+          {comes.charAt(0).toUpperCase() + comes.slice(1)}
         </Typography>
         <Typography
           sx={{
@@ -794,7 +840,9 @@ function ActorRow({
             display: { xs: "none", sm: "block" },
           }}
         >
-          used by {actor.usedBy}
+          {scenarioCount == null
+            ? `Used by ${actor.usedBy}`
+            : `${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`}
         </Typography>
 
         {onEdit && (
@@ -858,24 +906,44 @@ function ActorRow({
 
       <Collapse in={open} unmountOnExit>
         <Stack spacing={1.5} sx={{ px: 2.5, pb: 2, pl: 7 }}>
+          <ActorSees view={view} name={actor.name} />
           <Box>
             <Label>What they do</Label>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               {actor.blurb}
             </Typography>
           </Box>
-          <Box>
-            <Label>What it tests</Label>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {actor.tests}
-            </Typography>
-          </Box>
+          {actor.tests && (
+            <Box>
+              <Label>What it tests</Label>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {actor.tests}
+              </Typography>
+            </Box>
+          )}
           <Box>
             <Label>When they enter</Label>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {entry.label} — {entry.blurb}
+              {sideOf(actor) === "caller" && arrivalLineOf(actor)
+                ? comes.charAt(0).toUpperCase() + comes.slice(1)
+                : `${entry.label} — ${entry.blurb}`}
             </Typography>
           </Box>
+          {sideOf(actor) === "caller" && actor.voice && (
+            <Box>
+              <Label>Voice</Label>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {[
+                  actor.voice.gender,
+                  actor.voice.age,
+                  actor.voice.accent,
+                  `loudness ${(actor.loudness || "automatic").toLowerCase()}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Typography>
+            </Box>
+          )}
           {actor.canApprove && (
             <Box>
               <Label>Approves</Label>
@@ -897,7 +965,7 @@ function ActorRow({
           <Box>
             <Label>Traits</Label>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
-              {actor.traits.map((t) => (
+              {(actor.traits || []).map((t) => (
                 <Chip
                   key={t}
                   size="small"
@@ -915,7 +983,7 @@ function ActorRow({
           <Box>
             <Label>Versions</Label>
             <Stack spacing={0.75}>
-              {actor.versions.map((v) => (
+              {(actor.versions || []).map((v) => (
                 <Stack
                   key={v.label}
                   direction="row"
@@ -947,6 +1015,9 @@ function ActorRow({
   );
 }
 ActorRow.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  cast: PropTypes.array,
   inLibrary: PropTypes.bool,
   onSaveToLibrary: PropTypes.func,
   proposed: PropTypes.bool,
@@ -956,6 +1027,7 @@ ActorRow.propTypes = {
   onEdit: PropTypes.func,
   onReset: PropTypes.func,
   onBranches: PropTypes.func,
+  scenarioCount: PropTypes.number,
 };
 
 function Label({ children }) {
@@ -976,609 +1048,30 @@ function Label({ children }) {
 }
 Label.propTypes = { children: PropTypes.node };
 
-/* ── create / edit ───────────────────────────────────────────────────────── */
-
-const formOf = (actor) => ({
-  kind: actor?.kind || "person",
-  name: actor?.name || "",
-  goal: actor?.goal || "",
-  blurb: actor?.blurb || "",
-  pressure: actor?.pressure || "competing",
-  entry: actor?.entry || "present",
-  traits: (actor?.traits || []).join(", "),
-  modalities: actor?.modalities || [],
-  activatedBy: actor?.activatedBy || "",
-  trigger: actor?.trigger || "",
-  timeoutMin: actor?.timeoutMin ?? "",
-  fallback: actor?.fallback || "silent",
-  behaviour: actor?.behaviour || "cooperative",
-  knowledge: (actor?.knowledge || []).join("\n"),
-  actions: (actor?.actions || []).join("\n"),
-  sources: actor?.sources || [],
-  tools: actor?.tools || [],
-  canApprove: !!actor?.canApprove,
-  approvalScope: actor?.approvalScope || "",
-});
-
-/*
-  What the world contract doesn't allow this actor (world.md): a write tool
-  changes the customer's records and is the agent's to run, so an actor can
-  approve it but not hold it; an outside company's agent can't authorise a
-  change here; and approving needs something that writes. Shown before
-  saving, with the way out; Save stays off until none is left.
-*/
-const permissionConflictsOf = (form, env) => {
-  const writes = (env?.tools || [])
-    .filter((t) => sideEffectOf(t) === "write")
-    .map((t) => t.name);
-  const who = form.name.trim() || "This actor";
-  const out = form.tools
-    .filter((t) => writes.includes(t))
-    .map((t) => ({
-      id: `tool-${t}`,
-      text: `${t} changes the customer's records, so only the agent can run it.${form.canApprove ? ` ${who} can approve it instead.` : ""}`,
-      fix: "Remove",
-      apply: (f) => ({ ...f, tools: f.tools.filter((x) => x !== t) }),
-    }));
-  if (form.canApprove && form.kind === "external-agent")
-    out.push({
-      id: "approve-external",
-      text: `${who} belongs to another company, so its "approved" can't authorise a change in this world.`,
-      fix: "Turn off",
-      apply: (f) => ({ ...f, canApprove: false }),
-    });
-  else if (form.canApprove && writes.length === 0)
-    out.push({
-      id: "approve-nothing",
-      text: "No tool in this world writes anything, so there is nothing to approve.",
-      fix: "Turn off",
-      apply: (f) => ({ ...f, canApprove: false }),
-    });
-  return out;
-};
-
-function ActorEditor({ actor, onClose, onSave, env, envState, cast }) {
-  const existing = !!actor?.id;
+function GroupHeader({ title, count }) {
   return (
-    <SideDrawer open={!!actor} onClose={onClose} width={480}>
-      {/* Keyed so reopening starts from what the environment has now. */}
-      {actor && (
-        <ActorForm
-          key={`${actor.id || "new"}-${actor.editedAt || ""}`}
-          actor={actor}
-          existing={existing}
-          onClose={onClose}
-          onSave={onSave}
-          env={env}
-          envState={envState}
-          cast={cast}
-        />
-      )}
-    </SideDrawer>
-  );
-}
-ActorEditor.propTypes = {
-  env: PropTypes.object,
-  envState: PropTypes.object,
-  cast: PropTypes.array,
-  actor: PropTypes.object,
-  onClose: PropTypes.func,
-  onSave: PropTypes.func,
-};
-
-function ActorForm({
-  actor,
-  existing,
-  onClose,
-  onSave,
-  env,
-  envState,
-  cast = [],
-}) {
-  const [form, setForm] = useState(() => formOf(actor));
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const toggleModality = (m) =>
-    setForm((f) => ({
-      ...f,
-      modalities: f.modalities.includes(m)
-        ? f.modalities.filter((x) => x !== m)
-        : [...f.modalities, m],
-    }));
-  const fields = {
-    ...form,
-    name: form.name.trim(),
-    goal: form.goal.trim(),
-    blurb: form.blurb.trim(),
-    traits: form.traits
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean),
-    activatedBy: form.activatedBy || null,
-    trigger: form.trigger.trim(),
-    timeoutMin: form.timeoutMin === "" ? null : Number(form.timeoutMin),
-    knowledge: form.knowledge
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean),
-    actions: form.actions
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean),
-  };
-  const toggle = (k, v) =>
-    setForm((f) => ({
-      ...f,
-      [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v],
-    }));
-  const others = cast.filter((a) => a.id !== actor?.id);
-  const tools = (env?.tools || []).map((t) => t.name);
-  const sources = (envState?.sources || []).filter(
-    (s) => s.inEnv && !s.archived,
-  );
-  const sees = actorContextOf(
-    { ...fields, name: fields.name || "This actor" },
-    envState,
-  );
-  const before = formOf(actor);
-  const dirty = JSON.stringify(form) !== JSON.stringify(before);
-  const conflicts = permissionConflictsOf(form, env);
-  const valid = !!fields.name && conflicts.length === 0;
-
-  return (
-    <Stack sx={{ height: "100%" }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={2}
-        sx={{
-          px: 2.5,
-          py: 2,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Box flex={1}>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            {existing ? actor.name : "Create actor"}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {existing
-              ? `${actor.version}${actor.edited ? " · edited here" : ""} — saved for this environment only; the library keeps ${actor.version}`
-              : "Made for this environment — added to its cast"}
-          </Typography>
-        </Box>
-        <IconButton size="small" onClick={onClose}>
-          <Iconify
-            icon="solar:close-circle-linear"
-            width={20}
-            sx={{ color: "text.tertiary" }}
-          />
-        </IconButton>
-      </Stack>
-
-      <Stack spacing={2.25} sx={{ p: 2.5, flex: 1, overflowY: "auto" }}>
-        <TextField
-          select
-          size="small"
-          label="Kind"
-          value={form.kind}
-          onChange={set("kind")}
-          fullWidth
-        >
-          {ACTOR_KINDS.filter((k) => k.id !== "sub-agent").map((k) => (
-            <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {k.label}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {k.note}
-              </Typography>
-            </MenuItem>
-          ))}
-        </TextField>
-        <TextField
-          size="small"
-          label="Name"
-          value={form.name}
-          onChange={set("name")}
-          fullWidth
-        />
-        <TextField
-          size="small"
-          label="Goal of their own (optional)"
-          value={form.goal}
-          onChange={set("goal")}
-          fullWidth
-          multiline
-          minRows={2}
-          helperText="Only if they want something besides the scenario's task. Never assumed."
-        />
-        <TextField
-          size="small"
-          label="Role"
-          value={form.blurb}
-          onChange={set("blurb")}
-          fullWidth
-          multiline
-          minRows={3}
-        />
-
-        <TextField
-          select
-          size="small"
-          label="Pressure"
-          value={form.pressure}
-          onChange={set("pressure")}
-          fullWidth
-        >
-          {PRESSURE_KINDS.map((k) => (
-            <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {k.label}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {k.blurb}
-              </Typography>
-            </MenuItem>
-          ))}
-        </TextField>
-
-        <TextField
-          select
-          size="small"
-          label="When they enter"
-          value={form.entry}
-          onChange={set("entry")}
-          fullWidth
-        >
-          {ENTRY_KINDS.map((k) => (
-            <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {k.label}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {k.blurb}
-              </Typography>
-            </MenuItem>
-          ))}
-        </TextField>
-
-        <TextField
-          select
-          size="small"
-          label="Activated by"
-          value={form.activatedBy}
-          onChange={set("activatedBy")}
-          fullWidth
-          helperText="Another actor can bring them in — a supervisor passing a request to the fraud desk."
-        >
-          <MenuItem value="" sx={{ typography: "s2" }}>
-            No one — they enter as set above
-          </MenuItem>
-          {others.map((a) => (
-            <MenuItem key={a.id} value={a.id} sx={{ typography: "s2" }}>
-              {a.name}
-            </MenuItem>
-          ))}
-        </TextField>
-        {(form.activatedBy ||
-          ["joins", "contacted", "scheduled"].includes(form.entry)) && (
-          <TextField
-            size="small"
-            label="What brings them in"
-            value={form.trigger}
-            onChange={set("trigger")}
-            fullWidth
-            placeholder="When an approval request is created"
-          />
-        )}
-        <Stack direction="row" spacing={1}>
-          <TextField
-            size="small"
-            type="number"
-            label="Answers within (min)"
-            value={form.timeoutMin}
-            onChange={set("timeoutMin")}
-            sx={{ width: 180 }}
-          />
-          <TextField
-            select
-            size="small"
-            label="If they don't answer"
-            value={form.fallback}
-            onChange={set("fallback")}
-            fullWidth
-          >
-            {FALLBACKS.map((f) => (
-              <MenuItem key={f.id} value={f.id} sx={{ typography: "s2" }}>
-                {f.label}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Stack>
-        <TextField
-          select
-          size="small"
-          label="Behaviour"
-          value={form.behaviour}
-          onChange={set("behaviour")}
-          fullWidth
-        >
-          {BEHAVIOURS.map((b) => (
-            <MenuItem key={b.id} value={b.id} sx={{ typography: "s2" }}>
-              {b.label}
-            </MenuItem>
-          ))}
-        </TextField>
-
-        <Box>
-          <Label>What they&apos;re allowed to do</Label>
-          <TextField
-            size="small"
-            value={form.actions}
-            onChange={set("actions")}
-            fullWidth
-            multiline
-            minRows={2}
-            placeholder="One per line — approve a refund up to $200, transfer to billing. Only actions the world supports."
-          />
-        </Box>
-        <Box>
-          <Label>What they know</Label>
-          <TextField
-            size="small"
-            value={form.knowledge}
-            onChange={set("knowledge")}
-            fullWidth
-            multiline
-            minRows={2}
-            placeholder="One fact per line — the deal, the amount, their own preference"
-          />
-          {sources.length > 0 && (
-            <Stack
-              direction="row"
-              spacing={0.75}
-              sx={{ mt: 1, flexWrap: "wrap", rowGap: 0.75 }}
-            >
-              {sources.map((src) => {
-                const hidden = src.visibility === "evaluator";
-                const on = form.sources.includes(src.id);
-                return (
-                  <Tooltip
-                    key={src.id}
-                    arrow
-                    title={
-                      hidden
-                        ? "Evaluator-only — an actor never gets the expected answers."
-                        : ""
-                    }
-                  >
-                    <span>
-                      <Chip
-                        size="small"
-                        label={src.name}
-                        disabled={hidden}
-                        onClick={() => toggle("sources", src.id)}
-                        sx={{
-                          color: on ? "text.primary" : "text.tertiary",
-                          border: "1px solid",
-                          borderColor: on ? "text.primary" : "divider",
-                          bgcolor: "transparent",
-                        }}
-                      />
-                    </span>
-                  </Tooltip>
-                );
-              })}
-            </Stack>
-          )}
-        </Box>
-
-        <Box>
-          <Label>What they can do</Label>
-          {tools.length > 0 && (
-            <Stack
-              direction="row"
-              spacing={0.75}
-              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
-            >
-              {tools.map((t) => {
-                const on = form.tools.includes(t);
-                const clash = on && conflicts.some((c) => c.id === `tool-${t}`);
-                return (
-                  <Chip
-                    key={t}
-                    size="small"
-                    label={t}
-                    onClick={() => toggle("tools", t)}
-                    sx={{
-                      fontFamily: "ui-monospace, Menlo, monospace",
-                      color: on ? "text.primary" : "text.tertiary",
-                      border: "1px solid",
-                      borderColor: clash
-                        ? "status.danger.border"
-                        : on
-                          ? "text.primary"
-                          : "divider",
-                      bgcolor: "transparent",
-                    }}
-                  />
-                );
-              })}
-            </Stack>
-          )}
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={form.canApprove}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, canApprove: e.target.checked }))
-                }
-              />
-            }
-            label={
-              <Typography sx={{ typography: "s2" }}>
-                Can approve requests
-              </Typography>
-            }
-          />
-          {form.canApprove && (
-            <TextField
-              size="small"
-              label="What they can approve"
-              value={form.approvalScope}
-              onChange={set("approvalScope")}
-              fullWidth
-              sx={{ mt: 1 }}
-              placeholder="Discounts up to 20%"
-            />
-          )}
-          {conflicts.length > 0 && (
-            <Stack
-              spacing={0.75}
-              sx={{
-                mt: 1.25,
-                p: 1.25,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: "status.danger.border",
-                bgcolor: "status.danger.bg",
-              }}
-            >
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                Permission conflict
-              </Typography>
-              {conflicts.map((c) => (
-                <Stack
-                  key={c.id}
-                  direction="row"
-                  alignItems="flex-start"
-                  spacing={1}
-                >
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.secondary",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                  >
-                    {c.text}
-                  </Typography>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => setForm(c.apply)}
-                    sx={{ flexShrink: 0 }}
-                  >
-                    {c.fix}
-                  </Button>
-                </Stack>
-              ))}
-            </Stack>
-          )}
-        </Box>
-
-        <Box
-          sx={{
-            p: 1.5,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
-          }}
-        >
-          <Label>{`What ${fields.name || "this actor"} sees before a run`}</Label>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {[
-              sees.facts.length
-                ? `Knows: ${sees.facts.join("; ")}`
-                : "Knows nothing beyond what it's told in the conversation",
-              sees.sources.length &&
-                `Reads: ${sees.sources.map((x) => x.name).join(", ")}`,
-              sees.tools.length
-                ? `Can use: ${sees.tools.join(", ")}`
-                : "Can't use any tool",
-              sees.canApprove
-                ? `Can approve: ${sees.approvalScope || "requests"}`
-                : 'Can\'t approve anything — an "approved" from them authorises nothing',
-              "Never sees the evaluator's expected answers",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </Typography>
-        </Box>
-
-        <TextField
-          size="small"
-          label="Traits"
-          value={form.traits}
-          onChange={set("traits")}
-          fullWidth
-          helperText="Comma separated — decoration on top of the goal, not a substitute for it"
-        />
-
-        <Box>
-          <Label>Modalities</Label>
-          <Stack direction="row" spacing={0.75}>
-            {MODALITIES.map((m) => {
-              const on = form.modalities.includes(m);
-              return (
-                <Chip
-                  key={m}
-                  size="small"
-                  label={m}
-                  onClick={() => toggleModality(m)}
-                  sx={{
-                    color: on ? "primary.main" : "text.tertiary",
-                    border: "1px solid",
-                    borderColor: on ? "primary.main" : "divider",
-                    bgcolor: (t) =>
-                      on ? alpha(t.palette.primary.main, 0.08) : "transparent",
-                  }}
-                />
-              );
-            })}
-          </Stack>
-        </Box>
-      </Stack>
-
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}
-      >
-        <CopyCommandButton command={actorCli.set(env, fields)} />
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {conflicts.length > 0
-            ? "Resolve the permission conflict to save"
-            : existing && dirty
-              ? "Recorded as an actors change on the next environment version"
-              : ""}
-        </Typography>
-        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
-          Cancel
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={existing ? !dirty || !valid : !valid}
-          onClick={() => onSave(actor, fields)}
-        >
-          {existing ? "Save for this environment" : "Create actor"}
-        </Button>
-      </Stack>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{
+        px: 2.5,
+        py: 0.75,
+        bgcolor: "background.neutral",
+        borderBottom: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+        {title}
+      </Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {count}
+      </Typography>
     </Stack>
   );
 }
-ActorForm.propTypes = {
-  env: PropTypes.object,
-  envState: PropTypes.object,
-  cast: PropTypes.array,
-  actor: PropTypes.object,
-  existing: PropTypes.bool,
-  onClose: PropTypes.func,
-  onSave: PropTypes.func,
+GroupHeader.propTypes = {
+  title: PropTypes.string,
+  count: PropTypes.number,
 };

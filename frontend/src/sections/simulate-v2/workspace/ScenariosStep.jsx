@@ -89,6 +89,11 @@ const SOURCE_MAP = {
 };
 import { ObjectFilterPanel } from "src/components/filter";
 import {
+  callerCastOf,
+  scenarioMatchesSubActor,
+  scenarioSubActorOptions,
+} from "../_mock/subActors";
+import {
   currentAgentVersion,
   currentEnvVersion,
   environmentVersions,
@@ -606,6 +611,11 @@ export default function ScenariosStep({
     }
     if (filters.persona?.length && !filters.persona.includes(personaFacet(r)))
       return false;
+    if (
+      filters.subActor?.length &&
+      !scenarioMatchesSubActor(r, filters.subActor, callerPool, env)
+    )
+      return false;
     if (filters.kind?.length && !filters.kind.includes(kindFacet(r)))
       return false;
     if (filters.subgoal?.length && !filters.subgoal.includes(subgoalFacet(r)))
@@ -628,6 +638,16 @@ export default function ScenariosStep({
       ].sort(),
     [selected],
   );
+  /* Sub-actors (caller side): each by name with how many scenarios include
+     them, then the simulated user alone. Not offered when none does. */
+  const callerPool = useMemo(
+    () => callerCastOf(env, envState),
+    [env, envState],
+  );
+  const subActorChoices = useMemo(
+    () => scenarioSubActorOptions(selected || [], callerPool, env),
+    [selected, callerPool, env],
+  );
   const subgoalChoices = useMemo(() => {
     const s = new Set();
     (selected || []).forEach((r) =>
@@ -649,6 +669,19 @@ export default function ScenariosStep({
         type: "enum",
         choices: personaChoices,
       },
+      ...(subActorChoices.length
+        ? [
+            {
+              value: "subActor",
+              label: "Sub-actor",
+              type: "enum",
+              choices: subActorChoices.map((o) => o.id),
+              choiceLabels: Object.fromEntries(
+                subActorChoices.map((o) => [o.id, o.label]),
+              ),
+            },
+          ]
+        : []),
       {
         value: "kind",
         label: "Kind",
@@ -681,7 +714,7 @@ export default function ScenariosStep({
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ],
-    [personaChoices, subgoalChoices, orgTags, orgGroups],
+    [personaChoices, subActorChoices, subgoalChoices, orgTags, orgGroups],
   );
 
   const shown = selected.filter((r) => {

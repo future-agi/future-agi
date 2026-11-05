@@ -96,7 +96,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
       subtitle={
         locked
           ? "Frozen so scores stay comparable. Copy it to edit."
-          : "Release checks decide when this environment is Ready."
+          : "These checks decide Ready"
       }
       action={
         <StatusBadge
@@ -237,7 +237,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
               : running
                 ? `Checking ${shown(st.version)} — this takes a few seconds and runs by itself for every new version.`
                 : st.ready
-                  ? "All five passed on this version. Lock it to freeze tasks, splits and the scorer."
+                  ? "All passed. Lock to freeze tasks, splits and the scorer."
                   : failed.length
                     ? `${failed.length} check${failed.length === 1 ? "" : "s"} failed — fix ${failed.length === 1 ? "it" : "them"}, then run the checks again.`
                     : "The checks run by themselves once this version is built. Nothing is shown as Ready until all five pass."}
@@ -311,8 +311,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
         </Typography>
         {!locked ? (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Unavailable: lock this release first. A trainer only reaches a
-            locked release, so its rewards stay comparable.
+            Lock this release first, so rewards stay comparable.
           </Typography>
         ) : (
           <RlAccess

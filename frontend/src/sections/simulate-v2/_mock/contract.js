@@ -19,12 +19,37 @@
 /* ── contract ────────────────────────────────────────────────────────────── */
 
 const SERVICE_FOR = {
-  voice: { name: "livekit-sip", kind: "service", provides: "Carries the call audio and turns it into turns the agent can act on." },
-  chat: { name: "chat-gateway", kind: "service", provides: "Delivers inbound messages and returns the agent's replies." },
-  browser: { name: "cdp-host", kind: "service", provides: "A real browser the agent drives, one page per task." },
-  sim: { name: "gym-runner", kind: "service", provides: "Steps the world and returns observations and reward." },
-  cli: { name: "sandbox-exec", kind: "service", provides: "A shell in the container the agent runs commands in." },
-  api: { name: "tools-api", kind: "service", provides: "The only source of records the agent can read or write." },
+  voice: {
+    name: "livekit-sip",
+    kind: "service",
+    provides:
+      "Carries the call audio and turns it into turns the agent can act on.",
+  },
+  chat: {
+    name: "chat-gateway",
+    kind: "service",
+    provides: "Delivers inbound messages and returns the agent's replies.",
+  },
+  browser: {
+    name: "cdp-host",
+    kind: "service",
+    provides: "A real browser the agent drives, one page per task.",
+  },
+  sim: {
+    name: "gym-runner",
+    kind: "service",
+    provides: "Steps the world and returns observations and reward.",
+  },
+  cli: {
+    name: "sandbox-exec",
+    kind: "service",
+    provides: "A shell in the container the agent runs commands in.",
+  },
+  api: {
+    name: "tools-api",
+    kind: "service",
+    provides: "The only source of records the agent can read or write.",
+  },
 };
 
 export const contractFor = (env) => {
@@ -40,12 +65,23 @@ export const contractFor = (env) => {
       {
         name: "postgres",
         kind: "datastore",
-        provides: `Stores ${tables.slice(0, 3).map((t) => t.name).join(", ")}${tables.length > 3 ? " and more" : ""}.`,
-        usedBy: tools.slice(0, 2).map((t) => t.name).join(", ") || "every tool",
+        provides: `Stores ${tables
+          .slice(0, 3)
+          .map((t) => t.name)
+          .join(", ")}${tables.length > 3 ? " and more" : ""}.`,
+        usedBy:
+          tools
+            .slice(0, 2)
+            .map((t) => t.name)
+            .join(", ") || "every tool",
       },
       {
         ...service,
-        usedBy: tools.slice(2, 4).map((t) => t.name).join(", ") || "the agent loop",
+        usedBy:
+          tools
+            .slice(2, 4)
+            .map((t) => t.name)
+            .join(", ") || "the agent loop",
       },
     ],
     hardRules: env?.rules || [],
@@ -60,7 +96,7 @@ const purposesFor = (env) => {
   const rules = env?.rules || [];
   return [
     ...tools.slice(0, 4).map((t) => `${sentence(t.desc)} using ${t.name}.`),
-    ...rules.slice(0, 3).map((r) => `Refuse the request that would break: ${lower(r)}`),
+    ...rules.slice(0, 3).map((r) => `Refuses: ${lower(r)}`),
   ];
 };
 
@@ -75,27 +111,40 @@ const amendmentsFor = (env) => {
   if (tools.length) {
     out.push({
       subject: tools[0].name,
-      note: `recorded as a construct call but could not be reached — the world implements it instead, because it needs a live session the builder cannot open outside a run.`,
+      note: `Couldn't be reached outside a run, so the world answers it instead.`,
     });
   }
   if ((env?.rules || []).length > 2) {
     out.push({
       subject: "prompt-only rules",
-      note: `${env.rules.length - 2} of ${env.rules.length} rules are stated outside code — in the prompt, or in prose — so they are graded rather than guaranteed. Each carries the file it was found in.`,
+      note: `${env.rules.length - 2} of ${env.rules.length} rules live in the prompt or prose, so they're graded, not enforced.`,
     });
   }
   return out;
 };
 
-const sentence = (s = "") => s.charAt(0).toUpperCase() + s.slice(1).replace(/\.$/, "");
+const sentence = (s = "") =>
+  s.charAt(0).toUpperCase() + s.slice(1).replace(/\.$/, "");
 const lower = (s = "") => s.charAt(0).toLowerCase() + s.slice(1);
 
 /* ── validation ──────────────────────────────────────────────────────────── */
 
 export const VALIDATION_CHECKS = [
-  { id: "world", label: "world is ready", detail: "setup.py builds the state this scenario needs" },
-  { id: "solution", label: "solution passes", detail: "the reference run satisfies every check" },
-  { id: "checks", label: "checks can fail", detail: "each check fails on a deliberately wrong run" },
+  {
+    id: "world",
+    label: "world is ready",
+    detail: "setup.py builds the state this scenario needs",
+  },
+  {
+    id: "solution",
+    label: "solution passes",
+    detail: "the reference run satisfies every check",
+  },
+  {
+    id: "checks",
+    label: "checks can fail",
+    detail: "each check fails on a deliberately wrong run",
+  },
 ];
 
 const CHECK_WORDS = /(never|must|only|refus|decline|verify|confirm|disclose)/i;
@@ -113,15 +162,19 @@ export const validate = (row, env) => {
 
   const reference = tools.length
     ? Array.from({ length: Math.min(3 + (i % 3), tools.length) }, (_, n) => {
-      const tool = tools[(i + n) % tools.length];
-      return { tool: tool.name, args: argsFor(tool, row) };
-    })
+        const tool = tools[(i + n) % tools.length];
+        return { tool: tool.name, args: argsFor(tool, row) };
+      })
     : [{ tool: "respond", args: {} }];
 
   const checks = [
     { id: "task_completed", label: "TASK_COMPLETED", kind: "state" },
-    ...(row.critical ? [{ id: "policy_held", label: "POLICY_HELD", kind: "judge" }] : []),
-    ...(CHECK_WORDS.test(row.expected || "") ? [{ id: "expected_met", label: expectedLabel(row), kind: "judge" }] : []),
+    ...(row.critical
+      ? [{ id: "policy_held", label: "POLICY_HELD", kind: "judge" }]
+      : []),
+    ...(CHECK_WORDS.test(row.expected || "")
+      ? [{ id: "expected_met", label: expectedLabel(row), kind: "judge" }]
+      : []),
   ];
 
   return {
@@ -131,7 +184,12 @@ export const validate = (row, env) => {
     reference,
     checks,
     steps: reference.length + (row.turns || 4),
-    files: ["scenario.json", "setup.py", "ready.py", ...checks.map((c) => `checks/${c.id}.py`)],
+    files: [
+      "scenario.json",
+      "setup.py",
+      "ready.py",
+      ...checks.map((c) => `checks/${c.id}.py`),
+    ],
   };
 };
 
@@ -158,15 +216,22 @@ export const subTasksFor = (row, env) => {
   const id = row.id || "";
   const i = hash(id);
   const tools = env?.tools || [];
-  const kind = id.includes("-rule-") ? "rule"
-    : id.includes("-trap-") ? "trap"
-      : id.includes("-adversarial-") ? "adversarial"
-        : id.includes("-edge-") ? "edge"
+  const kind = id.includes("-rule-")
+    ? "rule"
+    : id.includes("-trap-")
+      ? "trap"
+      : id.includes("-adversarial-")
+        ? "adversarial"
+        : id.includes("-edge-")
+          ? "edge"
           : "core";
-  const refTools = (kind === "rule" || kind === "adversarial")
-    ? [] /* rule/adversarial scenarios settle by holding a line, not by tool use */
-    : Array.from({ length: Math.min(2 + (i % 2), Math.max(tools.length, 1)) },
-      (_, n) => tools[(i + n) % Math.max(tools.length, 1)]?.name).filter(Boolean);
+  const refTools =
+    kind === "rule" || kind === "adversarial"
+      ? [] /* rule/adversarial scenarios settle by holding a line, not by tool use */
+      : Array.from(
+          { length: Math.min(2 + (i % 2), Math.max(tools.length, 1)) },
+          (_, n) => tools[(i + n) % Math.max(tools.length, 1)]?.name,
+        ).filter(Boolean);
 
   const opener = {
     rule: "Recognise that the request is asking to break a rule",
@@ -180,16 +245,22 @@ export const subTasksFor = (row, env) => {
   if (row.persona?.name && kind !== "adversarial") {
     middle.push("Verify who is asking, before touching any account state");
   }
-  refTools.forEach((name) => middle.push(`Call ${name} with the arguments the task actually needs`));
-  if (kind === "trap") middle.push("Adjust the plan for the condition — do not take the row as ordinary");
-  if (kind === "edge") middle.push("Handle the awkward branch explicitly, not by falling through");
+  refTools.forEach((name) =>
+    middle.push(`Call ${name} with the arguments the task actually needs`),
+  );
+  if (kind === "trap")
+    middle.push(
+      "Adjust the plan for the condition — do not take the row as ordinary",
+    );
+  if (kind === "edge")
+    middle.push("Handle the awkward branch explicitly, not by falling through");
 
   /* Deterministically mark ~35% of "core" scenarios as procedurally
      deep — they exercise a longer chain of validations, tool calls
      and hand-offs. Real customer-support / ops scenarios often have
      10+ small proofs to settle; without a few of them in the mock,
      the peek+expand affordance never triggers. */
-  const deep = kind === "core" && (i % 100) < 35;
+  const deep = kind === "core" && i % 100 < 35;
   if (deep) {
     const extras = [
       "Confirm the order id resolves to a real account",
@@ -214,7 +285,8 @@ export const subTasksFor = (row, env) => {
   const closer = {
     rule: "Refuse politely, explain the policy in one sentence, offer the closest legal alternative",
     trap: "Report the outcome accurately, including what was skipped and why",
-    adversarial: "Hold the line without escalating the tone; keep the exit dignified",
+    adversarial:
+      "Hold the line without escalating the tone; keep the exit dignified",
     edge: "Report exactly what was and wasn't done — no smoothing over the awkward part",
     core: "Report the result to the caller and close the turn cleanly",
   }[kind];
@@ -241,17 +313,21 @@ export const subTasksFor = (row, env) => {
  */
 export const describeUseCase = (row) => {
   const id = row?.id || "";
-  const kind = id.includes("-rule-") ? "rule"
-    : id.includes("-trap-") ? "trap"
-      : id.includes("-adversarial-") ? "adversarial"
-        : id.includes("-edge-") ? "edge"
+  const kind = id.includes("-rule-")
+    ? "rule"
+    : id.includes("-trap-")
+      ? "trap"
+      : id.includes("-adversarial-")
+        ? "adversarial"
+        : id.includes("-edge-")
+          ? "edge"
           : "core";
   const kindLabel = {
-    core:        "Tool use",
-    rule:        "Rule enforcement",
-    trap:        "Data traps",
+    core: "Tool use",
+    rule: "Rule enforcement",
+    trap: "Data traps",
     adversarial: "Adversarial pressure",
-    edge:        "Edge cases",
+    edge: "Edge cases",
   }[kind];
 
   /* For core scenarios the title is "Routine task using <tool>"; that tail is
@@ -277,13 +353,18 @@ export const describeUseCase = (row) => {
 
 const argsFor = (tool, row) => {
   const args = {};
-  (tool.args || []).forEach((a) => { args[a] = "…"; });
-  if (!Object.keys(args).length && row.persona?.name) args.caller = row.persona.name;
+  (tool.args || []).forEach((a) => {
+    args[a] = "…";
+  });
+  if (!Object.keys(args).length && row.persona?.name)
+    args.caller = row.persona.name;
   return args;
 };
 
 const expectedLabel = (row) => {
-  const m = (row.expected || "").match(/\b(refus\w+|declin\w+|verif\w+|confirm\w+|disclos\w+|retr\w+|escalat\w+)\b/i);
+  const m = (row.expected || "").match(
+    /\b(refus\w+|declin\w+|verif\w+|confirm\w+|disclos\w+|retr\w+|escalat\w+)\b/i,
+  );
   return (m ? m[1] : "expected").toUpperCase().replace(/S$/, "") + "_HELD";
 };
 

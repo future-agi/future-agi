@@ -134,9 +134,18 @@ const FIELD_NAME = {
   tier: "answers with",
   approval: "approval",
   faults: "faults",
-  goal: "goal",
-  blurb: "role",
+  goal: "wants",
+  blurb: "what they do",
   entry: "joins",
+  actions: "can do",
+  knowledge: "knows",
+  side: "side",
+  loudness: "loudness",
+  arrival: "comes in",
+  agreesTo: "may agree to",
+  keepsPrivate: "keeps to themselves",
+  handsOverWhen: "hands over when",
+  doneWhen: "is done when",
   canApprove: "can approve",
   approvalScope: "approves",
   rows: "rows",
@@ -151,7 +160,11 @@ const valueOf = (field, raw) => {
     (v && typeof v === "object" && !Array.isArray(v)
       ? nameOf(v)
       : Array.isArray(v)
-        ? `${v.length} item${v.length === 1 ? "" : "s"}`
+        ? v.length &&
+          v.every((x) => typeof x === "string") &&
+          v.join(", ").length <= 48
+          ? v.join(", ")
+          : `${v.length} item${v.length === 1 ? "" : "s"}`
         : nameOf(v))
   );
 };
