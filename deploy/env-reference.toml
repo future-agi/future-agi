@@ -1213,6 +1213,49 @@ values for these settings at startup. Deploy the backend and frontend together.
     setups = ["S", "D", "H"]
     text = "Where the sidebar's Help entry points."
 
+  [[part.section]]
+  heading = "Optional host update reporting"
+  body = '''
+Disabled by default; neither installer adds a mount or recreates an existing
+install. Run `./bin/install --host-status-help` (or
+`./deploy/setup.sh --host-status-help`) for explicit opt-in instructions.
+The host must register a dedicated public slot before overlay selection.
+`--prepare-host-status` only creates a NEW operator-owned 0755 slot directory
+under an existing trusted public parent outside the checkout; it does not
+register reporting, write status or change `.env`. Existing sources are refused
+unchanged, not repaired. The host publisher writes sanitized `status.json` as
+0644 and atomically replaces it. Never mount private updater state, retained
+environments, journals, a parent containing other slots or a Docker socket.
+
+Select [the Standalone overlay](repo:deploy/docker-compose.host-status.standalone.yml)
+after the Standalone base, or [the Distributed overlay](repo:deploy/docker-compose.host-status.distributed.yml)
+after the Distributed base (and AFTER the production overlay in production).
+Only `app` or `backend` receives the directory read-only. Missing source fails
+closed without Docker creating a root-owned directory; a missing status file
+reports unavailable without preventing app startup. Production stage,
+initialization and apply remain separate operator actions. Windows/PowerShell
+installation behavior is unchanged. Remote daemons, SELinux and rootless hosts
+require separate qualification.
+'''
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_DIR"]
+    default = "unset; required only by the optional overlay"
+    setups = ["S", "D"]
+    text = "Host-only absolute path to the registered operator-owned public slot directory, ending in its 32-hex slot ID. Mounted at `/run/futureagi-host-update` read-only with automatic source creation disabled. It is not passed into the container environment. Never point it at private updater state, an env file or a parent containing other installations. Shell exports override the selected env file; verify the effective source with the host registration."
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_SLOT"]
+    default = "empty; required only by the optional overlay"
+    setups = ["S", "D"]
+    text = "Public random 128-bit correlation slot from the host reporting registration, encoded as 32 lowercase hex characters. App/backend requires exact slot and runtime topology agreement. Production is reported by the host registration, not inferred from the app's unrelated `ENV_TYPE`; the app displays the host-reported boolean unchanged. A slot or topology mismatch returns unavailable without a snapshot; it never authorizes an update."
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_FILE"]
+    default = "empty; overlay fixes it to `/run/futureagi-host-update/status.json`"
+    setups = ["S", "D"]
+    text = "App reader setting, supplied only to Standalone app or Distributed/production backend by the overlay. Arbitrary paths are refused. No overlay means unconfigured/unavailable, not healthy. Only a sanitized public file is read; the app cannot mutate host updater state."
+
 [[part]]
 heading = "4. Advanced tuning"
 body = '''

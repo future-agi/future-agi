@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1127,
+  endpointCount: 1126,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -248,6 +248,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/api/capabilities/": ["get"],
       "/api/deployment-info/": ["get"],
       "/api/health/clickhouse/": ["get"],
+      "/api/host-update-status/": ["get"],
       "/api/public/health": ["get"],
       "/api/public/ingestion": ["post"],
       "/api/public/traces": ["get"],
@@ -895,8 +896,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
         ["post"],
-      "/simulate/api/harness-environments/{id}/verify/": ["post"],
-      "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
       "/simulate/api/harness-environments/{id}/versions/": ["get"],
       "/simulate/api/harness-environments/{id}/versions/agent/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
@@ -1648,6 +1647,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/api/capabilities/": ["get"],
   "/api/deployment-info/": ["get"],
   "/api/health/clickhouse/": ["get"],
+  "/api/host-update-status/": ["get"],
   "/api/public/health": ["get"],
   "/api/public/ingestion": ["post"],
   "/api/public/traces": ["get"],
@@ -2255,8 +2255,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
     ["post"],
-  "/simulate/api/harness-environments/{id}/verify/": ["post"],
-  "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
   "/simulate/api/harness-environments/{id}/versions/": ["get"],
   "/simulate/api/harness-environments/{id}/versions/agent/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
