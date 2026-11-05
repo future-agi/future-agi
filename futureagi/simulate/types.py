@@ -147,6 +147,31 @@ class WorkerEvent(TypedDict, total=False):
     attribution: Required[Literal["reported", "unattributed"]]
 
 
+class WorkerStep(TypedDict, total=False):
+    """One row of the Participants tab: a hand-off (with its return) or a tool call, under its parent hand-off."""
+
+    kind: Required[Literal["handoff", "tool_call"]]
+    key: Required[int]
+    parent: Required[int | None]
+    depth: Required[int]
+    worker_id: Required[str | None]
+    transfer: bool
+    handoff: WorkerEvent | None
+    returned: WorkerEvent | None
+    started_at: str | None
+    ended_at: str | None
+    parallel: bool
+    call: WorkerEvent
+
+
+class WorkerSteps(TypedDict):
+    steps: list[WorkerStep]
+    depth: int
+    parallel: int
+    overlap_unknown: bool
+    worker_depths: dict[str, int]
+
+
 class Coordinator(TypedDict):
     name: str
 

@@ -56713,7 +56713,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     CallWorkersResponse: {
-      required: ["workers", "events", "collected_at"],
+      required: [
+        "workers",
+        "events",
+        "collected_at",
+        "steps",
+        "depth",
+        "parallel",
+        "overlap_unknown",
+        "worker_depths",
+      ],
       type: "object",
       properties: {
         workers: {
@@ -56755,6 +56764,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Collected at",
           type: "string",
           minLength: 1,
+        },
+        steps: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerStep",
+          },
+        },
+        depth: {
+          title: "Depth",
+          type: "integer",
+        },
+        parallel: {
+          title: "Parallel",
+          type: "integer",
+        },
+        overlap_unknown: {
+          title: "Overlap unknown",
+          type: "boolean",
+        },
+        worker_depths: {
+          title: "Worker depths",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
         },
       },
     },
@@ -92958,6 +92992,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Attribution",
           type: "string",
           enum: ["reported", "unattributed"],
+        },
+      },
+    },
+    CallWorkerStep: {
+      required: ["kind", "key", "parent", "depth", "worker_id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["handoff", "tool_call"],
+        },
+        key: {
+          title: "Key",
+          type: "integer",
+        },
+        parent: {
+          title: "Parent",
+          type: "integer",
+          "x-nullable": true,
+        },
+        depth: {
+          title: "Depth",
+          type: "integer",
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        transfer: {
+          title: "Transfer",
+          type: "boolean",
+        },
+        handoff: {
+          $ref: "#/definitions/CallWorkerEvent",
+        },
+        returned: {
+          $ref: "#/definitions/CallWorkerEvent",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ended_at: {
+          title: "Ended at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parallel: {
+          title: "Parallel",
+          type: "boolean",
+        },
+        call: {
+          $ref: "#/definitions/CallWorkerEvent",
         },
       },
     },

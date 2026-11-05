@@ -51419,6 +51419,77 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
   started_at: zod.string().min(1).optional(),
   spans_received: zod.boolean().optional(),
   collected_at: zod.string().min(1),
+  steps: zod.array(
+    zod.object({
+      kind: zod.enum(["handoff", "tool_call"]),
+      key: zod.number(),
+      parent: zod.number(),
+      depth: zod.number(),
+      worker_id: zod.string().min(1),
+      transfer: zod.boolean().optional(),
+      handoff: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          payload_omitted: zod.boolean().optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      returned: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          payload_omitted: zod.boolean().optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      started_at: zod.string().min(1).optional(),
+      ended_at: zod.string().min(1).optional(),
+      parallel: zod.boolean().optional(),
+      call: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          payload_omitted: zod.boolean().optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+    }),
+  ),
+  depth: zod.number(),
+  parallel: zod.number(),
+  overlap_unknown: zod.boolean(),
+  worker_depths: zod.record(zod.string(), zod.number()),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({

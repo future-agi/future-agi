@@ -465,8 +465,17 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
         "refund",
         "audit",
     }
-    # The response carries the documented fields only, not every key the stored record keeps.
-    assert set(found.json()) == set(timeline)
+    # The response carries the documented fields only, not every key the stored record keeps, plus the arranged steps.
+    assert set(found.json()) == set(timeline) | {
+        "steps",
+        "depth",
+        "parallel",
+        "overlap_unknown",
+        "worker_depths",
+    }
+    first = found.json()["steps"][0]
+    assert (first["kind"], first["parent"], first["depth"]) == ("handoff", None, 1)
+    assert found.json()["depth"] >= 1
     assert (
         "span_id" in timeline["events"][1]
         and "span_id" not in found.json()["events"][1]

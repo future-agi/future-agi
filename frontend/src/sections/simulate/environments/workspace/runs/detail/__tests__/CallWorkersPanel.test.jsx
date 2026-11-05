@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 
+import { withSteps } from "./workerSteps.fixture";
+
 let result;
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
   ...(await importOriginal()),
-  useCallWorkers: () => result,
+  useCallWorkers: () => result && { ...result, data: withSteps(result.data) },
 }));
 
 const { default: CallWorkersPanel } = await import("../CallWorkersPanel");

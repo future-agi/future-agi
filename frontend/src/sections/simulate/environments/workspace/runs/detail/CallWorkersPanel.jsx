@@ -20,7 +20,7 @@ import Markdown from "src/sections/simulate/environments/buildEnvironment/consol
 import { MONO_FONT as MONO } from "src/sections/simulate/environments/workspace/contract/contract.constants";
 import { seriesColor } from "src/theme/data-colors";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
-import { arrange, asShown, isLong, seconds } from "./utils/callWorkersUtils";
+import { asShown, isLong, nest, seconds } from "./utils/callWorkersUtils";
 import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 // One colour per level of hand-off, so a deep or wide team stays readable; names tell workers apart.
@@ -572,7 +572,7 @@ export default function CallWorkersPanel({ callExecutionId }) {
         : C.coordinator;
   const start = data.started_at;
   const hasHandOffs = data.events.some(isHandOff);
-  const tree = arrange(data.events);
+  const tree = nest(data);
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>

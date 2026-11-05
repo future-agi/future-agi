@@ -24407,6 +24407,8 @@ export interface CallExecutionV3DetailResponseApi {
   csat_reason: string;
 }
 
+export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -24485,6 +24487,32 @@ export interface CallWorkerTurnApi {
   at: string;
 }
 
+export type CallWorkerStepApiKind =
+  (typeof CallWorkerStepApiKind)[keyof typeof CallWorkerStepApiKind];
+
+export const CallWorkerStepApiKind = {
+  handoff: "handoff",
+  tool_call: "tool_call",
+} as const;
+
+export interface CallWorkerStepApi {
+  kind: CallWorkerStepApiKind;
+  key: number;
+  parent: number;
+  depth: number;
+  /** @minLength 1 */
+  worker_id: string;
+  transfer?: boolean;
+  handoff?: CallWorkerEventApi;
+  returned?: CallWorkerEventApi;
+  /** @minLength 1 */
+  started_at?: string;
+  /** @minLength 1 */
+  ended_at?: string;
+  parallel?: boolean;
+  call?: CallWorkerEventApi;
+}
+
 export interface CallWorkersResponseApi {
   workers: CallWorkerApi[];
   events: CallWorkerEventApi[];
@@ -24497,6 +24525,11 @@ export interface CallWorkersResponseApi {
   spans_received?: boolean;
   /** @minLength 1 */
   collected_at: string;
+  steps: CallWorkerStepApi[];
+  depth: number;
+  parallel: number;
+  overlap_unknown: boolean;
+  worker_depths: CallWorkersResponseApiWorkerDepths;
 }
 
 export type RunDashboardMetricApiUnit =

@@ -30,6 +30,7 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_worker_steps import worker_steps
 from simulate.services.harness_workers import WORKERS_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -621,6 +622,25 @@ class CallWorkerTurnSerializer(serializers.Serializer):
     at = serializers.CharField(allow_null=True)
 
 
+class CallWorkerStepSerializer(serializers.Serializer):
+    """A row of the tab in reading order; `parent` is the `key` of the hand-off it sits under, null at the top."""
+
+    kind = serializers.ChoiceField(choices=("handoff", "tool_call"))
+    key = serializers.IntegerField()
+    parent = serializers.IntegerField(allow_null=True)
+    depth = serializers.IntegerField()
+    worker_id = serializers.CharField(allow_null=True)
+    # Hand-off rows: the hand-off and its return (null when not seen), its span, and whether a sibling overlapped it.
+    transfer = serializers.BooleanField(required=False)
+    handoff = CallWorkerEventSerializer(allow_null=True, required=False)
+    returned = CallWorkerEventSerializer(allow_null=True, required=False)
+    started_at = serializers.CharField(allow_null=True, required=False)
+    ended_at = serializers.CharField(allow_null=True, required=False)
+    parallel = serializers.BooleanField(required=False)
+    # Tool-call rows: the call itself.
+    call = CallWorkerEventSerializer(required=False)
+
+
 class CallWorkersResponseSerializer(serializers.Serializer):
     workers = CallWorkerSerializer(many=True)
     events = CallWorkerEventSerializer(many=True)
@@ -633,6 +653,13 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     started_at = serializers.CharField(allow_null=True, required=False)
     spans_received = serializers.BooleanField(required=False)
     collected_at = serializers.CharField()
+    steps = CallWorkerStepSerializer(many=True)
+    # Deepest level of delegation, hand-offs that ran in parallel, and whether some overlap could not be told.
+    depth = serializers.IntegerField()
+    parallel = serializers.IntegerField()
+    overlap_unknown = serializers.BooleanField()
+    # The level each worker was first handed work at.
+    worker_depths = serializers.DictField(child=serializers.IntegerField())
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
@@ -1009,7 +1036,8 @@ class CallExecutionV3WorkersView(APIView):
         timeline = (call.call_metadata or {}).get(WORKERS_KEY)
         if not timeline:
             return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response(CallWorkersResponseSerializer(timeline).data)
+        steps = worker_steps(timeline.get("events", []))
+        return Response(CallWorkersResponseSerializer({**timeline, **steps}).data)
 
 
 class RunAnalyticsV3View(APIView):

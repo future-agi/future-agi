@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { arrange, asShown, isLong, seconds } from "../callWorkersUtils";
+import { asShown, isLong, nest, seconds } from "../callWorkersUtils";
 
 const at = (second) => `2026-10-31T12:00:${String(second).padStart(2, "0")}`;
 
@@ -56,157 +56,85 @@ describe("isLong", () => {
   });
 });
 
-describe("arrange", () => {
-  it("nests a hand-off under the agent that made it, with its calls and its return", () => {
-    const tree = arrange([
-      { seq: 1, type: "delegated", worker_id: "lead", at: at(1) },
-      { seq: 2, type: "delegated", worker_id: "helper", by: "lead", at: at(2) },
-      { seq: 3, type: "tool_call", worker_id: "helper", tool: "t", at: at(3) },
-      { seq: 4, type: "returned", worker_id: "helper", at: at(4) },
-      { seq: 5, type: "returned", worker_id: "lead", at: at(5) },
-      { seq: 6, type: "tool_call", worker_id: null, tool: "reply", at: at(6) },
-    ]);
+describe("nest", () => {
+  it("puts each step under the hand-off its parent names and keeps the API's summary", () => {
+    const tree = nest({
+      steps: [
+        {
+          kind: "handoff",
+          key: 1,
+          parent: null,
+          depth: 1,
+          worker_id: "lead",
+          transfer: false,
+          handoff: { seq: 1 },
+          returned: { seq: 5 },
+          parallel: false,
+        },
+        {
+          kind: "handoff",
+          key: 2,
+          parent: 1,
+          depth: 2,
+          worker_id: "helper",
+          transfer: false,
+          handoff: { seq: 2 },
+          returned: null,
+          parallel: true,
+        },
+        {
+          kind: "tool_call",
+          key: 3,
+          parent: 2,
+          depth: 2,
+          worker_id: "helper",
+          call: { seq: 3, tool: "t" },
+        },
+        {
+          kind: "tool_call",
+          key: 6,
+          parent: null,
+          depth: 0,
+          worker_id: null,
+          call: { seq: 6, tool: "reply" },
+        },
+      ],
+      depth: 2,
+      parallel: 1,
+      overlap_unknown: true,
+      worker_depths: { lead: 1, helper: 2 },
+    });
 
     const [lead, reply] = tree.items;
-    expect(lead).toMatchObject({ worker_id: "lead", depth: 1 });
-    expect(lead.returned.seq).toBe(5);
+    expect(lead).toMatchObject({
+      kind: "handoff",
+      worker_id: "lead",
+      depth: 1,
+      returned: { seq: 5 },
+    });
     const [helper] = lead.items;
-    expect(helper).toMatchObject({ worker_id: "helper", depth: 2 });
+    expect(helper).toMatchObject({
+      worker_id: "helper",
+      parallel: true,
+      delegated: { seq: 2 },
+    });
     expect(helper.items.map((item) => item.event.tool)).toEqual(["t"]);
     expect(reply).toMatchObject({ kind: "call", key: 6 });
     expect(tree).toMatchObject({
       depth: 2,
-      parallel: 0,
+      parallel: 1,
+      overlapUnknown: true,
       depthOf: { lead: 1, helper: 2 },
     });
   });
 
-  it("marks overlapping siblings as parallel and keeps a return with no hand-off at the top", () => {
-    const tree = arrange([
-      { seq: 1, type: "delegated", worker_id: "a", at: at(1) },
-      { seq: 2, type: "transferred", worker_id: "b", at: at(2) },
-      { seq: 3, type: "returned", worker_id: "a", at: at(4) },
-      { seq: 4, type: "returned", worker_id: "b", at: at(5) },
-      { seq: 5, type: "returned", worker_id: "c", at: at(6) },
-    ]);
-
-    expect(tree.parallel).toBe(2);
-    expect(tree.items.map((item) => [item.worker_id, !!item.parallel])).toEqual(
-      [
-        ["a", true],
-        ["b", true],
-        ["c", false],
-      ],
-    );
-    expect(tree.items[1].transfer).toBe(true);
-    expect(tree.items[2].returned.seq).toBe(5);
-  });
-
-  describe("two hand-offs to one worker open at once", () => {
-    const hotels = {
-      seq: 1,
-      type: "delegated",
-      worker_id: "searcher",
-      task: "hotels",
-      delegation_id: "A",
-      at: at(1),
-    };
-    const flights = { ...hotels, seq: 2, task: "flights", delegation_id: "B" };
-    const answer = (seq, id, result) => ({
-      seq,
-      type: "returned",
-      worker_id: "searcher",
-      delegation_id: id,
-      result,
-      at: at(seq + 2),
+  it("reads a record with no steps as an empty tree", () => {
+    expect(nest({})).toEqual({
+      items: [],
+      depth: 0,
+      parallel: 0,
+      overlapUnknown: false,
+      depthOf: {},
     });
-    const answers = (tree) =>
-      tree.items.map((one) => [one.delegated?.task, one.returned?.result]);
-
-    it("gives each its own return, whichever comes back first", () => {
-      expect(
-        answers(
-          arrange([
-            hotels,
-            flights,
-            answer(3, "A", "some hotels"),
-            answer(4, "B", "some flights"),
-          ]),
-        ),
-      ).toEqual([
-        ["hotels", "some hotels"],
-        ["flights", "some flights"],
-      ]);
-    });
-
-    it("leaves the other open when only one returned", () => {
-      expect(
-        answers(arrange([hotels, flights, answer(3, "A", "some hotels")])),
-      ).toEqual([
-        ["hotels", "some hotels"],
-        ["flights", undefined],
-      ]);
-    });
-
-    it("never gives a hand-off a return that names a different one", () => {
-      expect(
-        answers(arrange([hotels, answer(2, "gone", "someone else's")])),
-      ).toEqual([
-        ["hotels", undefined],
-        [undefined, "someone else's"],
-      ]);
-    });
-
-    it("files a tool call by its own delegation_id, and by the latest open without one", () => {
-      const call = (seq, id) => ({
-        seq,
-        type: "tool_call",
-        worker_id: "searcher",
-        tool: "t",
-        at: at(seq),
-        ...(id ? { delegation_id: id } : {}),
-      });
-      const tree = arrange([hotels, flights, call(3, "A"), call(4)]);
-      expect(tree.items.map((one) => one.items.map((i) => i.key))).toEqual([
-        [3],
-        [4],
-      ]);
-    });
-  });
-
-  it("takes a hand-off's missing start from its first step, and says when overlap can't be known", () => {
-    const known = arrange([
-      { seq: 1, type: "delegated", worker_id: "a", at: at(1) },
-      { seq: 2, type: "returned", worker_id: "a", at: at(5) },
-      { seq: 3, type: "delegated", worker_id: "b", at: null },
-      { seq: 4, type: "tool_call", worker_id: "b", tool: "t", at: at(3) },
-      { seq: 5, type: "returned", worker_id: "b", at: at(6) },
-    ]);
-    expect(known).toMatchObject({ parallel: 2, overlapUnknown: false });
-
-    const unknown = arrange([
-      { seq: 1, type: "delegated", worker_id: "a", at: at(1) },
-      { seq: 2, type: "returned", worker_id: "a", at: at(5) },
-      { seq: 3, type: "delegated", worker_id: "b", at: null },
-      { seq: 4, type: "returned", worker_id: "b", at: at(6) },
-    ]);
-    expect(unknown).toMatchObject({ parallel: 0, overlapUnknown: true });
-  });
-
-  it("keeps the coordinator's own call at the top after control passes back to it", () => {
-    const tree = arrange([
-      { seq: 1, type: "transferred", worker_id: null, at: at(1) },
-      { seq: 2, type: "tool_call", worker_id: null, tool: "t", at: at(2) },
-    ]);
-    expect(tree.items.map((one) => one.kind)).toEqual(["handoff", "call"]);
-  });
-
-  it("falls back to the latest open hand-off for a return with no delegation_id", () => {
-    const tree = arrange([
-      { seq: 1, type: "delegated", worker_id: "a", at: at(1) },
-      { seq: 2, type: "delegated", worker_id: "a", at: at(2) },
-      { seq: 3, type: "returned", worker_id: "a", at: at(3) },
-    ]);
-    expect(tree.items.map((one) => one.returned?.seq)).toEqual([undefined, 3]);
   });
 });
