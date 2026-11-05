@@ -238,7 +238,7 @@ export const rollupLine = (r) => {
   if (r.verdict === "unmeasured")
     return `Unmeasured — missing ${r.missing}; counts neither for nor against the agent`;
   if (r.verdict === "inconclusive")
-    return `Inconclusive — ${plural(r.criticalUnsure, "critical sub-goal")} unsure`;
+    return `Unmeasured — ${plural(r.criticalUnsure, "critical sub-goal")} unsure`;
   return r.supportingFailed
     ? `Passed — ${plural(r.supportingFailed, "supporting sub-goal")} missed (reported, doesn't fail) · score ${r.score}`
     : "Passed — every critical sub-goal held";

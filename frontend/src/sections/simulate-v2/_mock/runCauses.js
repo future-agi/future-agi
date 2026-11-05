@@ -38,7 +38,7 @@ export const CAUSE_ORDER = [
 export const causeShort = (cause) => (VERDICT_CAUSES[cause]?.label || cause).replace(/^(passed|failed|inconclusive|test invalid|error) · /i, "");
 
 /** "Test invalid", "Error" — the outcome a cause rolls up to, as a label. */
-export const outcomeLabelOf = (cause) => OUTCOMES[outcomeOfCause(cause)]?.label || "Inconclusive";
+export const outcomeLabelOf = (cause) => OUTCOMES[outcomeOfCause(cause)]?.label || "Unmeasured";
 
 /**
  * The scenarios that were Outdated, Re-check or Stale as a run starts — they

@@ -1,15 +1,17 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { Children, isValidElement, useState } from "react";
 import {
   Box,
   Button,
   ButtonBase,
+  IconButton,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import SideDrawer from "../components/SideDrawer";
 import AddSourceMenu from "../workspace/data/AddSourceMenu";
 import { getActor } from "../_mock/actors";
 import {
@@ -333,217 +335,265 @@ export default function DesignReview({
       )}
 
       {waiting && (
-        <ButtonBase
-          onClick={() => setPlanOpen((v) => !v)}
-          aria-expanded={planOpen}
-          sx={{ ...linkSx, color: "text.primary", mt: 0.5, gap: 0.5 }}
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setPlanOpen(true)}
+          sx={{ ...actionSx, mt: 0.75 }}
         >
-          <Iconify
-            icon={
-              planOpen
-                ? "solar:alt-arrow-up-linear"
-                : "solar:alt-arrow-down-linear"
-            }
-            width={14}
-          />
-          {planOpen ? "Hide the plan" : "Show the plan"}
-        </ButtonBase>
+          Show the plan
+        </Button>
       )}
-      {waiting && planOpen && (
-        <Box sx={{ maxHeight: 320, overflowY: "auto", mt: 0.5 }}>
-          <Box component="table" sx={{ width: 1, borderCollapse: "collapse" }}>
-            <Box component="tbody">
-              <PlanRow label="Records">
-                {tables.length ? (
-                  tables.map((t) => (
-                    <PlanLine key={t.name}>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
-                        {t.name}
-                      </Box>
+      {/* The plan opens beside the page, so the summary above the tabs
+         stays one compact box. */}
+      {waiting && (
+        <SideDrawer
+          open={planOpen}
+          onClose={() => setPlanOpen(false)}
+          width={{ xs: "100%", sm: 560 }}
+        >
+          <Stack sx={{ height: "100%" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 2.5,
+                py: 2,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Box flex={1} minWidth={0}>
+                <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+                  The plan
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  Nothing is built until you approve.
+                </Typography>
+              </Box>
+              <IconButton
+                size="small"
+                onClick={() => setPlanOpen(false)}
+                aria-label="Close"
+              >
+                <Iconify icon="solar:close-linear" width={16} />
+              </IconButton>
+            </Stack>
+            <Box sx={{ px: 2.5, py: 1.5, flex: 1, overflowY: "auto" }}>
+              <Stack spacing={2.5}>
+                <>
+                  <PlanRow label="Records">
+                    {tables.length ? (
+                      tables.map((t) => (
+                        <PlanLine key={t.name}>
+                          <Box component="span" sx={{ fontWeight: 500 }}>
+                            {t.name}
+                          </Box>
+                          <Box
+                            component="span"
+                            sx={{ color: "text.secondary", ml: 0.75 }}
+                          >
+                            {`${(t.rows || 0).toLocaleString()} rows${t.note ? ` · ${t.note}` : ""}`}
+                          </Box>
+                        </PlanLine>
+                      ))
+                    ) : (
+                      <PlanLine empty>
+                        No records — the description named none
+                      </PlanLine>
+                    )}
+                  </PlanRow>
+                  <PlanRow label="Tools">
+                    {tools.length ? (
+                      tools.map((t) => (
+                        <PlanLine
+                          key={t.name}
+                          onRemove={onChange && (() => removeTool(t))}
+                        >
+                          <Box component="span" sx={{ fontWeight: 500 }}>
+                            {t.name}
+                          </Box>
+                          {t.desc && (
+                            <Box
+                              component="span"
+                              sx={{ color: "text.secondary", ml: 0.75 }}
+                            >
+                              {t.desc}
+                            </Box>
+                          )}
+                        </PlanLine>
+                      ))
+                    ) : (
+                      <PlanLine empty>None yet</PlanLine>
+                    )}
+                    {deps
+                      .filter((d) => choiceOf(d) === "skip")
+                      .map((d) => (
+                        <PlanLine key={d.id}>
+                          <Box
+                            component="span"
+                            sx={{ color: "text.secondary" }}
+                          >
+                            {`${d.request} — can't be built here, left out`}
+                          </Box>
+                        </PlanLine>
+                      ))}
+                  </PlanRow>
+                  <PlanRow label="Rules">
+                    {rules.length ? (
+                      rules.map((r, i) =>
+                        editing === i ? (
+                          <Stack
+                            key={`${i}-edit`}
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                            sx={{ px: 1.5, py: 0.75 }}
+                          >
+                            <TextField
+                              size="small"
+                              fullWidth
+                              autoFocus
+                              value={draft}
+                              onChange={(e) => setDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveRule(i);
+                                if (e.key === "Escape") setEditing(null);
+                              }}
+                              sx={{
+                                "& .MuiInputBase-input": {
+                                  typography: "s2",
+                                  py: 0.5,
+                                },
+                              }}
+                            />
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => saveRule(i)}
+                              sx={{
+                                color: "text.primary",
+                                borderColor: "divider",
+                                flexShrink: 0,
+                              }}
+                            >
+                              Save
+                            </Button>
+                            <ButtonBase
+                              onClick={() => setEditing(null)}
+                              sx={{ ...linkSx, flexShrink: 0 }}
+                            >
+                              Cancel
+                            </ButtonBase>
+                          </Stack>
+                        ) : (
+                          <PlanLine
+                            key={`${i}-${r}`}
+                            onEdit={
+                              onChange &&
+                              (() => {
+                                setEditing(i);
+                                setDraft(r);
+                              })
+                            }
+                            onRemove={
+                              onChange &&
+                              (() =>
+                                removing("The rule", {
+                                  rules: rules.filter((_, j) => j !== i),
+                                }))
+                            }
+                          >
+                            {r}
+                          </PlanLine>
+                        ),
+                      )
+                    ) : (
+                      <PlanLine empty>None yet</PlanLine>
+                    )}
+                  </PlanRow>
+                  <PlanRow label="People">
+                    <PlanLine>
+                      Caller
                       <Box
                         component="span"
                         sx={{ color: "text.secondary", ml: 0.75 }}
                       >
-                        {`${(t.rows || 0).toLocaleString()} rows${t.note ? ` · ${t.note}` : ""}`}
+                        the person the agent serves
                       </Box>
                     </PlanLine>
-                  ))
-                ) : (
-                  <PlanLine>No records — the description named none</PlanLine>
-                )}
-              </PlanRow>
-              <PlanRow label="Tools">
-                {tools.length ? (
-                  tools.map((t) => (
-                    <PlanLine
-                      key={t.name}
-                      onRemove={onChange && (() => removeTool(t))}
-                    >
-                      <Box component="span" sx={{ fontWeight: 500 }}>
-                        {t.name}
-                      </Box>
-                      {t.desc && (
-                        <Box
-                          component="span"
-                          sx={{ color: "text.secondary", ml: 0.75 }}
-                        >
-                          {t.desc}
-                        </Box>
-                      )}
-                    </PlanLine>
-                  ))
-                ) : (
-                  <PlanLine>None yet</PlanLine>
-                )}
-                {deps
-                  .filter((d) => choiceOf(d) === "skip")
-                  .map((d) => (
-                    <PlanLine key={d.id}>
-                      <Box component="span" sx={{ color: "text.secondary" }}>
-                        {`${d.request} — can't be built here, left out`}
-                      </Box>
-                    </PlanLine>
-                  ))}
-              </PlanRow>
-              <PlanRow label="Rules">
-                {rules.length ? (
-                  rules.map((r, i) =>
-                    editing === i ? (
-                      <Stack
-                        key={`${i}-edit`}
-                        direction="row"
-                        alignItems="center"
-                        spacing={1}
-                      >
-                        <TextField
-                          size="small"
-                          fullWidth
-                          autoFocus
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") saveRule(i);
-                            if (e.key === "Escape") setEditing(null);
-                          }}
-                          sx={{
-                            "& .MuiInputBase-input": {
-                              typography: "s2",
-                              py: 0.5,
-                            },
-                          }}
-                        />
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => saveRule(i)}
-                          sx={{
-                            color: "text.primary",
-                            borderColor: "divider",
-                            flexShrink: 0,
-                          }}
-                        >
-                          Save
-                        </Button>
-                        <ButtonBase
-                          onClick={() => setEditing(null)}
-                          sx={{ ...linkSx, flexShrink: 0 }}
-                        >
-                          Cancel
-                        </ButtonBase>
-                      </Stack>
-                    ) : (
+                    {actors.map((id) => (
                       <PlanLine
-                        key={`${i}-${r}`}
-                        onEdit={
-                          onChange &&
-                          (() => {
-                            setEditing(i);
-                            setDraft(r);
-                          })
-                        }
+                        key={id}
                         onRemove={
                           onChange &&
                           (() =>
-                            removing("The rule", {
-                              rules: rules.filter((_, j) => j !== i),
+                            removing(getActor(id)?.name || id, {
+                              actors: actors.filter((x) => x !== id),
                             }))
                         }
                       >
-                        {r}
+                        {getActor(id)?.name || id}
                       </PlanLine>
-                    ),
-                  )
-                ) : (
-                  <PlanLine>None yet</PlanLine>
-                )}
-              </PlanRow>
-              <PlanRow label="People">
-                <PlanLine>
-                  Caller
-                  <Box
-                    component="span"
-                    sx={{ color: "text.secondary", ml: 0.75 }}
+                    ))}
+                  </PlanRow>
+                  <PlanRow
+                    label="Scenarios"
+                    count={groups.reduce((n, g) => n + g.n, 0) || draftCount}
                   >
-                    the person the agent serves
-                  </Box>
-                </PlanLine>
-                {actors.map((id) => (
-                  <PlanLine
-                    key={id}
-                    onRemove={
-                      onChange &&
-                      (() =>
-                        removing(getActor(id)?.name || id, {
-                          actors: actors.filter((x) => x !== id),
-                        }))
-                    }
+                    {groups.length ? (
+                      groups.map((g) => (
+                        <PlanLine key={g.label}>
+                          <Box
+                            component="span"
+                            sx={{ fontVariantNumeric: "tabular-nums" }}
+                          >
+                            {g.n}
+                          </Box>
+                          <Box component="span" sx={{ ml: 0.75 }}>
+                            {g.label}
+                          </Box>
+                        </PlanLine>
+                      ))
+                    ) : (
+                      <PlanLine
+                        empty
+                      >{`${draftCount} written after the build, one per use case`}</PlanLine>
+                    )}
+                  </PlanRow>
+                </>
+              </Stack>
+              {undo && (
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ mt: 1.5 }}
+                >
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
                   >
-                    {getActor(id)?.name || id}
-                  </PlanLine>
-                ))}
-              </PlanRow>
-              <PlanRow label="Scenarios">
-                {groups.length ? (
-                  groups.map((g) => (
-                    <PlanLine key={g.label}>
-                      <Box
-                        component="span"
-                        sx={{ fontVariantNumeric: "tabular-nums" }}
-                      >
-                        {g.n}
-                      </Box>
-                      <Box component="span" sx={{ ml: 0.75 }}>
-                        {g.label}
-                      </Box>
-                    </PlanLine>
-                  ))
-                ) : (
-                  <PlanLine>{`${draftCount} written after the build, one per use case`}</PlanLine>
-                )}
-              </PlanRow>
+                    {`${undo.label} removed from the plan.`}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      onChange(undo.restore);
+                      setUndo(null);
+                    }}
+                    sx={actionSx}
+                  >
+                    Undo
+                  </Button>
+                </Stack>
+              )}
             </Box>
-          </Box>
-        </Box>
+          </Stack>
+        </SideDrawer>
       )}
 
-      {waiting && undo && (
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.5 }}>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {`${undo.label} removed from the plan.`}
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => {
-              onChange(undo.restore);
-              setUndo(null);
-            }}
-            sx={actionSx}
-          >
-            Undo
-          </Button>
-        </Stack>
-      )}
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
         {note}
       </Typography>
@@ -570,32 +620,75 @@ const linkSx = {
   color: "text.secondary",
 };
 
-function PlanRow({ label, children }) {
+/* One section of the plan: a heading with its count, then its lines in a
+   bordered list — the spec-sheet look the rest of the environment uses. */
+function PlanRow({ label, count, children }) {
+  const n =
+    count ??
+    Children.toArray(children).filter(
+      (c) => isValidElement(c) && !c.props.empty,
+    ).length;
   return (
-    <Box component="tr">
+    <Box>
+      <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+        {label}
+        {n > 0 && (
+          <Box
+            component="span"
+            sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
+          >
+            {n}
+          </Box>
+        )}
+      </Typography>
       <Box
-        component="td"
         sx={{
-          typography: "s2",
-          color: "text.secondary",
-          width: 84,
-          py: 0.5,
-          verticalAlign: "top",
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
         }}
       >
-        {label}
-      </Box>
-      <Box component="td" sx={{ py: 0.5 }}>
         {children}
       </Box>
     </Box>
   );
 }
-PlanRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
+PlanRow.propTypes = {
+  label: PropTypes.string,
+  count: PropTypes.number,
+  children: PropTypes.node,
+};
+
+/* A quiet icon action at the end of a line; the word is on hover. */
+function LineAction({ icon, label, onClick }) {
+  return (
+    <Tooltip arrow title={label}>
+      <IconButton
+        size="small"
+        aria-label={label}
+        onClick={onClick}
+        sx={{ color: "text.tertiary", "&:hover": { color: "text.primary" } }}
+      >
+        <Iconify icon={icon} width={16} />
+      </IconButton>
+    </Tooltip>
+  );
+}
+LineAction.propTypes = {
+  icon: PropTypes.string.isRequired,
+  label: PropTypes.string.isRequired,
+  onClick: PropTypes.func.isRequired,
+};
 
 function PlanLine({ children, onEdit, onRemove }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.125 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
+      sx={{ px: 1.5, py: 0.5, minHeight: 36 }}
+    >
       <Typography
         component="div"
         sx={{ typography: "s2", flex: 1, minWidth: 0 }}
@@ -603,25 +696,21 @@ function PlanLine({ children, onEdit, onRemove }) {
         {children}
       </Typography>
       {onEdit && (
-        <Button size="small" variant="outlined" onClick={onEdit} sx={actionSx}>
-          Edit
-        </Button>
+        <LineAction icon="solar:pen-linear" label="Edit" onClick={onEdit} />
       )}
       {onRemove && (
-        <Button
-          size="small"
-          variant="outlined"
+        <LineAction
+          icon="solar:trash-bin-minimalistic-linear"
+          label="Remove"
           onClick={onRemove}
-          sx={actionSx}
-        >
-          Remove
-        </Button>
+        />
       )}
     </Stack>
   );
 }
 PlanLine.propTypes = {
   children: PropTypes.node,
+  empty: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
 };
