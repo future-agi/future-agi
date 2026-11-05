@@ -290,7 +290,7 @@ export default function CodingAgentFlow({ title, onSave, initial = null }) {
             required
             value={key}
             onChange={setKey}
-            placeholder="Paste the key, or a vault://… reference"
+            placeholder="a vault://… reference"
             helper={`${meta.label} runs on your account, so runs are charged to this key. Stored encrypted, never shown again.`}
             fullWidth
           />
