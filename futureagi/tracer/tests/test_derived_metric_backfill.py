@@ -30,9 +30,53 @@ EMPTY = changes.ChangeBatch((), (), (), (), (), {})
 
 
 class EmptyPolicyRecorder(Recorder):
+    def __init__(self):
+        super().__init__()
+        self.checkpoint_projects = set()
+
+    def consolidate_checkpoint(self, project_id):
+        # Empty physical ranges need no layout work. Still enforce the scope of
+        # the real store's post-publication consolidation callback.
+        assert not self.checkpoint_projects or self.checkpoint_projects == {
+            str(project_id)
+        }
+
     def execute(self, query, params=None):
-        assert query.startswith("SELECT count()")
-        return [(0,)]
+        if query.startswith("SELECT count()"):
+            return [(0,)]
+        # Checkpoint discovery now nominates the last key of a bounded range,
+        # not a count. An empty relation has no last key (not a zero tuple).
+        from tracer.services.derived_metrics.publication import MAX_COMPACTION_ROWS
+
+        assert query.startswith("SELECT tuple(")
+        assert "SELECT DISTINCT" in query
+        assert "LIMIT %(checkpoint_limit)s" in query
+        assert query.endswith("DESC LIMIT 1")
+        assert params["checkpoint_limit"] == MAX_COMPACTION_ROWS
+        assert params["checkpoint_org"] and params["checkpoint_project"]
+        assert params.get("checkpoint_deltas") or params.get("checkpoint_base")
+        self.checkpoint_projects.add(str(params["checkpoint_project"]))
+        return []
+
+
+@pytest.mark.parametrize(
+    "query", ["SELECT * FROM field_values", "DELETE FROM field_values"]
+)
+def test_empty_policy_recorder_rejects_unbounded_or_mutating_queries(query):
+    with pytest.raises(AssertionError):
+        EmptyPolicyRecorder().execute(query, {})
+
+
+def test_empty_policy_recorder_preserves_zero_count_result():
+    assert EmptyPolicyRecorder().execute("SELECT count() FROM empty") == [(0,)]
+
+
+def test_empty_policy_recorder_consolidates_only_its_nominated_project():
+    recorder = EmptyPolicyRecorder()
+    recorder.checkpoint_projects.add("owned-project")
+    recorder.consolidate_checkpoint("owned-project")
+    with pytest.raises(AssertionError):
+        recorder.consolidate_checkpoint("foreign-project")
 
 
 def scrubbed(original):

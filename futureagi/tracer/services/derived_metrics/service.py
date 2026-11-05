@@ -1196,15 +1196,19 @@ def preview(
 
 
 def admit_refresh(metric):
-    """B07's refresh-now adapter must use the same legacy/trace fence."""
+    """Admit an authorized definition to B10's durable, throttled project queue."""
+    from tracer.services.derived_metrics.admission import request_refresh
+    from tracer.services.derived_metrics.feature_flag import metrics_enabled
+
+    if not metrics_enabled(org=metric.organization_id, project=metric.project_id):
+        raise MetricUnavailableError("metrics_disabled", "Metrics are not enabled.")
     definition = metric.active_version or metric.versions.get(
         version=metric.current_version
     )
     require_computable(definition)
-    raise MetricUnavailableError(
-        "refresh_unavailable",
-        "Refresh is not available until the committed refresh writer is installed.",
-    )
+    return {
+        "status": "queued" if request_refresh(metric.project_id) else "already_queued"
+    }
 
 
 def activate_definition(metric, data):

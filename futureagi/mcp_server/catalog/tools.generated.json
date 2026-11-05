@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "19af3c484d967d1c91e41bb4a0a60fa25368f93149a9ada9aed8794f57f980f2",
+  "source_contract_sha256": "2fa3d1262fb68b293b7fb3e979e8654666565e5edc19ee42dc9cc1e4cba26185",
   "tool_count": 111,
   "tools": [
     {
@@ -4372,7 +4372,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4406,7 +4406,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4449,7 +4449,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4483,7 +4483,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5050,7 +5050,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -5084,7 +5084,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5127,7 +5127,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -5161,7 +5161,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -9505,7 +9505,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -9539,7 +9539,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -10761,7 +10761,7 @@
               "properties": {
                 "column_id": {
                   "type": "string",
-                  "description": "Column or attribute id to filter on."
+                  "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                 },
                 "property_id": {
                   "type": "string",
@@ -10795,7 +10795,7 @@
                     },
                     "col_type": {
                       "type": "string",
-                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                     },
                     "attribute_value_types": {
                       "type": "array",
@@ -11103,7 +11103,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -11137,7 +11137,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
