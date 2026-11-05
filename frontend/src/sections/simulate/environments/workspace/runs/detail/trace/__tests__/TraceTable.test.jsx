@@ -316,6 +316,48 @@ describe("TraceTable — sub-goal verdicts", () => {
       }
     }
   });
+
+  it("says a check whose evidence never arrived is not measured, and what each check was decided from", () => {
+    render(
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                status: "failed",
+                subGoalResults: [
+                  {
+                    name: "Refund row",
+                    passed: false,
+                    evidence: ["world_state", "tool_calls"],
+                  },
+                  {
+                    name: "Polite",
+                    passed: null,
+                    result: "unmeasured",
+                    evidence: ["transcript"],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const details = within(activeRow())
+      .getAllByText("Scenario a1")[0]
+      .closest("td");
+    expect(within(details).getByText("Not measured")).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the world, the agent's calls"),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the transcript"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("TraceTable — column group band", () => {
