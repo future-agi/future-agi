@@ -25545,6 +25545,8 @@ export interface CallWorkerEventApi {
   output?: CallWorkerEventApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
+  /** @minLength 1 */
+  refusal_code?: string;
   relationship?: CallWorkerEventApiRelationship;
   /** @minLength 1 */
   at: string;

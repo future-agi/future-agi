@@ -180,6 +180,7 @@ class WorkerEvent(TypedDict, total=False):
     output_omitted: bool
     relationship: Literal["observed", "unknown"]
     parent_delegation_id: str
+    refusal_code: str
     runtime_event_id: str
     runtime_parent_event_id: str
     at: Required[str | None]

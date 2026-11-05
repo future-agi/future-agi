@@ -1837,3 +1837,29 @@ def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
     # The world refusing one past its deadline is still a recorded end.
     late = worker_states(timeline, trial="ended", past_deadline={"refund"})["workers"]
     assert {one["id"]: one.get("state") for one in late}["refund"] == "timed_out"
+
+
+def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_timed_out():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {
+            "name": "get_order",
+            "ok": False,
+            "refused": True,
+            "at": 1.0,
+            "worker_id": "order_lookup",
+            "error": "the deadline for order_lookup has passed",
+            "refusal_code": "deadline_passed",
+        },
+        {"name": "list_refunds", "ok": True, "at": 2.0, "worker_id": "refund"},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
+    refused = next(e for e in timeline["events"] if e["tool"] == "get_order")
+    assert refused["refusal_code"] == "deadline_passed"
+    states = {
+        one["id"]: one.get("state")
+        for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    # The world's own refusal is the record; a worker with no such call gets no invented end.
+    assert (states["order_lookup"], states["refund"]) == ("timed_out", None)

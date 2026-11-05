@@ -95692,6 +95692,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Output omitted",
           type: "boolean",
         },
+        refusal_code: {
+          title: "Refusal code",
+          type: "string",
+          minLength: 1,
+        },
         relationship: {
           title: "Relationship",
           type: "string",

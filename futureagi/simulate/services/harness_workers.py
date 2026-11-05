@@ -553,6 +553,9 @@ def worker_timeline(
             "at": started(call) or when(call.get("ended_at")),
             "attribution": "reported",
         }
+        if call.get("refusal_code"):
+            # Why the world refused it, as its action log coded it.
+            event["refusal_code"] = str(call["refusal_code"])
         place = placed_in(call)
         if "parent_delegation_id" in place:
             event["delegation_id"] = place["parent_delegation_id"]
@@ -700,7 +703,12 @@ def worker_states(
         for event in timeline["events"]
         if event["type"] == "returned"
     }
-    late = set(past_deadline)
+    # Refused past its deadline: by the trial's world changes, or by the refusal code on its own recorded calls.
+    late = set(past_deadline) | {
+        str(event["worker_id"]).rsplit("/", 1)[-1]
+        for event in timeline["events"]
+        if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
+    }
     # Only a hand-off the record shows can be still out; a worker seen only through its tool calls has no recorded
     # end, so it gets no end state rather than an invented one.
     handed = {

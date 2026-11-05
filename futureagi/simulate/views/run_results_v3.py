@@ -704,6 +704,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     # True when the record's size limit was reached before this step, so that part was not kept.
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
+    # Why the world refused this call (`not_permitted`, `deadline_passed`), as its action log coded it.
+    refusal_code = serializers.CharField(required=False)
     # `unknown` when the harness recorded no parent for this step; it is then shown at the top, never guessed.
     relationship = serializers.ChoiceField(
         choices=("observed", "unknown"), required=False
