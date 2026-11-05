@@ -125,6 +125,8 @@ def start_verify(
     the idempotency key is unique per verify, so no run a caller names can stand in
     for one."""
     chosen = ensure_held_back(environment)
+    if (existing := version_verify(environment, agent_version_id)) is not None:
+        return existing
     # A case its suite dropped stays held back but can no longer run.
     cases = (
         sorted(
@@ -139,8 +141,6 @@ def start_verify(
             "this environment's scenarios include no held-back case to verify on",
             status_code=409,
         )
-    if (existing := version_verify(environment, agent_version_id)) is not None:
-        return existing
     # Outside the transaction: the check may call the usage service.
     require_harness_call_usage(environment)
     with transaction.atomic():

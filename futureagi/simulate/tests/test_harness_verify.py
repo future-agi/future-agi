@@ -232,6 +232,19 @@ class TestWhenTheSuiteChanges:
         assert held_back(environment).suite_version_id == environment.suite_version_id
         assert refused.value.code == "held_back_empty"
 
+    def test_a_completed_verify_stays_final_once_its_cases_are_dropped(
+        self, environment, user
+    ):
+        _hold(environment, [KEYS[1]])
+        candidate = _second_agent(environment)
+        first = _verify(environment, candidate)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
+            state=HostedHarnessJob.State.COMPLETED
+        )
+        _new_default_suite(environment, user, [NAMES[0], NAMES[2]])
+
+        assert _verify(environment, candidate).id == first.id
+
     def test_a_discarded_pinned_suite_does_not_stop_a_verify(self, environment, user):
         old_suite = environment.suite_version_id
         _hold(environment, [KEYS[1]])
