@@ -51,6 +51,7 @@ export const paths = {
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
       pricing: `${ROOTS.DASHBOARD}/settings/pricing`,
       eeLicenses: `${ROOTS.DASHBOARD}/settings/ee-licenses`,
+      updates: `${ROOTS.DASHBOARD}/settings/updates`,
     },
     performance: `${ROOTS.DASHBOARD}/performance`,
     data: `${ROOTS.DASHBOARD}/data`,

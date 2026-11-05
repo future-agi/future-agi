@@ -389,8 +389,8 @@ export default function AskPanel({ run, lens }) {
           { question: q, history },
           own.signal,
         );
-        const { answer, followUps, dropped } = normalizeAnswer(result);
-        return { status: "done", answer, followUps, dropped };
+        const answer = normalizeAnswer(result);
+        return { status: answer.error ? "error" : "done", ...answer };
       } catch (error) {
         if (own.signal.aborted) return null;
         return {
