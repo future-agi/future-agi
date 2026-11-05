@@ -2211,3 +2211,71 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
+
+**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs  
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:36`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment whose contract routes issue_refund to production, and a built one whose pairing was never certified (e2e/lib/harness_environment_seed.py)
+2. read the certified pairing's readiness (GET capabilities)
+3. read the uncertified pairing's readiness
+4. ask for it to be checked again (POST capabilities/recheck)
+5. read its readiness while the check runs
+6. try to run a scenario on that pairing
+
+**Backend state verified:**
+
+- the certified pairing names the seeded default versions, reads its evidence from the pair certificate, and its measured rows are exactly five Supported and tool routing Blocked as production_only, answer blocked
+- the uncertified pairing reads not_run and unchecked
+- recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
+- the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
+- the run answers 409 pair_validating and creates no run job
+
+### SIM-E2E-004 — the cases a pairing holds back are bucketed and paged by scenario number
+
+**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases  
+**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 53 refund and 2 lookup scenarios whose contract routes issue_refund to production (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness for the whole suite (GET capabilities)
+3. page through the blocked cases (GET capabilities/cases?bucket=blocked, then cursor=next)
+4. read the eligible cases
+
+**Backend state verified:**
+
+- the buckets add up to requested: 2 eligible and 53 blocked of 55, each list naming exactly the seeded keys
+- tool routing holds back 53 of 55
+- the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
+- the eligible page is the two lookups, held by nothing
+- the page numbers are the stored suite members' numbers
+
+### SIM-E2E-005 — a reviewed draft saves only the accepted change, and only through Validate
+
+**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule  
+**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)
+2. add a Manager actor through the actors route
+3. read the review: the rule cited to the message, the actor to the person
+4. accept the rule and reject the actor
+5. try a plain Save, first with the decisions alone, then with the review digest too
+6. Validate
+7. stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)
+8. read the drafts until validation is ready, then Save the candidates with a name
+
+**Backend state verified:**
+
+- a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move
+- Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
+- after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
+- no draft is left open once saved

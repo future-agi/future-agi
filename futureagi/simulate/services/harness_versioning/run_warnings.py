@@ -71,6 +71,46 @@ def _names(names: list[str]) -> str:
     return ", ".join(names)
 
 
+def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
+    """The suite's scenarios a saved, graded change touched that hold no proof against this environment version."""
+    from simulate.models import HarnessSuiteMember
+
+    reviewed = (environment_version.documents or {}).get("review_changes") or []
+    touched = {
+        key
+        for one in reviewed
+        if one.get("decision") == "accepted" and one.get("graded")
+        for key in one.get("revalidate") or []
+    }
+    if not touched:
+        return []
+    members = set(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version).values_list(
+            "scenario_key", flat=True
+        )
+    )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # A change names a scenario by its folder, the suite by its key: the same scenario either way once normalised.
+    tokens = {_scenario_token(key) for key in touched}
+    return sorted(
+        key
+        for key in members
+        if _scenario_token(key) in tokens
+        and not any(
+            isinstance(proof, dict) and proof.get("holds") is True and _scenario_token(name) == _scenario_token(key)
+            for name, proof in proofs.items()
+        )
+    )
+
+
 def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, Any]]:
     """What the pinned agent version's credentials lack, by name; no value is read
     except to learn whether its set can be decrypted at all."""
@@ -173,6 +213,18 @@ def run_warnings(
                 f"Suite {_message_label(_label(suite_version.version_number))}"
                 " hasn't been proved"
                 f" against environment {environment_label}",
+                "suite",
+            )
+        )
+    unproved = _needs_revalidation(environment_version, suite_version)
+    if unproved:
+        shown = unproved[:5] + ([f"{len(unproved) - 5} more"] if len(unproved) > 5 else [])
+        warnings.append(
+            _warning(
+                "scenarios_need_revalidation",
+                f"Environment {environment_label} changed what"
+                f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
+                f" prove {_names(shown)} again",
                 "suite",
             )
         )

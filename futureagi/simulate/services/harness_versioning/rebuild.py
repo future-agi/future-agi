@@ -285,7 +285,9 @@ def _check_answerable(environment: HostedHarnessJob, nudge_id: Any) -> HarnessNu
     if nudge.state not in (State.PENDING, State.FAILED):
         raise nudges._closed(nudge)
     if not nudges.nudges_enabled():
-        raise drafts._error("nudges_disabled", "Rebuilds aren't switched on", 409)
+        raise drafts.version_error(
+            "nudges_disabled", "Rebuilds aren't switched on", 409
+        )
     return nudge
 
 
@@ -315,7 +317,7 @@ def answer_rebuild(
         if locked is None:
             raise nudges.nudge_not_found()
         if _busy(locked):
-            raise drafts._error(
+            raise drafts.version_error(
                 "environment_building", "The environment is still being built", 409
             )
         nudge = _lock_nudge(locked, nudge_id)
@@ -560,7 +562,7 @@ def restore_draft_snapshot(nudge: HarnessNudge, *, locked: HostedHarnessJob) -> 
     from simulate.services.harness_versioning import drafts
 
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
-    model = drafts._model(nudge.target)
+    model = drafts.piece_model(nudge.target)
     draft_id = snapshot.get("draft_version_id")
     others = model.no_workspace_objects.filter(job=locked, status=VersionStatus.DRAFT)
     if draft_id:
@@ -704,6 +706,10 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     """Nothing to change: the default agent moves to the trigger (unless moved by hand
     meanwhile) and the default environment version is recorded as fitting it."""
     from simulate.services.harness_agent_versions import hand_move
+    from simulate.services.harness_versioning.validation import (
+        agent_move,
+        start_validation,
+    )
     from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge)
@@ -712,6 +718,20 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     reason = None
     if locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
+        if reason is None:
+            validation = start_validation(
+                locked,
+                trigger,
+                locked.environment_version,
+                locked.suite_version,
+                purpose="agent_move",
+                move=agent_move(
+                    "no_change", locked, trigger, user=nudge.answered_by, nudge=nudge
+                ),
+            )
+            if validation is not None and not validation.ready:
+                # Moved, and E stamped, by the validation once the pairing passes.
+                reason = "validating"
         if reason is None:
             try:
                 with transaction.atomic():
@@ -1308,13 +1328,15 @@ def _snapshot_documents(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
     files = archives.read_archive(archives.get_archive(snapshot["archive_object_key"]))
     other = Target.SUITE if target == Target.ENVIRONMENT else Target.ENVIRONMENT
     sides = {
-        target: drafts._side(files, target),
-        other: drafts._piece_files(locked, other, getattr(locked, f"{other}_version")),
+        target: drafts.piece_side(files, target),
+        other: drafts.piece_files(locked, other, getattr(locked, f"{other}_version")),
     }
-    _split, prepared = drafts._prepared(
+    _split, prepared = drafts.prepare_tree(
         locked, archives.compose(sides["environment"], sides["suite"])
     )
-    values = drafts._content(locked, target, prepared, origin="nudge", default=default)
+    values = drafts.draft_content(
+        locked, target, prepared, origin="nudge", default=default
+    )
     return SimpleNamespace(documents=values["documents"])
 
 
@@ -1426,7 +1448,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -1462,7 +1486,7 @@ def _saved_over(
     # A save equal to the default leaves no draft, only the one it discarded.
     ids = [snapshot["draft_version_id"]] if snapshot.get("draft_version_id") else []
     discarded = (
-        drafts._model(nudge.target)
+        drafts.piece_model(nudge.target)
         ._base_manager.filter(
             Q(nudge=nudge) | Q(id__in=ids),
             job=locked,
@@ -1498,7 +1522,7 @@ def _unhandled_tools(
     tools = diffs._tools((result.documents or {}).get("contract") or {})
     if not tools:
         return []
-    files = drafts._piece_files(locked, "environment", result)
+    files = drafts.piece_files(locked, "environment", result)
     try:
         manifest = json.loads(files["manifest.json"])
     except (KeyError, ValueError):
@@ -1690,15 +1714,15 @@ def _validate(
 ) -> None:
     from simulate.services.harness_versioning.versions import (
         PROOF_CLOCK_SKEW,
-        _member_rows,
         _validation,
+        member_rows,
     )
 
     environment_version = nudge.base_environment_version or locked.environment_version
     taken = _taken_at(nudge)
     if suite is None or environment_version is None or taken is None:
         return
-    paired = _member_rows(locked, (suite.documents or {}).get("scenarios") or [])
+    paired = member_rows(locked, (suite.documents or {}).get("scenarios") or [])
     # Only proofs made after the turn started count: no clock-skew allowance (Q1).
     _validation(
         suite, environment_version, proofs, paired, locked, taken + PROOF_CLOCK_SKEW
@@ -1710,14 +1734,24 @@ def _land(
 ) -> dict[str, Any] | None:
     """Make the turn's draft the default; ``None`` when the pair can't be run."""
     from simulate.services.harness_versioning import drafts
+    from simulate.services.harness_versioning.validation import (
+        agent_move,
+        can_validate,
+        start_validation,
+    )
+    from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge) if nudge.target == Target.ENVIRONMENT else None
     reason = None
     if trigger is not None and locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
     agent = trigger if trigger is not None and reason is None else None
+    environment_before = locked.environment_version_id
+    # The new pairing is validated before the agent moves; the draft lands for the
+    # current agent.
+    validate = agent is not None and can_validate(locked, agent.id)
     activated = None
-    for moving in (agent, None) if agent is not None else (None,):
+    for moving in (agent, None) if agent is not None and not validate else (None,):
         try:
             with transaction.atomic():
                 activated = drafts.activate_drafts(
@@ -1739,6 +1773,32 @@ def _land(
         break
     if activated is None:
         return None
+    if validate:
+        validation = start_validation(
+            locked,
+            agent,
+            locked.environment_version,
+            locked.suite_version,
+            purpose="agent_move",
+            move=agent_move(
+                "land",
+                locked,
+                agent,
+                user=nudge.answered_by,
+                nudge=nudge,
+                from_environment_version_id=environment_before,
+            ),
+        )
+        if validation is None or validation.ready:
+            try:
+                with transaction.atomic():
+                    move_agent(locked, agent)
+            except HostedHarnessError:
+                locked.refresh_from_db()
+                reason = "not_prepared"
+        else:
+            # Moved by the validation once the pairing passes.
+            reason = "validating"
     version, created = activated[nudge.target]
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
     summary: dict[str, Any] = {

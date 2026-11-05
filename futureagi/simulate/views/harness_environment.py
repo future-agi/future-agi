@@ -17,12 +17,23 @@ from simulate.serializers.harness_environment import (
     HarnessActorWriteSerializer,
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
+    HarnessCapabilityCasePageSerializer,
+    HarnessCapabilityCasesQuerySerializer,
+    HarnessCapabilityRecheckResponseSerializer,
+    HarnessCapabilityRecheckSerializer,
+    HarnessCapabilitySelectionQuerySerializer,
+    HarnessCapabilitySelectionReportSerializer,
+    HarnessCapabilitySelectionSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
+    HarnessDefaultMoveValidatingSerializer,
+    HarnessDraftReviewSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
+    HarnessDraftValidateResponseSerializer,
+    HarnessDraftValidateSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -37,6 +48,7 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
+    HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
@@ -101,6 +113,13 @@ def _bound_by_name(run_test, name):
         if name == str(getattr(config.eval_template, "name", "") or ""):
             return config
     return None
+
+
+def _selection_report(job, picks, *, keys, trials):
+    from simulate.services.harness_readiness import resolve_pairing, selection_report
+
+    pairing = resolve_pairing(job, **picks)
+    return selection_report(pairing, keys=keys, trials=trials)
 
 
 def _uuid_or_none(value):
@@ -185,9 +204,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -203,7 +220,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            202: HarnessDefaultMoveValidatingSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(
@@ -215,9 +235,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     def move_default(self, request, pk=None, piece=None, version_id=None):
         """Make an agent, environment or suite version the default; returns every
-        version."""
+        version. An agent move that waits for its pairing to validate is a 202."""
         from simulate.services.harness_versioning.versions import (
             MOVABLE_PIECES,
+            move_agent_default,
             move_default,
         )
 
@@ -228,14 +249,28 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if piece not in MOVABLE_PIECES or identifier is None:
             raise version_reads.version_not_found()
-        moved = move_default(
-            job,
-            piece,
-            identifier,
-            expected_default_id=request.validated_data["expected_default_id"],
-            user=request.user,
+        expected_default_id = request.validated_data["expected_default_id"]
+        if piece != "agent":
+            moved = move_default(
+                job,
+                piece,
+                identifier,
+                expected_default_id=expected_default_id,
+                user=request.user,
+            )
+            return Response(version_reads.list_versions(moved))
+        moved, validation = move_agent_default(
+            job, identifier, expected_default_id=expected_default_id, user=request.user
         )
-        return Response(version_reads.list_versions(moved))
+        if validation is None or validation.ready:
+            return Response(version_reads.list_versions(moved))
+        return Response(
+            {
+                "versions": version_reads.list_versions(moved),
+                "validation": validation.as_view(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     def _agent_version(self, job, version_id):
         """One agent version of this environment's agent, or a 404."""
@@ -445,16 +480,27 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         return Response(list_drafts(job))
 
+    @validated_request(responses={200: HarnessDraftReviewSerializer})
+    @action(detail=True, methods=["get"], url_path="drafts/review")
+    def drafts_review(self, request, pk=None):
+        """Every change the open drafts make, item by item, with the decision taken on each. No writes."""
+        from simulate.services.harness_versioning.review import draft_review
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(draft_review(job))
+
     @validated_request(
-        request_serializer=HarnessDraftSaveSerializer,
-        responses={200: HarnessDraftSaveResponseSerializer},
+        request_serializer=HarnessReviewDecisionsSerializer,
+        responses={200: HarnessDraftReviewSerializer},
         reject_unknown_fields=True,
     )
-    @action(detail=True, methods=["post"], url_path=r"drafts/save")
-    def save_drafts(self, request, pk=None):
-        """Make every named draft live together; returns the new defaults and every
-        version."""
-        from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
+    @action(detail=True, methods=["post"], url_path="drafts/review/decisions")
+    def drafts_review_decisions(self, request, pk=None):
+        """Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review."""
+        from simulate.services.harness_versioning.review import record_decisions
 
         version_reads.require_versioning()
         job = self._job(request, pk)
@@ -462,12 +508,81 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         body = request.validated_data
         return Response(
+            record_decisions(
+                job,
+                body["decisions"],
+                expected_revisions=body["expected_revisions"],
+                user=request.user,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessDraftValidateSerializer,
+        responses={
+            200: HarnessDraftValidateResponseSerializer,
+            202: HarnessDraftValidateResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="drafts/validate")
+    def validate_drafts(self, request, pk=None):
+        """Build candidate versions from the reviewed drafts and start validating them; 202 while it runs."""
+        from simulate.services.harness_versioning.candidates import validate_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        result, running = validate_drafts(
+            job,
+            expected_revisions=body["expected_revisions"],
+            expected_review_digest=body.get("expected_review_digest"),
+            user=request.user,
+        )
+        return Response(
+            result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
+        )
+
+    @validated_request(
+        request_serializer=HarnessDraftSaveSerializer,
+        responses={200: HarnessDraftSaveResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path=r"drafts/save")
+    def save_drafts(self, request, pk=None):
+        """Make every named draft, or the validated candidates, live together; returns the new defaults and every
+        version."""
+        from simulate.services.harness_versioning.candidate_promotion import (
+            promote_candidates,
+        )
+        from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        if "candidates" in body:
+            return Response(
+                promote_candidates(
+                    job,
+                    {name: str(value) for name, value in body["candidates"].items()},
+                    expected_review_digest=body.get("expected_review_digest"),
+                    name=body.get("name") or "",
+                    idempotency_key=body["idempotency_key"],
+                    user=request.user,
+                )
+            )
+        return Response(
             save_drafts(
                 job,
                 {
                     one["piece"]: SaveRequest(
                         expected_parent_id=one["expected_parent_id"],
                         expected_revision=one.get("expected_revision"),
+                        expected_review_digest=body.get("expected_review_digest"),
+                        name=body.get("name") or "",
                     )
                     for one in body["drafts"]
                 },
@@ -574,6 +689,84 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise nudge_not_found()
         nudge = stop_rebuild(job, identifier, user=request.user)
         return Response(nudge_item(_nudges(job).get(id=nudge.id)))
+
+    @validated_request(
+        query_serializer=HarnessCapabilitySelectionQuerySerializer,
+        responses={200: HarnessCapabilitySelectionReportSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_capabilities",
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities")
+    def capabilities(self, request, pk=None):
+        """The run readiness of an agent, environment and suite pairing, computed now,
+        and the selected cases it holds back; an absent id is the environment's default
+        and absent keys select the whole suite. No writes."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = dict(request.validated_query_data)
+        keys = query.pop("keys", None)
+        trials = query.pop("trials")
+        return Response(_selection_report(job, query, keys=keys, trials=trials))
+
+    @validated_request(
+        request_serializer=HarnessCapabilitySelectionSerializer,
+        responses={200: HarnessCapabilitySelectionReportSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_select_capabilities",
+    )
+    @capabilities.mapping.post
+    def select_capabilities(self, request, pk=None):
+        """The same report for a selection too large for a query string. No writes."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = dict(request.validated_data)
+        keys = body.pop("scenario_ids")
+        trials = body.pop("trials")
+        return Response(_selection_report(job, body, keys=keys, trials=trials))
+
+    @validated_request(
+        query_serializer=HarnessCapabilityCasesQuerySerializer,
+        responses={200: HarnessCapabilityCasePageSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_capability_cases",
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities/cases")
+    def capability_cases(self, request, pk=None):
+        """One page, by scenario number, of the selected cases in a bucket or held
+        back by a row. No writes."""
+        from simulate.services.harness_readiness import case_page, resolve_pairing
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = dict(request.validated_query_data)
+        options = {
+            name: query.pop(name, None) for name in ("keys", "bucket", "row", "cursor")
+        }
+        trials = query.pop("trials")
+        pairing = resolve_pairing(job, **query)
+        return Response(case_page(pairing, trials=trials, **options))
+
+    @validated_request(
+        request_serializer=HarnessCapabilityRecheckSerializer,
+        responses={202: HarnessCapabilityRecheckResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="capabilities/recheck")
+    def recheck_capabilities(self, request, pk=None):
+        """Validate a pairing again with a run-less check; moves no default. An absent
+        id is the environment's default."""
+        from simulate.services.harness_readiness import recheck, resolve_pairing
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        pairing = resolve_pairing(job, **request.validated_data)
+        return Response(
+            {"validation": recheck(pairing)}, status=status.HTTP_202_ACCEPTED
+        )
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

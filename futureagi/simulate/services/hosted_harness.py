@@ -4,9 +4,10 @@ import hashlib
 import json
 import secrets
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -279,6 +280,24 @@ def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> 
     return f"run:{environment.id}:{idempotency_digest}"
 
 
+# The environment's own bookkeeping, which a job made from its payload must not carry:
+# its build spend would be billed again and its markers would act on the new job.
+RUN_DROPPED_METADATA = (
+    "scenario_extend",
+    "usage_limit",
+    "harness_spend",
+    "authoring_usage_reports",
+    "usage_reports",
+    "sandbox_runtime",
+    "default_pairs",
+    "default_pair_sealed",
+    "conversation_checkpoints",
+    "draft_saves",
+    "draft_validation",
+    "observability_refusal",
+)
+
+
 def create_selected_harness_run(
     environment: HostedHarnessJob,
     *,
@@ -377,6 +396,13 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+        if resolved is not None:
+            from simulate.services.harness_versioning.validation import (
+                require_pair_runnable,
+            )
+
+            # Before the pins are made: making them resets a failed bundle.
+            require_pair_runnable(environment, resolved)
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(
@@ -482,19 +508,7 @@ def create_selected_harness_run(
         if parallelism is not None:
             runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
-        for key in (
-            "scenario_extend",
-            "usage_limit",
-            "harness_spend",
-            "authoring_usage_reports",
-            "usage_reports",
-            "sandbox_runtime",
-            "default_pairs",
-            "default_pair_sealed",
-            "conversation_checkpoints",
-            "draft_saves",
-            "observability_refusal",
-        ):
+        for key in RUN_DROPPED_METADATA:
             child_metadata.pop(key, None)
         child_metadata.update(
             {
@@ -608,6 +622,22 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
+            from simulate.services.harness_readiness import store_run_snapshot
+
+            # Once committed: reading the evidence may download an archive, which
+            # never happens under the environment's lock.
+            transaction.on_commit(
+                partial(
+                    store_run_snapshot,
+                    child.id,
+                    environment,
+                    agent_version=pins.agent_version,
+                    environment_version=pins.environment_version,
+                    suite_version=pins.suite_version,
+                    runtime=pins.runtime,
+                    bundle=pins.assembled_bundle,
+                )
+            )
             pin_fields = [
                 "agent_version",
                 "environment_version",
@@ -1240,21 +1270,16 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
         for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
         if isinstance(goal, dict) and goal.get("name")
     }
-    if not catalogue:
-        return
-    ungradable = []
-    for key in scenario_keys:
-        sub_goals = (
-            (pins.members[key].content or {}) if key in pins.members else {}
-        ).get("sub_goals")
-        if not isinstance(sub_goals, list):
-            continue
-        names = {
-            str(goal.get("name") if isinstance(goal, dict) else goal)
-            for goal in sub_goals
-        }
-        if not names & catalogue:
-            ungradable.append(key)
+    ungradable = [
+        key
+        for key in scenario_keys
+        if grades_nothing(
+            ((pins.members[key].content or {}) if key in pins.members else {}).get(
+                "sub_goals"
+            ),
+            catalogue,
+        )
+    ]
     if ungradable:
         raise HostedHarnessError(
             "scenario_ungradable",
@@ -1263,6 +1288,19 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
+
+
+def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused."""
+    if not catalogue or not isinstance(sub_goals, list):
+        return False
+    names = {
+        str(goal.get("name") if isinstance(goal, Mapping) else goal)
+        for goal in sub_goals
+    }
+    return not names & set(catalogue)
 
 
 def _member_registrations(
@@ -2856,8 +2894,32 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
         logger.exception("builder_check_request_failed", job_id=job_id)
 
 
+def fail_unscheduled(job: HostedHarnessJob, message: str) -> datetime | None:
+    """Fail a queued job whose workflow could not be started; returns when, or ``None``
+    once the job had moved on."""
+    now = timezone.now()
+    marked = HostedHarnessJob.no_workspace_objects.filter(
+        id=job.id, state=HostedHarnessJob.State.QUEUED
+    ).update(
+        state=HostedHarnessJob.State.FAILED,
+        current_stage="failed",
+        terminal_at=now,
+        failure={
+            "domain": "infrastructure",
+            "stage": "queued",
+            "code": "scheduler_unavailable",
+            "message": message,
+        },
+    )
+    return now if marked else None
+
+
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
-    """Move a terminal job's Run, and the calls it left open, to their end states."""
+    """Move a terminal job's Run, and the calls it left open, to their end states; a
+    validation job's validation ends on commit."""
+    from simulate.services.harness_versioning.validation import on_terminal
+
+    on_terminal(job)
     if not job.test_execution_id:
         return
     message = (job.failure or {}).get("message")

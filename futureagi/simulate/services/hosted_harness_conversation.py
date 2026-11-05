@@ -1818,6 +1818,8 @@ class _DraftCommand:
     origin: str
     author: Any
     draft_kwargs: dict[str, Any]
+    # The person's message the turn answered, which each change it makes cites.
+    message_id: str
 
 
 def _draft_command(
@@ -1836,6 +1838,7 @@ def _draft_command(
         origin=origin or ("extend" if payload.get("_origin") == "extend" else "chat"),
         author=command_author(payload, environment),
         draft_kwargs=draft_kwargs,
+        message_id=str(command.id) if command is not None else "",
     )
 
 
@@ -1980,6 +1983,7 @@ def promote_conversation_checkpoint(
                     origin=draft_command.origin,
                     user=draft_command.author,
                     expected=expected,
+                    message_id=draft_command.message_id,
                     **draft_command.draft_kwargs,
                 )
             except HostedHarnessError as exc:

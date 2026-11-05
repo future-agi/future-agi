@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessJob,
     RunTest,
 )
+from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import diffs
 from simulate.services.harness_versioning.versions import (
     versioning_enabled,
@@ -161,10 +162,17 @@ def _newest_first(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]:
+def _piece_item(
+    version: Any,
+    default_id: Any,
+    *,
+    suite: bool,
+    candidate_states: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(version.id),
         "label": _label(version.version_number),
+        "name": version.name or None,
         "status": version.status,
         "is_default": version.id == default_id,
         "created_at": version.created_at.isoformat(),
@@ -191,7 +199,18 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
+        "candidate_state": _candidate_state(version, candidate_states or {}),
     }
+
+
+def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
+    """How History labels a candidate: validating, ready or failed while it is the live one, superseded or expired
+    once set aside."""
+    if version.status == VersionStatus.CANDIDATE:
+        return states.get(str(version.id), "superseded")
+    if version.discard_reason in (DiscardReason.SUPERSEDED, DiscardReason.EXPIRED):
+        return version.discard_reason
+    return None
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
@@ -434,6 +453,7 @@ def _agent_item(
     return {
         "id": str(version.id),
         "label": _agent_label(version.version_name, version.version_number),
+        "name": None,
         "status": (
             _AGENT_STATUS.get(runtime.preflight_status, "active")
             if runtime is not None
@@ -490,6 +510,7 @@ def _agent_item(
         and not _held_elsewhere(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
+        "candidate_state": None,
     }
 
 
@@ -520,7 +541,9 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_versioning.candidate_sets import candidate_states
 
+    states = candidate_states(job)
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -538,11 +561,19 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             for version in agents
         ],
         "environment": [
-            _piece_item(version, job.environment_version_id, suite=False)
+            _piece_item(
+                version,
+                job.environment_version_id,
+                suite=False,
+                candidate_states=states,
+            )
             for version in environments
         ],
         "suite": [
-            _piece_item(version, job.suite_version_id, suite=True) for version in suites
+            _piece_item(
+                version, job.suite_version_id, suite=True, candidate_states=states
+            )
+            for version in suites
         ],
     }
 
@@ -766,32 +797,45 @@ def suite_members(job: HostedHarnessJob, version_id: Any) -> list[dict[str, Any]
     ]
 
 
-def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]]:
+def run_version_labels(
+    execution_ids: Iterable[Any], *, readiness: bool = False
+) -> dict[str, dict[str, Any]]:
     """Each hosted run's pinned agent, environment and suite version, by test execution.
 
     Read from the run job's own pins only, never the environment's defaults; an
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
-    not the one its environment version was built with.
+    not the one its environment version was built with. With ``readiness``, each also
+    carries ``capability_snapshot``: the readiness the run was created with.
     """
     ids = [one for one in execution_ids if one]
     if not ids:
         return {}
-    rows = (
+    jobs = (
         HostedHarnessJob.no_workspace_objects.filter(test_execution_id__in=ids)
         .exclude(environment_version__isnull=True, suite_version__isnull=True)
         .order_by("created_at")
-        .values_list(
-            "test_execution_id",
-            "environment_version_id",
-            "environment_version__version_number",
-            "suite_version_id",
-            "suite_version__version_number",
-            "agent_version_id",
-            "agent_version__version_name",
-            "agent_version__version_number",
-            "environment_version__agent_version_id",
-        )
+    )
+    rows = jobs.values_list(
+        "test_execution_id",
+        "environment_version_id",
+        "environment_version__version_number",
+        "suite_version_id",
+        "suite_version__version_number",
+        "agent_version_id",
+        "agent_version__version_name",
+        "agent_version__version_number",
+        "environment_version__agent_version_id",
+    )
+    snapshots = (
+        {
+            str(one): snapshot
+            for one, snapshot in jobs.values_list(
+                "test_execution_id", "capability_snapshot"
+            )
+        }
+        if readiness
+        else {}
     )
     return {
         str(execution_id): {
@@ -809,6 +853,11 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
                 else None
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
+            **(
+                {"capability_snapshot": snapshots.get(str(execution_id))}
+                if readiness
+                else {}
+            ),
         }
         for (
             execution_id,
