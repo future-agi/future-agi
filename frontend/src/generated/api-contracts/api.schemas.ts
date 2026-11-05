@@ -25221,6 +25221,43 @@ export interface CallCallActorApi {
   delivery?: CallCallActorApiDelivery;
 }
 
+export interface TrialStateChangeApi {
+  /** @minLength 1 */
+  who: string;
+  /** @minLength 1 */
+  name: string;
+  attempted: number;
+  committed: number;
+  refused: number;
+  faulted: number;
+  duplicate: number;
+  committed_actions: string[];
+}
+
+export type ActorDecisionApiPlay =
+  (typeof ActorDecisionApiPlay)[keyof typeof ActorDecisionApiPlay];
+
+export const ActorDecisionApiPlay = {
+  mocked: "mocked",
+  live: "live",
+  history: "history",
+} as const;
+
+export interface ActorDecisionApi {
+  /** @minLength 1 */
+  actor: string;
+  play: ActorDecisionApiPlay;
+  /** @minLength 1 */
+  action?: string;
+  why?: string;
+  status?: number;
+}
+
+export interface TrialStateApi {
+  state_changes?: TrialStateChangeApi[];
+  decisions?: ActorDecisionApi[];
+}
+
 export interface CallExecutionV3DetailResponseApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -25371,6 +25408,7 @@ export interface CallExecutionV3DetailResponseApi {
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
   call_actors: CallCallActorApi[];
+  trial_state: TrialStateApi;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */

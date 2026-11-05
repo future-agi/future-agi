@@ -56176,6 +56176,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluations",
         "function_calls",
         "call_actors",
+        "trial_state",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -56654,6 +56655,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/CallCallActor",
           },
+        },
+        trial_state: {
+          $ref: "#/definitions/TrialState",
         },
         scoring_status: {
           title: "Scoring status",
@@ -95316,6 +95320,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TrialState: {
+      type: "object",
+      properties: {
+        state_changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialStateChange",
+          },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ActorDecision",
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     CallTranscript: {
       required: ["content"],
       type: "object",
@@ -117433,6 +117455,90 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Text",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ActorDecision: {
+      required: ["actor", "play"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "string",
+          minLength: 1,
+        },
+        play: {
+          title: "Play",
+          type: "string",
+          enum: ["mocked", "live", "history"],
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        why: {
+          title: "Why",
+          type: "string",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    TrialStateChange: {
+      required: [
+        "who",
+        "name",
+        "attempted",
+        "committed",
+        "refused",
+        "faulted",
+        "duplicate",
+        "committed_actions",
+      ],
+      type: "object",
+      properties: {
+        who: {
+          title: "Who",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        committed: {
+          title: "Committed",
+          type: "integer",
+        },
+        refused: {
+          title: "Refused",
+          type: "integer",
+        },
+        faulted: {
+          title: "Faulted",
+          type: "integer",
+        },
+        duplicate: {
+          title: "Duplicate",
+          type: "integer",
+        },
+        committed_actions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

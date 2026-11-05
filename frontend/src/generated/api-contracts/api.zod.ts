@@ -53212,6 +53212,33 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         ),
     }),
   ),
+  trial_state: zod.object({
+    state_changes: zod
+      .array(
+        zod.object({
+          who: zod.string().min(1),
+          name: zod.string().min(1),
+          attempted: zod.number(),
+          committed: zod.number(),
+          refused: zod.number(),
+          faulted: zod.number(),
+          duplicate: zod.number(),
+          committed_actions: zod.array(zod.string().min(1)),
+        }),
+      )
+      .optional(),
+    decisions: zod
+      .array(
+        zod.object({
+          actor: zod.string().min(1),
+          play: zod.enum(["mocked", "live", "history"]),
+          action: zod.string().min(1).optional(),
+          why: zod.string().optional(),
+          status: zod.number().optional(),
+        }),
+      )
+      .optional(),
+  }),
   scoring_status: zod.enum([
     "not_applicable",
     "pending",
