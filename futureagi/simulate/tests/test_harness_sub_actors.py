@@ -196,6 +196,7 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
                 },
                 {
                     "role": "sub_actor",
+                    "sub_actor": "friend",
                     "name": "Rowan",
                     "content": "Add a stop.",
                     "started_speaking_at": at + 2,
@@ -214,10 +215,10 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
     )
 
     rows = list(call.transcripts.order_by("start_time_ms"))
-    assert [(row.speaker_role, row.speaker_name) for row in rows] == [
-        ("assistant", ""),
-        ("sub_actor", "Rowan"),
-        ("user", ""),
+    assert [(row.speaker_role, row.speaker_name, row.sub_actor_id) for row in rows] == [
+        ("assistant", "", None),
+        ("sub_actor", "Rowan", "friend"),
+        ("user", "", None),
     ]
     assert metadata["harness_sub_actors"] == record
     from simulate.tasks.alk_sim import _build_transcript_text
@@ -313,11 +314,12 @@ def test_a_transcript_written_without_a_speaker_name_is_stored_with_none(
             "VALUES (gen_random_uuid(), now(), now(), false, %s, 'user', 'Hi', 0, 0, 1)",
             [call_execution.id],
         )
-    assert CallTranscript.objects.get(call_execution=call_execution).speaker_name == ""
+    row = CallTranscript.objects.get(call_execution=call_execution)
+    assert (row.speaker_name, row.sub_actor_id) == ("", None)
 
 
 @pytest.mark.django_db
-def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
+def test_run_results_filter_and_count_calls_by_each_sub_actor_planned_for_them(
     organization, workspace
 ):
     from simulate.services.run_results_v3_queries import (
@@ -325,18 +327,17 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
         apply_run_call_query,
     )
 
+    def took_part(**part):
+        return [{"sub_actor": "friend", "name": "Rowan", **part}]
+
     seen = {
-        "entered": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 1}
-        ],
-        # Included but never came in: the call is not one the friend entered.
-        "absent": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}
-        ],
-        # Triggered, but the call ended before their line was said: they never came in.
-        "unsaid": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 0}
-        ],
+        "entered": took_part(triggered=True, delivered=1, drawn=True),
+        # Planned, but their trigger never fired.
+        "absent": took_part(triggered=False, delivered=0, drawn=True),
+        # Triggered, but the call ended before their line was said: dropped, not absent.
+        "unsaid": took_part(triggered=True, delivered=0, drawn=True, dropped=["x"]),
+        # This call's draw left them out: absent by design.
+        "undrawn": took_part(triggered=False, delivered=0, drawn=False),
         "plain": None,
     }
     ids = {}
@@ -366,23 +367,34 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
             )
         )
 
-    assert filtered(sub_actor=["friend"]) == ["entered"]
-    assert filtered(sub_actor=["none"]) == ["absent", "plain", "unsaid"]
-    assert filtered(sub_actor_not=["friend"]) == ["absent", "plain", "unsaid"]
-    assert filtered(sub_actor=["friend", "none"]) == [
-        "absent",
-        "entered",
-        "plain",
-        "unsaid",
-    ]
+    assert filtered(sub_actor=["friend"]) == ["absent", "entered", "unsaid"]
+    assert filtered(sub_actor=["none"]) == ["plain", "undrawn"]
+    assert filtered(sub_actor_not=["friend"]) == ["plain", "undrawn"]
+    assert filtered(sub_actor=["friend", "none"]) == sorted(seen)
     assert _sub_actor_facet(calls) == [
-        {"value": "none", "count": 3, "label": "Simulated user only"},
-        {"value": "friend", "count": 1, "label": "Rowan"},
+        {
+            "value": "friend",
+            "count": 3,
+            "label": "Rowan",
+            "delivered": 1,
+            "dropped": 1,
+            "not_triggered": 1,
+        },
+        {
+            "value": "none",
+            "count": 2,
+            "label": "Simulated user only",
+            "delivered": 0,
+            "dropped": 0,
+            "not_triggered": 0,
+        },
     ]
-    # A run where no sub-actor entered any call offers no sub-actor filter.
+    # A run where no call had a sub-actor planned offers no sub-actor filter.
     assert (
         _sub_actor_facet(
-            calls.exclude(id__in=[k for k, v in ids.items() if v == "entered"])
+            calls.filter(
+                id__in=[k for k, v in ids.items() if v in ("plain", "undrawn")]
+            )
         )
         == []
     )
@@ -546,6 +558,22 @@ def test_the_call_detail_serves_who_each_sub_actor_is_and_an_older_call_what_it_
         {"id": "friend", "name": "Rowan", "role": "roommate", "channel": "audio_mix"},
         {"id": "kid", "name": "Sam"},
     ]
+    summary = [
+        {"sub_actor": "friend", "triggered": True, "delivered": 0},
+        {"sub_actor": "kid", "triggered": False, "delivered": 0, "drawn": False},
+    ]
+    assert _call_sub_actors(
+        {"harness_sub_actors": {"resolved": resolved, "summary": summary}}
+    ) == [
+        {
+            "id": "friend",
+            "name": "Rowan",
+            "role": "roommate",
+            "channel": "audio_mix",
+            "delivery": "dropped",
+        },
+        {"id": "kid", "name": "Sam", "delivery": "not_drawn"},
+    ]
     assert _call_sub_actors({"harness_sub_actors": {"summary": []}}) == []
     assert _call_sub_actors(None) == []
 
@@ -562,7 +590,12 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
         CallExecution.SimulationCallType.VOICE,
         {
             "messages": [
-                {"role": "sub_actor", "name": "Rowan", "content": "Add a stop."}
+                {
+                    "role": "sub_actor",
+                    "sub_actor": "friend",
+                    "name": "Rowan",
+                    "content": "Add a stop.",
+                }
             ]
         },
         {},
@@ -570,4 +603,8 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
     clear_call_for_rerun(call)
 
     [turn] = CallExecutionSnapshot.objects.get(call_execution=call).transcripts
-    assert (turn["speaker_role"], turn["speaker_name"]) == ("sub_actor", "Rowan")
+    assert (turn["speaker_role"], turn["speaker_name"], turn["sub_actor_id"]) == (
+        "sub_actor",
+        "Rowan",
+        "friend",
+    )

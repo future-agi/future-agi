@@ -60,7 +60,7 @@ import { buildSegments, resultTops } from "./insightsDistribution";
 import { formatCount, runOutcome, runReadAny } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
-import { reportMetaParts } from "./insightsReport";
+import { reportMetaParts, summaryIncomplete } from "./insightsReport";
 import { shownScopeLabel } from "./insightsScope";
 import { ReportProvider, useReportModel } from "./reportContext";
 import { ErrorState } from "./parts";
@@ -252,6 +252,13 @@ function ReportHeader({
               label={scope}
               icon="mdi:calendar-range"
               title="What this run read"
+            />
+          )}
+          {summaryIncomplete(run) && (
+            <HeaderChip
+              label="Partial report"
+              icon="mdi:alert-outline"
+              title="Analysis is complete, but the summary did not finish or pass verification."
             />
           )}
           {run && (

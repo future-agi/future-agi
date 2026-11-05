@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import OtherPartyName from "./OtherPartyName";
 import { CALL_PARTICIPANTS_HEADING, DEFAULT_ROLE_LABELS } from "./constants";
+import { otherPartyKey } from "./transcriptUtils";
 
 const customerParty = (customerName) =>
   customerName
@@ -17,7 +18,7 @@ export default function CallParticipants({ others, customerName }) {
   const line = [
     { key: "customer", party: customerParty(customerName) },
     ...speakers.map((party) => ({
-      key: `${party.role}:${party.speakerName}`,
+      key: otherPartyKey(party),
       party,
     })),
     { key: "agent", party: { speakerName: DEFAULT_ROLE_LABELS.assistant } },

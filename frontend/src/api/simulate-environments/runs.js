@@ -57,10 +57,13 @@ export function executionToRun(raw) {
     ? raw.outcome_passed
     : raw?.completed_calls ?? Math.round((total * rate) / 100);
   const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
+  const errored = hasOutcomes ? raw.outcome_errored ?? 0 : 0;
   const failed = hasOutcomes
-    ? (raw.outcome_failed ?? 0) + skipped
+    ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
   const noScore = hasOutcomes ? raw.outcome_no_score ?? 0 : 0;
+  // A run passes only when no call failed, errored or was skipped.
+  const notPassed = failed + errored + skipped;
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -68,9 +71,14 @@ export function executionToRun(raw) {
   } else if (raw.status === "Cancelled") {
     // A stopped run is terminal but not a failure.
     status = "cancelled";
-  } else if (raw.status === "Completed" && failed === 0 && !passed && noScore) {
+  } else if (
+    raw.status === "Completed" &&
+    notPassed === 0 &&
+    !passed &&
+    noScore
+  ) {
     status = "no_score";
-  } else if (raw.status === "Completed" && failed === 0) {
+  } else if (raw.status === "Completed" && notPassed === 0) {
     status = "passed";
   } else {
     status = "failed";
@@ -93,9 +101,10 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    // The list's pass rate base: passed plus failed, and `failed` here includes
-    // errored and skipped calls. A call still pending, stopped or with no score is out.
+    // The pass rate base, as on the call summary: passed plus failed. Errored, skipped,
+    // no-score and unfinished calls are counted apart and never in it.
     scored: hasOutcomes ? passed + failed : total,
+    errored,
     skipped,
     hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,

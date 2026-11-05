@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from itertools import islice
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from django.db.models import QuerySet
@@ -51,6 +51,7 @@ from simulate.services.run_results_v3_queries import (
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
+    sub_actor_delivery,
 )
 from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
@@ -62,6 +63,7 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
+from simulate.types import SubActorDelivery
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -348,10 +350,22 @@ class LabelledFacetValueSerializer(FacetValueSerializer):
     label = serializers.CharField()
 
 
+class SubActorFacetValueSerializer(LabelledFacetValueSerializer):
+    delivered = serializers.IntegerField(
+        help_text="Calls where at least one of the sub-actor's lines reached the agent."
+    )
+    dropped = serializers.IntegerField(
+        help_text="Calls where the sub-actor was triggered but none of its lines reached the agent."
+    )
+    not_triggered = serializers.IntegerField(
+        help_text="Calls the sub-actor was planned for but never triggered in."
+    )
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
-    sub_actor = LabelledFacetValueSerializer(many=True, required=False)
+    sub_actor = SubActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -593,6 +607,11 @@ class CallSubActorSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="The channel id they joined the call on.",
     )
+    delivery = serializers.ChoiceField(
+        choices=list(get_args(SubActorDelivery)),
+        required=False,
+        help_text="How far they got in the call; absent on a call stored without a summary.",
+    )
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
@@ -806,7 +825,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v3:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v4:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
@@ -845,14 +864,27 @@ class RunCallsV3View(APIView):
 
 
 def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
-    """Who each of the call's sub-actors is and how they were heard."""
+    """Who each of the call's sub-actors is, how they were heard and how far they got."""
     record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
     resolved = record.get("resolved") if isinstance(record, dict) else None
+    summary = record.get("summary") if isinstance(record, dict) else None
+    deliveries = {
+        one["sub_actor"]: sub_actor_delivery(one)
+        for one in summary or []
+        if isinstance(one, dict) and isinstance(one.get("sub_actor"), str)
+    }
     return [
         {
-            key: one[key]
-            for key in ("id", "name", "role", "channel")
-            if isinstance(one.get(key), str)
+            **{
+                key: one[key]
+                for key in ("id", "name", "role", "channel")
+                if isinstance(one.get(key), str)
+            },
+            **(
+                {"delivery": deliveries[one["id"]]}
+                if one.get("id") in deliveries
+                else {}
+            ),
         }
         for one in resolved or []
         if isinstance(one, dict)

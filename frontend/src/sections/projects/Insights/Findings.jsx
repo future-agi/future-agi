@@ -191,8 +191,9 @@ export default function Findings({ summary }) {
   if (!summary || summary.error)
     return (
       <Typography variant="body2" color="text.secondary">
-        The summary is unavailable for this run. The categories and statistics
-        below are complete.
+        Analysis is complete, but the summary could not be written. This is a
+        partial report; the categories, statistics and evidence remain
+        available.
       </Typography>
     );
   const findings = normalizeFindings(summary);

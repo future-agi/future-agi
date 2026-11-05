@@ -166,6 +166,7 @@ ChatTranscriptPane.propTypes = {
     PropTypes.shape({
       role: PropTypes.string,
       speakerName: PropTypes.string,
+      subActorId: PropTypes.string,
       actorRole: PropTypes.string,
       channel: PropTypes.string,
       text: PropTypes.string,

@@ -33,11 +33,15 @@ export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
 export const channelLabel = (channel) =>
   SUB_ACTOR_CHANNEL_LABELS[channel] || "";
 
+// One person on the call: a sub-actor by their id, or by name on a turn stored before ids were kept.
+export const otherPartyKey = (turn) =>
+  `${turn.role}:${turn.subActorId || turn.speakerName}`;
+
 // Everyone other than the agent and the customer, once each, in the order they first appear.
 export const otherParties = (turns = []) => {
   const seen = new Map();
   for (const turn of turns) {
-    const key = `${turn.role}:${turn.speakerName}`;
+    const key = otherPartyKey(turn);
     if (isOtherRole(turn.role) && !seen.has(key)) seen.set(key, turn);
   }
   return [...seen.values()];
@@ -139,6 +143,7 @@ export const enrichTurns = (
       role,
       rawRole: item.speaker_role || item.role,
       speakerName: item.speaker_name || "",
+      subActorId: item.sub_actor_id || "",
       actorRole: item.actor_role || "",
       channel: item.channel || "",
       content: getContent(item),

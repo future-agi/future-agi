@@ -76,16 +76,30 @@ beforeEach(() => {
 });
 
 describe("executionToRun", () => {
-  it("counts calls with a pass or fail in the pass-rate base, errored ones included", () => {
+  it("bases the pass rate on passed plus failed only, like the call summary", () => {
     const base = {
       id: "ex-rate",
       status: "Completed",
       outcome_passed: 6,
       outcome_failed: 2,
+      outcome_errored: 2,
       outcome_skipped: 2,
     };
-    expect(executionToRun({ ...base, total_chats: 10, outcome_no_score: 0 }).scored).toBe(10);
-    expect(executionToRun({ ...base, total_chats: 12, outcome_no_score: 2 }).scored).toBe(10);
+    const run = executionToRun({
+      ...base,
+      total_chats: 12,
+      outcome_no_score: 0,
+    });
+    expect([run.scored, run.failed, run.errored, run.skipped]).toEqual([
+      8, 2, 2, 2,
+    ]);
+    expect(
+      executionToRun({ ...base, total_chats: 14, outcome_no_score: 2 }).scored,
+    ).toBe(8);
+    // Errored and skipped calls keep a run from reading passed, but stay out of its rate.
+    const unrated = { ...base, outcome_failed: 0, total_chats: 10 };
+    expect(executionToRun(unrated).scored).toBe(6);
+    expect(executionToRun(unrated).status).toBe("failed");
     // A run stopped before its calls finished has nothing to rate them on yet.
     const stopped = { id: "ex-stopped", status: "Cancelled", total_chats: 4, outcome_passed: 0 };
     expect(executionToRun({ ...stopped, outcome_failed: 0, outcome_no_score: 0 }).scored).toBe(0);
@@ -265,8 +279,9 @@ describe("executionToRun", () => {
     expect(run).toMatchObject({
       total: 6,
       passed: 3,
-      failed: 3,
+      failed: 2,
       skipped: 1,
+      scored: 5,
       status: "failed",
     });
   });

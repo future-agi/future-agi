@@ -217,10 +217,12 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_passed": (
                 outcomes.get("passed", 0) if outcomes is not None else None
             ),
+            # A pass rate is passed over passed plus failed; every other outcome is its own count.
             "outcome_failed": (
-                outcomes.get("failed", 0) + outcomes.get("errored", 0)
-                if outcomes is not None
-                else None
+                outcomes.get("failed", 0) if outcomes is not None else None
+            ),
+            "outcome_errored": (
+                outcomes.get("errored", 0) if outcomes is not None else None
             ),
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
