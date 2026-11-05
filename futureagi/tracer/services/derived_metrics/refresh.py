@@ -59,6 +59,7 @@ from tracer.services.derived_metrics.storage import (
     FIELD_VALUES,
     LIST_CURRENT_MEMBERS,
     LIST_CURRENT_ROOTS,
+    LIST_USER_ACTIVITY,
     RETIRED_PARTS,
     SOURCE_DEPENDENCIES,
     UNIT_STATE,
@@ -75,6 +76,7 @@ TABLE_KINDS = {
     "bucket_retired_parts": RETIRED_PARTS,
     "list_current_root_facts": LIST_CURRENT_ROOTS,
     "list_current_members": LIST_CURRENT_MEMBERS,
+    "list_current_user_activity": LIST_USER_ACTIVITY,
 }
 TABLE_KIND = {table.name: kind for kind, table in TABLE_KINDS.items()}
 

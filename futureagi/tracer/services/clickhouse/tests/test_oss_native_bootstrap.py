@@ -796,8 +796,13 @@ def test_current_fact_opt_in_adds_only_packaged_immutable_tables():
     assert set(created) == set(DEFAULT_NAMES) | {
         "list_current_root_facts",
         "list_current_members",
+        "list_current_user_activity",
     }
-    for name in ("list_current_root_facts", "list_current_members"):
+    for name in (
+        "list_current_root_facts",
+        "list_current_members",
+        "list_current_user_activity",
+    ):
         ddl = client.definitions[name]
         assert "ReplacingMergeTree(_version)" in ddl
         assert "generation, attempt_id" in ddl

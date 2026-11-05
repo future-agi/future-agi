@@ -352,7 +352,31 @@ LIST_CURRENT_MEMBERS = MetricTable(
     PROJECT_PARTITION,
     LIST_CURRENT_KEY,
 )
-LIST_CURRENT_TABLES = (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS)
+# A user reassignment retracts the old user-key and inserts the new key in the
+# same publication. Time, deletion and usage stay payload, never pruning keys.
+LIST_USER_ACTIVITY_SCHEMA = tuple(
+    column
+    for column in LIST_CURRENT_SCHEMA
+    if column[0]
+    not in {
+        "parent_span_id",
+        "name",
+        "input",
+        "attributes_extra",
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+    }
+)
+LIST_USER_ACTIVITY = MetricTable(
+    "list_current_user_activity",
+    "037_list_current_user_activity.sql",
+    LIST_USER_ACTIVITY_SCHEMA,
+    "_version",
+    PROJECT_PARTITION,
+    (*LIST_CURRENT_KEY[:2], "canonical_user_id", *LIST_CURRENT_KEY[2:]),
+)
+LIST_CURRENT_TABLES = (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS, LIST_USER_ACTIVITY)
 
 TABLES = MappingProxyType(
     {

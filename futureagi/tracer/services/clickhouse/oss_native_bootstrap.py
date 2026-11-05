@@ -48,6 +48,7 @@ _TABLES = {
 _CURRENT_LISTS = {
     "list_current_root_facts": ("036_list_current_root_facts.sql", 2, 0),
     "list_current_members": ("036_list_current_root_facts.sql", 2, 1),
+    "list_current_user_activity": ("037_list_current_user_activity.sql", 1, 0),
 }
 _ROLLUPS = {
     "spans_per_session": ("008_per_session_rollup.sql", 2, 0),

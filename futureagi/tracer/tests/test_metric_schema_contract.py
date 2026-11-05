@@ -119,10 +119,17 @@ def test_only_owned_additive_tables_and_numbers():
         "034_metric_source_dependencies.sql",
         "035_metric_bucket_retired_parts.sql",
         "036_list_current_root_facts.sql",
+        "037_list_current_user_activity.sql",
     )
     for filename in storage.SCHEMA_FILES:
         assert len(list(SCHEMA_DIR.glob(filename[:3] + "_*.sql"))) == 1
-    assert not any("user" in name for name in storage.TABLES)
+    # Only span activity is persisted, never per-window/per-user metric totals.
+    assert {name for name in storage.TABLES if "user" in name} == {
+        "list_current_user_activity"
+    }
+    assert "span_id" in storage.LIST_USER_ACTIVITY.logical_key
+    assert "unit_start" not in storage.LIST_USER_ACTIVITY.logical_key
+    assert "field_id" not in storage.LIST_USER_ACTIVITY.columns
     # Attempt preimages are a write-once PG ledger, not a CH state-transition copy.
     assert not any("attempt" in name or "ledger" in name for name in storage.TABLES)
 
@@ -308,7 +315,7 @@ def live_store():
             name: scoped.command(f"SHOW CREATE TABLE {name}") for name in storage.TABLES
         }
         assert before == after
-        assert scoped.query("SELECT count() FROM schema_versions").first_row == (6,)
+        assert scoped.query("SELECT count() FROM schema_versions").first_row == (7,)
         yield scoped
     finally:
         if scoped is not None:
