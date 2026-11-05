@@ -3169,6 +3169,41 @@ def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
     assert (job.completed_count, job.failed_count) == (2, 0)
 
 
+@pytest.mark.django_db
+def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_out(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch-spent", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+    # The relaunch, the last the budget allows, loses the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "terminal_delivery_incomplete"
+    calls = {
+        execution.execution_key: execution.call_execution
+        for execution in HostedHarnessExecution.no_workspace_objects.filter(
+            job=job
+        ).select_related("call_execution")
+    }
+    assert calls["scenario-1:0"].status == CallExecution.CallStatus.COMPLETED
+    assert calls["scenario-2:0"].status == CallExecution.CallStatus.FAILED
+    assert calls["scenario-2:0"].ended_reason == job.failure["message"]
+    # The Run is not failed: it is scored from the call that has its result, as after
+    # an in-run re-run.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
 @pytest.mark.django_db(transaction=True)
 def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     organization, monkeypatch
