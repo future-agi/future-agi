@@ -17,6 +17,7 @@ export default function TrialChangesPanel({ trialState }) {
   const preRun = all.filter((one) => one.play === "history");
   const decisions = all.filter((one) => one.play !== "history");
   const approvals = trialState?.approvals || [];
+  const usage = trialState?.usage || [];
   if (!changes.length && !all.length)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.empty}</Typography>;
   const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
@@ -96,6 +97,14 @@ export default function TrialChangesPanel({ trialState }) {
           ))}
         </Box>
       )}
+      {usage.length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.usageHeading}
+          </Typography>
+          <Typography sx={quiet}>{C.usage(usage)}</Typography>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -105,5 +114,6 @@ TrialChangesPanel.propTypes = {
     state_changes: PropTypes.arrayOf(PropTypes.object),
     decisions: PropTypes.arrayOf(PropTypes.object),
     approvals: PropTypes.arrayOf(PropTypes.object),
+    usage: PropTypes.arrayOf(PropTypes.object),
   }),
 };

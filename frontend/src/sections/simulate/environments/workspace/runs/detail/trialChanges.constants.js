@@ -57,6 +57,14 @@ export const TRIAL_CHANGES_COPY = {
     `${one.request?.action || "A request"}, then ${name(one.decision?.by)}: ${one.decision?.action || "?"}`,
   actedBefore: "the agent committed a write before the decision",
   waitedFor: "the agent waited for the decision",
+  usageHeading: "Actors' model use",
+  usage: (rows) => {
+    const tokens = rows.reduce(
+      (sum, one) => sum + (one.tokens_in || 0) + (one.tokens_out || 0),
+      0,
+    );
+    return `${rows.length} model calls, ${tokens} tokens, counted in the simulator's usage`;
+  },
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
 };

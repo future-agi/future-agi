@@ -227,4 +227,39 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Before the run · /)).toBeNull();
   });
+
+  it("says how much the actors' model calls used", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 1,
+              committed: 1,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["x"],
+            },
+          ],
+          usage: [
+            {
+              actor: "priya",
+              model: "m",
+              tokens_in: 10,
+              tokens_out: 5,
+              cost_usd: 0,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "1 model calls, 15 tokens, counted in the simulator's usage",
+      ),
+    ).toBeInTheDocument();
+  });
 });
