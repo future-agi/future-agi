@@ -11,6 +11,14 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
 
 const { default: CallWorkersPanel } = await import("../CallWorkersPanel");
 
+// A call with no hand-off shows its steps with no toggle.
+const renderSteps = (ui) => {
+  const view = render(ui);
+  const toggle = screen.queryByRole("checkbox", { name: "Raw events" });
+  if (toggle) fireEvent.click(toggle);
+  return view;
+};
+
 const TIMELINE = {
   collected_at: "2026-10-31T12:00:00Z",
   started_at: "2026-10-31T11:59:50",
@@ -80,41 +88,26 @@ describe("CallWorkersPanel", () => {
     result = { data: TIMELINE, isLoading: false, isError: false };
   });
 
-  it("shows the request, each hand-off with the worker's calls and return, and the reply, under the coordinator", () => {
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(
-      screen.getByText("Coordinator · Returns coordinator"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("One level, one hand-off at a time"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Please refund order 1042")).toBeInTheDocument();
-    expect(
-      screen.getByText("Delegated to Order-lookup worker: inspect order 1042"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/^get_order/)).toBeInTheDocument();
-    expect(screen.getByText(/\(error\)/)).toBeInTheDocument();
-    expect(
-      screen.getByText("Order-lookup worker returned"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("eligible")).toBeInTheDocument();
-    expect(screen.getByText("Coordinator · send_reply")).toBeInTheDocument();
-    expect(screen.getByText("Your refund is on its way")).toBeInTheDocument();
-    // In order: request, hand-off, return, the coordinator's own call, the reply.
-    const order = [
-      "Please refund order 1042",
-      "Order-lookup worker returned",
-      "Coordinator · send_reply",
-      "Your refund is on its way",
-    ].map((text) => screen.getByText(text));
-    order
-      .slice(1)
-      .forEach((node, index) =>
-        expect(
-          order[index].compareDocumentPosition(node) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy(),
-      );
+  const steps = () =>
+    screen.getAllByTestId("raw-event").map((one) => one.dataset.type);
+
+  it("lists every step in order, from the request through each hand-off and its calls to the reply", () => {
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+    expect(steps()).toEqual([
+      "Message",
+      "Hand-off",
+      "Tool call",
+      "Answer",
+      "Tool call",
+      "Reply",
+    ]);
+    const [, handOff, tool] = screen.getAllByTestId("raw-event");
+    expect(handOff).toHaveTextContent("Returns coordinator");
+    expect(handOff).toHaveTextContent("→ Order-lookup worker");
+    expect(handOff).toHaveTextContent("inspect order 1042");
+    expect(tool).toHaveTextContent("Order-lookup worker");
+    expect(tool).toHaveTextContent("get_order");
+    expect(tool).toHaveTextContent("error");
   });
 
   it("says when the record was built without the app's traces, and not otherwise", () => {
@@ -124,7 +117,7 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
+    const { unmount } = renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText(note)).toBeInTheDocument();
     unmount();
     result = {
@@ -132,16 +125,8 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.queryByText(note)).toBeNull();
-  });
-
-  it("names only the tool inside its worker's hand-off", () => {
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("get_order (error)")).toBeInTheDocument();
-    expect(screen.queryByText(/Order-lookup worker · get_order/)).toBeNull();
-    // A call outside any hand-off still says whose it was.
-    expect(screen.getByText("Coordinator · send_reply")).toBeInTheDocument();
   });
 
   it("shows an answer returned as data as code, kept as it came", () => {
@@ -157,7 +142,7 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     const [returned] = screen
       .getAllByTestId("answer")
       .filter((one) => one.textContent.includes("feedback"));
@@ -181,7 +166,7 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     const [returned] = screen
       .getAllByTestId("answer")
       .filter((one) => one.textContent.includes("line 12"));
@@ -204,30 +189,26 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Audit worker · not observed")).toBeInTheDocument();
-    expect(screen.queryByText("Caller's request")).toBeNull();
-    expect(screen.queryByText("Coordinator's reply")).toBeNull();
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByText("Not observed: Audit worker")).toBeInTheDocument();
+    expect(steps()).toEqual(["Tool call"]);
   });
 
   it("times each step from the call's start", () => {
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("0:04")).toBeInTheDocument();
     expect(screen.getByText("0:05")).toBeInTheDocument();
     expect(screen.getByText("0:07")).toBeInTheDocument();
     expect(screen.getByText("0:20")).toBeInTheDocument();
   });
 
-  it("opens a tool call to show its input and output, by mouse or keyboard", () => {
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.queryByText("store unavailable")).toBeNull();
-    fireEvent.click(screen.getByText(/^get_order/));
-    expect(screen.getByText("Input")).toBeInTheDocument();
+  it("shows a tool call's input and output until its JSON is hidden", () => {
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("store unavailable")).toBeInTheDocument();
-    const row = screen.getByRole("button", { name: /^get_order/ });
-    expect(row).toHaveAttribute("aria-expanded", "true");
-    fireEvent.keyDown(row, { key: " " });
-    expect(row).toHaveAttribute("aria-expanded", "false");
+    const [button] = screen.getAllByRole("button", { name: "Hide JSON" });
+    fireEvent.click(button);
+    expect(screen.getByText("store unavailable")).not.toBeVisible();
+    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
   it("says what is missing for a request, reply, coordinator or return that was not seen", () => {
@@ -242,8 +223,8 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Coordinator")).toBeInTheDocument();
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getAllByText("Coordinator").length).toBeGreaterThan(0);
     expect(screen.getByText("No request recorded")).toBeInTheDocument();
     expect(screen.getByText("No reply recorded")).toBeInTheDocument();
     expect(
@@ -271,7 +252,7 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("Order 1042").tagName).toBe("STRONG");
     expect(
       screen.getAllByRole("listitem").map((item) => item.textContent),
@@ -292,7 +273,7 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(document.querySelector("img")).toBeNull();
   });
@@ -316,32 +297,34 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("Unknown · get_order")).toBeInTheDocument();
-    expect(screen.queryByText("Coordinator · get_order")).toBeNull();
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByTestId("raw-event")).toHaveTextContent("Unknown");
+    expect(screen.getByTestId("raw-event")).not.toHaveTextContent(
+      "Coordinator",
+    );
   });
 
   it("shows a spinner until the record is read, and an error only with nothing to show", () => {
     result = { data: undefined, isLoading: true, isError: false };
-    const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
+    const { unmount } = renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     unmount();
     result = { data: undefined, isLoading: false, isError: true };
-    const failed = render(<CallWorkersPanel callExecutionId="c1" />);
+    const failed = renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(
       screen.getByText("Couldn't load this call's participants."),
     ).toBeInTheDocument();
     failed.unmount();
-    // A failed refetch leaves the tree that's already on screen.
+    // A failed refetch leaves what's already on screen.
     result = { data: TIMELINE, isLoading: false, isError: true };
-    render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByTestId("tree-root")).toBeInTheDocument();
+    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByTestId("raw-events")).toBeInTheDocument();
     expect(
       screen.queryByText("Couldn't load this call's participants."),
     ).toBeNull();
   });
 
-  describe("as a tree", () => {
+  describe("steps", () => {
     const worker = (id, observed = true) => ({
       worker_id: `r/${id}`,
       id,
@@ -365,60 +348,10 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     });
-    // The guide-line branch a node hangs in, and the node that branch belongs to (the root when none).
-    const ownerOf = (node) =>
-      node.parentElement.closest(
-        '[data-testid="hand-off"], [data-testid="tree-root"]',
-      );
 
-    it("draws the coordinator as the root and each hand-off as a child joined by guide lines", () => {
-      result = { data: TIMELINE, isLoading: false, isError: false };
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      const root = screen.getByTestId("tree-root");
-      const node = screen.getByTestId("hand-off");
-      // The hand-off hangs in a guide-line branch of the root, under the coordinator, not beside it.
-      expect(node.closest('[data-testid="tree-child"]')).not.toBeNull();
-      expect(node.closest('[data-testid="tree-branch"]')).not.toBeNull();
-      expect(ownerOf(node)).toBe(root);
-      expect(root).toHaveTextContent("Coordinator · Returns coordinator");
-      // The request sits above the root and the reply after it.
-      const request = screen.getByText("Caller's request");
-      const reply = screen.getByText("Coordinator's reply");
-      expect(
-        request.compareDocumentPosition(root) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(
-        root.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(root.contains(reply)).toBe(false);
-    });
-
-    it("hangs a nested hand-off under the node of the agent that made it", () => {
+    it("credits a nested hand-off to the agent that made it, and keeps a control pass with no answer", () => {
       result = timeline(
-        [worker("lead"), worker("helper")],
-        [
-          { type: "delegated", worker_id: "r/lead", at: at(1) },
-          { type: "delegated", worker_id: "r/helper", by: "r/lead", at: at(2) },
-          { type: "returned", worker_id: "r/helper", result: "h", at: at(3) },
-          { type: "returned", worker_id: "r/lead", result: "l", at: at(4) },
-        ],
-      );
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      const [lead, helper] = screen.getAllByTestId("hand-off");
-      expect(ownerOf(lead)).toBe(screen.getByTestId("tree-root"));
-      expect(ownerOf(helper)).toBe(lead);
-      expect(helper.closest('[data-testid="tree-branch"]')).not.toBe(
-        lead.closest('[data-testid="tree-branch"]'),
-      );
-      expect(
-        screen.getByText("2 levels deep · one hand-off at a time"),
-      ).toBeInTheDocument();
-    });
-
-    it("shows a control pass as its own node, with the hand-offs that agent made under it", () => {
-      result = timeline(
-        [worker("inspiration"), worker("place"), worker("poi")],
+        [worker("inspiration"), worker("place")],
         [
           {
             type: "transferred",
@@ -430,7 +363,8 @@ describe("CallWorkersPanel", () => {
             type: "delegated",
             worker_id: "r/place",
             by: "r/inspiration",
-            at: null,
+            task: "find places",
+            at: at(2),
           },
           {
             type: "returned",
@@ -438,37 +372,21 @@ describe("CallWorkersPanel", () => {
             result: "places",
             at: at(5),
           },
-          {
-            type: "delegated",
-            worker_id: "r/poi",
-            by: "r/inspiration",
-            at: null,
-          },
-          { type: "returned", worker_id: "r/poi", result: "sights", at: at(9) },
         ],
       );
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      const nodes = screen.getAllByTestId("hand-off");
-      const passed = nodes.find(
-        (one) => one.dataset.worker === "inspiration worker",
-      );
-      expect(passed).toHaveTextContent("Control passed to inspiration worker");
-      expect(passed).not.toHaveTextContent("inspiration worker returned");
-      for (const name of ["place worker", "poi worker"])
-        expect(ownerOf(nodes.find((one) => one.dataset.worker === name))).toBe(
-          passed,
-        );
-      // Neither sibling has a start, so "one at a time" would be a guess.
-      expect(
-        screen.getByText(/can't tell if hand-offs overlapped/),
-      ).toBeInTheDocument();
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+      expect(steps()).toEqual([
+        "Message",
+        "Control pass",
+        "Hand-off",
+        "Answer",
+        "Reply",
+      ]);
+      const [, pass, handOff] = screen.getAllByTestId("raw-event");
+      expect(pass).toHaveTextContent("→ inspiration worker");
+      expect(handOff).toHaveTextContent("inspiration worker");
+      expect(handOff).toHaveTextContent("→ place worker");
     });
-
-    const depthOf = (text) =>
-      screen
-        .getByText(text, { exact: false })
-        .closest("[data-testid='hand-off']")
-        .getAttribute("data-depth");
 
     it("marks sibling hand-offs whose spans overlap as in parallel", () => {
       result = timeline(
@@ -497,48 +415,8 @@ describe("CallWorkersPanel", () => {
           { type: "returned", worker_id: "r/review", result: "ok", at: at(8) },
         ],
       );
-      render(<CallWorkersPanel callExecutionId="c1" />);
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getAllByText("in parallel")).toHaveLength(2);
-      expect(
-        screen.getByText("One level · 2 hand-offs ran in parallel"),
-      ).toBeInTheDocument();
-    });
-
-    it("summarises a large team in one line and colours by depth, not by worker", () => {
-      const team = Array.from({ length: 20 }, (_, index) =>
-        worker(`w${index}`, index < 15),
-      );
-      result = timeline(team, [
-        { type: "delegated", worker_id: "r/w0", task: "lead", at: at(1) },
-        {
-          type: "delegated",
-          worker_id: "r/w1",
-          by: "r/w0",
-          task: "help",
-          at: at(2),
-        },
-        { type: "returned", worker_id: "r/w1", result: "done", at: at(3) },
-        {
-          type: "delegated",
-          worker_id: "r/w2",
-          by: "r/w0",
-          task: "help",
-          at: at(4),
-        },
-        { type: "returned", worker_id: "r/w2", result: "done", at: at(5) },
-        { type: "returned", worker_id: "r/w0", result: "done", at: at(6) },
-      ]);
-      render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(
-        screen.getByText("20 participants · 15 observed · 5 not observed"),
-      ).toBeInTheDocument();
-      expect(screen.queryByText("w3 worker")).toBeNull();
-      fireEvent.click(screen.getByText("Show all participants"));
-      const tint = (name) =>
-        getComputedStyle(screen.getByText(name).closest(".MuiChip-root"))
-          .backgroundColor;
-      expect(tint("w1 worker")).toBe(tint("w2 worker"));
-      expect(tint("w0 worker")).not.toBe(tint("w1 worker"));
     });
 
     it("says why a step's payload, later steps or a return are missing when the record reached its limit", () => {
@@ -561,19 +439,18 @@ describe("CallWorkersPanel", () => {
         ],
       );
       const uncut = result;
-      render(<CallWorkersPanel callExecutionId="c1" />);
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getByText(/^No return from b worker/)).toBeInTheDocument();
       cleanup();
       result = {
         ...uncut,
         data: { ...uncut.data, events_omitted: 12 },
       };
-      render(<CallWorkersPanel callExecutionId="c1" />);
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
       expect(
         screen.getByText(/^Return from b worker not shown/),
       ).toBeInTheDocument();
       expect(screen.queryByText(/^No return from/)).toBeNull();
-      fireEvent.click(screen.getByText(/^lookup/));
       expect(
         screen.getAllByText(
           "Not kept: this call's record reached its size limit",
@@ -586,48 +463,150 @@ describe("CallWorkersPanel", () => {
       ).toBeInTheDocument();
     });
 
-    it("keeps a record from before hand-offs named their maker flat under the coordinator", () => {
+    it("keeps a long record's JSON closed, so it stays quick to draw", () => {
       result = timeline(
-        [worker("a"), worker("b")],
+        [worker("a")],
         [
-          { type: "delegated", worker_id: "r/a", task: "one", at: at(1) },
-          { type: "returned", worker_id: "r/a", result: "x", at: at(2) },
-          { type: "delegated", worker_id: "r/b", task: "two", at: at(3) },
-          { type: "returned", worker_id: "r/b", result: "y", at: at(4) },
+          { type: "delegated", worker_id: "r/a", task: "many", at: at(1) },
+          ...Array.from({ length: 21 }, (_, index) => ({
+            type: "tool_call",
+            worker_id: "r/a",
+            tool: `tool_${index}`,
+            status: "ok",
+            input: { n: index },
+            at: at(2),
+          })),
         ],
       );
+      renderSteps(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.queryByRole("button", { name: "Hide JSON" })).toBeNull();
+      expect(screen.getAllByRole("button", { name: "Show JSON" })).toHaveLength(
+        21,
+      );
+    });
+  });
+
+  describe("as a table", () => {
+    const worker = (id, name, observed = true) => ({
+      worker_id: id,
+      id,
+      name,
+      observed,
+      undeclared: false,
+      instance_ids: [],
+    });
+    const tool = (seq, workerId, name, extra) => ({
+      seq,
+      type: "tool_call",
+      worker_id: workerId,
+      tool: name,
+      status: "ok",
+      input: { order_id: "1042" },
+      output: { ok: true },
+      at: "2026-10-31T11:59:57",
+      attribution: "reported",
+      ...extra,
+    });
+    const handOff = (seq, workerId, task, by) => ({
+      seq,
+      type: "delegated",
+      worker_id: workerId,
+      by,
+      delegation_id: `d${seq}`,
+      task,
+      at: "2026-10-31T11:59:56",
+      attribution: "reported",
+    });
+    const returned = (seq, workerId, delegation, text, status = "ok") => ({
+      seq,
+      type: "returned",
+      worker_id: workerId,
+      delegation_id: delegation,
+      result: text,
+      status,
+      at: "2026-10-31T11:59:58",
+      attribution: "reported",
+    });
+    const TABLE = {
+      ...TIMELINE,
+      workers: [
+        worker("r/lookup", "Lookup"),
+        worker("r/refund", "Refund"),
+        worker("r/audit", "Audit", false),
+      ],
+      events: [
+        handOff(1, "r/lookup", "find order 1042"),
+        tool(2, "r/lookup", "get_order"),
+        returned(3, "r/lookup", "d1", "Order 1042 is eligible"),
+        handOff(4, "r/refund", "refund order 1042"),
+        tool(5, "r/refund", "issue_refund", {
+          status: "error",
+          output: "gateway returned 503",
+        }),
+        returned(6, "r/refund", "d4", null, "error"),
+      ],
+    };
+    const row = (name) =>
+      screen
+        .getAllByTestId("worker-row")
+        .find((one) => one.dataset.worker === name);
+
+    beforeEach(() => {
+      result = { data: TABLE, isLoading: false, isError: false };
+    });
+
+    it("opens the table with a count of how hand-offs ended and marks the failed one", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(depthOf("Delegated to a worker")).toBe("1");
-      expect(depthOf("Delegated to b worker")).toBe("1");
+
       expect(
-        screen.getByText("One level, one hand-off at a time"),
+        screen.getByText("2 hand-offs to 2 workers. 1 finished, 1 didn't."),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("raw-events")).toBeNull();
+      expect(row("Lookup")).toHaveAttribute("data-end", "finished");
+      expect(row("Refund")).toHaveAttribute("data-end", "failed");
+      // The icon alone can't say so: the button's own label decides what a screen reader hears.
+      expect(
+        screen.getByRole("button", {
+          name: "Show raw data for Refund, error",
+        }),
       ).toBeInTheDocument();
     });
 
-    it("keeps hand-offs below the second level folded and unmounted until opened", () => {
-      result = timeline(
-        [worker("a"), worker("b"), worker("c")],
-        [
-          { type: "delegated", worker_id: "r/a", at: at(1) },
-          { type: "delegated", worker_id: "r/b", by: "r/a", at: at(2) },
-          { type: "delegated", worker_id: "r/c", by: "r/b", at: at(3) },
-          {
-            type: "returned",
-            worker_id: "r/c",
-            result: "leaf done",
-            at: at(4),
-          },
-        ],
-      );
+    it("leaves a row as it is when the click ends a text selection, but not for a keyboard press", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.queryByText("leaf done")).toBeNull();
-      const deep = screen.getByRole("button", {
-        name: /Delegated to c worker/,
-      });
-      expect(deep).toHaveAttribute("aria-expanded", "false");
-      fireEvent.keyDown(deep, { key: "Enter" });
-      expect(deep).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByText("leaf done")).toBeInTheDocument();
+      const selection = vi
+        .spyOn(window, "getSelection")
+        .mockReturnValue({ toString: () => "copied text" });
+
+      fireEvent.click(row("Lookup"), { detail: 1 });
+      expect(screen.queryByTestId("worker-row-raw")).toBeNull();
+
+      fireEvent.click(row("Lookup"), { detail: 0 });
+      expect(screen.getByTestId("worker-row-raw")).toBeInTheDocument();
+      selection.mockRestore();
+    });
+
+    it("opens a failed tool with its row, so the error is one click from the table", () => {
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.queryByText("gateway returned 503")).toBeNull();
+
+      fireEvent.click(row("Refund"));
+      expect(screen.getByText("gateway returned 503")).toBeInTheDocument();
+    });
+
+    it("opens only the clicked row's raw data, and the toggle swaps the table for every step", () => {
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show raw data for Lookup" }),
+      );
+
+      const raw = screen.getByTestId("worker-row-raw");
+      expect(raw).toHaveTextContent("get_order");
+      expect(raw).not.toHaveTextContent("issue_refund");
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Raw events" }));
+      expect(steps()).toContain("Reply");
+      expect(screen.queryByTestId("worker-row")).toBeNull();
     });
   });
 });
