@@ -56175,7 +56175,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
-        "sub_actors",
+        "call_actors",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -56649,10 +56649,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SimulateRunV3FunctionCall",
           },
         },
-        sub_actors: {
+        call_actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/CallSubActor",
+            $ref: "#/definitions/CallCallActor",
           },
         },
         scoring_status: {
@@ -66203,6 +66203,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "actions",
         "channels",
         "loudness",
+        "reserved_ids",
       ],
       type: "object",
       properties: {
@@ -66245,10 +66246,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        reserved_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessActorView: {
-      required: ["actor_id", "permitted_actions", "sees", "never_sees"],
+      required: [
+        "actor_id",
+        "permitted_actions",
+        "sees",
+        "never_sees",
+        "played_from_view",
+        "unused_reason",
+      ],
       type: "object",
       properties: {
         actor_id: {
@@ -66270,11 +66285,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         never_sees: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
+          $ref: "#/definitions/HarnessActorNeverSees",
+        },
+        played_from_view: {
+          title: "Played from view",
+          type: "boolean",
+        },
+        unused_reason: {
+          title: "Unused reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -91566,7 +91587,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
-            "sub_actor",
+            "actor",
             "unknown",
           ],
         },
@@ -95027,12 +95048,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    CallSubActor: {
+    CallCallActor: {
       type: "object",
       properties: {
         id: {
           title: "Id",
-          description: "The sub-actor's id in the environment.",
+          description: "The actor's id in the environment.",
           type: "string",
         },
         name: {
@@ -95315,7 +95336,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
-            "sub_actor",
+            "actor",
             "unknown",
           ],
         },
@@ -95324,8 +95345,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
         },
-        sub_actor_id: {
-          title: "Sub actor id",
+        actor_id: {
+          title: "Actor id",
           type: "string",
           maxLength: 255,
           "x-nullable": true,
@@ -101203,6 +101224,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorNeverSees: {
+      required: ["scenario_fields", "files", "other_actors"],
+      type: "object",
+      properties: {
+        scenario_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        other_actors: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     HarnessActorSeen: {
       required: ["input", "value", "source"],
       type: "object",
@@ -102141,7 +102189,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "amendments",
         "sub_goals",
-        "sub_actors",
+        "call_actors",
         "end_conditions",
         "provenance",
       ],
@@ -102251,10 +102299,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentCatalogueSubGoal",
           },
         },
-        sub_actors: {
+        call_actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessEnvironmentSubActor",
+            $ref: "#/definitions/HarnessEnvironmentCallActor",
           },
         },
         end_conditions: {
@@ -102432,7 +102480,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "fixture",
         "steps",
         "sub_goals",
-        "sub_actors",
+        "actors",
         "persona",
         "situation",
         "outcome",
@@ -102497,10 +102545,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentSubGoal",
           },
         },
-        sub_actors: {
+        actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessEnvironmentScenarioSubActor",
+            $ref: "#/definitions/HarnessEnvironmentScenarioCallActor",
           },
         },
         persona: {
@@ -111232,10 +111280,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/FacetValue",
           },
         },
-        sub_actor: {
+        call_actor: {
           type: "array",
           items: {
-            $ref: "#/definitions/SubActorFacetValue",
+            $ref: "#/definitions/CallActorFacetValue",
           },
         },
         status: {
@@ -121532,6 +121580,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentCallActor: {
+      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          minLength: 1,
+        },
+        persona: {
+          $ref: "#/definitions/HarnessEnvironmentCallActorPersona",
+        },
+        loudness_ratio: {
+          title: "Loudness ratio",
+          type: "number",
+        },
+        scenarios_count: {
+          title: "Scenarios count",
+          type: "integer",
+        },
+      },
+    },
     HarnessEnvironmentCatalogueSubGoal: {
       required: ["name", "what", "kind", "claim", "check"],
       type: "object",
@@ -121641,42 +121725,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
             "x-nullable": true,
           },
-        },
-      },
-    },
-    HarnessEnvironmentSubActor: {
-      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        role: {
-          title: "Role",
-          type: "string",
-        },
-        channel: {
-          title: "Channel",
-          type: "string",
-          minLength: 1,
-        },
-        persona: {
-          $ref: "#/definitions/HarnessEnvironmentSubActorPersona",
-        },
-        loudness_ratio: {
-          title: "Loudness ratio",
-          type: "number",
-        },
-        scenarios_count: {
-          title: "Scenarios count",
-          type: "integer",
         },
       },
     },
@@ -121863,7 +121911,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentScenarioSubActor: {
+    HarnessEnvironmentScenarioCallActor: {
       required: ["id", "instruction", "trigger"],
       type: "object",
       properties: {
@@ -121877,7 +121925,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         trigger: {
-          $ref: "#/definitions/HarnessEnvironmentSubActorTrigger",
+          $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
+        },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },
@@ -126171,22 +126229,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    FacetValue: {
-      required: ["value", "count"],
-      type: "object",
-      properties: {
-        value: {
-          title: "Value",
-          type: "string",
-          minLength: 1,
-        },
-        count: {
-          title: "Count",
-          type: "integer",
-        },
-      },
-    },
-    SubActorFacetValue: {
+    CallActorFacetValue: {
       required: [
         "value",
         "count",
@@ -126214,19 +126257,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         delivered: {
           title: "Delivered",
           description:
-            "Calls where at least one of the sub-actor's lines reached the agent.",
+            "Calls where at least one of the actor's lines reached the agent.",
           type: "integer",
         },
         dropped: {
           title: "Dropped",
           description:
-            "Calls where the sub-actor was triggered but none of its lines reached the agent.",
+            "Calls where the actor was triggered but none of its lines reached the agent.",
           type: "integer",
         },
         not_triggered: {
           title: "Not triggered",
           description:
-            "Calls the sub-actor was planned for but never triggered in.",
+            "Calls the actor was planned for but never triggered in.",
+          type: "integer",
+        },
+      },
+    },
+    FacetValue: {
+      required: ["value", "count"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
           type: "integer",
         },
       },
@@ -130297,7 +130355,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentSubActorPersona: {
+    HarnessEnvironmentCallActorPersona: {
       type: "object",
       properties: {
         name: {
@@ -130345,7 +130403,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentSubActorTrigger: {
+    HarnessEnvironmentCallActorTrigger: {
       type: "object",
       properties: {
         kind: {

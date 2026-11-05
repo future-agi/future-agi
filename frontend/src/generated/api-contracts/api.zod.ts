@@ -37796,7 +37796,7 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
           "system",
           "tool_calls",
           "tool_call_result",
-          "sub_actor",
+          "actor",
           "unknown",
         ]),
         speaker_name: zod
@@ -38500,7 +38500,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         check: zod.string(),
       }),
     ),
-    sub_actors: zod.array(
+    call_actors: zod.array(
       zod.object({
         id: zod.string().min(1),
         name: zod.string().min(1),
@@ -38581,7 +38581,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           claim: zod.string().optional(),
         }),
       ),
-      sub_actors: zod.array(
+      actors: zod.array(
         zod.object({
           id: zod.string().min(1),
           instruction: zod.string(),
@@ -38593,6 +38593,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
             words: zod.array(zod.string().min(1)).optional(),
             p: zod.number().optional(),
           }),
+          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -38745,7 +38746,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         check: zod.string(),
       }),
     ),
-    sub_actors: zod.array(
+    call_actors: zod.array(
       zod.object({
         id: zod.string().min(1),
         name: zod.string().min(1),
@@ -38826,7 +38827,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           claim: zod.string().optional(),
         }),
       ),
-      sub_actors: zod.array(
+      actors: zod.array(
         zod.object({
           id: zod.string().min(1),
           instruction: zod.string(),
@@ -38838,6 +38839,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
             words: zod.array(zod.string().min(1)).optional(),
             p: zod.number().optional(),
           }),
+          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -38939,6 +38941,7 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
   ),
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
 });
 
 /**
@@ -38972,6 +38975,7 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
   ),
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
 });
 
 /**
@@ -39002,7 +39006,13 @@ export const SimulateApiHarnessEnvironmentsActorViewResponse = zod.object({
       source: zod.enum(["actor", "scenario", "caller"]),
     }),
   ),
-  never_sees: zod.array(zod.string().min(1)),
+  never_sees: zod.object({
+    scenario_fields: zod.array(zod.string().min(1)),
+    files: zod.array(zod.string().min(1)),
+    other_actors: zod.array(zod.string().min(1)),
+  }),
+  played_from_view: zod.boolean(),
+  unused_reason: zod.string().min(1),
 });
 
 /**
@@ -39037,6 +39047,7 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
   ),
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
 });
 
 /**
@@ -39070,6 +39081,7 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
   ),
   channels: zod.record(zod.string(), zod.string()),
   loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
 });
 
 /**
@@ -40051,7 +40063,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           check: zod.string(),
         }),
       ),
-      sub_actors: zod.array(
+      call_actors: zod.array(
         zod.object({
           id: zod.string().min(1),
           name: zod.string().min(1),
@@ -40132,7 +40144,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             claim: zod.string().optional(),
           }),
         ),
-        sub_actors: zod.array(
+        actors: zod.array(
           zod.object({
             id: zod.string().min(1),
             instruction: zod.string(),
@@ -40144,6 +40156,9 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
               words: zod.array(zod.string().min(1)).optional(),
               p: zod.number().optional(),
             }),
+            actions: zod
+              .array(zod.record(zod.string(), zod.string()))
+              .optional(),
           }),
         ),
         persona: zod.record(zod.string(), zod.string()),
@@ -47707,7 +47722,7 @@ export const SimulateCallExecutionsTranscriptsListParams = zod.object({
 
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax = 255;
 
-export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSubActorIdMax = 255;
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemActorIdMax = 255;
 
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
@@ -47732,7 +47747,7 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             "system",
             "tool_calls",
             "tool_call_result",
-            "sub_actor",
+            "actor",
             "unknown",
           ])
           .optional()
@@ -47743,10 +47758,10 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax,
           )
           .optional(),
-        sub_actor_id: zod
+        actor_id: zod
           .string()
           .max(
-            simulateCallExecutionsTranscriptsListResponseTranscriptsItemSubActorIdMax,
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemActorIdMax,
           )
           .optional(),
         content: zod.string().min(1).describe("Transcript content"),
@@ -52779,7 +52794,7 @@ export const SimulateTestExecutionsTranscriptsListParams = zod.object({
 
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax = 255;
 
-export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSubActorIdMax = 255;
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemActorIdMax = 255;
 
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
@@ -52808,7 +52823,7 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   "system",
                   "tool_calls",
                   "tool_call_result",
-                  "sub_actor",
+                  "actor",
                   "unknown",
                 ])
                 .optional()
@@ -52819,10 +52834,10 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax,
                 )
                 .optional(),
-              sub_actor_id: zod
+              actor_id: zod
                 .string()
                 .max(
-                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSubActorIdMax,
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemActorIdMax,
                 )
                 .optional(),
               content: zod.string().min(1).describe("Transcript content"),
@@ -53177,12 +53192,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       on_behalf_of: zod.string().min(1).optional(),
     }),
   ),
-  sub_actors: zod.array(
+  call_actors: zod.array(
     zod.object({
       id: zod
         .string()
         .optional()
-        .describe("The sub-actor's id in the environment."),
+        .describe("The actor's id in the environment."),
       name: zod.string().optional().describe("The name the transcript shows."),
       role: zod.string().optional().describe("Who they are to the caller."),
       channel: zod
@@ -54343,7 +54358,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         count: zod.number(),
       }),
     ),
-    sub_actor: zod
+    call_actor: zod
       .array(
         zod.object({
           value: zod.string().min(1),
@@ -54352,17 +54367,17 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           delivered: zod
             .number()
             .describe(
-              "Calls where at least one of the sub-actor's lines reached the agent.",
+              "Calls where at least one of the actor's lines reached the agent.",
             ),
           dropped: zod
             .number()
             .describe(
-              "Calls where the sub-actor was triggered but none of its lines reached the agent.",
+              "Calls where the actor was triggered but none of its lines reached the agent.",
             ),
           not_triggered: zod
             .number()
             .describe(
-              "Calls the sub-actor was planned for but never triggered in.",
+              "Calls the actor was planned for but never triggered in.",
             ),
         }),
       )

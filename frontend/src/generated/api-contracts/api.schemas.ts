@@ -18735,7 +18735,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
-  sub_actor: "sub_actor",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -19100,7 +19100,7 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
-export interface HarnessEnvironmentSubActorPersonaApi {
+export interface HarnessEnvironmentCallActorPersonaApi {
   name?: string;
   gender?: string;
   age_group?: string;
@@ -19113,7 +19113,7 @@ export interface HarnessEnvironmentSubActorPersonaApi {
   accent?: string;
 }
 
-export interface HarnessEnvironmentSubActorApi {
+export interface HarnessEnvironmentCallActorApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
@@ -19121,7 +19121,7 @@ export interface HarnessEnvironmentSubActorApi {
   role: string;
   /** @minLength 1 */
   channel: string;
-  persona: HarnessEnvironmentSubActorPersonaApi;
+  persona: HarnessEnvironmentCallActorPersonaApi;
   loudness_ratio?: number;
   scenarios_count: number;
 }
@@ -19203,7 +19203,7 @@ export interface HarnessEnvironmentContractApi {
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
-  sub_actors: HarnessEnvironmentSubActorApi[];
+  call_actors: HarnessEnvironmentCallActorApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -19253,7 +19253,7 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
-export interface HarnessEnvironmentSubActorTriggerApi {
+export interface HarnessEnvironmentCallActorTriggerApi {
   /** @minLength 1 */
   kind?: string;
   turn?: number;
@@ -19263,11 +19263,16 @@ export interface HarnessEnvironmentSubActorTriggerApi {
   p?: number;
 }
 
-export interface HarnessEnvironmentScenarioSubActorApi {
+export type HarnessEnvironmentScenarioCallActorApiActionsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentScenarioCallActorApi {
   /** @minLength 1 */
   id: string;
   instruction: string;
-  trigger: HarnessEnvironmentSubActorTriggerApi;
+  trigger: HarnessEnvironmentCallActorTriggerApi;
+  actions?: HarnessEnvironmentScenarioCallActorApiActionsItem[];
 }
 
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
@@ -19289,7 +19294,7 @@ export interface HarnessEnvironmentScenarioApi {
   fixture: HarnessEnvironmentScenarioApiFixture;
   steps: number;
   sub_goals: HarnessEnvironmentSubGoalApi[];
-  sub_actors: HarnessEnvironmentScenarioSubActorApi[];
+  actors: HarnessEnvironmentScenarioCallActorApi[];
   persona: HarnessEnvironmentScenarioApiPersona;
   /** @minLength 1 */
   situation: string;
@@ -19464,6 +19469,7 @@ export interface HarnessActorListApi {
   actions: HarnessWorldActionApi[];
   channels: HarnessActorListApiChannels;
   loudness: HarnessActorListApiLoudness;
+  reserved_ids: string[];
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };
@@ -19492,12 +19498,21 @@ export interface HarnessActorSeenApi {
   source: HarnessActorSeenApiSource;
 }
 
+export interface HarnessActorNeverSeesApi {
+  scenario_fields: string[];
+  files: string[];
+  other_actors: string[];
+}
+
 export interface HarnessActorViewApi {
   /** @minLength 1 */
   actor_id: string;
   permitted_actions: string[];
   sees: HarnessActorSeenApi[];
-  never_sees: string[];
+  never_sees: HarnessActorNeverSeesApi;
+  played_from_view: boolean;
+  /** @minLength 1 */
+  unused_reason: string;
 }
 
 export type HarnessComparePairApiBand =
@@ -23241,7 +23256,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
-  sub_actor: "sub_actor",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -23252,7 +23267,7 @@ export interface CallTranscriptApi {
   /** @maxLength 255 */
   speaker_name?: string;
   /** @maxLength 255 */
-  sub_actor_id?: string;
+  actor_id?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -25183,18 +25198,18 @@ export interface SimulateRunV3FunctionCallApi {
 /**
  * How far they got in the call; absent on a call stored without a summary.
  */
-export type CallSubActorApiDelivery =
-  (typeof CallSubActorApiDelivery)[keyof typeof CallSubActorApiDelivery];
+export type CallCallActorApiDelivery =
+  (typeof CallCallActorApiDelivery)[keyof typeof CallCallActorApiDelivery];
 
-export const CallSubActorApiDelivery = {
+export const CallCallActorApiDelivery = {
   delivered: "delivered",
   dropped: "dropped",
   not_triggered: "not_triggered",
   not_drawn: "not_drawn",
 } as const;
 
-export interface CallSubActorApi {
-  /** The sub-actor's id in the environment. */
+export interface CallCallActorApi {
+  /** The actor's id in the environment. */
   id?: string;
   /** The name the transcript shows. */
   name?: string;
@@ -25203,7 +25218,7 @@ export interface CallSubActorApi {
   /** The channel id they joined the call on. */
   channel?: string;
   /** How far they got in the call; absent on a call stored without a summary. */
-  delivery?: CallSubActorApiDelivery;
+  delivery?: CallCallActorApiDelivery;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -25355,7 +25370,7 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
-  sub_actors: CallSubActorApi[];
+  call_actors: CallCallActorApi[];
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
@@ -26027,24 +26042,24 @@ export interface FacetValueApi {
   count: number;
 }
 
-export interface SubActorFacetValueApi {
+export interface CallActorFacetValueApi {
   /** @minLength 1 */
   value: string;
   count: number;
   /** @minLength 1 */
   label: string;
-  /** Calls where at least one of the sub-actor's lines reached the agent. */
+  /** Calls where at least one of the actor's lines reached the agent. */
   delivered: number;
-  /** Calls where the sub-actor was triggered but none of its lines reached the agent. */
+  /** Calls where the actor was triggered but none of its lines reached the agent. */
   dropped: number;
-  /** Calls the sub-actor was planned for but never triggered in. */
+  /** Calls the actor was planned for but never triggered in. */
   not_triggered: number;
 }
 
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
-  sub_actor?: SubActorFacetValueApi[];
+  call_actor?: CallActorFacetValueApi[];
   status: FacetValueApi[];
 }
 
