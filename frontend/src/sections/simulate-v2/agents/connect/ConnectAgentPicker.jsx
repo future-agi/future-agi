@@ -27,6 +27,7 @@ import { newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import CodingAgentFlow from "./CodingAgentFlow";
+import BrowserAgentFlow from "./BrowserAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
 import FrameworkAgentFlow from "./FrameworkAgentFlow";
 import ClosedPlatformFlow from "./ClosedPlatformFlow";
@@ -317,6 +318,9 @@ export default function ConnectAgentPicker({
         {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
         {choice === "coding" && (
           <CodingAgentFlow {...flowProps} title={picked?.meta?.name} />
+        )}
+        {choice === "browser" && (
+          <BrowserAgentFlow {...flowProps} title="Browser agent" />
         )}
         {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
         {choice === CLOSED_WAY.id && (

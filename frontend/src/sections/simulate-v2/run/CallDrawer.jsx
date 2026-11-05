@@ -16,6 +16,7 @@ import { SegmentedTabs, CustomTabs } from "src/components/tabs/tabs";
 import { effectiveModality } from "../_mock/rlContract";
 import { getSurface } from "../_mock/surfaces";
 import { browserAppOf } from "../_mock/runStream";
+import { allowedSitesOf, blockedAttemptsOf } from "../_mock/browserAgents";
 import BrowserApp, { deriveState, focusOf, urlFor } from "./stages/BrowserApps";
 import { callDetail } from "../_mock/callDetail";
 import { checkEvidenceOf, rollupLine } from "../_mock/scenarioSubGoals";
@@ -362,6 +363,8 @@ export default function CallDrawer({
             {pane === "transcript" && !conversational && (
               <ActionTrace
                 task={task}
+                env={env}
+                envState={envState}
                 stage={stage}
                 at={stepIndex}
                 onScrub={setStepIndex}
@@ -1390,8 +1393,11 @@ TalkRatio.propTypes = { agent: PropTypes.number };
  * is rebuilt at the selected step, which is the only way to answer "did it
  * click the row it meant to".
  */
-function ActionTrace({ task, stage, at, onScrub }) {
+function ActionTrace({ task, env, envState, stage, at, onScrub }) {
   const steps = task.steps || [];
+  /* The sites this environment's browser may open, and what it was refused. */
+  const sites = stage === "browser" ? allowedSitesOf(env, envState) : [];
+  const blocked = stage === "browser" ? blockedAttemptsOf(task, sites) : [];
   const index = at == null ? steps.length - 1 : Math.min(at, steps.length - 1);
   const shown = steps.slice(0, index + 1);
 
@@ -1475,6 +1481,21 @@ function ActionTrace({ task, stage, at, onScrub }) {
             Step {index + 1} of {steps.length} — click a row to rewind the page
             to that point.
           </Typography>
+          {sites.length > 0 && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                Allowed sites:{" "}
+              </Box>
+              {sites.join(", ")}
+              {blocked.length > 0 && (
+                <Box component="span" sx={{ color: "status.danger.fg" }}>
+                  {` · ${blocked.length} blocked`}
+                </Box>
+              )}
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -1560,6 +1581,11 @@ function ActionTrace({ task, stage, at, onScrub }) {
                   {((st.duration || 0) / 1000).toFixed(1)}s
                 </Typography>
               </Stack>
+              {blocked
+                .filter((b) => b.after === i)
+                .map((b) => (
+                  <BlockedRow key={b.site} attempt={b} />
+                ))}
             </React.Fragment>
           );
         })}
@@ -1573,8 +1599,68 @@ function ActionTrace({ task, stage, at, onScrub }) {
   );
 }
 
+/* A page the browser tried to open and was refused — not a step it took. */
+function BlockedRow({ attempt }) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="flex-start"
+      spacing={1.25}
+      sx={{
+        px: 1.25,
+        py: 0.875,
+        borderRadius: 1,
+        border: "1px dashed",
+        borderColor: "status.danger.fg",
+      }}
+    >
+      <Iconify
+        icon="solar:forbidden-circle-linear"
+        width={16}
+        sx={{ color: "status.danger.fg", flexShrink: 0, mt: "1px" }}
+      />
+      <Box
+        sx={{
+          px: 0.75,
+          borderRadius: "4px",
+          flexShrink: 0,
+          bgcolor: "status.danger.bg",
+        }}
+      >
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "status.danger.fg",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
+          blocked
+        </Typography>
+      </Box>
+      <Box flex={1} minWidth={0}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            wordBreak: "break-word",
+          }}
+        >
+          {attempt.site}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {`Not an allowed site, so the page didn't open (${attempt.why}).`}
+        </Typography>
+      </Box>
+    </Stack>
+  );
+}
+BlockedRow.propTypes = { attempt: PropTypes.object.isRequired };
+
 ActionTrace.propTypes = {
   task: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
   stage: PropTypes.string,
   at: PropTypes.number,
   onScrub: PropTypes.func,

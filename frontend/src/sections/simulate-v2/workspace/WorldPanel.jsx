@@ -28,6 +28,7 @@ import { envLabelOf } from "../_mock/envVersionKinds";
 import { firstSnapshotOfWorld } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import SourcesSection from "./data/SourcesSection";
+import AllowedSitesSection from "./AllowedSitesSection";
 import IdentityMapCard from "./IdentityMapCard";
 import SandboxPreviewDrawer from "./SandboxPreviewDrawer";
 
@@ -517,6 +518,16 @@ export default function WorldPanel({
             )}
           </Box>
         )}
+
+      {/* A browser environment says which sites its browser may open. */}
+      {!inBuild && env?.surface === "browser" && (
+        <AllowedSitesSection
+          env={env}
+          envState={envState}
+          patch={patch}
+          readOnly={locked}
+        />
+      )}
 
       {!inBuild && (
         <SourcesSection

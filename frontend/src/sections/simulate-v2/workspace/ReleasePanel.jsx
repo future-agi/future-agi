@@ -477,6 +477,14 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
           ))}
         </TextField>
       </Stack>
+      {/* The reward can't be farmed (T32): a negative control repeats an
+          action and must earn nothing more. */}
+      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        <Box component="span" sx={{ color: "status.success.fg" }}>
+          {`Reward ${reward} checked`}
+        </Box>
+        {" — repeating an action earns nothing more (negative control passed)."}
+      </Typography>
 
       <Stack direction="row" spacing={1.5} alignItems="center">
         <Typography

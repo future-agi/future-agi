@@ -634,6 +634,82 @@ export const CATALOGUE_TEMPLATES = [
   ),
 ];
 
+/* New industry domains (T50): built with the harness, each must pass its
+   release checks and ship locked with splits before it can be used. */
+CATALOGUE_TEMPLATES.push(
+  world(
+    "env-task-legal",
+    "chat",
+    "legal",
+    "Legal Intake",
+    "Take a new client enquiry, check conflicts and book a consult",
+    "A law firm's intake chat. Prospective clients describe a matter; conflicts, jurisdiction and the no-advice rule decide what happens next.",
+    [
+      ["matters", 1800, "60 closed with a conflict"],
+      ["clients", 2400, "35 adverse parties"],
+      ["consult_slots", 300, "40 this week"],
+    ],
+    [
+      ["check_conflicts", "Search for conflicts of interest"],
+      ["lookup_jurisdiction", "Where the firm can act"],
+      ["book_consult", "Book a consultation"],
+    ],
+    [
+      "Never give legal advice before an engagement letter is signed",
+      "Run a conflict check before taking any matter details",
+      "Decline matters outside the firm's jurisdictions",
+    ],
+  ),
+  world(
+    "env-task-energy",
+    "voice",
+    "energy",
+    "Grid Outage Line",
+    "Report an outage, check restoration and register a medical priority",
+    "A distribution network's outage line. Callers report outages; planned work, restoration estimates and medical-priority customers decide the answer.",
+    [
+      ["feeders", 420, "12 faulted now"],
+      ["outages", 260, "40 planned works"],
+      ["customers", 9000, "180 on the medical priority register"],
+    ],
+    [
+      ["lookup_premise", "Find the caller's premise"],
+      ["outage_status", "Outage and restoration estimate"],
+      ["report_fault", "Report a new fault"],
+      ["register_priority", "Add to the medical priority register"],
+    ],
+    [
+      "Never give a restoration time the outage record doesn't hold",
+      "Downed lines: tell the caller to stay 10 m away and call emergency services",
+      "Medical priority needs a named condition and confirmation",
+    ],
+  ),
+  world(
+    "env-task-safety",
+    "chat",
+    "safety",
+    "Workplace Safety Reports",
+    "Log a site incident, escalate it and stop work where required",
+    "A construction firm's safety chat. Workers report incidents and near misses; severity rules decide what is escalated and when work stops.",
+    [
+      ["sites", 60, "4 under a stop-work order"],
+      ["incidents", 1500, "90 open"],
+      ["permits", 700, "35 expired"],
+    ],
+    [
+      ["lookup_site", "Find the site"],
+      ["log_incident", "Log an incident or near miss"],
+      ["escalate_incident", "Escalate to the safety lead"],
+      ["issue_stop_work", "Issue a stop-work order"],
+    ],
+    [
+      "Serious injuries are escalated within 15 minutes",
+      "Work at height without a valid permit stops at once",
+      "Never ask the reporter for medical details beyond what's needed",
+    ],
+  ),
+);
+
 /* A clinic is an appointment world with its own patients and rules. */
 CATALOGUE_TEMPLATES.push({
   ...CATALOGUE_TEMPLATES[0],
@@ -1132,6 +1208,54 @@ export const CATALOGUE_ALL = [
 
 /* The launch catalogue (clarified plan, 30 Oct): 11 worlds. The rest stay
    defined for environments already made from them, but aren't offered. */
+/* New domains (T50), not part of the launch set: each waits on its checks. */
+CATALOGUE_ALL.push(
+  {
+    id: "N01",
+    domain: "Legal services",
+    task: "Take a new client enquiry, check conflicts and book a consult",
+    templateId: "env-task-legal",
+    newDomain: true,
+    release: R("2026.11.1", "soon", 3),
+    requests: ["I need help with my landlord keeping my deposit."],
+    actors: ["Conflicts partner"],
+    recipe: { model: "gpt-4.1", limitations: ["Gives advice too early"] },
+  },
+  {
+    id: "N02",
+    domain: "Energy grid",
+    task: "Report an outage, check restoration and register a medical priority",
+    templateId: "env-task-energy",
+    newDomain: true,
+    release: R("2026.11.1", "soon", 4),
+    requests: ["My power's been out since 6am — when's it back?"],
+    actors: ["Control room dispatcher"],
+    recipe: { model: "gpt-4.1", limitations: ["Guesses restoration times"] },
+  },
+  {
+    id: "N03",
+    domain: "Education administration",
+    task: "Check enrollment eligibility and submit a course request",
+    templateId: "env-task-education",
+    newDomain: true,
+    release: R("2026.11.1", "soon", 4),
+    requests: ["Can I still get into Statistics 201?"],
+    actors: ["Registrar"],
+    recipe: { model: "gpt-4.1-mini", limitations: ["Ignores academic holds"] },
+  },
+  {
+    id: "N04",
+    domain: "Workplace safety",
+    task: "Log a site incident, escalate it and stop work where required",
+    templateId: "env-task-safety",
+    newDomain: true,
+    release: R("2026.11.1", "soon", 2),
+    requests: ["Someone just fell off the scaffold on level 3."],
+    actors: ["Site safety lead"],
+    recipe: { model: "gpt-4.1", limitations: ["Under-rates near misses"] },
+  },
+);
+
 const LAUNCH_IDS = [
   "V02",
   "V01",
@@ -1148,6 +1272,7 @@ const LAUNCH_IDS = [
 export const CATALOGUE = CATALOGUE_ALL.filter(
   (c) =>
     LAUNCH_IDS.includes(c.id) ||
+    c.newDomain ||
     ["unsupported", "access"].includes(c.release.status),
 );
 

@@ -210,14 +210,15 @@ export const AGENT_CONNECT_GROUPS = [
         kind: "running",
         channels: ["chat", "voice"],
       },
-      /* Browser agents: the environment opens a browser limited to an allowlist of sites — later. */
+      /* Browser agents (T36): the agent's code drives a browser we start in
+         the sandbox; each environment sets the sites it may open. */
       {
         id: "browser",
         name: "Browser agent",
+        fix: "Pull request",
         icon: "solar:window-frame-linear",
-        need: "A browser limited to sites you allow",
-        kind: "running",
-        soon: true,
+        need: "Its code in your repo · your model key",
+        kind: "browser",
       },
       {
         id: "phone",

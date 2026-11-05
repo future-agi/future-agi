@@ -6,6 +6,7 @@ import { CustomTabs } from "src/components/tabs/tabs";
 import SideDrawer from "../components/SideDrawer";
 import TemplateBuildPanel from "./TemplateBuildPanel";
 import WorldPreview from "./WorldPreview";
+import WorldRlAccess from "./WorldRlAccess";
 import { QuietTag } from "./LandingBits";
 import { READINESS, adoptBlockOf, catalogueById } from "../_mock/catalogue";
 
@@ -155,11 +156,14 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
           >
             <Tab value="world" label="World" />
             <Tab value="start" label="Use with your agent" />
+            {/* rl.md step 1: a trainer starts from the catalogue. */}
+            {entry && <Tab value="rl" label="RL access" />}
           </CustomTabs>
 
           {/* Keyed by tab, so switching starts the new tab at its top. */}
           <Box key={tab} sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
             {tab === "world" && <WorldPreview world={world} />}
+            {tab === "rl" && <WorldRlAccess world={world} />}
             {tab === "start" && (
               <TemplateBuildPanel
                 key={world.id}
