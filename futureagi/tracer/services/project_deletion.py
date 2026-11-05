@@ -25,6 +25,9 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.services.derived_metrics.pg_response_hooks import (
+    cooperative_pg_response_writer,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -69,7 +72,9 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
     if not project_ids:
         return project_ids
 
-    with transaction.atomic():
+    # Enter the optional cooperative gate before ANY child row lock. This is
+    # PG response evidence only; source tombstones/privacy remain owner-owned.
+    with cooperative_pg_response_writer(), transaction.atomic():
         now = timezone.now()
         if project_type == "experiment":
             ProjectVersion.objects.filter(project__in=projects).update(
