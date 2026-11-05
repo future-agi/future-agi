@@ -111,10 +111,15 @@ export function useResumeRun(executionId) {
         variant: "error",
       });
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
-      queryClient.invalidateQueries({ queryKey: runAnalyticsKey(executionId) });
-      queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
-    },
+    // Returned, so the mutation stays pending until the run's read has refetched:
+    // the button can't be clicked again while the run still reads as interrupted.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) }),
+        queryClient.invalidateQueries({
+          queryKey: runAnalyticsKey(executionId),
+        }),
+        queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix }),
+      ]),
   });
 }
