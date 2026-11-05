@@ -87,6 +87,7 @@ import { subTasksFor } from "../_mock/contract";
 import { pinsForNewRun } from "../_mock/envModel";
 import { pinnedScenarios } from "../_mock/decoupled";
 import { withRegrade } from "../_mock/regrade";
+import { attemptsOf, nextAttemptOf } from "../_mock/runPlanLink";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { milestoneOf } from "../_mock/runScripts";
 import { currentUser } from "../_mock/scenarioProvenance";
@@ -958,6 +959,20 @@ function LiveRun() {
       twinWrites: null,
       ...(pendingMember && { pending: false }),
     });
+    /* A retry is a linked attempt: the run it continues records it too, with
+       its own identity and reason — the original keeps its result. */
+    const contOf = params.get("continues");
+    const orig = contOf && (envState.runs || []).find((r) => r.id === contOf);
+    const attempt = nextAttemptOf(orig, {
+      runId,
+      scenarioIds: scenarios.map((sc) => sc.id),
+    });
+    if (attempt)
+      recordRun({
+        id: orig.id,
+        attempts: [...attemptsOf(orig), attempt],
+        ...(orig.agentKey && { agentKey: orig.agentKey }),
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, runId]);
 
@@ -1705,8 +1720,11 @@ function LiveRun() {
               size="small"
               aria-label="Stop run"
               onClick={() => {
-                /* A platform's calls end on its side: say so until it confirms. */
-                if (envState?.agent?.values?.provider) {
+                /* Stop requested until the trials in progress have cleaned
+                   up (runs.md) — a platform's calls end on its side, ours
+                   reset their world and save their evidence. */
+                /* A run with a spend limit says it in its own banner. */
+                if (envState?.agent?.values?.provider || !spend?.cap) {
                   setCancelState("cancelling");
                   setTimeout(() => setCancelState("confirmed"), 2500);
                 }
@@ -1976,23 +1994,30 @@ function LiveRun() {
       {/* A platform agent: its call limit, a rate-limit pause, and cancelling until confirmed. */}
       {(() => {
         const provider = envState?.agent?.values?.provider;
-        if (!provider) return null;
-        const P = provider.charAt(0).toUpperCase() + provider.slice(1);
+        const P = provider
+          ? provider.charAt(0).toUpperCase() + provider.slice(1)
+          : null;
         const limit = { vapi: 10, retell: 20 }[provider] || null;
         const share = stats.total ? stats.done / stats.total : 0;
         const line =
           cancelState === "cancelling"
-            ? `Stopping… waiting for ${P} to confirm the calls in progress ended. No new calls start.`
+            ? P
+              ? `Stop requested — waiting for ${P} to confirm the calls in progress ended. No new calls start.`
+              : `Stop requested — the ${size.voice ? "calls" : "trials"} in progress are resetting their world and saving their evidence. No new ones start.`
             : cancelState === "confirmed"
-              ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
-              : phase === "running" &&
-                  stats.total >= 20 &&
-                  share >= 0.4 &&
-                  share < 0.55
-                ? `Paused — ${P} returned 429 (rate limited). Retrying in 15 s; queued calls hold. Not counted against the agent.`
-                : phase === "running" && limit && parallel > limit
-                  ? `${P} allows ${limit} calls at once on this account — ${parallel - limit} wait their turn and start as calls finish. Waiting isn't counted against the agent.`
-                  : null;
+              ? P
+                ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
+                : `Stopped — cleanup finished. Finished ${size.voice ? "calls" : "trials"} are kept.`
+              : !P
+                ? null
+                : phase === "running" &&
+                    stats.total >= 20 &&
+                    share >= 0.4 &&
+                    share < 0.55
+                  ? `Paused — ${P} returned 429 (rate limited). Retrying in 15 s; queued calls hold. Not counted against the agent.`
+                  : phase === "running" && limit && parallel > limit
+                    ? `${P} allows ${limit} calls at once on this account — ${parallel - limit} wait their turn and start as calls finish. Waiting isn't counted against the agent.`
+                    : null;
         if (!line) return null;
         return (
           <Typography

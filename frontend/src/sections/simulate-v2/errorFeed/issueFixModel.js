@@ -1226,8 +1226,8 @@ export const fixStatusOf = (
     return {
       ...at,
       key: "over-budget",
-      label: "Stopped at budget",
-      detail: "before searching",
+      label: "Baseline not established",
+      detail: "the budget ran out before the baseline",
     };
   /* Recurrence is the record's own (shippedStateOf reads it); a caller's
      explicit flag still forces Reopened. */
@@ -1249,8 +1249,7 @@ export const fixStatusOf = (
       recheck: true,
       label: `Needs re-check on ${behind.prod}`,
     };
-  if (ending.key === "budget")
-    return { ...at, key: "ready", label: "Stopped at budget" };
+  if (ending.key === "budget") return { ...at, key: "ready", label: "Stopped" };
   /* Stopped once two runs in a row didn't beat the best; the best was verified. */
   if (ending.key === "stopped-early")
     return { ...at, key: "ready", label: "Stopped early" };

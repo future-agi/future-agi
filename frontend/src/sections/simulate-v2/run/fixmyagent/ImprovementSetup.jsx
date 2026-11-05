@@ -76,7 +76,6 @@ import ImprovementConstraints, {
   ConstraintPicker,
 } from "../../improvements/ImprovementConstraints";
 import { changedKeysOf, withEdits } from "../../improvements/constraintEdits";
-import CostPartsTable from "../../improvements/CostPartsTable";
 import CasePicker from "../../improvements/CasePicker";
 import { isCodeAgent } from "../../agents/foundFacts";
 import { TextLink } from "../../agents/connect/connectBits";
@@ -202,9 +201,8 @@ export default function ImprovementSetup({
   const [advanced, setAdvanced] = useState(false);
   /* From a run: a short confirm first (agent, scenarios, budget, price), the
      same as Fix's — Edit plan opens everything below in place. */
-  /* The rest of the plan, and the cost's parts, open in place. */
+  /* The rest of the plan opens in place. */
   const [more, setMore] = useState(false);
-  const [showBreakdown, setShowBreakdown] = useState(false);
   /* Stamped when the setup opens: the seed is never reused, even after an
      improvement is deleted, and stays the same until Start. */
   const [openedAt, setOpenedAt] = useState(() => Date.now().toString(36));
@@ -214,7 +212,6 @@ export default function ImprovementSetup({
     setOpenedAt(Date.now().toString(36));
     setAdvanced(false);
     setMore(false);
-    setShowBreakdown(false);
     setAlsoIn([]);
     setAcrossLineage(false);
     setName(improvementRunName(es, null));
@@ -519,9 +516,10 @@ export default function ImprovementSetup({
       .flatMap((e) => otherMustPass[e.id]?.markedNotCounted || []),
   ]);
   /* Every constraint the search is held to, the time cap and must-pass
-     included; the budget has its own picker above. */
+     included; the budget has its own picker above. No per-conversation cost
+     or latency promise — only the credit and time limits. */
   const constraints = limitRows(limits, agentModel, { mustPass: mustPassAll })
-    .filter((c) => c.id !== "budget")
+    .filter((c) => !["budget", "cost", "latency"].includes(c.id))
     .map((c) => `${c.label}: ${c.value}`)
     .join(" · ");
   /* What this kind of agent can have changed: code agents their code,
@@ -899,22 +897,6 @@ export default function ImprovementSetup({
                   ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)} with the best it found — the full plan would need about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
                   : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
               </Typography>
-              {estimate.parts?.length > 0 && (
-                <Box sx={{ mt: 0.5 }}>
-                  <TextLink onClick={() => setShowBreakdown((v) => !v)}>
-                    {showBreakdown ? "Hide breakdown" : "Show breakdown"}
-                  </TextLink>
-                </Box>
-              )}
-              {showBreakdown && estimate.parts?.length > 0 && (
-                <Box sx={{ mt: 1 }}>
-                  <CostPartsTable
-                    parts={estimate.parts}
-                    totalLabel={overBudget ? "Full plan" : "Up to"}
-                    totalUsd={estimate.likely}
-                  />
-                </Box>
-              )}
             </ConfirmRow>
           </Box>
         )}

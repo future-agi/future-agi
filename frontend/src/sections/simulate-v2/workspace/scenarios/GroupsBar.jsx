@@ -12,7 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CopyCommandButton from "../../components/CopyCommandButton";
-import { groupRunPlanOf } from "../../_mock/scenarioOrg";
+import { groupRunPlanOf, newerThanSuiteOf } from "../../_mock/scenarioOrg";
 
 /* Light tabs, not boxes: only the open group is shaded. */
 const pill = (on) => ({
@@ -44,6 +44,7 @@ export default function GroupsBar({
   onPick,
   onCreate,
   onRun,
+  onUpdate,
   selectedCount = 0,
   readOnly = false,
   repeats = 3,
@@ -54,6 +55,8 @@ export default function GroupsBar({
   const [confirm, setConfirm] = useState(null);
   const current = groups.find((g) => g.name === active) || null;
   const plan = confirm ? groupRunPlanOf(confirm, rows, stateOf) : null;
+  /* Members edited since the suite was saved — it still runs the saved ones. */
+  const newer = current ? newerThanSuiteOf(current, rows) : [];
 
   return (
     <Stack
@@ -108,6 +111,27 @@ export default function GroupsBar({
         </Button>
       )}
       <Box flex={1} />
+      {current && newer.length > 0 && (
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
+        >
+          {`${newer.length} newer than the suite · `}
+          {onUpdate && !readOnly && (
+            <ButtonBase
+              onClick={() => onUpdate(current)}
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.primary",
+                textDecoration: "underline",
+                verticalAlign: "baseline",
+              }}
+            >
+              Update suite
+            </ButtonBase>
+          )}
+        </Typography>
+      )}
       {current && (
         <Button
           size="small"
@@ -268,6 +292,7 @@ GroupsBar.propTypes = {
   onPick: PropTypes.func.isRequired,
   onCreate: PropTypes.func.isRequired,
   onRun: PropTypes.func.isRequired,
+  onUpdate: PropTypes.func,
   selectedCount: PropTypes.number,
   readOnly: PropTypes.bool,
   repeats: PropTypes.number,

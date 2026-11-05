@@ -7,14 +7,18 @@ import {
   repeatsOf,
   limitRows,
   runsCountOf,
+  waitingAt,
+  IMPROVEMENT_PHASES,
+  OPT_STATUS,
   DEFAULT_LIMITS,
 } from "../_mock/optimizationRuns";
 import { creditsLabel } from "../_mock/metering";
 import { envVersionNameOf } from "../_mock/codeRefs";
 
 /*
-  A running improvement, as the stages a fix goes through — Reproduce,
-  Search, Verify, then Ready for review — one row each, in the key-value
+  A running improvement, as the stages a fix goes through — Queued,
+  Reproducing, Diagnosing, Proposing, Checking (Stopping while a stop
+  settles), then Done — one row each, in the key-value
   shape of the verdict that replaces it when it finishes. The runs it tries
   arrive in the table below, as real runs; this says only where it is and
   what each stage is working from.
@@ -103,18 +107,33 @@ export default function ImprovementStages({
     upTo: true,
     stopped: null,
   };
-  const order = ["reproduce", "search", "verify"];
+  /* The local timer's three stages, read as the plan's: the search stage is
+     Diagnosing until its diagnose step has played, then Proposing. */
+  const order = ["reproduce", "diagnose", "search", "verify"];
+  const here =
+    stage === "search" && progress?.step === "diagnose" ? "diagnose" : stage;
   const stateOf = (key) => {
     if (done) return "done";
     const a = order.indexOf(key);
-    const b = order.indexOf(stage);
+    const b = order.indexOf(here);
     return a < b ? "done" : a === b ? "now" : "todo";
   };
+  /* Waiting on the environment's run: Queued, in Reproducing's place. A stop
+     in progress reads Stopping on the stage it interrupts. */
+  const running = record.status === OPT_STATUS.RUNNING;
+  const queued = running && !done && waitingAt(record);
+  const stopping = running && !done && !!record.stopRequestedAt;
+  const nameOf = (key, label) =>
+    stopping && stateOf(key) === "now"
+      ? IMPROVEMENT_PHASES.stopping
+      : key === "reproduce" && queued
+        ? IMPROVEMENT_PHASES.queued
+        : label;
 
   const rows = [
     {
       key: "reproduce",
-      label: "Reproduce",
+      label: nameOf("reproduce", IMPROVEMENT_PHASES.reproducing),
       text:
         feed && rep.total
           ? stateOf("reproduce") === "now"
@@ -159,8 +178,33 @@ export default function ImprovementStages({
           : null,
     },
     {
+      key: "diagnose",
+      label: nameOf("diagnose", IMPROVEMENT_PHASES.diagnosing),
+      text: suggestion
+        ? "Reads the failures to write up the cause and the change to make"
+        : cause
+          ? feed
+            ? `Starts from the cause in ${issueId}: ${cause}.`
+            : `Starts from its diagnosis: ${cause}.`
+          : goal
+            ? stateOf("reproduce") === "done"
+              ? `Aimed at ${goalWords(goal)}: ${plural(r.goalTargets || 0, "scenario")} short of it today.`
+              : `Aimed at ${goalWords(goal)}.`
+            : "Reads the failures to find what to change",
+      sub:
+        cause && goal
+          ? stateOf("reproduce") === "done"
+            ? `Aimed at ${goalWords(goal)}: ${plural(r.goalTargets || 0, "scenario")} short of it today.`
+            : `Aimed at ${goalWords(goal)}.`
+          : null,
+      link:
+        feed && onOpenIssue
+          ? { label: `View ${issueId}`, onClick: onOpenIssue }
+          : null,
+    },
+    {
       key: "search",
-      label: "Search",
+      label: nameOf("search", IMPROVEMENT_PHASES.searching),
       text: suggestion
         ? "No change is tried — this agent can only be called. You get a suggested change to apply yourself."
         : stateOf("search") === "todo"
@@ -168,34 +212,14 @@ export default function ImprovementStages({
           : count.stopped
             ? `${plural(count.done, "candidate")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
             : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "candidate")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
-      sub:
-        [
-          /* A goal aims at the scenarios short of it; an issue or a run's
-           Debug failures, at the cause they found. */
-          goal
-            ? stateOf("reproduce") === "done"
-              ? `Aimed at ${goalWords(goal)}: ${plural(r.goalTargets || 0, "scenario")} short of it today.`
-              : `Aimed at ${goalWords(goal)}.`
-            : cause
-              ? feed
-                ? `Starts from the cause in ${issueId}: ${cause}.`
-                : `Starts from its diagnosis: ${cause}.`
-              : null,
-          /* Voice runs in real time, so the search keeps a slice — said, not hidden. */
-          r.voiceCap
-            ? `Voice calls run in real time, so it searches on ${r.voiceCap.scenarios} of the ${r.voiceCap.of} scenarios: the issue's, what fails today, then the rest. Must-pass still covers all of them.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" ") || null,
-      link:
-        feed && onOpenIssue
-          ? { label: `View ${issueId}`, onClick: onOpenIssue }
-          : null,
+      /* Voice runs in real time, so the search keeps a slice — said, not hidden. */
+      sub: r.voiceCap
+        ? `Voice calls run in real time, so it searches on ${r.voiceCap.scenarios} of the ${r.voiceCap.of} scenarios: the issue's, what fails today, then the rest. Must-pass still covers all of them.`
+        : null,
     },
     {
       key: "verify",
-      label: "Verify",
+      label: nameOf("verify", IMPROVEMENT_PHASES.verifying),
       text: suggestion
         ? "Writes up the cause and the change to make"
         : [
@@ -246,7 +270,11 @@ export default function ImprovementStages({
   const heldTo = [
     ...limitRows(record.limits || DEFAULT_LIMITS, model, {
       mustPass: mustPassTotal,
-    }).filter((c) => !(record.budget && c.id === "budget")),
+    }).filter(
+      (c) =>
+        !(record.budget && c.id === "budget") &&
+        !["cost", "latency"].includes(c.id),
+    ),
     ...(record.budget
       ? [
           {

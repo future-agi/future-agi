@@ -28,6 +28,7 @@ import { scenarioTitle } from "../_mock/scenarios";
 import { resolveEval } from "../_mock/evals";
 import { freeTierByRun, runCreditsOf } from "../_mock/usageLedger";
 import { BILLING_POLICY } from "../_mock/rates";
+import { attemptHeaderOf } from "../_mock/runPlanLink";
 import { useOptionalSimStore } from "../store";
 import { StatusChip } from "../components/primitives";
 
@@ -383,11 +384,16 @@ export default function CostTab({ run, env, envState, tasks, onOpenTask }) {
   const continuesRun = record?.continues
     ? (envState?.runs || []).find((r) => r.id === record.continues)
     : null;
+  const attemptHdr = attemptHeaderOf(envState?.runs || [], record);
   const history = [
     continuesRun && {
       when: when(record?.startedAt),
-      event: `Continues run ${continuesRun.ordinal ?? ""}`.trim(),
-      detail: "only the scenarios its limit stopped from starting",
+      event:
+        `Attempt ${attemptHdr?.attempt ?? 2} of run ${continuesRun.ordinal ?? ""}`.trim(),
+      detail: (attemptHdr?.reason || "Retry of interrupted trials").replace(
+        /^./,
+        (c) => c.toLowerCase(),
+      ),
       credits: "—",
       quiet: true,
     },

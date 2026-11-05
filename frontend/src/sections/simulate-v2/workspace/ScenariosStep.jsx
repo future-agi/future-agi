@@ -152,6 +152,7 @@ import {
   archivePatch,
   promotePatch,
   exportScenarios,
+  updateSuitePatch,
 } from "../_mock/scenarioOrg";
 import {
   TagsGroupsManager,
@@ -2187,6 +2188,9 @@ export default function ScenariosStep({
                   {!asOfBatch && mode === "scenarios" && (
                     <Box data-scenarios-safe="groups-bar">
                       <GroupsBar
+                        onUpdate={(g) =>
+                          patch(updateSuitePatch(envState, g.id))
+                        }
                         groups={orgGroups}
                         rows={selected}
                         stateOf={stateOf}

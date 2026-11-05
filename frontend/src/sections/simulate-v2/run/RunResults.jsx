@@ -50,7 +50,12 @@ import { canEditEval } from "../workspace/evals/canEditEval";
 import { useAppliedEvals } from "../workspace/evals/useAppliedEvals";
 import { useEnvState } from "../store";
 import useRunFitCheck from "./useRunFitCheck";
-import { runPlanHref } from "../_mock/runPlanLink";
+import {
+  runPlanHref,
+  attemptHeaderOf,
+  attemptsOf,
+  retriedIdsOf,
+} from "../_mock/runPlanLink";
 import { RATE_PLAN } from "../_mock/rates";
 import { runSummaries, trialSummaries } from "../_mock/comparison";
 import { textTone } from "../components/textTone";
@@ -91,7 +96,14 @@ import { memberResultsOf } from "../_mock/memberAttribution";
 import { delegationEvidenceOf } from "../_mock/handoffs";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { causeOf, outcomeOfCause } from "../_mock/decoupled";
-import { regradeOf, regradeRecordOf } from "../_mock/regrade";
+import {
+  regradeOf,
+  regradeRecordOf,
+  regradesOf,
+  latestRegradeOf,
+  resultCountsOf,
+  withRegradeRecord,
+} from "../_mock/regrade";
 import { repeatActionsOf } from "../_mock/repeatActions";
 import { RepeatGroup, RepeatRow } from "./RepeatChooser";
 import { agentVersions } from "../_mock/versions";
@@ -567,6 +579,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       now      — "Run as configured now": picks up every edit since.
   */
   const sourceRun = (envState.runs || []).find((r) => r.id === runId) || null;
+  /* Retries are linked attempts of this run: what they took over isn't offered again. */
+  const retriedIds = retriedIdsOf(sourceRun);
+  const retryLeft = (sourceRun?.budget?.notStarted || []).filter(
+    (id) => !retriedIds.includes(id),
+  );
+  const lastAttempt = attemptsOf(sourceRun).slice(-1)[0] || null;
   /* The capability report as it stood when this run started — kept with it,
      so a later check doesn't rewrite what this run ran under. */
   const runCaps = sourceRun?.compat?.rows?.length ? sourceRun.compat : null;
@@ -739,13 +757,18 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   );
   const startRegrade = () => {
     if (!regrade || !sourceRun) return;
-    const rec = regradeRecordOf(regrade);
+    /* The result being replaced is kept with the re-grade, never overwritten. */
+    const rec = regradeRecordOf(regrade, { before: resultCountsOf(tasks) });
     patch({
       runs: (envState.runs || []).map((r) =>
-        r.id === sourceRun.id ? { ...r, regradedWith: rec } : r,
+        r.id === sourceRun.id ? withRegradeRecord(r, rec) : r,
       ),
     });
   };
+  /* Re-evaluating keeps the earlier result: the history lists what each re-grade replaced. */
+  const regradeHistory = regradesOf(sourceRun);
+  const latestRegrade = latestRegradeOf(sourceRun);
+  const [showEarlier, setShowEarlier] = useState(false);
   const regradedChanged = tasks.filter((t) => t.regraded?.changed).length;
   /* Every way to repeat this run, for the one Repeat chooser. */
   const repeat = repeatActionsOf({
@@ -1426,12 +1449,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {` · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
             {identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}
             {(() => {
-              /* Finishing what an earlier run's limit left unstarted. */
-              const of = (envState.runs || []).find(
-                (r) => r.id === runId,
-              )?.continues;
-              const src = of && (envState.runs || []).find((r) => r.id === of);
-              return src ? ` · continues run ${src.ordinal}` : "";
+              /* Finishing what an earlier run left unstarted: a linked attempt of it. */
+              const at = attemptHeaderOf(envState.runs || [], sourceRun);
+              return at
+                ? ` · Attempt ${at.attempt} of run ${at.of.ordinal} · ${(at.reason || "retry of interrupted trials").replace(/^./, (c) => c.toLowerCase())}`
+                : "";
             })()}
             {(() => {
               /* A reviewed eligible subset: the requested count stays the denominator. */
@@ -1539,33 +1561,65 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
 
             {/* The limit kept some from starting: finish them under a new
                 limit — only those; the finished ones aren't run or charged again. */}
-            {identity?.budget?.notStarted?.length > 0 && (
-              <>
-                {" · "}
-                <Tooltip
-                  arrow
-                  describeChild
-                  placement="bottom-start"
-                  title={
-                    sourceRun?.status === "interrupted"
-                      ? `Interrupted: ${sourceRun.interruption?.reason || "an infrastructure failure, not the agent."} Retry restarts only these; the ones that finished aren't run or charged again.`
-                      : "Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
-                  }
-                >
+            {identity?.budget?.notStarted?.length > 0 &&
+              (retryLeft.length > 0 ? (
+                <>
+                  {" · "}
+                  <Tooltip
+                    arrow
+                    describeChild
+                    placement="bottom-start"
+                    title={
+                      sourceRun?.status === "interrupted"
+                        ? `Interrupted: ${sourceRun.interruption?.reason || "an infrastructure failure, not the agent."} Retry restarts only these${retriedIds.length ? " (the ones already retried are left out)" : ""}; the ones that finished aren't run or charged again.`
+                        : "Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
+                    }
+                  >
+                    <Box
+                      component="span"
+                      {...clickable(
+                        () =>
+                          sourceRun?.status === "interrupted"
+                            ? setRetryConfirm(true)
+                            : navigate(
+                                runPlanHref(envId, {
+                                  only: retryLeft,
+                                  trials: identity.repeats || 3,
+                                  agent: identity.agentVersion,
+                                  continues: identity.id,
+                                }),
+                              ),
+                        { role: "link" },
+                      )}
+                      sx={{
+                        ...focusRing,
+                        cursor: "pointer",
+                        "&:hover": {
+                          color: "text.primary",
+                          textDecoration: "underline",
+                        },
+                      }}
+                    >
+                      {sourceRun?.status === "interrupted"
+                        ? `Interrupted · ${retryLeft.length} didn't start · ${retriedIds.length ? `Retry (attempt ${attemptsOf(sourceRun).length + 2})` : "Retry"}`
+                        : `${retryLeft.length} didn't start · Run them`}
+                    </Box>
+                  </Tooltip>
+                </>
+              ) : (
+                /* Everything that didn't start went into a linked attempt. */
+                <>
+                  {" · "}
                   <Box
                     component="span"
                     {...clickable(
                       () =>
-                        sourceRun?.status === "interrupted"
-                          ? setRetryConfirm(true)
-                          : navigate(
-                              runPlanHref(envId, {
-                                only: identity.budget.notStarted,
-                                trials: identity.repeats || 3,
-                                agent: identity.agentVersion,
-                                continues: identity.id,
-                              }),
-                            ),
+                        navigate(
+                          paths.dashboard.simulate.simulationRun(
+                            envId,
+                            lastAttempt.runId,
+                          ),
+                        ),
                       { role: "link" },
                     )}
                     sx={{
@@ -1577,13 +1631,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       },
                     }}
                   >
-                    {sourceRun?.status === "interrupted"
-                      ? `Interrupted · ${identity.budget.notStarted.length} didn't start · Retry`
-                      : `${identity.budget.notStarted.length} didn't start · Run them`}
+                    {`${sourceRun?.status === "interrupted" ? "Interrupted · " : ""}${identity.budget.notStarted.length} didn't start · ${sourceRun?.status === "interrupted" ? "retried" : "continued"} as attempt ${lastAttempt.attempt}`}
                   </Box>
-                </Tooltip>
-              </>
-            )}
+                </>
+              ))}
             {/* What it metered, who placed the calls, which rule graded it and
                 the replay header — one hover, not five clauses. */}
             <Tooltip
@@ -2019,20 +2070,50 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   .filter(Boolean)
                   .join(" and ")
                   .replace(/^./, (c) => c.toUpperCase())}
-                {`. Re-grade it so its scores use the repaired test — the stored traces and end-states, read again: ${regrade.scenarioIds.length} scenarios, no new calls. What that changes is the test's, not the agent's.`}
+                {`. Re-grade it so its scores use the repaired test — ${regrade.stateSaved ? "the stored traces and end-states, read again" : "the stored traces, read again (the end state wasn't saved, so only the conversation checks are re-graded)"}: ${regrade.scenarioIds.length} scenarios, no new calls. The earlier result is kept. What that changes is the test's, not the agent's.`}
               </>
-            ) : sourceRun.regradedWith.toolCalls ? (
+            ) : latestRegrade.toolCalls ? (
               /* Tool call evaluation: what it caught, said plainly. */
               (() => {
                 const caught = tasks.filter(
                   (t) => t.regraded?.toolCalls,
                 ).length;
-                return `Re-graded with tool call evaluation · ${caught} ${caught === 1 ? "scenario's" : "scenarios'"} claims had no tool call behind them and now fail${regradedChanged ? ` · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} turned from pass to fail` : ""}. The recorded calls were read again — no new run.`;
+                return `Re-evaluated · previous result kept. Re-graded with tool call evaluation · ${caught} ${caught === 1 ? "scenario's" : "scenarios'"} claims had no tool call behind them and now fail${regradedChanged ? ` · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} turned from pass to fail` : ""}. The recorded calls were read again — no new run.`;
               })()
             ) : (
-              `Re-graded with ${sourceRun.regradedWith.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test — the test's change, not the agent's.`
+              `Re-evaluated · previous result kept. Re-graded with ${latestRegrade.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test — the test's change, not the agent's.${latestRegrade.conversationOnly ? " End state wasn't saved — only the conversation checks were re-graded." : ""}`
+            )}
+            {showEarlier && (
+              <Box component="span" sx={{ display: "block", mt: 0.5 }}>
+                {regradeHistory.map((g, i) => {
+                  const b = g.before;
+                  return (
+                    <Box
+                      key={g.at || i}
+                      component="span"
+                      sx={{ display: "block" }}
+                    >
+                      {`${i === 0 ? "Original result" : `Before re-grade ${i + 1}`}: ${b ? `${b.passed} passed · ${b.failed} failed${b.flaky ? ` · ${b.flaky} flaky` : ""}${b.unmeasured ? ` · ${b.unmeasured} not counted` : ""}` : "not recorded"} — replaced ${new Date(g.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} by ${g.label}${g.summary ? ` (${g.summary})` : ""}`}
+                    </Box>
+                  );
+                })}
+              </Box>
             )}
           </Typography>
+          {!regrade && regradeHistory.length > 0 && (
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => setShowEarlier((v) => !v)}
+              sx={{
+                color: "text.secondary",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {showEarlier ? "Hide earlier result" : "Earlier result"}
+            </Button>
+          )}
           {regrade && (
             <Button
               size="small"
@@ -3062,14 +3143,17 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       </Box>
                     )}
                   </Box>
+                  {/* Unsafe to repeat: an action that reached a real system
+                      blocks automatic retry (runs.md). */}
                   {real && (
                     <Typography
                       sx={{ typography: "s2", color: "status.warning.fg" }}
                     >
-                      This agent&apos;s tools reach your real systems. A trial
-                      that was partway may have already done something — an
-                      email sent, a record changed — and retrying can do it
-                      again.
+                      Retry is off for this run. Its agent&apos;s tools reach
+                      your real systems, so a trial cut off partway may have
+                      already sent an email or changed a record — retrying would
+                      do it again. Switch the environment&apos;s runs to Sealed,
+                      then run these as a new run.
                     </Typography>
                   )}
                 </Stack>
@@ -3079,6 +3163,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   size="small"
                   variant="contained"
                   color="primary"
+                  disabled={real}
                   onClick={() => {
                     setRetryConfirm(false);
                     navigate(

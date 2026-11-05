@@ -15,7 +15,6 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { StatusDot } from "../../components/primitives";
 import { clickable, focusRing } from "../../components/clickable";
-import { TextLink } from "../../agents/connect/connectBits";
 import { validateRows } from "../../_mock/scenarioOrg";
 import { currentEnvVersion } from "../../_mock/versions";
 import { currentUser } from "../../_mock/scenarioProvenance";
@@ -62,6 +61,21 @@ const selSx = {
   minWidth: 200,
   "& .MuiSelect-select": { py: 0.5 },
 };
+
+/* A review action — a real button, never text that reads as a label. */
+function ActBtn({ onClick, children }) {
+  return (
+    <Button
+      size="small"
+      variant="outlined"
+      onClick={onClick}
+      sx={{ minWidth: 0, py: 0, px: 1, flexShrink: 0 }}
+    >
+      {children}
+    </Button>
+  );
+}
+ActBtn.propTypes = { onClick: PropTypes.func, children: PropTypes.node };
 
 /* One section of a draft's review. */
 function Section({ title, children }) {
@@ -229,12 +243,12 @@ export default function TraceReviewDrawer({
                   {`${dupes.length} set${dupes.length === 1 ? "" : "s"} of drafts look like the same situation.`}
                 </Typography>
                 {dupes.map((ids) => (
-                  <TextLink
+                  <ActBtn
                     key={ids.join()}
                     onClick={() => patch(mergePatch(envState, ids))}
                   >
                     {`Merge ${ids.length} — every source is kept`}
-                  </TextLink>
+                  </ActBtn>
                 ))}
               </Box>
             )}
@@ -435,7 +449,7 @@ export default function TraceReviewDrawer({
                         </Typography>
                         {m.unresolved && !review.mapping[m.id] && (
                           <Stack direction="row" spacing={1}>
-                            <TextLink
+                            <ActBtn
                               onClick={() =>
                                 save({
                                   mapping: {
@@ -446,8 +460,8 @@ export default function TraceReviewDrawer({
                               }
                             >
                               Stub it
-                            </TextLink>
-                            <TextLink
+                            </ActBtn>
+                            <ActBtn
                               onClick={() =>
                                 save({
                                   mapping: {
@@ -458,7 +472,7 @@ export default function TraceReviewDrawer({
                               }
                             >
                               Leave out
-                            </TextLink>
+                            </ActBtn>
                           </Stack>
                         )}
                       </Stack>
@@ -609,7 +623,7 @@ export default function TraceReviewDrawer({
                               spacing={1}
                               sx={{ flexShrink: 0 }}
                             >
-                              <TextLink
+                              <ActBtn
                                 onClick={() =>
                                   save({
                                     assumptions: {
@@ -620,8 +634,8 @@ export default function TraceReviewDrawer({
                                 }
                               >
                                 Accept
-                              </TextLink>
-                              <TextLink
+                              </ActBtn>
+                              <ActBtn
                                 onClick={() =>
                                   save({
                                     assumptions: {
@@ -632,8 +646,8 @@ export default function TraceReviewDrawer({
                                 }
                               >
                                 Replace with evidence
-                              </TextLink>
-                              <TextLink
+                              </ActBtn>
+                              <ActBtn
                                 onClick={() =>
                                   save({
                                     assumptions: {
@@ -644,7 +658,7 @@ export default function TraceReviewDrawer({
                                 }
                               >
                                 Keep blocked
-                              </TextLink>
+                              </ActBtn>
                             </Stack>
                           )}
                         </Stack>

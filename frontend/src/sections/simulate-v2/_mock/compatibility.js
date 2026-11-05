@@ -30,7 +30,7 @@ import {
 } from "./toolFit";
 import { currentAgentVersion, currentEnvVersion } from "./versions";
 import { hashSeed } from "./runStream";
-import { familyOf } from "./testedVersions";
+import { familyOf, transportQualified } from "./testedVersions";
 import { checksStateOf } from "./release";
 
 const agentVersionWord = (v) => (v?.label ? `${v.label} ` : "");
@@ -398,7 +398,11 @@ export const compatibilityOf = ({
         `Was Supported. ${staleWhy} — re-check before trusting it.`,
         { affected, repair: "test", checkId, was: "supported" },
       );
-    const status = FROM_CHECK[r.state] || "untested";
+    /* A stop that was requested but never seen isn't a pass or a fail. */
+    const status =
+      r.outcome === "stop-requested"
+        ? "untested"
+        : FROM_CHECK[r.state] || "untested";
     return add(id, status, r.detail, {
       affected: status === "supported" ? [] : affected,
       ...(status === "blocked" && { repair: "connection", blocks: true }),
@@ -441,7 +445,14 @@ export const compatibilityOf = ({
   );
 
   const spec = checked ? connectionSpecOf(agent) : null;
-  if (spec?.method === "sse" || spec?.method === "ws" || voice)
+  const streamed = spec?.method === "sse" || spec?.method === "ws";
+  if (streamed && !transportQualified(family, spec.method))
+    add(
+      "streaming",
+      "unavailable",
+      `Unsupported — ${spec.method === "sse" ? "SSE" : "WebSocket"} stays unsupported until an adapter for it passes qualification${family ? `, and ${family.family} hasn't` : ""}. Use HTTP for now.`,
+    );
+  else if (streamed || voice)
     add(
       "streaming",
       "supported",

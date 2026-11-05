@@ -239,6 +239,7 @@ export const AGENT_TYPES = [
         key: "streaming",
         label: "Response is streamed (SSE)",
         type: FIELD.SWITCH,
+        help: "SSE is unsupported until an adapter for it passes qualification — replies are read whole.",
       },
     ],
   },
@@ -459,11 +460,10 @@ export const AGENT_TYPES = [
         label: "Transport",
         type: FIELD.SELECT,
         required: true,
-        options: [
-          { value: "sse", label: "HTTP + SSE" },
-          { value: "stdio", label: "stdio" },
-          { value: "ws", label: "WebSocket" },
-        ],
+        /* SSE and WebSocket stay out until an adapter for them passes
+           qualification (connect.md, T43). */
+        options: [{ value: "stdio", label: "stdio" }],
+        help: "HTTP + SSE and WebSocket are unsupported until an adapter for them passes qualification.",
       },
       {
         key: "clientName",

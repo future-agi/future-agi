@@ -193,6 +193,13 @@ const STATUS_META = {
     role: "danger",
     icon: "solar:close-circle-linear",
   },
+  /* A call with no verdict (it dropped, or nothing could be graded):
+     its steps are neither addressed nor missed. */
+  unmeasured: {
+    label: "Unmeasured",
+    role: "neutral",
+    icon: "solar:minus-circle-linear",
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,11 +364,13 @@ const PathAnalysisView = ({
       // pass vs miss. The similarity score is only cosmetic (shown as
       // "% match") and used for the partial state when there's no
       // authority.
-      const status = currentPath
-        ? confirmed
-          ? "pass"
-          : "miss"
-        : getStatus(bestScore, confirmed);
+      const status = providedAnalysis?.unmeasured
+        ? "unmeasured"
+        : currentPath
+          ? confirmed
+            ? "pass"
+            : "miss"
+          : getStatus(bestScore, confirmed);
       const keywords = bestTurn
         ? sharedKeywords(
             tokenize(stepTargetText(step)),
@@ -378,19 +387,28 @@ const PathAnalysisView = ({
         keywords,
       };
     });
-  }, [steps, turns, currentPath, currentPathNames, requiresFlowAnalysis]);
+  }, [
+    steps,
+    turns,
+    currentPath,
+    currentPathNames,
+    requiresFlowAnalysis,
+    providedAnalysis,
+  ]);
 
   const coverage = useMemo(() => {
     if (!stepRows.length) return { pass: 0, partial: 0, miss: 0, total: 0 };
     let pass = 0;
     let partial = 0;
     let miss = 0;
+    let unmeasured = 0;
     stepRows.forEach((r) => {
       if (r.status === "pass") pass += 1;
       else if (r.status === "partial") partial += 1;
+      else if (r.status === "unmeasured") unmeasured += 1;
       else miss += 1;
     });
-    return { pass, partial, miss, total: stepRows.length };
+    return { pass, partial, miss, total: stepRows.length, unmeasured };
   }, [stepRows]);
 
   const filteredRows = useMemo(() => {
@@ -833,8 +851,10 @@ PathAnalysisView.propTypes = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
-  const { pass, partial, miss, total } = coverage;
+  const { pass, partial, miss, total, unmeasured = 0 } = coverage;
   const pct = total > 0 ? Math.round((pass / total) * 100) : 0;
+  /* No verdict: not a 0% — nothing was scored. */
+  const noVerdict = total > 0 && unmeasured === total;
   return (
     <Stack
       direction="row"
@@ -844,8 +864,16 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
     >
       <Stack direction="row" alignItems="center" gap={0.75}>
         <StatusBadge
-          label={`${pct}%`}
-          role={pct >= 80 ? "success" : pct >= 50 ? "warning" : "danger"}
+          label={noVerdict ? "Unmeasured" : `${pct}%`}
+          role={
+            noVerdict
+              ? "neutral"
+              : pct >= 80
+                ? "success"
+                : pct >= 50
+                  ? "warning"
+                  : "danger"
+          }
           dot={false}
         />
         <Typography
@@ -1163,7 +1191,10 @@ const StepCard = ({
             py: 0.5,
             borderTop: "1px dashed",
             borderColor: "divider",
-            bgcolor: (t) => alpha(t.palette.error.main, 0.03),
+            bgcolor: (t) =>
+              status === "unmeasured"
+                ? "transparent"
+                : alpha(t.palette.error.main, 0.03),
           }}
         >
           <Typography
@@ -1173,7 +1204,9 @@ const StepCard = ({
               fontStyle: "italic",
             }}
           >
-            No matching turn — the agent never touched this step.
+            {status === "unmeasured"
+              ? "Not observed — the call has no verdict, so this step isn't scored."
+              : "No matching turn — the agent never touched this step."}
           </Typography>
         </Box>
       )}

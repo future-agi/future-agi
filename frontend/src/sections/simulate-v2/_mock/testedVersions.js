@@ -41,6 +41,43 @@ export const TESTED_VERSIONS = [
     limits: "—",
   },
   {
+    family: "Claude Agent SDK",
+    category: "chat",
+    how: "Process",
+    versions: "claude-agent-sdk 0.1.x",
+    status: "Supported",
+    evidence: "Start, turns, tool binding and stop checked",
+    limits: "Sub-agent turns are reported inside the parent's",
+  },
+  {
+    family: "Pydantic AI",
+    category: "chat",
+    how: "Process",
+    versions: "pydantic-ai 0.4.x",
+    status: "Supported",
+    evidence: "Typed tool calls and run results observed from its spans",
+    limits: "Streamed structured output isn't mapped yet",
+  },
+  {
+    family: "Google ADK",
+    category: "chat",
+    how: "Process",
+    versions: "google-adk 1.x",
+    status: "Partial",
+    evidence: "Start, turns, tool binding and sessions",
+    limits:
+      "Stop isn't honored mid-turn — the runner finishes its current agent",
+  },
+  {
+    family: "Deep Agents",
+    category: "multi",
+    how: "Process",
+    versions: "deepagents 0.0.x",
+    status: "Partial",
+    evidence: "Planning tool, sub-agent calls and file writes observed",
+    limits: "Its virtual filesystem isn't cleared between trials",
+  },
+  {
     family: "CrewAI",
     category: "multi",
     how: "Process",
@@ -110,7 +147,8 @@ export const TESTED_VERSIONS = [
     versions: "Reference report writer 0.3",
     status: "Partial",
     evidence: "PDF and CSV retrieved and format-checked",
-    limits: "Only declared formats are graded; a filename alone isn't an artifact",
+    limits:
+      "Only declared formats are graded; a filename alone isn't an artifact",
   },
   {
     family: "Browser agent",
@@ -140,18 +178,178 @@ const U = "unavailable";
 const T = "untested";
 /* Each family's linked diagnostic: per capability, what the reference run showed. */
 const DIAG = {
-  "Python service": { start: S, message: S, continuity: S, streaming: P, toolRouting: S, state: S, cancel: S, reset: S, cost: P },
-  "Node service": { start: S, message: S, continuity: S, streaming: P, toolRouting: S, state: S, cancel: S, reset: S, cost: P },
-  LangGraph: { start: S, message: S, continuity: S, streaming: S, toolRouting: S, state: S, cancel: S, reset: S, resume: P, cost: P },
-  "OpenAI Agents SDK": { start: S, message: S, continuity: S, streaming: S, toolRouting: S, state: S, children: S, cancel: S, reset: S, cost: P },
-  CrewAI: { start: S, message: S, continuity: S, toolRouting: S, state: S, children: P, cancel: P, reset: S, cost: P },
-  "Coordinator + two workers": { start: S, message: S, continuity: S, toolRouting: S, state: S, children: P, cancel: S, reset: S, cost: P },
+  "Python service": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: P,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  "Node service": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: P,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  LangGraph: {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    resume: P,
+    cost: P,
+  },
+  "OpenAI Agents SDK": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    toolRouting: S,
+    state: S,
+    children: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  "Claude Agent SDK": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    toolRouting: S,
+    state: S,
+    children: P,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  "Pydantic AI": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: P,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  "Google ADK": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    toolRouting: S,
+    state: S,
+    children: P,
+    cancel: U,
+    reset: S,
+    cost: P,
+  },
+  "Deep Agents": {
+    start: S,
+    message: S,
+    continuity: S,
+    toolRouting: S,
+    state: S,
+    children: S,
+    cancel: S,
+    reset: P,
+    cost: P,
+  },
+  CrewAI: {
+    start: S,
+    message: S,
+    continuity: S,
+    toolRouting: S,
+    state: S,
+    children: P,
+    cancel: P,
+    reset: S,
+    cost: P,
+  },
+  "Coordinator + two workers": {
+    start: S,
+    message: S,
+    continuity: S,
+    toolRouting: S,
+    state: S,
+    children: P,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
   "Async task (A2A)": { start: T, message: T, files: T, cancel: T, resume: T },
-  "Artifact-producing agent": { start: S, message: S, files: P, toolRouting: S, state: S, cancel: S, reset: S, cost: P },
-  "Coding agent CLI": { start: S, message: S, files: S, toolRouting: S, state: S, cancel: S, reset: S, resume: U, cost: P },
-  "LiveKit voice": { start: S, message: S, continuity: S, streaming: S, audio: P, toolRouting: S, state: S, cancel: S, reset: S, cost: P },
-  Vapi: { start: S, message: S, continuity: S, streaming: S, audio: S, toolRouting: P, state: U, cancel: S, reset: S, cost: S },
-  Retell: { start: S, message: S, continuity: S, streaming: S, audio: S, toolRouting: P, state: U, cancel: S, reset: S, cost: S },
+  "Artifact-producing agent": {
+    start: S,
+    message: S,
+    files: P,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  "Coding agent CLI": {
+    start: S,
+    message: S,
+    files: S,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    resume: U,
+    cost: P,
+  },
+  "LiveKit voice": {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    audio: P,
+    toolRouting: S,
+    state: S,
+    cancel: S,
+    reset: S,
+    cost: P,
+  },
+  Vapi: {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    audio: S,
+    toolRouting: P,
+    state: U,
+    cancel: S,
+    reset: S,
+    cost: S,
+  },
+  Retell: {
+    start: S,
+    message: S,
+    continuity: S,
+    streaming: S,
+    audio: S,
+    toolRouting: P,
+    state: U,
+    cancel: S,
+    reset: S,
+    cost: S,
+  },
   "Browser agent": { start: T, browser: T, state: T, reset: T },
 };
 
@@ -179,10 +377,18 @@ export const familyOf = (agent, kind) => {
   if (/livekit|pipecat/.test(f)) return find("LiveKit voice");
   if (/langgraph/.test(f)) return find("LangGraph");
   if (/openai/.test(f)) return find("OpenAI Agents SDK");
+  if (/claude|anthropic/.test(f)) return find("Claude Agent SDK");
+  if (/pydantic/.test(f)) return find("Pydantic AI");
+  if (/adk|google/.test(f)) return find("Google ADK");
+  if (/deep\s?agents?/.test(f)) return find("Deep Agents");
   if (/crew/.test(f)) return find("CrewAI");
   if (v.connection?.method === "async") return find("Async task (A2A)");
   if (kind === "repo" || kind === "upload" || kind === "endpoint")
-    return find(v.language === "TypeScript" || /node|express/.test(f) ? "Node service" : "Python service");
+    return find(
+      v.language === "TypeScript" || /node|express/.test(f)
+        ? "Node service"
+        : "Python service",
+    );
   return null;
 };
 
@@ -193,13 +399,34 @@ export const familyOf = (agent, kind) => {
   supported passes, partial passes with a limit, unavailable fails. A family
   with no reference agent yet isn't run.
 */
-export const QUAL_CHECKS = ["start", "message", "toolRouting", "state", "cancel", "reset"];
+export const QUAL_CHECKS = [
+  "start",
+  "message",
+  "toolRouting",
+  "state",
+  "cancel",
+  "reset",
+];
+
+/*
+  SSE and custom WebSocket transports stay unsupported until an adapter for
+  them passes qualification (connect.md, T43). A family declares the ones it
+  has an adapter for in `transports`; none does yet, and only a family whose
+  qualification passed counts.
+*/
+export const transportQualified = (row, method) =>
+  !!row &&
+  (row.transports || []).includes(method) &&
+  qualificationOf(row).outcome === "passed";
 
 export const qualificationOf = (row) => {
-  if (row.status === "Untested") return { outcome: "not-run", checks: [], failed: [], limited: [] };
+  if (row.status === "Untested")
+    return { outcome: "not-run", checks: [], failed: [], limited: [] };
   const results = DIAG[row.family] || {};
   const checks = QUAL_CHECKS.map((id) => ({ id, result: results[id] || T }));
-  const failed = checks.filter((c) => c.result === U || c.result === T).map((c) => c.id);
+  const failed = checks
+    .filter((c) => c.result === U || c.result === T)
+    .map((c) => c.id);
   const limited = checks.filter((c) => c.result === P).map((c) => c.id);
   return {
     outcome: failed.length ? "failed" : limited.length ? "limited" : "passed",

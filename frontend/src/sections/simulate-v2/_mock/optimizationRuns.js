@@ -40,8 +40,8 @@ export const OPT_STATUS = {
   /* A new goal improvement where every scenario already meets the goal —
      it ends before searching. */
   NOTHING: "nothing-to-improve",
-  /* Checking the finalists alone would cost more than the budget (or take
-     longer than its time cap) — it stops before searching. */
+  /* Today's agent can't be measured inside the budget (or time cap) — the
+     baseline isn't established, so it stops before searching. */
   OVER_BUDGET: "over-budget",
   /* Stopped by a person while it ran: the trials that finished stay, with
      what they cost; none was checked on the held-back scenarios, so there's
@@ -51,15 +51,26 @@ export const OPT_STATUS = {
 
 /**
  * Stop a running improvement where it is (`progress` from
- * improvementProgressOf). The trials that finished are kept as evidence and
- * spend; finalists, held-back results and the winner are dropped — none of
- * them were checked.
+ * improvementProgressOf). Whatever finished is kept as evidence and spend:
+ * the trials that ran and, once the held-back check had begun, the finalists
+ * and held-back results. Only unfinished work is dropped — a winner is never
+ * picked from a stopped run.
  */
 export const stopImprovement = (record, progress, now = Date.now()) => {
   const r = record?.result || null;
   const done = progress?.runsDone || 0;
   const at = new Date(now).toISOString();
   const { pendingEnding: _pending, ...rest } = record || {};
+  /* Finalists are scored on the held-back scenarios in the verify stage; a
+     stop before that has nothing checked to keep. */
+  const checked = progress?.stage === "verify";
+  const trials = (r?.trials || []).slice(0, done);
+  const kept = new Set(trials.map((t) => t.n));
+  const finalists = checked
+    ? (r?.finalists || [])
+        .filter((f) => kept.has(f.n))
+        .map((f) => ({ ...f, pick: false, winner: false }))
+    : [];
   return {
     ...rest,
     status: OPT_STATUS.STOPPED,
@@ -67,6 +78,7 @@ export const stopImprovement = (record, progress, now = Date.now()) => {
     stoppedBy: {
       at,
       trials: done,
+      finalists: finalists.length,
       of: progress?.runsMax || r?.trials?.length || 0,
       /* Past the first stage, today's agent has been measured. */
       measured: !!progress && progress.stage !== "reproduce",
@@ -74,10 +86,10 @@ export const stopImprovement = (record, progress, now = Date.now()) => {
     result: r
       ? {
           ...r,
-          trials: (r.trials || []).slice(0, done),
-          finalists: [],
+          trials,
+          finalists,
           winner: null,
-          heldPerScenario: {},
+          heldPerScenario: checked ? r.heldPerScenario || {} : {},
         }
       : null,
   };
@@ -994,10 +1006,12 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * Everything an improvement run concluded, said once so the page, the Error
- * Feed chip and the lists agree. Seven endings: Ready for review, Stopped
- * early (no gain in the last two runs — the best was verified), No safe
- * improvement, Could not reproduce, Stopped at budget, Failed for
- * infrastructure reasons, and Suggestion only — for agents we can only call.
+ * Feed chip and the lists agree. Endings: Ready for review, Stopped early
+ * (no gain in the last two runs — the best was verified), No improvement,
+ * Could not reproduce, Baseline not established (the baseline can't run or
+ * exceeds the ceiling), Stopped, Infrastructure error, and Suggestion only
+ * — for agents we can only call. Ready for review is then Verified,
+ * Limited validation or Inconclusive (proofStrength).
  */
 /** Started more than a day ago and still not finished — timed out. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -1116,11 +1130,11 @@ const outcomeOf = (rec, { model } = {}) => {
   if (record?.status === OPT_STATUS.OVER_BUDGET) {
     const s = record.stoppedAtBudget || {};
     return {
-      ending: { key: "budget", label: "Stopped at budget" },
+      ending: { key: "budget", label: "Baseline not established" },
       headline:
         s.by === "time"
-          ? `Stopped at budget — checking the finalists alone would take longer than the ${s.minutes}-minute time cap, so nothing was searched.`
-          : `Stopped at budget — checking the finalists alone would cost more than the ${creditsLabel(s.budget || 0)} budget, so nothing was searched.`,
+          ? `Baseline not established — measuring today's agent would take longer than the ${s.minutes}-minute time cap, so nothing was searched and no candidate was compared against a guess.`
+          : `Baseline not established — measuring today's agent would cost more than the ${creditsLabel(s.budget || 0)} budget, so nothing was searched and no candidate was compared against a guess.`,
       beforeSearch: true,
     };
   }
@@ -1129,7 +1143,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ending: { key: "stopped", label: "Stopped" },
       headline: s.trials
-        ? `Stopped after ${s.trials} of up to ${s.of} ${s.of === 1 ? "trial" : "trials"}. None was checked on the held-back scenarios, so nothing can be chosen — today's version stays. The trials that ran stay here.`
+        ? `Stopped after ${s.trials} of up to ${s.of} ${s.of === 1 ? "trial" : "trials"}. ${s.finalists ? `${plural(s.finalists, "finalist")} had been checked on the held-back scenarios, but the check wasn't finished, so nothing can be chosen` : "None was checked on the held-back scenarios, so nothing can be chosen"} — today's version stays. What finished stays here.`
         : "Stopped before it tried a change. Today's version stays.",
       beforeSearch: !s.trials,
     };
@@ -1240,12 +1254,6 @@ const outcomeOf = (rec, { model } = {}) => {
   ];
   /* The newer engine's rows — only on records stamped with them. */
   const fz = record?.frozen || {};
-  /* "No increase" allows the ±2% two runs of one agent already differ by. */
-  const noIncrease = (limits.costCeiling ?? 0) <= 0;
-  const tol = noIncrease ? COST_NOISE : 0;
-  const costLabel = noIncrease
-    ? "Cost per conversation · no increase"
-    : `Cost per conversation within +${limits.costCeiling}%`;
   const areas = fz.areaCheck
     ? [
         ...new Set(
@@ -1293,39 +1301,6 @@ const outcomeOf = (rec, { model } = {}) => {
             !switched ||
             (limits.model?.mode === "approved" &&
               (limits.model.approved || []).includes(switched)),
-        },
-        costKnown && limits.costMode === "abs" && limits.costCeilingAbs != null
-          ? (() => {
-              /* An amount: today's cost per conversation, moved by the change. */
-              const today =
-                PER_CONVERSATION[record.surface === "voice" ? "voice" : "chat"];
-              const after = today * (1 + effect.cost / 100);
-              return {
-                id: "cost",
-                label: `Cost per conversation under $${Number(limits.costCeilingAbs).toFixed(2)}`,
-                actual: `$${after.toFixed(3)} (${signed(effect.cost)})`,
-                pass: after <= limits.costCeilingAbs,
-              };
-            })()
-          : costKnown
-            ? {
-                id: "cost",
-                label: costLabel,
-                actual: `${signed(effect.cost)}${tol && effect.cost > 0 && effect.cost <= tol ? ` · within the ±${tol}% two runs differ by` : ""}`,
-                pass: effect.cost <= (limits.costCeiling ?? 0) + tol,
-              }
-            : /* No cost data from this agent: unverified, never passed. */
-              {
-                id: "cost",
-                label: costLabel,
-                actual: "Unverified — this agent reports no cost",
-                pass: null,
-              },
-        {
-          id: "latency",
-          label: `Latency within +${limits.latencyCeiling}%`,
-          actual: signed(effect.latency),
-          pass: effect.latency <= limits.latencyCeiling,
         },
         {
           id: "changes",
@@ -1528,8 +1503,6 @@ const outcomeOf = (rec, { model } = {}) => {
     /* Said as what the candidate would do, not as the rule it failed. */
     const why =
       {
-        cost: `it would raise cost per conversation ${failedCheck.actual}, over the ${limits.costMode === "abs" ? `$${Number(limits.costCeilingAbs).toFixed(2)}` : noIncrease ? "no-increase" : `+${limits.costCeiling}%`} limit`,
-        latency: `it would slow responses by ${failedCheck.actual}, over the +${limits.latencyCeiling}% limit`,
         changes: `it changes ${offLimits.map((x) => SURFACE_LABEL[x] || x).join(" and ")}, which this agent's constraints don't allow`,
         protected: `it edits ${hitProtected.join(", ")}, which this agent protects`,
         blockers:
@@ -1622,7 +1595,7 @@ const outcomeOf = (rec, { model } = {}) => {
         : `${creditsLabel(s.budget || 0)} budget`;
     return {
       ...base,
-      ending: { key: "budget", label: "Stopped at budget" },
+      ending: { key: "budget", label: "Stopped" },
       headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} trials. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
@@ -1647,12 +1620,14 @@ export const suggestedFixOf = (record) => {
 };
 
 /*
-  How much the held-back result is worth: Verified, or Limited validation
-  (likely, or too few held back to tell).
+  How much the held-back result is worth: Verified, Limited validation (too
+  few held back to tell), or Inconclusive.
   "Fixed 3 of 4" reads as proof whatever the size of the set; this says what
-  it's worth. Read off the winner's re-run after the pick (new improvements).
+  it's worth. Verified means better on at least HELD_BACK.minimum (4,
+  improvementStart.js) untouched held-back scenarios with no protected
+  regression — that part is the blocking verdict, read before this. Fewer
+  held back is Limited validation, never Verified.
 */
-export const PROVEN_MIN = 5;
 export const TELL_MIN = 4;
 export const proofStrength = (r, issue, held) => {
   if (!r?.rsi || !r.winner) return null;
@@ -1680,11 +1655,13 @@ export const proofStrength = (r, issue, held) => {
       ? ` (${issue.heldFixed} of ${issue.held} from the issue, ${envFixed} of ${envT.length} elsewhere that fail the same way)`
       : "";
   const of = `fixed ${fixed} of ${n} failing ${n === 1 ? "scenario" : "scenarios"} it never saw${parts}`;
-  if (n < TELL_MIN)
+  /* Fewer held-back scenarios than HELD_BACK.minimum: never Verified. */
+  const heldSize = r.heldMeasured ?? (r.heldTasks || []).length;
+  if (n < TELL_MIN || (heldSize && heldSize < TELL_MIN))
     return {
       key: "few",
       label: "Limited validation",
-      note: `${of} — it takes ${TELL_MIN} or more to tell`,
+      note: `${of} — it takes ${TELL_MIN} or more held-back scenarios to tell`,
     };
   /* Scored on an evaluation that agrees with people at chance: whatever it
      moved, it can't prove the agent got better. */
@@ -1692,51 +1669,12 @@ export const proofStrength = (r, issue, held) => {
   if (goalRel?.tier === "unreliable") {
     return {
       key: "none",
-      label: "Not verified",
+      label: "Inconclusive",
       note: `${of}, but scored on ${r.goal.label}, which agrees with your annotators about as often as chance (κ ${goalRel.kappa.toFixed(2)})`,
     };
   }
-  const lift = r.heldScore - r.heldBase;
-  const noise = r.noise || 0;
-  const share = fixed / n;
-  /* Older improvements weren't re-run after the pick: likely at best. */
-  const confirmed = !!r.confirm?.held;
-  const rerun = r.confirm
-    ? confirmed
-      ? ", and again on a re-run after the pick"
-      : ", but not on the re-run after the pick"
-    : ", on the same run that picked it";
-  /* Fewer held-back scenarios than HELD_BACK.minimum (improvementStart.js):
-     never Verified, only Limited validation. */
-  const heldSize = r.heldMeasured ?? (r.heldTasks || []).length;
-  const enoughHeld = !heldSize || heldSize >= 4;
-  if (
-    confirmed &&
-    enoughHeld &&
-    fixed >= PROVEN_MIN &&
-    share >= 0.75 &&
-    (issue || lift >= 2 * noise)
-  ) {
-    return { key: "proven", label: "Verified", note: `${of}${rerun}` };
-  }
-  if (
-    (confirmed || !r.confirm) &&
-    fixed >= 2 &&
-    share >= 0.5 &&
-    (issue || lift > noise)
-  ) {
-    const short = !r.confirm
-      ? "a re-run after the pick"
-      : fixed < PROVEN_MIN
-        ? `${PROVEN_MIN} fixed`
-        : "three in four fixed";
-    return {
-      key: "likely",
-      label: "Limited validation",
-      note: `${of}${rerun} — ${short} would prove it`,
-    };
-  }
-  return { key: "none", label: "Not verified", note: `${of}${rerun}` };
+  if (fixed >= TELL_MIN) return { key: "proven", label: "Verified", note: of };
+  return { key: "none", label: "Inconclusive", note: of };
 };
 
 /* Marked must-pass but not passing every repeat today — named, never gating. */
@@ -2052,18 +1990,20 @@ export const judgeFor = (proposerId = "") =>
 /* ── where a running improvement is ────────────────────────────────────── */
 
 /*
-  Draft → Reproducing → Searching → Verifying, derived from the step of its
-  trace it has reached — timed the way the trace plays (`RunTrace`), from
-  when the run started. Null once it has ended.
+  Queued → Reproducing → Diagnosing → Proposing → Checking (Stopping while a
+  stop settles), derived from the step of its trace it has reached — timed
+  the way the trace plays (`RunTrace`), from when the run started. These are
+  the plan's names; a real service would report them as durable state. Null
+  once it has ended.
 */
-/* Diagnosing is a step of the search, not a state of its own — it reads as
-   Searching wherever a status is shown; the stepper still names Diagnose. */
 export const IMPROVEMENT_PHASES = {
   draft: "Draft",
+  queued: "Queued",
   reproducing: "Reproducing",
-  diagnosing: "Searching",
-  searching: "Searching",
-  verifying: "Verifying",
+  diagnosing: "Diagnosing",
+  searching: "Proposing",
+  verifying: "Checking",
+  stopping: "Stopping",
 };
 const STEP_PHASE = {
   reread: "reproducing",
@@ -2091,7 +2031,7 @@ const stepDuration = (s, stepMs = TRACE_STEP_MS, runMs = RUN_MS) => {
 };
 /*
   Endings decided before any search — Could not reproduce, Nothing to
-  improve, Stopped at budget, Failed — still play their Reproducing phase
+  improve, Baseline not established, Failed — still play their Reproducing phase
   first (RSI PRD: Draft → Reproducing → Searching → Verifying → an ending).
   The record is written running with the ending pending (`pendingEnding`)
   and reads as that ending once its Reproduce steps would have played.
@@ -2148,19 +2088,26 @@ export const settlePending = (record, now = Date.now()) => {
   };
 };
 
-export const improvementPhaseOf = (record, now = Date.now()) => {
+const livePhaseOf = (record, now) => {
   if (record?.status === "draft")
     return { key: "draft", label: IMPROVEMENT_PHASES.draft };
   if (statusOf(record, now) !== OPT_STATUS.RUNNING) return null;
-  /* Waiting on its first run, or an ending decided up front: reproducing. */
-  if (record.pendingEnding || waitingAt(record, now))
+  /* Waiting on the environment's run to finish: queued. */
+  if (!record.pendingEnding && waitingAt(record, now))
+    return {
+      key: "queued",
+      label: IMPROVEMENT_PHASES.queued,
+      step: "reproduce",
+    };
+  /* An ending decided up front: reproducing. */
+  if (record.pendingEnding)
     return {
       key: "reproducing",
       label: IMPROVEMENT_PHASES.reproducing,
       step: "reproduce",
     };
   const r = record.result;
-  if (!r) return { key: "draft", label: IMPROVEMENT_PHASES.draft };
+  if (!r) return { key: "queued", label: IMPROVEMENT_PHASES.queued };
   const steps = searchTrace(r, record);
   const elapsed = Math.max(0, now - startMsOf(record, now));
   let t = 0;
@@ -2177,6 +2124,31 @@ export const improvementPhaseOf = (record, now = Date.now()) => {
     step: steps[steps.length - 1]?.id,
   };
 };
+
+/**
+ * The phase a running improvement is in. A stop in progress
+ * (`stopRequestedAt`, see requestStop) reads Stopping, with the phase it
+ * interrupted kept as `from`.
+ */
+export const improvementPhaseOf = (record, now = Date.now()) => {
+  const phase = livePhaseOf(record, now);
+  if (!phase || phase.key === "draft" || !record.stopRequestedAt) return phase;
+  return {
+    ...phase,
+    key: "stopping",
+    label: IMPROVEMENT_PHASES.stopping,
+    from: phase.key,
+  };
+};
+
+/**
+ * Ask a running improvement to stop: no new work starts and in-flight work
+ * settles (Stopping). stopImprovement then records what finished.
+ */
+export const requestStop = (record, now = Date.now()) => ({
+  ...record,
+  stopRequestedAt: new Date(now).toISOString(),
+});
 
 /*
   How far a running improvement has got, on the one clock every view reads —

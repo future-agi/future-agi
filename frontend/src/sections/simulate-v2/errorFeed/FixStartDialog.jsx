@@ -211,13 +211,14 @@ export default function FixStartDialog({
         ? estimateRunPlan({
             env: main,
             envState: mainState,
-            scenarios: drafts.length,
+            /* Priced on the reviewed tests once the review is done. */
+            scenarios: runDrafts.length,
             attempts: runRepeats,
             evals: (mainState?.evals || []).map(resolveEval).filter(Boolean),
             runLocation: mainState?.agent?.values?.runLocation || null,
           })
         : null,
-    [main, mainState, drafts.length, runRepeats],
+    [main, mainState, runDrafts.length, runRepeats],
   );
   const runPrice =
     runEstimate && !runEstimate.platform.unknown && !runEstimate.blocked.length

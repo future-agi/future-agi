@@ -3287,7 +3287,13 @@ export default function EnvironmentWorkspace() {
           }
           scopeLead={
             runPlanReq?.continues
-              ? `Continues run ${(envState.runs || []).find((r) => r.id === runPlanReq.continues)?.ordinal ?? ""} — only the scenarios its limit stopped from starting. The ones that finished aren't run or charged again.`
+              ? (() => {
+                  /* A retry is a linked attempt of the run it continues. */
+                  const src = (envState.runs || []).find(
+                    (r) => r.id === runPlanReq.continues,
+                  );
+                  return `Attempt ${(src?.attempts || []).length + 2} of run ${src?.ordinal ?? ""} — only the scenarios ${src?.status === "interrupted" ? "that were interrupted" : "its limit stopped from starting"}. The ones that finished aren't run or charged again.`;
+                })()
               : runPlanReq?.toolReplay
                 ? `Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === runPlanReq.toolReplay)?.ordinal ?? ""} — the agent runs again, and every tool answers what it returned then. It can't show how the agent does against a world that changes.`
                 : runPlanReq?.snapshot

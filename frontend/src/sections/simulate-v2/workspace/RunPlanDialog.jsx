@@ -49,7 +49,10 @@ import { platformPreviewOf } from "../_mock/platformPreview";
 import { assistantsFor } from "../_mock/connectAgent";
 import { delegationEvidenceOf } from "../_mock/handoffs";
 import { membersOf } from "../_mock/improvementPolicy";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import ClosableDialog from "../components/ClosableDialog";
+import { startsFromCode } from "../_mock/connectionCheck";
 
 /* Pre-run cost and spending cap for simulations: hidden for now. */
 const SHOW_RUN_COST = false;
@@ -161,6 +164,19 @@ export default function RunPlanDialog({
   envLabel = null,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
+  /* Agents we start from code run in our sandbox and take the seed; a
+     hosted endpoint or a Vapi/Retell agent runs elsewhere and can't. */
+  const seedable = startsFromCode(envState?.agent || {});
+  /* Submitting (runs.md): a rejected start says no run was created; a
+     start that times out never submits twice — it offers to find the run.
+     ?submit=rejected | timeout shows each, as ?price=missing does. */
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const submitDemo = searchParams.get("submit");
+  const [submit, setSubmit] = useState(null);
+  useEffect(() => {
+    if (open) setSubmit(null);
+  }, [open]);
   const [attempts, setAttempts] = useState(initialAttempts || 3);
   const [versions, setVersions] = useState(
     versionOptions.slice(0, 1).map((o) => o.label),
@@ -382,7 +398,25 @@ export default function RunPlanDialog({
         <Typography sx={{ typography: "m2", fontWeight: 600 }}>
           Run plan
         </Typography>
-        <Typography noWrap sx={{ typography: "s2", color: "text.tertiary" }}>
+        {/* From a ready world, its exact release and pack are on hover. */}
+        <Typography
+          noWrap
+          title={(() => {
+            const entry = catalogueOfEnv(env);
+            if (!entry) return undefined;
+            const pack =
+              { starter: "Starter pack", full: "Full world" }[env?.pack] ||
+              (env?.pack ? "A named pack" : null);
+            return [
+              `${entry.id} · ${entry.task}`,
+              `release ${envReleaseOf(env, entry)}`,
+              pack,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+          })()}
+          sx={{ typography: "s2", color: "text.tertiary" }}
+        >
           {[
             env?.name || "Environment",
             voice ? "Voice" : "Text",
@@ -399,30 +433,6 @@ export default function RunPlanDialog({
             .filter(Boolean)
             .join(" · ")}
         </Typography>
-        {/* From a ready world: the exact release and pack this run uses. */}
-        {(() => {
-          const entry = catalogueOfEnv(env);
-          if (!entry) return null;
-          const pack =
-            {
-              starter: "Starter pack",
-              full: "Full world",
-            }[env?.pack] || (env?.pack ? "A named pack" : null);
-          return (
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary" }}
-            >
-              {[
-                `${entry.id} · ${entry.task}`,
-                `release ${envReleaseOf(env, entry)}`,
-                pack,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
-          );
-        })()}
       </DialogTitle>
 
       <DialogContent>
@@ -525,7 +535,11 @@ export default function RunPlanDialog({
                     <Typography
                       sx={{ typography: "s3", color: "status.warning.fg" }}
                     >
-                      {`Stop is partial for this agent — ${cancelRow.detail.charAt(0).toLowerCase()}${cancelRow.detail.slice(1)}`}
+                      <Tooltip arrow title={cancelRow.detail}>
+                        <span>
+                          Stop is partial for this agent — hover for why
+                        </span>
+                      </Tooltip>
                     </Typography>
                   )}
                 </Stack>
@@ -621,7 +635,7 @@ export default function RunPlanDialog({
                       </MenuItem>
                       {suites.map((x) => (
                         <MenuItem key={x.id} value={x.id}>
-                          {`${x.name} · ${x.ids.length}`}
+                          {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
                         </MenuItem>
                       ))}
                     </TextField>
@@ -662,18 +676,22 @@ export default function RunPlanDialog({
                       }}
                     >
                       {row.v}
+                      {/* One line per row; what it means is on hover. */}
+                      {row.note && (
+                        <Tooltip arrow title={row.note}>
+                          <Box
+                            component="span"
+                            sx={{ display: "inline-flex", ml: 0.75 }}
+                          >
+                            <Iconify
+                              icon="solar:info-circle-linear"
+                              width={14}
+                              sx={{ color: "text.disabled" }}
+                            />
+                          </Box>
+                        </Tooltip>
+                      )}
                     </Box>
-                    {row.note && (
-                      <Typography
-                        sx={{
-                          typography: "s3",
-                          color: "text.tertiary",
-                          mt: 0.25,
-                        }}
-                      >
-                        {row.note}
-                      </Typography>
-                    )}
                   </Box>
                 </Stack>
               ))}
@@ -874,11 +892,21 @@ export default function RunPlanDialog({
             ).filter((t) => t.handling === "live");
             if (!live.length) return null;
             return (
-              <Typography
-                sx={{ typography: "s3", color: "text.secondary", mt: -1 }}
+              <Tooltip
+                arrow
+                title={`${live.map((t) => `${t.name}: ${t.line}`).join(" · ")}. Your own tools are redirected to the test world.`}
               >
-                {`Runs for real: ${live.map((t) => `${t.name} (${t.line.charAt(0).toLowerCase()}${t.line.slice(1)})`).join(" · ")}. Your own tools are redirected to the test world.`}
-              </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    mt: -1,
+                    alignSelf: "flex-start",
+                  }}
+                >
+                  {`Runs for real: ${live.map((t) => t.name).join(", ")}`}
+                </Typography>
+              </Tooltip>
             );
           })()}
 
@@ -897,7 +925,7 @@ export default function RunPlanDialog({
           <Box>
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                Seed and limits
+                {seedable ? "Seed and limits" : "Limits"}
               </Typography>
               <Typography
                 noWrap
@@ -912,7 +940,12 @@ export default function RunPlanDialog({
               >
                 {limitsLine(limits, {
                   voice,
-                  seed: seedFrom ? `seed of ${seedFrom}` : "new seed",
+                  /* A seed only where the agent can take one (runs.md). */
+                  seed: !seedable
+                    ? null
+                    : seedFrom
+                      ? `seed of ${seedFrom}`
+                      : "new seed",
                 })}
               </Typography>
               <Button
@@ -937,16 +970,18 @@ export default function RunPlanDialog({
             </Stack>
             <Collapse in={showLimits}>
               <Box sx={{ mt: 0.5 }}>
-                <Row
-                  label="Seed"
-                  detail={
-                    seedFrom
-                      ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
-                      : "Fixed when the run starts and saved with it — a re-run can reuse it"
-                  }
-                  value={seedFrom ? `Same as ${seedFrom}` : "New"}
-                  muted
-                />
+                {seedable && (
+                  <Row
+                    label="Seed"
+                    detail={
+                      seedFrom
+                        ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
+                        : "Fixed when the run starts and saved with it — a re-run can reuse it"
+                    }
+                    value={seedFrom ? `Same as ${seedFrom}` : "New"}
+                    muted
+                  />
+                )}
                 <Row
                   label={voice ? "Longest call" : "Per-trial timeout"}
                   detail={`A ${unit} still going then stops and fails as timed out`}
@@ -1317,6 +1352,46 @@ export default function RunPlanDialog({
         </Stack>
       </DialogContent>
 
+      {(submit === "rejected" || submit === "timeout") && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{
+            mx: 3,
+            mb: 1,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor:
+              submit === "rejected"
+                ? "status.danger.border"
+                : "status.warning.border",
+            borderRadius: "8px",
+          }}
+        >
+          <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+            {submit === "rejected"
+              ? "No run created — the platform turned the request down (the world service is unavailable). Nothing was charged and your choices are kept, so you can try again."
+              : "We couldn't confirm the run started. It may have been created, so Start stays off to avoid running it twice — find it first."}
+          </Typography>
+          {submit === "timeout" && env?.id && (
+            <Button
+              size="small"
+              variant="outlined"
+              sx={{ flexShrink: 0 }}
+              onClick={() => {
+                onClose();
+                navigate(
+                  paths.dashboard.simulate.environmentStep(env.id, "runs"),
+                );
+              }}
+            >
+              Find submitted run
+            </Button>
+          )}
+        </Stack>
+      )}
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
@@ -1333,9 +1408,19 @@ export default function RunPlanDialog({
             <Button
               size="small"
               variant="contained"
-              disabled={!check.canStart || (blockedN > 0 && !subsetOk)}
+              disabled={
+                !check.canStart ||
+                (blockedN > 0 && !subsetOk) ||
+                submit === "sending" ||
+                submit === "timeout"
+              }
               startIcon={<Iconify icon="solar:play-bold" width={14} />}
-              onClick={() =>
+              onClick={() => {
+                if (submitDemo === "rejected" || submitDemo === "timeout") {
+                  setSubmit("sending");
+                  setTimeout(() => setSubmit(submitDemo), 900);
+                  return;
+                }
                 onStart({
                   attempts: Number(attempts),
                   versions: otherAgent ? [otherAgent.version] : versions,
@@ -1370,10 +1455,14 @@ export default function RunPlanDialog({
                             observation: true,
                           }
                         : null,
-                })
-              }
+                });
+              }}
             >
-              Start run
+              {submit === "sending"
+                ? "Starting…"
+                : submit === "rejected"
+                  ? "Try again"
+                  : "Start run"}
             </Button>
           </span>
         </Tooltip>

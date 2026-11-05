@@ -389,6 +389,14 @@ export function taskToVoiceData(
     steps,
     failStep: failed ? task.failStep : null,
     failedGoal,
+    unmeasured:
+      task?.status === "unmeasured"
+        ? task?.fault?.transport
+          ? "the connection dropped before the call finished"
+          : task?.fault?.grading
+            ? "the judge didn't return a verdict"
+            : "the call couldn't be graded"
+        : null,
   });
 
   return {
@@ -437,16 +445,17 @@ export function taskToVoiceData(
     bot_wpm: voice && !textRehearsal ? 214 : undefined,
     user_interruption_count: textRehearsal ? undefined : 0,
     ai_interruption_count: textRehearsal ? undefined : 0,
-    customer_latency_metrics: voice && !textRehearsal
-      ? {
-          system_metrics: {
-            endpointing: 120,
-            transcriber: 90,
-            model: 260,
-            voice: 140,
-          },
-        }
-      : undefined,
+    customer_latency_metrics:
+      voice && !textRehearsal
+        ? {
+            system_metrics: {
+              endpointing: 120,
+              transcriber: 90,
+              model: 260,
+              voice: 140,
+            },
+          }
+        : undefined,
 
     /* Attributes tab. */
     attributes: {

@@ -14,7 +14,16 @@ import { paths } from "src/routes/paths";
 */
 export const runPlanHref = (
   envId,
-  { only = [], trials, agent, also = [], continues, snapshot, envVersion, toolReplay } = {},
+  {
+    only = [],
+    trials,
+    agent,
+    also = [],
+    continues,
+    snapshot,
+    envVersion,
+    toolReplay,
+  } = {},
 ) => {
   const q = new URLSearchParams({ plan: "1" });
   if (only?.length) q.set("only", only.join(","));
@@ -56,3 +65,47 @@ export const RUN_PLAN_PARAMS = [
   "env",
   "replay",
 ];
+
+/*
+  Linked attempts (runs.md "Retry only the interrupted trials"): a retry is
+  its own run, but the run it continues keeps the link — attempt 2, 3, … each
+  with its own identity and reason. The original stays attempt 1.
+*/
+export const attemptsOf = (run) => run?.attempts || [];
+
+/** Scenario ids a run's attempts already took over — not offered for retry again. */
+export const retriedIdsOf = (run) => [
+  ...new Set(attemptsOf(run).flatMap((a) => a.scenarioIds || [])),
+];
+
+/**
+ * The attempt record to add to the original when a continuation is recorded:
+ * { id, attempt, runId, scenarioIds, reason, at }, or null when it is
+ * already there.
+ */
+export const nextAttemptOf = (orig, { runId, scenarioIds = [] }) => {
+  if (!orig || attemptsOf(orig).some((a) => a.runId === runId)) return null;
+  const n = attemptsOf(orig).length + 2;
+  return {
+    id: `${orig.id}-a${n}`,
+    attempt: n,
+    runId,
+    scenarioIds,
+    reason:
+      orig.status === "interrupted"
+        ? "Retry of interrupted trials"
+        : "Continued after the limit stopped them",
+    at: new Date().toISOString(),
+  };
+};
+
+/**
+ * Where a run sits among linked attempts: { of, attempt, reason } when the
+ * run it continues lists it as an attempt, else null.
+ */
+export const attemptHeaderOf = (runs = [], run) => {
+  if (!run?.continues) return null;
+  const of = runs.find((r) => r.id === run.continues);
+  const a = attemptsOf(of).find((x) => x.runId === run.id);
+  return of ? { of, attempt: a?.attempt || 2, reason: a?.reason || "" } : null;
+};

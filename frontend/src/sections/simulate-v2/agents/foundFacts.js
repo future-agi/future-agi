@@ -56,7 +56,7 @@ const testsOf = (agent, d, toolNames) => {
   };
 };
 
-/** { entry, prompts, tools, model, runCommand, tests, testChecks, runtimePrompts, modelAtRuntime, credentialKeys } as read (corrections applied). */
+/** { entry, prompts, tools, model, modelUnknown, runCommand, tests, testChecks, runtimePrompts, modelAtRuntime, credentialKeys } as read (corrections applied). */
 export const foundValuesOf = (agent) => {
   const d = definitionOf(agent);
   const read = agentDefinitionOf({ agent });
@@ -64,13 +64,17 @@ export const foundValuesOf = (agent) => {
     .map((t) => (typeof t === "string" ? t : t.name))
     .filter(Boolean);
   const tests = testsOf(agent, d, toolNames);
+  /* An absent model stays Unknown (connect.md): never the read's stand-in
+     name, which is a guess. */
+  const model = d.model || "";
   return {
     tests: tests.command,
     testChecks: tests.checks,
     entry: d.entry || "",
     prompts: d.prompts || [],
     tools: toolNames,
-    model: d.model || (read.model?.visible ? read.model.name : "") || "",
+    model,
+    modelUnknown: !model,
     runCommand: d.runCommand || d.installCommand || "",
     runtimePrompts: d.runtimePrompts || [],
     modelAtRuntime: !!d.modelAtRuntime,

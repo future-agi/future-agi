@@ -54,6 +54,10 @@ export const connectionSpecOf = (agent, found = {}) => {
     statusField: saved.statusField ?? "status",
     artifactField: saved.artifactField ?? "",
     cancelPath: saved.cancelPath ?? "",
+    /* Whether a cancel was seen to stop the agent. Declared isn't observed:
+       until it was, the step reads Stop requested or Cleanup failed. */
+    /* We see an agent we start stop; a hosted endpoint we can only ask. */
+    stopObserved: saved.stopObserved ?? startsFromCode(agent),
   };
 };
 
@@ -155,6 +159,30 @@ export const ASYNC_CHECKS = [
   { id: "recover", label: "Recovers without a second job" },
   { id: "cancel", label: "Cancels" },
 ];
+/*
+  A cancel the agent never confirmed (connect.md): "Stop requested" until it
+  is observed stopped, or "Cleanup failed" when it didn't — never ok on
+  metadata alone. Which one is fixed per agent. Stop requested keeps the
+  "unavailable" state (neither green nor a repairable failure) with an
+  `outcome` the check's `passed` reads.
+*/
+/* A stop we can't watch (a hosted endpoint) reads Stop requested until the
+   agent is seen to stop; Cleanup failed only when cleanup is seen to fail
+   (connect.md). Neither fails the connection on its own. */
+const unobservedStop = (spec) =>
+  spec.cleanupFailed
+    ? {
+        state: "failed",
+        outcome: "cleanup-failed",
+        detail: "Cleanup failed — the agent didn't stop.",
+      }
+    : {
+        state: "unavailable",
+        outcome: "stop-requested",
+        detail: "Stop requested — waiting to see the agent stop.",
+      };
+const checkPassed = (out) => out.every((r) => r.state !== "failed");
+
 export const checksFor = (spec) =>
   spec?.method === "async" ? ASYNC_CHECKS : CHECKS;
 
@@ -174,15 +202,22 @@ export const CHECKS = [
 export const runConnectionCheck = (agent, spec, tools = []) => {
   const fromCode = startsFromCode(agent);
   const out = [];
-  const add = (id, state, detail, repair = null) =>
+  const add = (id, state, detail, repair = null, outcome = null) =>
     out.push({
       id,
       label: checksFor(spec).find((c) => c.id === id).label,
       state,
       detail,
       ...(repair && { repair }),
+      ...(outcome && { outcome }),
     });
-  if (spec.method === "async") return runAsyncCheck(spec, add, out);
+  const addStop = (declared, okDetail, noneDetail) => {
+    if (!declared) return add("cancel", "unavailable", noneDetail);
+    if (spec.stopObserved) return add("cancel", "ok", okDetail);
+    const u = unobservedStop(spec);
+    add("cancel", u.state, u.detail, null, u.outcome);
+  };
+  if (spec.method === "async") return runAsyncCheck(spec, addStop, add, out);
 
   if (fromCode && !spec.startCommand.trim())
     add(
@@ -255,22 +290,15 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
     );
   }
 
-  if (fromCode)
-    add(
-      "cancel",
-      "ok",
-      "Cancel stopped the turn in 0.4 s and the process exited cleanly.",
-    );
-  else
-    add(
-      "cancel",
-      "unavailable",
-      "Not declared — stopping a run waits for the current turn to finish.",
-    );
+  addStop(
+    fromCode,
+    "Cancel stopped the turn in 0.4 s and the process exited cleanly.",
+    "Not declared — stopping a run waits for the current turn to finish.",
+  );
 
   return {
     results: out,
-    passed: out.every((r) => r.state !== "failed"),
+    passed: checkPassed(out),
     productionTools: stillLive,
   };
 };
@@ -278,7 +306,7 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
 /* An async task, end to end: accepted with a job ID, progress, a terminal
    state, the artifact retrieved, a dropped watcher reconnected to the same
    job, and cancellation as declared. */
-const runAsyncCheck = (spec, add, out) => {
+const runAsyncCheck = (spec, addStop, add, out) => {
   if (!spec.taskIdField.trim())
     add(
       "accepted",
@@ -331,21 +359,14 @@ const runAsyncCheck = (spec, add, out) => {
     "ok",
     "Dropped the watcher mid-job and reconnected: the same job_7f3a, no second job started.",
   );
-  if (spec.cancelPath.trim())
-    add(
-      "cancel",
-      "ok",
-      `Cancel at ${spec.cancelPath} confirmed — the job ended as cancelled and its partial output was kept.`,
-    );
-  else
-    add(
-      "cancel",
-      "unavailable",
-      "Not declared — a stopped run waits for the job to finish.",
-    );
+  addStop(
+    !!spec.cancelPath.trim(),
+    `Cancel at ${spec.cancelPath} confirmed — the job ended as cancelled and its partial output was kept.`,
+    "Not declared — a stopped run waits for the job to finish.",
+  );
   return {
     results: out,
-    passed: out.every((r) => r.state !== "failed"),
+    passed: checkPassed(out),
     productionTools: [],
   };
 };

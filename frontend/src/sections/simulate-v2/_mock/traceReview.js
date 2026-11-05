@@ -155,14 +155,18 @@ export const mappingsOf = (row, env, sources) => {
   const tables = (
     Array.isArray(env?.seed) ? env.seed : env?.seed?.tables || []
   ).map((t) => t.name);
-  const prodOnly = sources.some((s) => s.evidence.tools)
-    ? ["zendesk_create_ticket"]
-    : [];
+  /* A simulated call came from our own world: nothing in it is production. */
+  const sim = ["simCall", "simulation"].includes(row?.traceImport?.sourceKind);
+  const where = sim ? "in the simulated call" : "in production";
+  const prodOnly =
+    !sim && sources.some((s) => s.evidence.tools)
+      ? ["zendesk_create_ticket"]
+      : [];
   return [
     {
       id: "account",
       kind: "Record",
-      from: "The caller's account (production ID)",
+      from: `The caller's account (${sim ? "from the simulated call" : "production ID"})`,
       to: tables[0]
         ? `${tables[0]} · a seeded row`
         : "no seeded table holds it — the caller describes it instead",
@@ -178,7 +182,7 @@ export const mappingsOf = (row, env, sources) => {
     ...matched.map((t) => ({
       id: `tool:${t}`,
       kind: "Tool",
-      from: `${t} (as called in production)`,
+      from: `${t} (as called ${where})`,
       to: `${t} · the world answers it`,
     })),
     ...prodOnly.map((t) => ({

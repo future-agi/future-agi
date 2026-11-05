@@ -7,6 +7,8 @@
 import { estimateRunPlan, rangeLabel } from "./pricing";
 import { takesSnapshot } from "./candidateSource";
 import { resolveEval } from "./evals";
+import { endStateSavedOf } from "./regrade";
+import { retriedIdsOf, attemptsOf } from "./runPlanLink";
 
 const costOf = (env, envState, run, n) => {
   if (!n) return null;
@@ -44,7 +46,13 @@ export const repeatActionsOf = ({
     ),
   ];
   const notCounted = tasks.filter((t) => t.status === "unmeasured").length;
-  const notStarted = run?.budget?.notStarted || [];
+  /* Ids a linked attempt already took over aren't offered again. */
+  const retried = retriedIdsOf(run);
+  const notStarted = (run?.budget?.notStarted || []).filter(
+    (id) => !retried.includes(id),
+  );
+  const alreadyRetried = !notStarted.length && retried.length > 0;
+  const stateSaved = endStateSavedOf({ env, envState, run });
   const total = run?.scenarioIds?.length || tasks.length;
   const agentName = envState?.agent?.name || "This agent";
   const code = takesSnapshot(envState?.agent);
@@ -61,9 +69,13 @@ export const repeatActionsOf = ({
     },
     reeval: {
       label: "Re-evaluate",
-      detail: regrade
-        ? `Read the stored traces again with the repaired test (${regrade.label}). The agent's run stays as it was.`
-        : "Apply another evaluation to the stored traces and end states. The agent's run stays as it was.",
+      detail: `${
+        regrade
+          ? `Read the stored traces again with the repaired test (${regrade.label}).`
+          : stateSaved
+            ? "Apply another evaluation to the stored traces and end states."
+            : "Apply another evaluation to the stored traces."
+      } The agent's run stays as it was, and the previous result is kept beside the new one.${stateSaved ? "" : " End state wasn't saved — only the conversation checks are re-graded."}`,
       meta: `No new agent calls · ${regrade ? `≈ ${regrade.credits.toLocaleString()} credits` : "judges only"}`,
     },
     failures: {
@@ -92,7 +104,9 @@ export const repeatActionsOf = ({
         : null,
       disabled: notStarted.length
         ? null
-        : "Every trial in this run finished — there's nothing to resume.",
+        : alreadyRetried
+          ? `Already retried as attempt ${attemptsOf(run).slice(-1)[0].attempt}.`
+          : "Every trial in this run finished — there's nothing to resume.",
       ids: notStarted,
     },
     checkpoint: {

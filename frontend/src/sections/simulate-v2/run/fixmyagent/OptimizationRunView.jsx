@@ -46,6 +46,7 @@ import {
   judgeFor,
   ladderOf,
   improvementPhaseOf,
+  IMPROVEMENT_PHASES,
   TRACE_STEP_MS,
   statusOf,
   settlePending,
@@ -183,7 +184,9 @@ export default function OptimizationRunView({
   };
   /* Opened beside the improvement's runs list, it's the decision only — the
      runs and their chart are already on the page. */
-  const [tab, setTab] = useState(decisionOnly ? "changes" : "trials");
+  const [tab, setTab] = useState(
+    decisionOnly || record.result?.winner ? "changes" : "evidence",
+  );
   const [openTrial, setOpenTrial] = useState(null);
   /* Running for over a day without finishing means it was timed out — the
      same reading the Improvements list and the Error Feed chip use. */
@@ -197,13 +200,13 @@ export default function OptimizationRunView({
   const failedToRun = status === OPT_STATUS.FAILED || timedOut;
   /* A new goal improvement where nothing fell short of the goal. */
   const nothing = status === OPT_STATUS.NOTHING;
-  /* Checking the finalists alone would have gone over the budget. */
+  /* Today's agent couldn't be measured inside the budget: no baseline. */
   const overBudget = status === OPT_STATUS.OVER_BUDGET;
   const [editingScenarios, setEditingScenarios] = useState(false);
   const result = record.result;
   /* Reproducing on the way to an ending already known — no search to show. */
   const pending = running && !result && !!record.pendingEnding;
-  /* Where a running improvement is — Reproducing, Searching, Verifying —
+  /* Where a running improvement is — Queued, Reproducing, Diagnosing, Proposing, Checking —
      re-read while the trace plays. */
   const [phaseNow, setPhaseNow] = useState(Date.now());
   useEffect(() => {
@@ -610,7 +613,7 @@ export default function OptimizationRunView({
               verify gets no pull request or default — the current version stays. */}
           {outcome.strength?.key === "none" && !lifecycle ? (
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Not verified — it didn&apos;t fix enough of the held-back
+              Inconclusive — it didn&apos;t fix enough of the held-back
               scenarios to call it a fix, so there&apos;s nothing to ship. The
               current version stays. Look at the evidence, or run it again with
               more held-back scenarios.
@@ -902,7 +905,9 @@ export default function OptimizationRunView({
           <ImprovementProgress
             title={
               phase?.label ||
-              (record.fixDepth === "suggestion" ? "Reproducing" : "Searching")
+              (record.fixDepth === "suggestion"
+                ? IMPROVEMENT_PHASES.reproducing
+                : IMPROVEMENT_PHASES.searching)
             }
             subtitle={
               record.fixDepth === "suggestion"
@@ -1050,7 +1055,7 @@ export default function OptimizationRunView({
               {/* Another trade-off was chosen over the search's pick. */}
               {shipped?.chosen && (
                 <Typography
-                  {...clickable(() => setTab("tradeoffs"))}
+                  {...clickable(() => setTab("evidence"))}
                   sx={{
                     typography: "s2",
                     color: "text.secondary",
@@ -1061,14 +1066,14 @@ export default function OptimizationRunView({
                     ...focusRing,
                   }}
                 >
-                  {`You chose Run ${shipped.n} over the search's pick (Run ${winner.n}): ${winner.score > shipped.score ? `${winner.score - shipped.score} pts lower` : winner.score < shipped.score ? `${shipped.score - winner.score} pts higher` : "the same score"} on the target scenarios, ${shipped.projected ? "a projected " : ""}${shipped.held}% held back. ${verified ? "Verified on the full suite — it ships instead." : "It ships instead once it's verified on the full suite."} See Trade-offs.`}
+                  {`You chose Run ${shipped.n} over the search's pick (Run ${winner.n}): ${winner.score > shipped.score ? `${winner.score - shipped.score} pts lower` : winner.score < shipped.score ? `${shipped.score - winner.score} pts higher` : "the same score"} on the target scenarios, ${shipped.projected ? "a projected " : ""}${shipped.held}% held back. ${verified ? "Verified on the full suite — it ships instead." : "It ships instead once it's verified on the full suite."} See Evidence › Trade-offs.`}
                 </Typography>
               )}
               {/* The coding agent's progress, one click from its attempts. */}
               {sessionNow && (
                 /* Beside the runs list there's no Runs tab here — the runs are on the page. */
                 <Typography
-                  {...clickable(decisionOnly ? null : () => setTab("trials"))}
+                  {...clickable(decisionOnly ? null : () => setTab("evidence"))}
                   sx={{
                     typography: "s2",
                     color: "text.secondary",
@@ -1322,74 +1327,88 @@ export default function OptimizationRunView({
                     value={tab}
                     onChange={(_, v) => setTab(v)}
                   >
-                    {!decisionOnly && <Tab value="trials" label="Runs" />}
-                    {!!result.finalists?.length && (
-                      <Tab value="finalists" label="Finalists" />
-                    )}
                     <Tab value="changes" label="Changes" />
-                    <Tab value="scenarios" label="Per scenario" />
-                    <Tab value="tradeoffs" label="Trade-offs" />
+                    <Tab value="scenarios" label="Scenarios" />
+                    <Tab value="evidence" label="Evidence" />
                   </Tabs>
                 </Box>
 
-                {tab === "trials" && (
+                {tab === "evidence" && (
                   <>
-                    {/* The coding agent's submissions first, judged the same way. */}
-                    {session && (
-                      <ImproverAttempts
-                        record={record}
-                        env={env}
-                        envState={envState}
-                        session={session}
-                        name={name || record.name}
-                        searchSpent={searchSpend(result, env?.surface)}
-                      />
+                    {/* Everything the run rests on, stacked: the runs, the
+                        finalists on the held-back set, and the trade-offs. */}
+                    {!decisionOnly && (
+                      <>
+                        <EvidenceHeading>Runs</EvidenceHeading>
+                        {/* The coding agent's submissions first, judged the same way. */}
+                        {session && (
+                          <ImproverAttempts
+                            record={record}
+                            env={env}
+                            envState={envState}
+                            session={session}
+                            name={name || record.name}
+                            searchSpent={searchSpend(result, env?.surface)}
+                          />
+                        )}
+                        {session && (
+                          <Typography
+                            sx={{
+                              px: 2,
+                              py: 1,
+                              typography: "s3",
+                              fontWeight: 600,
+                              color: "text.tertiary",
+                              textTransform: "none",
+                              letterSpacing: 0.5,
+                              borderBottom: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          >
+                            Future AGI search
+                          </Typography>
+                        )}
+                        {/* Best so far, then every run — open one to see its calls. */}
+                        <Box
+                          sx={{
+                            px: 2,
+                            pt: 1.5,
+                            pb: 1,
+                            borderBottom: "1px solid",
+                            borderColor: "divider",
+                          }}
+                        >
+                          <Growth
+                            trials={result.trials}
+                            base={result.base}
+                            theme={theme}
+                            winner={winner}
+                          />
+                        </Box>
+                        <TrialList
+                          trials={result.trials}
+                          winner={winner}
+                          openTrial={openTrial}
+                          setOpenTrial={setOpenTrial}
+                          onOpenRun={openTrialRun}
+                          record={record}
+                        />
+                      </>
                     )}
-                    {session && (
-                      <Typography
-                        sx={{
-                          px: 2,
-                          py: 1,
-                          typography: "s3",
-                          fontWeight: 600,
-                          color: "text.tertiary",
-                          textTransform: "none",
-                          letterSpacing: 0.5,
-                          borderBottom: "1px solid",
-                          borderColor: "divider",
-                        }}
-                      >
-                        Future AGI search
-                      </Typography>
+                    {!!result.finalists?.length && (
+                      <>
+                        <EvidenceHeading>Finalists</EvidenceHeading>
+                        <FinalistsTable result={result} bare />
+                      </>
                     )}
-                    {/* Best so far, then every run — open one to see its calls. */}
-                    <Box
-                      sx={{
-                        px: 2,
-                        pt: 1.5,
-                        pb: 1,
-                        borderBottom: "1px solid",
-                        borderColor: "divider",
-                      }}
-                    >
-                      <Growth
-                        trials={result.trials}
-                        base={result.base}
-                        theme={theme}
-                        winner={winner}
-                      />
-                    </Box>
-                    <TrialList
-                      trials={result.trials}
-                      winner={winner}
-                      openTrial={openTrial}
-                      setOpenTrial={setOpenTrial}
-                      onOpenRun={openTrialRun}
+                    <EvidenceHeading>Trade-offs</EvidenceHeading>
+                    <TradeoffView
                       record={record}
+                      chosen={record.preferredTrial}
+                      onChoose={choose}
                     />
                   </>
                 )}
-                {tab === "finalists" && <FinalistsTable result={result} bare />}
                 {tab === "changes" && (
                   <WinnerChanges
                     env={env}
@@ -1411,13 +1430,6 @@ export default function OptimizationRunView({
                 )}
                 {tab === "scenarios" && (
                   <ScenarioOutcomes result={result} winner={winner} />
-                )}
-                {tab === "tradeoffs" && (
-                  <TradeoffView
-                    record={record}
-                    chosen={record.preferredTrial}
-                    onChoose={choose}
-                  />
                 )}
               </Box>
             </Box>
@@ -1661,8 +1673,9 @@ SuggestionBody.propTypes = {
 };
 
 /*
-  Stopped at budget before searching: checking the finalists alone would
-  have cost more than the budget, so no change was tried. The way on is a
+  Baseline not established: measuring today's agent alone would have cost
+  more than the budget, so no change was tried and nothing was compared
+  against a guess. The way on is a
   bigger budget (or time cap), picked right here — past the agent's own
   limit too, asking in place whether that limit should move — and the same
   improvement searches again (Reproduce already ran, so it isn't repeated).
@@ -1682,7 +1695,7 @@ function OverBudgetBody({ record, outcome, env, envState, patch }) {
           maxWidth: 640,
         }}
       >
-        {`${outcome.headline} Nothing ran past the budget and no change was found.`}
+        {`${outcome.headline} Nothing ran past the budget.`}
       </Typography>
       <Box sx={{ maxWidth: 640 }}>
         <RaiseLimitBar
@@ -1842,6 +1855,27 @@ IssueScenarioEditor.propTypes = {
   onReproduce: PropTypes.func,
 };
 const REPEATS_WORD = "three times";
+
+/* A heading between the stacked parts of the Evidence tab. */
+function EvidenceHeading({ children }) {
+  return (
+    <Typography
+      sx={{
+        px: 2,
+        py: 1,
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.tertiary",
+        borderTop: "1px solid",
+        borderBottom: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      {children}
+    </Typography>
+  );
+}
+EvidenceHeading.propTypes = { children: PropTypes.node };
 
 /* Label and value rows under the verdict — the reasons, not a paragraph of them. */
 function Facts({ rows }) {
@@ -2300,16 +2334,40 @@ function ImprovementSteps({
     nothing: "solar:check-circle-linear",
   }[ending];
   /* While it runs, each step reads done, now or to do from the phase the
-     trace has reached. */
+     trace has reached. Queued sits in Reproducing's place; a stop in
+     progress keeps the phase it interrupted. */
   const ORDER = ["reproducing", "searching", "verifying"];
+  const phaseKey = phase?.key === "stopping" ? phase.from : phase?.key;
+  const stopping = running && phase?.key === "stopping";
   const live = (stepPhase, fallback) => {
     if (!running || !phase) return fallback;
     const a = ORDER.indexOf(stepPhase);
     const b = ORDER.indexOf(
-      phase.key === "diagnosing" ? "searching" : phase.key,
+      phaseKey === "queued"
+        ? "reproducing"
+        : phaseKey === "diagnosing"
+          ? "searching"
+          : phaseKey,
     );
     return a < b ? "done" : a === b ? "now" : "todo";
   };
+  /* Running, a stage reads by the plan's name — Queued, Reproducing,
+     Diagnosing, Proposing, Checking — and Stopping on the one being
+     interrupted; once it has ended, by what it did. */
+  const runningLabel = (stepPhase, name) =>
+    running && live(stepPhase, "todo") === "now"
+      ? stopping
+        ? IMPROVEMENT_PHASES.stopping
+        : stepPhase === "reproducing"
+          ? phaseKey === "queued"
+            ? IMPROVEMENT_PHASES.queued
+            : IMPROVEMENT_PHASES.reproducing
+          : stepPhase === "searching"
+            ? phaseKey === "diagnosing"
+              ? IMPROVEMENT_PHASES.diagnosing
+              : IMPROVEMENT_PHASES.searching
+            : IMPROVEMENT_PHASES.verifying
+      : name;
   /* The PRD's stages — Reproduce, Search, Verify, Ready for review. The
      engine's own steps (re-reading the agent, the baseline twice, the
      diagnosis) are what each stage did, on hover — not stages of their own. */
@@ -2330,18 +2388,19 @@ function ImprovementSteps({
       .filter(Boolean)
       .join(" · ") || null;
   /* The count is said once Reproduce has run — never while it's running. */
-  const reproducing = running && (!phase || phase.key === "reproducing");
+  const reproducing =
+    running && (!phase || ["reproducing", "queued"].includes(phaseKey));
   const reproduced =
     feed && r.total
       ? {
           label:
             (r.overridden && !r.reproduced) || reproducing
-              ? "Reproduce"
+              ? runningLabel("reproducing", "Reproduce")
               : `Reproduced on ${r.reproduced || 0} of ${r.total} scenarios`,
           sub: reproducing ? null : reproduceSub,
         }
       : {
-          label: "Reproduce",
+          label: runningLabel("reproducing", "Reproduce"),
           sub:
             [
               fromRun ? `from Run ${fromRun.ordinal || ""}`.trim() : null,
@@ -2375,7 +2434,7 @@ function ImprovementSteps({
     ? [
         { ...reproduced, state: running ? live("reproducing", "now") : "done" },
         {
-          label: "Search",
+          label: runningLabel("searching", "Search"),
           sub: "no change tried — this agent can only be called",
           state: running ? live("searching", "todo") : "done",
         },
@@ -2396,12 +2455,12 @@ function ImprovementSteps({
               : "done",
         },
         {
-          label: "Search",
+          label: runningLabel("searching", "Search"),
           sub: searchSub,
           state: stopped ? "todo" : running ? live("searching", "now") : "done",
         },
         {
-          label: "Verify",
+          label: runningLabel("verifying", "Verify"),
           sub:
             !stopped && !running
               ? `${record.result?.finalists?.length || 1} ${record.result?.finalists?.length === 1 ? "finalist" : "finalists"} on held-back${record.result?.mustPassMeasured != null ? " and must-pass" : ""} + limits`
@@ -2619,7 +2678,9 @@ function RunningConstraints({ record, model }) {
     (record.result?.otherEnvs || []).reduce((n, e) => n + (e.mustPass || 0), 0);
   const rows = [
     ...limitRows(record.limits || DEFAULT_LIMITS, model, { mustPass }).filter(
-      (c) => !(record.budget && c.id === "budget"),
+      (c) =>
+        !(record.budget && c.id === "budget") &&
+        !["cost", "latency"].includes(c.id),
     ),
     ...(record.budget
       ? [

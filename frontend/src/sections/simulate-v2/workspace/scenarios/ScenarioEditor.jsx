@@ -226,7 +226,13 @@ export default function ScenarioEditor({
     const meta = mustPassMoved
       ? setBlocker({ ...row }, !!draft.critical)
       : { ...row };
-    onSave(metaOnly ? meta : draft, { metaOnly, bump });
+    /* The two notes aren't in the edit-bump field groups, so an edit to
+       them alone reads as "only the set's marks moved" — carry them over. */
+    const notes = {
+      allowedVariation: draft.allowedVariation,
+      mustNot: draft.mustNot,
+    };
+    onSave(metaOnly ? { ...meta, ...notes } : draft, { metaOnly, bump });
     onClose();
   };
 
@@ -319,6 +325,26 @@ export default function ScenarioEditor({
             value={draft.expected || ""}
             onChange={(e) => set("expected")(e.target.value)}
             helperText="What a pass looks like. Evals grade against this."
+            InputProps={{ sx: { typography: "s2" } }}
+          />
+          <TextField
+            size="small"
+            label="Allowed variation"
+            multiline
+            minRows={2}
+            value={draft.allowedVariation || ""}
+            onChange={(e) => set("allowedVariation")(e.target.value)}
+            helperText="Optional. What may differ between runs and still pass — wording, order, which of two valid routes the agent takes."
+            InputProps={{ sx: { typography: "s2" } }}
+          />
+          <TextField
+            size="small"
+            label="Must not do / hands off when"
+            multiline
+            minRows={2}
+            value={draft.mustNot || ""}
+            onChange={(e) => set("mustNot")(e.target.value)}
+            helperText="Optional. What the agent must not do, and when it should hand over to a person."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <SetMarks row={draft} onMustPass={toggleMustPass} />

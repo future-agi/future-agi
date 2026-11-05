@@ -38,6 +38,7 @@ import {
 } from "../workspace/scenarios/ScenarioStateBits";
 import { protectionOf } from "../_mock/mustPassProtection";
 import { personalDataDetail, REPLAY_NOTE } from "../_mock/scenarioSources";
+import { assumptionOf } from "../_mock/scenarioProvenance";
 import TestConditionRow from "./TestConditionRow";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
@@ -383,6 +384,7 @@ export default function ScenarioDetail({
           <Collapse in={showInternals} unmountOnExit>
             <Internals
               s={s}
+              assumed={!!assumptionOf(row)}
               env={env}
               policy={policy}
               connect={connect}
@@ -821,6 +823,12 @@ function DrawerSheet({
             <BriefBlock brief={brief} />
           </Row>
         )}
+        {/* Generated or inferred facts are labelled, not credited to a source. */}
+        {assumptionOf(row) && (
+          <Row label="Assumption">
+            <Typography className="sd-val">{assumptionOf(row)}</Typography>
+          </Row>
+        )}
       </Part>
       {/* world.md: one tool this scenario uses misbehaves on purpose. */}
       <Part title="Hidden · test conditions">
@@ -880,6 +888,16 @@ function DrawerSheet({
         {s.checks?.length > 0 && (
           <Row label="Graded on">
             <GradedOn checks={s.checks} />
+          </Row>
+        )}
+        {row.allowedVariation && (
+          <Row label="Allowed variation">
+            <Typography className="sd-val">{row.allowedVariation}</Typography>
+          </Row>
+        )}
+        {row.mustNot && (
+          <Row label="Must not / hands off">
+            <Typography className="sd-val">{row.mustNot}</Typography>
           </Row>
         )}
         {tools.length > 0 && (
@@ -1032,6 +1050,7 @@ function DrawerSheet({
             <GateList gates={gates} vl={vl} proof={proof} />
             <Internals
               s={s}
+              assumed={!!assumptionOf(row)}
               env={env}
               policy={policy}
               connect={connect}
@@ -2027,6 +2046,7 @@ GateList.propTypes = {
 /* The simulated caller's policy, the reference solution and the files. */
 function Internals({
   s,
+  assumed = false,
   env,
   policy,
   connect = false,
@@ -2087,6 +2107,12 @@ function Internals({
                 ))}
               </Stack>
             </PolicyRow>
+            {/* Facts the generator or an inference supplied — not cited. */}
+            {assumed && (
+              <PolicyRow label="Basis">
+                Assumption — these facts were not read from a cited source.
+              </PolicyRow>
+            )}
             <PolicyRow label="Held back">
               <Stack spacing={0.375}>
                 {policy.private.map((f) => (
@@ -2276,6 +2302,7 @@ function Internals({
 }
 Internals.propTypes = {
   s: PropTypes.object,
+  assumed: PropTypes.bool,
   env: PropTypes.object,
   policy: PropTypes.object,
   connect: PropTypes.bool,

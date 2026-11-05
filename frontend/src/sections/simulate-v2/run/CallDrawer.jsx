@@ -18,7 +18,7 @@ import { getSurface } from "../_mock/surfaces";
 import { browserAppOf } from "../_mock/runStream";
 import BrowserApp, { deriveState, focusOf, urlFor } from "./stages/BrowserApps";
 import { callDetail } from "../_mock/callDetail";
-import { subGoalResultsOf, rollupLine } from "../_mock/scenarioSubGoals";
+import { checkEvidenceOf, rollupLine } from "../_mock/scenarioSubGoals";
 import CallGraph from "./CallGraph";
 import TwinStateTimeline from "./TwinStateTimeline";
 import TwinRequestStream from "./TwinRequestStream";
@@ -1606,11 +1606,16 @@ const SUBGOAL_STATUS = {
     color: "text.tertiary",
     label: "Inconclusive",
   },
+  unmeasured: {
+    icon: "solar:minus-circle-linear",
+    color: "text.tertiary",
+    label: "Unmeasured",
+  },
 };
 
 function SubGoalRollup({ task, env, envState }) {
-  const { items, rollup } = subGoalResultsOf(task, env, envState);
-  if (!items.length) return null;
+  const { items, rollup } = checkEvidenceOf(task, env, envState);
+  if (!items.length || !rollup) return null;
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
       <Box
@@ -1632,7 +1637,9 @@ function SubGoalRollup({ task, env, envState }) {
           {rollupLine(rollup)}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          {`${items.filter((x) => x.status === "met").length} of ${items.length} sub-goals met · score ${rollup.score}`}
+          {rollup.verdict === "unmeasured"
+            ? `${items.length} sub-goals unmeasured`
+            : `${items.filter((x) => x.status === "met").length} of ${items.length} sub-goals met · score ${rollup.score}`}
         </Typography>
       </Box>
       {items.map((x) => {
@@ -1657,16 +1664,22 @@ function SubGoalRollup({ task, env, envState }) {
               width={14}
               sx={{ color: st.color, flexShrink: 0 }}
             />
-            <Typography
-              sx={{
-                typography: "s2",
-                color: "text.secondary",
-                flex: 1,
-                minWidth: 0,
-              }}
-            >
-              {x.text}
-            </Typography>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {x.text}
+              </Typography>
+              {/* The evidence each check rests on — or what's missing. */}
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: x.missing ? "status.warning.fg" : "text.tertiary",
+                }}
+              >
+                {x.missing
+                  ? `Needs ${x.evidence} · missing ${x.missing}`
+                  : `Evidence: ${x.evidence}`}
+              </Typography>
+            </Box>
             <Typography
               sx={{
                 typography: "s3",

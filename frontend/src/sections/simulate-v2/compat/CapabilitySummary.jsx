@@ -72,14 +72,25 @@ export default function CapabilitySummary({
       why: "no connection check has covered them yet.",
     },
     {
+      status: "partial",
+      title: (k) => `${k} work only in part here`,
+      why: "Show all says what each one is missing.",
+    },
+    {
       status: "stale",
       title: (k) => `${k} need a re-check`,
       why: "a fix was applied since the last check, so check again to confirm they hold.",
     },
   ]
-    .map((g) => ({ ...g, rows: flagged.filter((r) => r.status === g.status) }))
+    .map((g) => ({
+      ...g,
+      /* Partial ones that touch no case stay in "Affects no case here". */
+      rows: flagged.filter(
+        (r) => r.status === g.status && (g.status !== "partial" || n(r) > 0),
+      ),
+    }))
     .filter((g) => g.rows.length > 1);
-  const inGroup = (r) => GROUPS.some((g) => g.status === r.status);
+  const inGroup = (r) => GROUPS.some((g) => g.rows.includes(r));
   const grouped = GROUPS.length > 0;
   const quiet = flagged.filter(
     (r) => !inGroup(r) && r.status !== "blocked" && !n(r),

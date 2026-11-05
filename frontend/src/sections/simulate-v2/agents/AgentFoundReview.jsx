@@ -9,6 +9,8 @@ import { FOUND_FACTS, foundPatchOf, foundValuesOf } from "./foundFacts";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const CRED_SLOT = "vault://acme/sim/agent_test_credentials";
+/* An absent model stays Unknown — shown as such, never an assumed name. */
+const MODEL_UNKNOWN = "Unknown";
 
 /**
  * "Check what we found" — opened from Finish setting up on a code agent's
@@ -91,18 +93,25 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
           key={f.id}
           fact={f}
           first={i === 0}
-          value={values[f.id]}
+          value={
+            f.id === "model" && !values.model ? MODEL_UNKNOWN : values[f.id]
+          }
           from={
-            f.id === "model" && found.modelAtRuntime
-              ? "Chosen at run time from configuration — this is the default it falls back to"
-              : f.id === "tests"
-                ? `Every change keeps them passing${found.testChecks?.length ? ` · also ${found.testChecks.join(", ")}` : ""}`
-                : null
+            f.id === "model" && !values.model
+              ? "Not found in the code"
+              : f.id === "model" && found.modelAtRuntime
+                ? "Chosen at run time from configuration — this is the default it falls back to"
+                : f.id === "tests"
+                  ? `Every change keeps them passing${found.testChecks?.length ? ` · also ${found.testChecks.join(", ")}` : ""}`
+                  : null
           }
           status={status[f.id]}
           onConfirm={() => setStatus((s) => ({ ...s, [f.id]: "confirmed" }))}
           onCorrect={(next) => {
-            setValues((x) => ({ ...x, [f.id]: next }));
+            /* Saving the "Unknown" the field was prefilled with isn't a model. */
+            const clean =
+              f.id === "model" && next === MODEL_UNKNOWN ? "" : next;
+            setValues((x) => ({ ...x, [f.id]: clean }));
             setStatus((s) => ({ ...s, [f.id]: "corrected" }));
           }}
         />

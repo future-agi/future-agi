@@ -20,7 +20,8 @@ import {
  * Everything else (added by hand, derived, generated, a dataset) is a quiet
  * one-word chip — "By hand", "Generated" — not linked; an icon alone read
  * as a button (a pen next to a title looks like "edit"). The drawer names
- * it in full.
+ * it in full. Generated or inferred facts read "Assumption" — labelled as
+ * such, not credited to a source.
  */
 const SHORT = {
   "Added manually": "By hand",
@@ -55,6 +56,12 @@ export default function SourceBadge({
       {link.detail && (
         <Typography sx={{ typography: "s3", color: "inherit" }}>
           {link.detail}
+        </Typography>
+      )}
+      {/* Generated or inferred facts are an assumption, not a cited source. */}
+      {link.assumption && (
+        <Typography sx={{ typography: "s3", color: "inherit" }}>
+          {`Assumption — ${link.assumption.charAt(0).toLowerCase()}${link.assumption.slice(1)} Cite a source to ground it.`}
         </Typography>
       )}
       {/* Built from production: the problem, not the person. */}
@@ -108,8 +115,10 @@ export default function SourceBadge({
       ? link.ref
       : null;
   const chipText = labelled
-    ? `${link.label}${refShown ? ` · ${refShown}` : ""}`
-    : link.ref || SHORT[link.label] || link.label;
+    ? `${link.label}${refShown ? ` · ${refShown}` : ""}${link.assumption ? " · Assumption" : ""}`
+    : link.assumption && !linked
+      ? "Assumption"
+      : link.ref || SHORT[link.label] || link.label;
 
   if (!linked) {
     /* Nowhere to go back to (a replayed production conversation, a

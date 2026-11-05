@@ -171,7 +171,7 @@ export function validateScenario(row, env, envState) {
   const canFail = vacuous
     ? {
         pass: false,
-        reason: `A wrong answer still passes: an agent that ${wrong} isn't caught by any check.`,
+        reason: `A wrong answer still passes: an agent that ${wrong} isn't caught by any check — the checks are too loose. Add one, for example “${addedCheckFor(wrong)}”.`,
         fix: { kind: "check", wrong, check: addedCheckFor(wrong) },
       }
     : {
@@ -185,7 +185,10 @@ export function validateScenario(row, env, envState) {
     gate("solvable")?.pass === false
       ? {
           pass: false,
-          reason: "A known-good run doesn't reach the expected end state.",
+          /* Say which assertion can't be met, not just that one can't (scenarios.md). */
+          reason: row?.expected
+            ? `A known-good run doesn't reach the expected end state — this assertion can't be met in the world: “${row.expected}”. Change it or the starting data.`
+            : "A known-good run doesn't reach the expected end state — the scenario has no Passes when to meet. Add one.",
         }
       : { pass: true };
 

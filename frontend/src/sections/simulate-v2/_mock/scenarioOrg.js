@@ -6,8 +6,11 @@
               envState.scenarioTags = [{ id, name, category, color, description }];
               a row carries `tagIds`.
     group     selects existing identities — "Refund release gate", "Smoke".
-              envState.scenarioGroups = [{ id, name, description, ids, createdAt }];
-              one scenario can be in many groups and is still one identity.
+              envState.scenarioGroups = [{ id, name, description, ids, createdAt,
+              version, revs }]; one scenario can be in many groups and is
+              still one identity. A group is a suite: a saved set of scenario
+              revisions — `revs` is each member's version label when the
+              suite was saved, `version` counts the suite's own saves.
               Deleting a group never deletes its scenarios.
     grounding justifies the expected behaviour — a passage, row or span with
               its version and what it supports (setup, policy or expected
@@ -21,6 +24,7 @@
 import { envChangePatch } from "./versions";
 import { proveOnAdd } from "./addScenarios";
 import { validateScenario } from "./scenarioValidation";
+import { scenarioVersionOf } from "./scenarioVersion";
 
 export const TAG_CATEGORIES = [
   { id: "risk", label: "Risk" },
@@ -121,7 +125,9 @@ export const deleteTagPatch = (envState, id) => ({
   ),
 });
 
-/** Add scenarios to a group (made when new) — the same identities, not copies. */
+/** Add scenarios to a group (made when new) — the same identities, not copies.
+ *  A suite pins each member at the revision it had when it joined; changing
+ *  who is in it saves the suite again (version + 1). */
 export const groupPatch = (envState, ids, name, on = true) => {
   const groups = groupsOf(envState);
   const existing = groups.find(
@@ -134,16 +140,70 @@ export const groupPatch = (envState, ids, name, on = true) => {
     ids: [],
     createdAt: now(),
   };
+  const memberIds = on
+    ? [...new Set([...group.ids, ...ids])]
+    : group.ids.filter((x) => !ids.includes(x));
+  const rowById = new Map((envState.scenarios || []).map((r) => [r.id, r]));
   const next = {
     ...group,
-    ids: on
-      ? [...new Set([...group.ids, ...ids])]
-      : group.ids.filter((x) => !ids.includes(x)),
+    ids: memberIds,
+    /* Kept members stay on the revision they were saved at; new ones pin now. */
+    revs: Object.fromEntries(
+      memberIds.map((id) => [
+        id,
+        group.revs?.[id] || scenarioVersionOf(rowById.get(id)),
+      ]),
+    ),
+    version:
+      (group.version || 1) +
+      (existing && memberIds.length !== group.ids.length ? 1 : 0),
   };
   return {
     scenarioGroups: existing
       ? groups.map((g) => (g.id === group.id ? next : g))
       : [...groups, next],
+  };
+};
+
+/** The suite's own version — 1 for one saved before suites were versioned. */
+export const suiteVersionOf = (group) => group?.version || 1;
+
+/** Members edited since the suite was saved: [{ id, title, pinned, now }].
+ *  A member with no recorded revision (an older suite) isn't counted. */
+export const newerThanSuiteOf = (group, rows) => {
+  const byId = new Map((rows || []).map((r) => [r.id, r]));
+  return (group?.ids || [])
+    .map((id) => {
+      const r = byId.get(id);
+      const pinned = group.revs?.[id];
+      return r && pinned && scenarioVersionOf(r) !== pinned
+        ? {
+            id,
+            title: r.title || r.summary || r.name || id,
+            pinned,
+            now: scenarioVersionOf(r),
+          }
+        : null;
+    })
+    .filter(Boolean);
+};
+
+/** Update suite: re-pin every member at its current revision and save the
+ *  suite as its next version. Membership doesn't change. */
+export const updateSuitePatch = (envState, id) => {
+  const rowById = new Map((envState.scenarios || []).map((r) => [r.id, r]));
+  return {
+    scenarioGroups: groupsOf(envState).map((g) =>
+      g.id === id
+        ? {
+            ...g,
+            revs: Object.fromEntries(
+              g.ids.map((x) => [x, scenarioVersionOf(rowById.get(x))]),
+            ),
+            version: suiteVersionOf(g) + 1,
+          }
+        : g,
+    ),
   };
 };
 

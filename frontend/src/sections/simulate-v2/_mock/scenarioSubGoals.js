@@ -182,6 +182,46 @@ export const subGoalResultsOf = (task, env, envState) => {
   return { items, rollup };
 };
 
+/* What a check rests on: the end state and tool calls, or the conversation. */
+const evidenceOfGoal = (g, env) =>
+  isConnectOnly(env) || !CHECKABLE.test(String(g?.text || ""))
+    ? "the conversation"
+    : "end state and tool calls";
+
+/**
+ * Each check with the evidence it rests on (scenarios.md "Check evidence").
+ * A trial that couldn't be measured still lists its checks — each one
+ * Unmeasured, naming what's missing (SC-3), never dropped or counted.
+ */
+export const checkEvidenceOf = (task, env, envState) => {
+  if (!task) return { items: [], rollup: null };
+  if (task.status !== "unmeasured") {
+    const r = subGoalResultsOf(task, env, envState);
+    return {
+      ...r,
+      items: r.items.map((g) => ({ ...g, evidence: evidenceOfGoal(g, env) })),
+    };
+  }
+  const goals = subGoalsOfScenario(task, env, envState);
+  const f = task.fault || {};
+  const missing = f.transport
+    ? "the rest of the conversation — the connection dropped"
+    : f.grading
+      ? "a verdict — the judge didn't return one"
+      : f.simulator
+        ? "a valid test — the simulated caller left its goal"
+        : "the end-state snapshot — it wasn't saved";
+  return {
+    items: goals.map((g) => ({
+      ...g,
+      status: "unmeasured",
+      evidence: evidenceOfGoal(g, env),
+      missing,
+    })),
+    rollup: goals.length ? { verdict: "unmeasured", missing } : null,
+  };
+};
+
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** "Failed — 1 critical sub-goal failed" and the like. */
@@ -195,6 +235,8 @@ export const rollupLine = (r) => {
     return `Failed — hit the turn limit (${r.turnLimit})${r.criticalFailed ? ` · ${plural(r.criticalFailed, "critical sub-goal")} not reached` : ""}`;
   if (r.verdict === "failed")
     return `Failed — ${plural(r.criticalFailed, "critical sub-goal")} failed`;
+  if (r.verdict === "unmeasured")
+    return `Unmeasured — missing ${r.missing}; counts neither for nor against the agent`;
   if (r.verdict === "inconclusive")
     return `Inconclusive — ${plural(r.criticalUnsure, "critical sub-goal")} unsure`;
   return r.supportingFailed

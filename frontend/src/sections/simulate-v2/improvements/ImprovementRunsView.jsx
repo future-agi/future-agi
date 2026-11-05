@@ -48,6 +48,7 @@ import {
   improvementSpendParts,
   improvementTotalSpend,
   stopImprovement,
+  requestStop,
 } from "../_mock/optimizationRuns";
 import CostPartsTable from "./CostPartsTable";
 import { downloadExperiment } from "../_mock/experimentExport";
@@ -137,11 +138,16 @@ export default function ImprovementRunsView({
   const [stopAsk, setStopAsk] = useState(false);
   const stopNow = () => {
     setStopAsk(false);
-    patch({
-      optimizations: (envState?.optimizations || []).map((o) =>
-        o.id === record.id ? stopImprovement(o, progress) : o,
-      ),
-    });
+    /* Stopping first (improve.md): it settles in-flight work, then the
+       stop records what finished. */
+    const mark = (fn) =>
+      patch({
+        optimizations: (envState?.optimizations || []).map((o) =>
+          o.id === record.id ? fn(o) : o,
+        ),
+      });
+    mark((o) => requestStop(o));
+    setTimeout(() => mark((o) => stopImprovement(o, progress)), 1500);
   };
   /* Flow 5's tabs once it has finished: the runs, what the kept change
      changes (each with its reason), and what it did to each scenario. */
@@ -876,9 +882,11 @@ export default function ImprovementRunsView({
             borderColor: "divider",
           }}
         >
-          <Tab value="runs" label={`Candidates (${runs.length})`} />
+          {/* The plan's finished tabs: Changes / Scenarios / Evidence (the
+              candidates and their runs), plus measured cost. */}
           {!stopped && <Tab value="changes" label="Changes" />}
-          {!stopped && <Tab value="scenarios" label="Per scenario" />}
+          {!stopped && <Tab value="scenarios" label="Scenarios" />}
+          <Tab value="runs" label={`Evidence · ${runs.length} candidates`} />
           <Tab value="cost" label="Cost" />
         </Tabs>
       )}

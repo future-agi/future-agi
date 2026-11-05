@@ -186,6 +186,22 @@ export const SOURCES = {
 export const sourceOf = (id) => SOURCES[id] || SOURCES.derived;
 
 /**
+ * Starting facts nobody read from a source: a generated scenario, or one
+ * whose caller was inferred, with nothing cited. They are labelled
+ * "Assumption" rather than credited to a source (scenarios.md: a generated
+ * assumption is labeled, not falsely cited). Citing a passage, row or span
+ * grounds them and the label goes. → the line to show, or null.
+ */
+export const assumptionOf = (scenario) => {
+  if (!scenario || (scenario.grounding || []).length) return null;
+  if (ensureProvenance(scenario).source === "generated")
+    return "Written by the generator from the environment's tools and records, not read from a source.";
+  if (scenario.inferred || scenario.persona?.inferred)
+    return "Inferred from the conversation, not read from a source.";
+  return null;
+};
+
+/**
  * Stamp provenance onto a scenario object. Non-mutating.
  *
  * `opts.source` — one of the SOURCES keys.
@@ -377,13 +393,14 @@ export function relativeTime(iso) {
  *     detail — second tooltip line (who, when, and anything specific)
  *     to     — a route, or null
  *     chat   — true when the way back is the builder chat, not a route
+ *     assumption — set when its facts were generated or inferred, not cited
  *     observe — for a scenario built from production: { line, to } — the
  *              original conversation stays in Observe, and `to` opens its trace
  *
  * `ctx` ({ envId, envState }) lets an improvement-made scenario link to the
  * improvement that wrote it.
  */
-export function sourceLinkOf(scenario, ctx = {}) {
+function baseSourceLinkOf(scenario, ctx = {}) {
   const s = ensureProvenance(scenario);
   const src = sourceOf(s.source);
   const by = s.addedBy?.kind === "user" ? s.addedBy.name : src.short;
@@ -490,4 +507,11 @@ export function sourceLinkOf(scenario, ctx = {}) {
     };
   }
   return { ...base, title: src.label, detail: `${by} · ${when}` };
+}
+
+/** The link, plus `assumption` (the line to show) when its facts are assumed. */
+export function sourceLinkOf(scenario, ctx = {}) {
+  const link = baseSourceLinkOf(scenario, ctx);
+  const assumption = assumptionOf(scenario);
+  return assumption ? { ...link, assumption } : link;
 }
