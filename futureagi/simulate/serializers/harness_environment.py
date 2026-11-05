@@ -103,6 +103,7 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     agent_version = AgentVersionRefSerializer(allow_null=True)
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
+    outcome_errored = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
     outcome_no_score = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)

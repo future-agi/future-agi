@@ -75,9 +75,9 @@ beforeEach(() => {
 });
 
 describe("passRateOf", () => {
-  it("is passed over everything measured, as a whole percent", () => {
+  it("is passed over passed plus failed, as a whole percent, with skipped calls left out", () => {
     expect(passRateOf({ passed: 3, failed: 7, skipped: 0 })).toBe(30);
-    expect(passRateOf({ passed: 2, failed: 0, skipped: 1 })).toBe(67);
+    expect(passRateOf({ passed: 2, failed: 0, skipped: 1 })).toBe(100);
   });
 
   it("is null when nothing was measured or outcomes are null", () => {

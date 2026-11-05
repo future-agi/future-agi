@@ -154,7 +154,7 @@ describe("buildRunStats", () => {
       failed: 1,
       measured: 3,
       unmeasured: 3,
-      passRate: 33,
+      passRate: 67,
     });
   });
 

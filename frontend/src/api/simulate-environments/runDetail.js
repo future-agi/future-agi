@@ -47,7 +47,7 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
  * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/total`.
+ *                                  present, else derived `passed/measured`.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -110,12 +110,14 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
+  // Passed over passed plus failed, as everywhere else; errored and skipped calls are out.
+  const measured = row?.hasOutcomes ? passed + failed : total;
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
   const passRate =
     row?.hasOutcomes || typeof perfRate !== "number"
-      ? total
-        ? Math.round((passed / total) * 100)
+      ? measured
+        ? Math.round((passed / measured) * 100)
         : 0
       : Math.round(perfRate);
 
@@ -154,7 +156,7 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: row?.hasOutcomes ? passed + failed : total,
+    measured,
     unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
