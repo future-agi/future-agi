@@ -78,11 +78,11 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
         icon: "solar:graph-linear",
       });
     }
-    /* A multi-agent app in a simulation: its coordinator's handoffs, when
+    /* A multi-agent app in a simulation: its coordinator's participants, when
        the caller passes them (simulate only). */
     if (isSimulate && data?.simHandoffs)
       t.push({
-        label: "Handoffs",
+        label: "Participants",
         value: TABS.HANDOFFS,
         icon: "solar:users-group-two-rounded-linear",
       });
