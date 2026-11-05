@@ -90,7 +90,7 @@ const agentVersion = (n, daysOld, note, rule) => ({
 const VOICE_AGENT_KEY = "vapi:asst_v1c2f3";
 
 /*
-  The Customer Support Line agent is a Vapi squad of three — one agent with
+  The Customer Support Line agent is a Vapi squad of four — one agent with
   one version history, whose Definition lists each member with its own
   instructions, model and tools. It serves voice and chat; chat has no
   environment yet. Live-test consent was given when it was connected.
@@ -119,6 +119,14 @@ const SUPPORT_SQUAD = [
     instructions: "Take over refunds above $200, disputes and upset callers. Summarise what the caller already said so they don't repeat it, then warm-transfer to a supervisor with escalate_to_human. Never share another customer's order details.",
     model: "gpt-4.1",
     tools: ["escalate_to_human", "lookup_order"],
+  },
+  {
+    id: "shipping",
+    name: "Shipping specialist",
+    role: "Delivery status, address changes and cancellations before dispatch",
+    instructions: "Check the delivery status with shipment_status before answering; change the address or cancel only while the order hasn't been dispatched, and hand anything already on its way to the Front desk to explain.",
+    model: "gpt-4o-mini",
+    tools: ["shipment_status", "update_shipping_address", "cancel_order", "lookup_order"],
   },
 ];
 const supportLineAgent = () => ({

@@ -53,7 +53,7 @@ import { withProjectLinkRepair } from "./projectLinkRepair";
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-export const SEED_VERSION = 37;
+export const SEED_VERSION = 38;
 /* Environments a seed version added, so a later top-up adds only those —
    never one someone removed since the last. */
 const ADDED_AT = { 21: ["env-clinic-line"], 37: ["env-refunds-desk"] };
@@ -135,6 +135,19 @@ const SEED_AGENT_VALUES = [
   "observability",
   "endpointConsent",
 ];
+/* A squad that gained members since a stored copy was made: when every stored
+   member is still one of the seed's and the seed has more, the seed's members
+   replace them. The rest of the stored definition stays. */
+const withSquadGrown = (a, s) => {
+  const have = a?.definition?.members;
+  const want = s?.definition?.members;
+  if (!Array.isArray(have) || !Array.isArray(want)) return a;
+  if (want.length <= have.length) return a;
+  const ids = new Set(want.map((m) => m?.id));
+  if (!have.every((m) => ids.has(m?.id))) return a;
+  return { ...a, definition: { ...a.definition, members: want } };
+};
+
 const fillSeededAgent = (es, seedEs) => {
   if (!es?.agent || !seedEs?.agent) return es;
   const a = es.agent;
@@ -167,12 +180,15 @@ const fillSeededAgent = (es, seedEs) => {
       : {};
   return {
     ...es,
-    agent: {
-      ...a,
-      ...legacyMcp,
-      values,
-      ...(!a.definition && s.definition && { definition: s.definition }),
-    },
+    agent: withSquadGrown(
+      {
+        ...a,
+        ...legacyMcp,
+        values,
+        ...(!a.definition && s.definition && { definition: s.definition }),
+      },
+      s,
+    ),
     agentVersions,
   };
 };
@@ -527,7 +543,10 @@ const topUpSeedVersions = (stored) => {
             : a.definition;
         byEnv[id] = {
           ...byEnv[id],
-          agent: { ...a, values, ...(definition && { definition }) },
+          agent: withSquadGrown(
+            { ...a, values, ...(definition && { definition }) },
+            s,
+          ),
         };
       },
     );
@@ -698,13 +717,25 @@ const topUpSeedVersions = (stored) => {
     byEnv: upgraded,
     agentLimits,
     ...(flags && { flags }),
-    connectedAgents:
-      (stored.seedVersion || 0) < 25
-        ? withRecordedConsentAndKeys(
-            scrubAgentList(stored.connectedAgents),
-            upgraded,
-          )
-        : scrubAgentList(stored.connectedAgents),
+    connectedAgents: ((stored.seedVersion || 0) < 25
+      ? withRecordedConsentAndKeys(
+          scrubAgentList(stored.connectedAgents),
+          upgraded,
+        )
+      : scrubAgentList(stored.connectedAgents)
+    )?.map((a) => {
+      /* Seed 38: the support squad's fourth member, for the agent as it is
+         kept in Agents (its environment copy is topped up above). */
+      const sa = Object.values(seed.byEnv)
+        .map((e) => e?.agent)
+        .find(
+          (x) =>
+            x?.definition?.members &&
+            x.values?.agentId &&
+            x.values.agentId === a?.values?.agentId,
+        );
+      return sa ? withSquadGrown(a, sa) : a;
+    }),
   };
   /* Seed 31: a commit history for two code agents (commitHistorySeed);
      Seed 32: each of those commits carries the change it made. */

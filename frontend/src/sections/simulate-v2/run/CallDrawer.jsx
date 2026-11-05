@@ -29,6 +29,7 @@ import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
 import { clickable, focusRing } from "../components/clickable";
+import { toolCallsOf } from "../_mock/participants";
 import HandoffTimeline from "./HandoffTimeline";
 import SharedState from "./SharedState";
 import ApprovalTimeline from "./ApprovalTimeline";
@@ -880,7 +881,10 @@ export default function CallDrawer({
                     {actionTally.map((a) => (
                       <Cell key={a.action} label={a.action} value={a.count} />
                     ))}
-                    <Cell label="Tool calls" value={log.calls.length} />
+                    <Cell
+                      label="Tool calls"
+                      value={toolCallsOf(log.calls).length}
+                    />
                     <Cell label="Never called" value={log.missing.length} />
                   </>
                 )}

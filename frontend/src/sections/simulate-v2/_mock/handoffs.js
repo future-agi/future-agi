@@ -66,7 +66,6 @@ export const handoffsOf = ({ agent, task }) => {
   const evidence = delegationEvidenceOf(agent);
   const path = memberPathOf(task, members);
   const [coord, worker] = path;
-  const calls = task.callLog?.calls || [];
   const events = [
     {
       at: 0,
@@ -90,6 +89,26 @@ export const handoffsOf = ({ agent, task }) => {
       enforced: evidence.source === "instrumented",
     };
   }
+  /* The calls this conversation made that the worker owns. A call that
+     belongs to another member's tools is never credited to it; a worker with
+     none of the conversation's calls does one of its own tools instead. */
+  const own = workerToolsOf(worker);
+  const recorded = (task.callLog?.calls || [])
+    .map((c) => ({ name: c.name || c.tool, id: c.id, args: c.args }))
+    .filter((c) => c.name && own.includes(c.name));
+  const preferred = own.filter((n) => !/lookup/i.test(n));
+  const pool = preferred.length ? preferred : own;
+  const calls = recorded.length
+    ? recorded
+    : pool.length
+      ? [
+          {
+            name: pool[hashSeed(`${task.id}:own-tool`) % pool.length],
+            id: undefined,
+            args: task.callLog?.calls?.[0]?.args,
+          },
+        ]
+      : [];
   const enforced = evidence.source === "instrumented";
   /* A boundary: what a worker's tool call was held against. A call that ran
      was allowed; declared limits are not enforced, so they're only declared. */
@@ -104,33 +123,34 @@ export const handoffsOf = ({ agent, task }) => {
     to: worker,
     text: `${coord.name} handed the request to ${worker.name}.`,
   });
-  calls
-    .slice(0, timeout ? Math.max(1, calls.length - 1) : calls.length)
-    .forEach((c) => {
-      t += 1.1;
-      events.push({
-        at: t,
-        kind: "tool",
-        from: worker,
-        boundary,
-        text: `${worker.name} called ${c.name || c.tool || "a tool"}.`,
-      });
-    });
-  /* Now and then a worker reaches for another member's tool. */
-  const outside = members
-    .filter((m) => m.id !== worker.id && m.id !== coord.id)
-    .flatMap((m) => workerToolsOf(m))
-    .find((n) => !workerToolsOf(worker).includes(n));
-  if (outside && hashSeed(`${task.id}:out-of-bounds`) % 7 === 0) {
+  calls.slice(0, timeout ? calls.length - 1 : calls.length).forEach((c) => {
     t += 1.1;
     events.push({
       at: t,
       kind: "tool",
       from: worker,
-      boundary: enforced ? "Blocked" : "Declared",
-      text: enforced
-        ? `${worker.name} tried ${outside}, outside its tools — blocked.`
-        : `${worker.name} called ${outside}, outside its declared tools.`,
+      boundary,
+      tool: c.name,
+      callId: c.id,
+      args: c.args,
+      text: `${worker.name} called ${c.name}.`,
+    });
+  });
+  /* Now and then a worker reaches for another member's tool — shown only as
+     the blocked attempt it is, never as a call the worker made. */
+  const outside = members
+    .filter((m) => m.id !== worker.id && m.id !== coord.id)
+    .flatMap((m) => workerToolsOf(m))
+    .find((n) => !workerToolsOf(worker).includes(n));
+  if (enforced && outside && hashSeed(`${task.id}:out-of-bounds`) % 7 === 0) {
+    t += 1.1;
+    events.push({
+      at: t,
+      kind: "tool",
+      from: worker,
+      boundary: "Blocked",
+      tool: outside,
+      text: `${worker.name} tried ${outside}, outside its tools — blocked.`,
     });
   }
   if (timeout) {
@@ -147,8 +167,8 @@ export const handoffsOf = ({ agent, task }) => {
       at: t + 30,
       kind: "timeout",
       from: worker,
-      attempted: last?.name || last?.tool || null,
-      text: `${worker.name} timed out after 30 s — no return event.${last ? ` Its ${last.name || last.tool} was attempted, not committed: the world shows no change.` : ""}`,
+      attempted: last?.name || null,
+      text: `${worker.name} timed out after 30 s — no return event.${last ? ` Its ${last.name} was attempted, not committed: the world shows no change.` : ""}`,
     });
     events.push({
       at: t + 31,
