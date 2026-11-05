@@ -25,8 +25,18 @@ export const ID_NOTE = "Worker IDs stay the same across retries";
 export const NOT_RECORDED = "Unknown — not in the recorded events";
 export const NOT_CONTROLLED =
   "Not a controlled run — a worker could bypass a block";
-export const NO_ANSWER = "Didn't finish — no answer came back.";
+/* We only know a worker never answered before the call ended — not that it
+   timed out, or when. */
+export const NO_ANSWER = "No answer came back.";
 export const NO_EVENTS = "No events from this worker.";
+export const NOT_TIED = "Not tied to a worker";
+export const NOT_DECLARED = "Not declared";
+/* Not recorded yet: which worker may call which tool, and the checks built on
+   worker events. */
+export const LIMITS_SOON =
+  "Coming soon — which worker may call which tool isn't recorded yet.";
+export const CHECKS_SOON =
+  "Coming soon — retries, duplicate writes and what the caller was told, per worker.";
 
 /** 0:42 — seconds into the call. */
 export const clock = (s) => {
@@ -230,7 +240,7 @@ const infoOf = (c) => {
 /* The most informative finished call of a worker. */
 const bestCallOf = (w) =>
   (w.calls || [])
-    .filter((c) => !c.blocked && c.output)
+    .filter((c) => !c.blocked && !c.failed && c.output)
     .map((c) => ({ c, i: infoOf(c) }))
     .sort((a, b) => b.i.rank - a.i.rank)[0] || null;
 
@@ -242,8 +252,14 @@ const bestCallOf = (w) =>
 export const resultSentenceOf = (w) => {
   if (w.state === "unobserved") return NO_EVENTS;
   if (w.state === "timeout") return NO_ANSWER;
+  if (w.state === "transferred")
+    return "Control passed — it doesn't hand back.";
+  /* A recorded worker's own words, as it returned them. */
+  if (w.recorded) return w.result || "Returned nothing.";
   const best = bestCallOf(w);
   if (best) return best.i.result;
+  const failed = (w.calls || []).find((c) => c.failed);
+  if (failed) return `${didOf(failed.name, { attempt: true })} — it failed.`;
   return (w.calls || []).some((c) => c.blocked)
     ? "Was blocked — that is outside its tools."
     : "Nothing needed a tool.";
@@ -260,14 +276,11 @@ export const replyOf = (workers = []) => {
     .filter((w) => w.state === "returned")
     .map((w) => bestCallOf(w)?.i.reply)
     .filter(Boolean);
-  const gone = workers.filter((w) => w.state === "timeout").map((w) => w.name);
+  /* A worker that never answered isn't mentioned: all we know is that its
+     answer never came. */
   const parts = said.map((s, i) =>
     i && s.startsWith("I've ") ? `I've also ${s.slice(5)}` : s,
   );
-  if (gone.length)
-    parts.push(
-      `I couldn't get an answer from ${gone.join(" and ")} in time, so that part isn't done.`,
-    );
   return parts.join(" ") || "I wasn't able to help with that.";
 };
 
@@ -276,19 +289,21 @@ export const replyOf = (workers = []) => {
  * and how they ended.
  *   Front desk passed this call to 2 workers. Both finished.
  */
-export const summaryOf = ({ coordinator, workers, observed }) => {
+export const summaryOf = ({ coordinator, workers, observed, turns = 1 }) => {
   const n = workers.length;
   if (!n)
     return `${coordinator} handled this call itself — no worker involved.`;
   if (!observed) return "Workers not observed — shown as the app declares them";
-  const head = `${coordinator} passed this call to ${n} ${n === 1 ? "worker" : "workers"}.`;
-  const done = workers.filter((w) => w.state === "returned").length;
-  const out = n - done;
+  const over = turns > 1 ? ` over ${turns} turns` : "";
+  const head = `${coordinator} passed this call to ${n} ${n === 1 ? "worker" : "workers"}${over}.`;
+  /* Only a hand-off still owed an answer counts against it. */
+  const out = workers.filter((w) => w.state === "timeout").length;
+  const done = n - out;
   if (!out)
     return `${head} ${n === 1 ? "It finished." : n === 2 ? "Both finished." : `All ${n} finished.`}`;
   if (!done)
-    return `${head} ${n === 1 ? "It didn't finish" : n === 2 ? "Neither finished" : `None of them finished`} (timed out).`;
-  return `${head} ${done} finished, ${out} didn't (timed out).`;
+    return `${head} ${n === 1 ? "It didn't answer." : n === 2 ? "Neither answered." : "None of them answered."}`;
+  return `${head} ${done} finished, ${out} didn't answer.`;
 };
 
 /** The tool calls a call is counted by — a hand-off to a worker is not one. */
@@ -520,11 +535,191 @@ export const participantsOf = ({ agent, task }) => {
     };
   });
 
+  /* ── How real calls are shaped (Karthik, from the recorded data) ──
+     A call has turns; a worker can hand work to its own sub-worker, and
+     workers can run at the same time. Only what a record carries is said. */
+  const shift = (w, at) => {
+    const d = at - w.delegatedAt;
+    w.delegatedAt = at;
+    w.endedAt += d;
+    w.calls.forEach((c) => {
+      c.at += d;
+    });
+  };
+  workers.forEach((w) => {
+    w.turn = 0;
+    w.parentId = null;
+    w.parallelWith = null;
+    w.depth = 0;
+  });
+  const split = (hashSeed(`${seed}:turn-split`) >>> 4) % 2 === 0;
+  if (observed && workers.length === 2) {
+    if (split) workers[1].turn = 1;
+    else {
+      /* Both handed out at once. */
+      shift(workers[1], workers[0].delegatedAt);
+      workers[0].parallelWith = workers[1].name;
+      workers[1].parallelWith = workers[0].name;
+    }
+  }
+  if (observed && workers.length >= 3) {
+    const [a, b, c] = workers;
+    shift(b, a.delegatedAt);
+    a.parallelWith = b.name;
+    b.parallelWith = a.name;
+    /* The third is the second's own sub-worker; the second waits for it. */
+    shift(c, (b.calls[0]?.at ?? b.delegatedAt) + 0.4);
+    c.parentId = b.id;
+    c.parentName = b.name;
+    c.depth = 1;
+    b.endedAt = Math.max(b.endedAt, c.endedAt + 0.4);
+  }
+
+  /* A tool call that failed, now and then. */
+  if (observed) {
+    const w = workers.find((x) => x.state === "returned" && x.calls.length);
+    if (w && hashSeed(`${seed}:failed-call`) % 4 === 0) {
+      const c = w.calls[0];
+      c.failed = true;
+      c.output = { error: "Upstream returned 503" };
+    }
+  }
+  /* A worker that ran without being declared, and a tool call no worker
+     claims — both appear in real records. */
+  const undeclared =
+    observed && workers.length > 0 && hashSeed(`${seed}:undeclared`) % 5 === 0
+      ? (() => {
+          const at = workers[0].delegatedAt + 0.2;
+          const io = ioOf("lookup_order", order, `${seed}:undeclared`);
+          return {
+            id: "undeclared-helper",
+            name: "Billing helper",
+            wid: "run/undeclared-helper",
+            model: null,
+            order,
+            seed: `${seed}:undeclared`,
+            undeclared: true,
+            state: "returned",
+            turn: 0,
+            depth: 0,
+            parentId: null,
+            parallelWith: null,
+            task: `Look up the billing record for order ${order}.`,
+            delegatedAt: at,
+            endedAt: at + 1.6,
+            calls: [
+              {
+                id: `undeclared-lookup_order-${Math.round(at * 10)}`,
+                worker: "undeclared-helper",
+                workerName: "Billing helper",
+                name: "lookup_order",
+                at: at + 0.6,
+                boundary: "Declared",
+                blocked: false,
+                input: io.input,
+                output: io.output,
+              },
+            ],
+          };
+        })()
+      : null;
+  const untied =
+    observed && workers.length > 0 && hashSeed(`${seed}:untied`) % 5 === 1
+      ? [
+          (() => {
+            const at = workers[0].delegatedAt + 0.5;
+            const io = ioOf("lookup_order", order, `${seed}:untied`);
+            return {
+              id: `untied-lookup_order-${Math.round(at * 10)}`,
+              worker: null,
+              workerName: null,
+              name: "lookup_order",
+              at,
+              turn: 0,
+              boundary: "Declared",
+              blocked: false,
+              input: io.input,
+              output: io.output,
+            };
+          })(),
+        ]
+      : [];
+  /* Declared members the call never reached. */
+  const notRun = observed
+    ? h.members
+        .filter(
+          (m) => m.id !== coordM.id && !workers.some((w) => w.id === m.id),
+        )
+        .map((m) => m.name)
+    : [];
+
   const allCalls = workers.flatMap((w) => w.calls);
-  const replyAt = workers.length
-    ? workers[workers.length - 1].endedAt + 0.9
-    : 1.8;
+  const lastEnd = workers.length
+    ? Math.max(...workers.map((w) => w.endedAt))
+    : 0;
+  const replyAt = workers.length ? lastEnd + 0.9 : 1.8;
   const reply = replyOf(workers);
+
+  /* The call turn by turn: what the caller said (if anything), the workers it
+     set off, and the reply (if any). A call that ended with a worker still
+     out has no reply on its last turn. */
+  const callerTexts = (task.steps || [])
+    .filter((s) => s.role && s.role !== "agent" && s.role !== "actor" && s.text)
+    .map((s) => s.text);
+  const agentTexts = (task.steps || [])
+    .filter((s) => s.role === "agent" && s.text)
+    .map((s) => s.text);
+  const inTurn = (k) => [
+    ...workers.filter((w) => w.turn === k),
+    ...(k === 0 && undeclared ? [undeclared] : []),
+  ];
+  const turns = [];
+  if (!observed)
+    turns.push({ n: 1, request, reply: null, at: 0, workers, untied: [] });
+  else if (workers.length === 2 && split) {
+    const r1 = replyOf([workers[0]]);
+    const t2 = workers[1].delegatedAt - 1.2;
+    turns.push({
+      n: 1,
+      request,
+      reply: r1,
+      at: 0,
+      replyAt: workers[0].endedAt + 0.6,
+      workers: inTurn(0),
+      untied,
+    });
+    /* The second turn may open without the caller: the front desk follows up. */
+    turns.push({
+      n: 2,
+      request: callerTexts[1] || null,
+      reply: replyOf([workers[1]]),
+      at: t2,
+      replyAt,
+      workers: inTurn(1),
+      untied: [],
+    });
+  } else {
+    turns.push({
+      n: 1,
+      request,
+      reply,
+      at: 0,
+      replyAt,
+      workers: inTurn(0),
+      untied,
+    });
+    if (workers.length >= 3)
+      turns.push({
+        n: 2,
+        request: callerTexts[1] || "Is there anything else I need to do?",
+        /* The call ended while a worker was still out. */
+        reply: timeout ? null : agentTexts.at(-1) || "No, that's everything.",
+        at: replyAt + 2,
+        replyAt: timeout ? null : replyAt + 4,
+        workers: [],
+        untied: [],
+      });
+  }
 
   /* The steps in order; tool calls sit one level under their worker. */
   const steps = [
@@ -585,7 +780,7 @@ export const participantsOf = ({ agent, task }) => {
           kind: "timeout",
           who: w.id,
           worker: w,
-          verb: `${w.name} didn't return (timed out at ${clock(w.endedAt)})`,
+          verb: `${w.name} didn't answer before the call ended`,
           detail: w.calls.some((c) => c.output == null)
             ? `${w.calls[w.calls.length - 1].name} was attempted, not committed — the world shows no change.`
             : null,
@@ -623,7 +818,18 @@ export const participantsOf = ({ agent, task }) => {
   }));
 
   return {
-    summary: summaryOf({ coordinator: coordinator.name, workers, observed }),
+    summary: summaryOf({
+      coordinator: coordinator.name,
+      workers,
+      observed,
+      turns: turns.length,
+    }),
+    turns,
+    untied,
+    undeclared: undeclared ? [undeclared] : [],
+    notRun,
+    /* Open in Traces, model and tokens need the app's own traces. */
+    traces: observed && agent?.values?.sendsTraces !== false,
     topology: TOPOLOGY,
     observed,
     enforced: h.enforced,
@@ -634,13 +840,23 @@ export const participantsOf = ({ agent, task }) => {
     outcome: timeout ? "timeout" : h.outcome,
     workers,
     request,
-    reply: observed || !workers.length ? reply : null,
-    duration: observed && workers.length ? replyAt : null,
+    reply:
+      observed || !workers.length
+        ? [...turns].reverse().find((t) => t.reply)?.reply || reply
+        : null,
+    duration:
+      observed && workers.length
+        ? Math.max(replyAt, ...turns.map((t) => t.replyAt || 0))
+        : null,
     steps,
     checks: !workers.length ? [] : !observed || timeout ? checks : [],
-    boundaries: allCalls.map((c) => ({
+    boundaries: [
+      ...allCalls,
+      ...(undeclared ? undeclared.calls : []),
+      ...untied,
+    ].map((c) => ({
       tool: c.name,
-      worker: c.workerName,
+      worker: c.workerName || NOT_TIED,
       boundary: c.boundary,
     })),
   };
@@ -684,6 +900,7 @@ const replyWithOf = (name) =>
  */
 export const handoffMessageOf = (w) => {
   if (!w || w.state === "unobserved") return null;
+  if (w.recorded) return w.task;
   const names = [...new Set((w.calls || []).map((c) => c.name))];
   const order = w.order != null ? ` order ${w.order}` : "";
   if (!names.length)
@@ -705,13 +922,16 @@ export const handoffMessageOf = (w) => {
 export const fullAnswerOf = (w) => {
   if (!w || w.state === "unobserved") return null;
   if (w.state === "timeout")
-    return `No answer — timed out after ${TIMEOUT_S.toFixed(1)} s`;
+    return "No answer came back before the call ended.";
+  if (w.recorded) return w.result;
   const lines = [resultSentenceOf(w)];
   const calls = w.calls || [];
   if (calls.length) lines.push("");
   calls.forEach((c) => {
     if (c.blocked)
       lines.push(`${didOf(c.name, { blocked: true })} — outside my tools.`);
+    else if (c.failed)
+      lines.push(`${didOf(c.name, { attempt: true })} — ${c.output.error}.`);
     else if (c.output)
       lines.push(
         `${didOf(c.name)} — ${kvOf(c.output)
@@ -725,7 +945,9 @@ export const fullAnswerOf = (w) => {
 
 /** Milliseconds a call took; null when it never answered. */
 export const toolDurationOf = (call) => {
-  if (!call || (call.output == null && !call.blocked)) return null;
+  /* A recorded call's time isn't in the record yet. */
+  if (!call || call.recorded || (call.output == null && !call.blocked))
+    return null;
   const h = hashSeed(`${call.id}:ms`);
   return call.blocked ? 8 + (h % 40) : 90 + (h % 760);
 };
@@ -741,13 +963,20 @@ export const callStatusOf = (call) => {
       kind: "error",
       text: "error: blocked — outside this worker's tools",
     };
+  if (call?.failed)
+    return {
+      kind: "error",
+      text: `failed: ${typeof call.output === "string" ? call.output : call.output?.error || "error"}`,
+    };
+  /* A recorded call says how it ended, output or not. */
+  if (call?.recorded) return { kind: "ok", text: "ok" };
   if (call?.output == null) return { kind: "none", text: "no response" };
   return { kind: "ok", text: "ok" };
 };
 
 /** Tokens a worker used, deterministic from its seed; null when unobserved. */
 export const tokensOf = (w) => {
-  if (!w || w.state === "unobserved") return null;
+  if (!w || w.state === "unobserved" || w.recorded) return null;
   const h = hashSeed(`${w.seed || w.id}:tokens`);
   return 520 + (h % 900) + 160 * (w.calls || []).length;
 };
@@ -778,40 +1007,76 @@ export const workerJsonOf = (w) => ({
 
 /**
  * Every event in time order for the Raw events view:
- *   { key, at, actor, type, depth, text?, input?, output?, duration?, status? }
- * type: Caller · Hand-off · Tool call · Answer · Timed out · Reply. Worker
- * events sit one level under their hand-off. Empty when no worker's events
- * were recorded.
+ *   { key, at, actor, type, depth, turn, text?, input?, output?, duration?, status? }
+ * type: Message · Hand-off · Tool call · Answer · No answer · Reply. A worker's
+ * events sit one level under its hand-off, a sub-worker's one level further.
+ * A tool call no worker claims has actor "Not tied to a worker". Empty when no
+ * worker's events were recorded.
  */
 export const rawEventsOf = (p) => {
   if (!p || !p.observed) return [];
-  const out = [
-    {
-      key: "caller",
-      at: 0,
-      actor: "Caller",
-      type: "Message",
-      depth: 0,
-      text: p.request,
-    },
-  ];
-  p.workers.forEach((w) => {
-    out.push({
-      key: `handoff-${w.id}`,
-      at: w.delegatedAt,
-      actor: p.coordinator.name,
-      type: "Hand-off",
-      depth: 0,
-      to: w.name,
-      text: handoffMessageOf(w),
+  const out = [];
+  const turns = p.turns?.length
+    ? p.turns
+    : [{ n: 1, request: p.request, reply: p.reply, at: 0, workers: p.workers }];
+  turns.forEach((t) => {
+    if (t.request)
+      out.push({
+        key: `caller-${t.n}`,
+        at: t.at,
+        actor: "Caller",
+        type: "Message",
+        depth: 0,
+        turn: t.n,
+        text: t.request,
+      });
+    t.workers.forEach((w) => {
+      out.push({
+        key: `handoff-${w.id}`,
+        at: w.delegatedAt,
+        actor: w.parentName || p.coordinator.name,
+        type: "Hand-off",
+        depth: w.depth || 0,
+        turn: t.n,
+        to: w.name,
+        text: handoffMessageOf(w),
+      });
+      w.calls.forEach((c) =>
+        out.push({
+          key: c.id,
+          at: c.at,
+          actor: w.name,
+          type: "Tool call",
+          depth: (w.depth || 0) + 1,
+          turn: t.n,
+          tool: c.name,
+          input: c.input ?? null,
+          output: c.output ?? null,
+          duration: toolDurationOf(c),
+          status: callStatusOf(c),
+        }),
+      );
+      out.push({
+        key: `end-${w.id}`,
+        at: w.endedAt,
+        actor: w.name,
+        type: w.state === "timeout" ? "No answer" : "Answer",
+        depth: (w.depth || 0) + 1,
+        turn: t.n,
+        text: fullAnswerOf(w),
+      });
     });
-    w.calls.forEach((c) =>
+    [
+      ...(t.untied || []).map((c) => [c, NOT_TIED]),
+      ...(t.own || []).map((c) => [c, p.coordinator.name]),
+    ].forEach(([c, actor]) =>
       out.push({
         key: c.id,
         at: c.at,
-        actor: w.name,
+        actor,
         type: "Tool call",
-        depth: 1,
+        depth: 0,
+        turn: t.n,
         tool: c.name,
         input: c.input ?? null,
         output: c.output ?? null,
@@ -819,22 +1084,16 @@ export const rawEventsOf = (p) => {
         status: callStatusOf(c),
       }),
     );
-    out.push({
-      key: `end-${w.id}`,
-      at: w.endedAt,
-      actor: w.name,
-      type: w.state === "timeout" ? "Timed out" : "Answer",
-      depth: 1,
-      text: fullAnswerOf(w),
-    });
+    if (t.reply)
+      out.push({
+        key: `reply-${t.n}`,
+        at: t.replyAt ?? p.duration ?? 1.8,
+        actor: p.coordinator.name,
+        type: "Reply",
+        depth: 0,
+        turn: t.n,
+        text: t.reply,
+      });
   });
-  out.push({
-    key: "reply",
-    at: p.duration ?? 1.8,
-    actor: p.coordinator.name,
-    type: "Reply",
-    depth: 0,
-    text: p.reply,
-  });
-  return out.sort((a, b) => a.at - b.at);
+  return out.sort((a, b) => a.turn - b.turn || a.at - b.at);
 };

@@ -183,7 +183,7 @@ describe("results and the reply", () => {
       ),
     ).toBe("Refunded $89 on order 7 to the original payment method.");
     expect(resultSentenceOf(w("timeout", [lookup]))).toBe(
-      "Didn't finish — no answer came back.",
+      "No answer came back.",
     );
     expect(resultSentenceOf(w("unobserved", []))).toBe(
       "No events from this worker.",
@@ -207,8 +207,8 @@ describe("results and the reply", () => {
     ).toBe(
       "I've refunded $5 to your original payment method. I've also emailed you a return label.",
     );
-    expect(replyOf([w("timeout", [], "Refunds")])).toMatch(
-      /couldn't get an answer from Refunds/,
+    expect(replyOf([w("timeout", [], "Refunds")])).toBe(
+      "I wasn't able to help with that.",
     );
     expect(replyOf([])).toMatch(/myself/);
   });
@@ -227,9 +227,11 @@ describe("summaryOf", () => {
       "Front desk passed this call to 1 worker. It finished.",
     );
     expect(sum([w("returned"), w("timeout")])).toBe(
-      "Front desk passed this call to 2 workers. 1 finished, 1 didn't (timed out).",
+      "Front desk passed this call to 2 workers. 1 finished, 1 didn't answer.",
     );
-    expect(sum([w("timeout")])).toMatch(/It didn't finish \(timed out\)\./);
+    expect(sum([w("timeout")])).toBe(
+      "Front desk passed this call to 1 worker. It didn't answer.",
+    );
     expect(sum([w("unobserved")], false)).toBe(
       "Workers not observed — shown as the app declares them",
     );
@@ -300,7 +302,9 @@ describe("participantsOf", () => {
         "returned",
         "timeout",
       ]);
-      expect(r.summary).toMatch(/3 workers\. 2 finished, 1 didn't/);
+      expect(r.summary).toMatch(
+        /3 workers over 2 turns\. 2 finished, 1 didn't answer/,
+      );
     });
     all(squad4(), "passed")
       .filter((r) => r.workers.length === 3)
@@ -374,11 +378,11 @@ describe("participantsOf", () => {
     expect(rows.length).toBeGreaterThan(0);
     rows.forEach((r) => {
       const gone = r.workers.find((w) => w.state === "timeout");
-      expect(resultSentenceOf(gone)).toMatch(/Didn't finish/);
+      expect(resultSentenceOf(gone)).toBe("No answer came back.");
       expect(r.steps.find((s) => s.kind === "timeout").verb).toMatch(
-        /didn't return \(timed out at \d+:\d\d\)/,
+        /didn't answer before the call ended/,
       );
-      expect(r.summary).toMatch(/\(timed out\)/);
+      expect(r.summary).toMatch(/didn't answer/);
       expect(r.duration).toBeGreaterThan(gone.endedAt);
     });
   });
@@ -429,7 +433,7 @@ describe("engineer detail", () => {
     expect(text).toContain("Checked return eligibility — Status: eligible");
     expect(text).toContain("Wasn't allowed to issue the refund — outside");
     expect(fullAnswerOf({ state: "timeout", calls: [] })).toBe(
-      "No answer — timed out after 30.0 s",
+      "No answer came back before the call ended.",
     );
     expect(fullAnswerOf({ state: "unobserved" })).toBeNull();
   });
@@ -480,38 +484,93 @@ describe("engineer detail", () => {
     expect(j.calls[0]).toHaveProperty("duration_ms");
     expect(JSON.parse(JSON.stringify(j))).toEqual(j);
   });
-  it("lists every event in time order, workers under their hand-off", () => {
+  it("lists every event turn by turn, workers under their hand-off", () => {
     const ps = all(squad4(), "failed");
-    const timedOut = ps.find((p) =>
-      p.workers.some((w) => w.state === "timeout"),
+    ps.filter((p) => p.observed && p.workers.length).forEach((p) => {
+      const ev = rawEventsOf(p);
+      expect(ev[0].type).toBe("Message");
+      /* in order within each turn */
+      p.turns.forEach((t) => {
+        const at = ev.filter((e) => e.turn === t.n).map((e) => e.at);
+        expect(at).toEqual([...at].sort((a, b) => a - b));
+      });
+      const handoffs = ev.filter((e) => e.type === "Hand-off");
+      expect(handoffs).toHaveLength(p.workers.length + p.undeclared.length);
+      /* a sub-worker's hand-off comes from its parent, one level down */
+      p.workers
+        .filter((w) => w.parentId)
+        .forEach((w) => {
+          const h = handoffs.find((e) => e.to === w.name);
+          expect(h.actor).toBe(w.parentName);
+          expect(h.depth).toBe(1);
+        });
+      const calls = ev.filter((e) => e.type === "Tool call");
+      expect(calls).toHaveLength(
+        [...p.workers, ...p.undeclared].reduce(
+          (n, w) => n + w.calls.length,
+          0,
+        ) + p.untied.length,
+      );
+      const gone = ev.filter((e) => e.type === "No answer");
+      expect(gone).toHaveLength(
+        p.workers.filter((w) => w.state === "timeout").length,
+      );
+      gone.forEach((e) =>
+        expect(e.text).toBe("No answer came back before the call ended."),
+      );
+    });
+  });
+  it("splits calls into turns, with nesting and parallel work", () => {
+    const ps = all(squad4(), "failed").filter((p) => p.workers.length);
+    const two = ps.filter((p) => p.turns.length === 2);
+    expect(two.length).toBeGreaterThan(0);
+    ps.filter((p) => p.workers.length === 3).forEach((p) => {
+      const [a, b, c] = p.workers;
+      expect(a.parallelWith).toBe(b.name);
+      expect(a.delegatedAt).toBe(b.delegatedAt);
+      expect(c.parentId).toBe(b.id);
+      expect(c.depth).toBe(1);
+      /* the call ended with a worker still out: no reply on the last turn */
+      expect(p.turns.at(-1).reply).toBeNull();
+    });
+    /* a turn can open without a caller message */
+    const quiet = all(squad4(), "passed").filter(
+      (p) => p.workers.length === 2 && p.turns.length === 2,
     );
-    const p = ps.find((x) => x.workers.length >= 2) || timedOut;
-    const ev = rawEventsOf(p);
-    expect(ev[0].type).toBe("Message");
-    expect(ev[ev.length - 1].type).toBe("Reply");
-    expect(ev.map((e) => e.at)).toEqual(
-      [...ev.map((e) => e.at)].sort((a, b) => a - b),
+    expect(quiet.some((p) => p.turns[1].request === null)).toBe(true);
+  });
+  it("shows the states real calls have", () => {
+    const ps = all(squad4(), "passed").filter((p) => p.workers.length);
+    const failed = ps.flatMap((p) => p.workers).flatMap((w) => w.calls);
+    expect(failed.some((c) => c.failed)).toBe(true);
+    failed
+      .filter((c) => c.failed)
+      .forEach((c) => expect(callStatusOf(c).kind).toBe("error"));
+    expect(ps.some((p) => p.undeclared.length)).toBe(true);
+    ps.filter((p) => p.undeclared.length).forEach((p) =>
+      expect(p.undeclared[0].undeclared).toBe(true),
     );
-    const types = new Set(ev.map((e) => e.type));
-    expect(types.has("Hand-off")).toBe(true);
-    expect(ev.filter((e) => e.type === "Hand-off")).toHaveLength(
-      p.workers.length,
+    expect(ps.some((p) => p.untied.length)).toBe(true);
+    ps.filter((p) => p.untied.length).forEach((p) =>
+      expect(
+        p.boundaries.some((b) => b.worker === "Not tied to a worker"),
+      ).toBe(true),
     );
-    expect(
-      ev.filter((e) => e.type === "Tool call").every((e) => e.depth === 1),
-    ).toBe(true);
-    expect(
-      ev.filter((e) => e.type === "Hand-off").every((e) => e.depth === 0),
-    ).toBe(true);
-    const calls = ev.filter((e) => e.type === "Tool call");
-    expect(calls).toHaveLength(
-      p.workers.reduce((n, w) => n + w.calls.length, 0),
+    /* declared members the call never reached */
+    ps.forEach((p) =>
+      p.notRun.forEach((n) =>
+        expect(p.workers.some((w) => w.name === n)).toBe(false),
+      ),
     );
-    if (timedOut) {
-      const t = rawEventsOf(timedOut).filter((e) => e.type === "Timed out");
-      expect(t).toHaveLength(1);
-      expect(t[0].text).toBe("No answer — timed out after 30.0 s");
-    }
+    expect(ps.some((p) => p.notRun.length)).toBe(true);
+  });
+  it("needs the app's traces for Open in Traces", () => {
+    const on = all(squad4()).find((p) => p.workers.length);
+    expect(on.traces).toBe(true);
+    const off = all({ ...squad4(), values: { sendsTraces: false } }).find(
+      (p) => p.workers.length,
+    );
+    expect(off.traces).toBe(false);
   });
   it("gives no raw events for an unobserved squad", () => {
     expect(rawEventsOf(null)).toEqual([]);

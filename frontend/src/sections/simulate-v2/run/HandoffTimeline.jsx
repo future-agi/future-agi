@@ -17,12 +17,15 @@ import {
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
+  CHECKS_SOON,
   ID_NOTE,
+  LIMITS_SOON,
+  NOT_DECLARED,
   NOT_RECORDED,
+  NOT_TIED,
   TRACES_SOON,
   callStatusOf,
   clock,
-  didLineOf,
   durationLabel,
   kvOf,
   participantsOf,
@@ -32,7 +35,16 @@ import {
   tokensOf,
   workerJsonOf,
 } from "../_mock/participants";
+import { participantsFromTimeline } from "../_mock/workerTimeline";
+import { CONTRACT_SAMPLES } from "../_mock/workerTimelineSamples";
 import SharedState from "./SharedState";
+
+/* ?contract=<name> shows one of the API's own call records instead. */
+const contractSample = () => {
+  if (typeof window === "undefined") return null;
+  const name = new URLSearchParams(window.location.search).get("contract");
+  return name && CONTRACT_SAMPLES[name] ? name : null;
+};
 
 const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
 
@@ -235,10 +247,14 @@ function Details({ p, agent, task }) {
             <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
               Tool limits
             </Typography>
-            <Typography sx={{ typography: "s2" }}>
-              {p.enforced
-                ? "Enforced — each worker can only use its own tools."
-                : "Not enforced — the app lists which tools each worker uses, but any worker could call any of them."}
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              {LIMITS_SOON}
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              Checks on worker events
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              {CHECKS_SOON}
             </Typography>
           </Box>
           {p.boundaries.length > 0 && (
@@ -262,9 +278,6 @@ function Details({ p, agent, task }) {
               >
                 <Box sx={{ flex: 1 }}>Tool</Box>
                 <Box sx={{ flex: 1 }}>Used by</Box>
-                {p.enforced && (
-                  <Box sx={{ width: 72, textAlign: "right" }}>Limit</Box>
-                )}
               </Stack>
               {p.boundaries.map((b, i) => (
                 <Stack
@@ -276,48 +289,14 @@ function Details({ p, agent, task }) {
                   <Box sx={{ ...mono, typography: "s3", flex: 1, minWidth: 0 }}>
                     {b.tool}
                   </Box>
-                  <Box sx={{ flex: 1 }}>{b.worker}</Box>
-                  {p.enforced && (
-                    <Box
-                      sx={{
-                        width: 72,
-                        textAlign: "right",
-                        color:
-                          b.boundary === "Blocked"
-                            ? "status.danger.fg"
-                            : "text.secondary",
-                      }}
-                    >
-                      {b.boundary}
-                    </Box>
-                  )}
-                </Stack>
-              ))}
-            </Box>
-          )}
-          {p.checks.length > 0 && (
-            <Box>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Checks that need worker events
-              </Typography>
-              {p.checks.map((c) => (
-                <Stack
-                  key={c.label}
-                  direction="row"
-                  sx={{ typography: "s3", py: 0.25 }}
-                >
-                  <Box sx={{ width: 200, color: "text.secondary" }}>
-                    {c.label}
-                  </Box>
                   <Box
                     sx={{
+                      flex: 1,
                       color:
-                        c.value === "Unmeasured"
-                          ? "text.tertiary"
-                          : "text.primary",
+                        b.worker === NOT_TIED ? "text.tertiary" : "inherit",
                     }}
                   >
-                    {c.value}
+                    {b.worker}
                   </Box>
                 </Stack>
               ))}
@@ -345,12 +324,12 @@ const cell = {
   overflowWrap: "anywhere",
 };
 
-/* Model, tokens and time on one line. */
-function Facts({ w }) {
-  const tokens = tokensOf(w);
+/* Model and tokens come from the app's traces; the time is always ours. */
+function Facts({ w, traces }) {
+  const tokens = traces ? tokensOf(w) : null;
   const span = spanLabelOf(w);
   const items = [
-    w.model || "Model not set",
+    traces && w.model,
     tokens != null && `${tokens.toLocaleString("en-US")} tokens`,
     span,
   ].filter(Boolean);
@@ -365,7 +344,7 @@ function Facts({ w }) {
         <Box
           key={t}
           sx={{
-            ...(i === 0 ? mono : {}),
+            ...(i === 0 && traces ? mono : {}),
             fontVariantNumeric: "tabular-nums",
           }}
         >
@@ -375,10 +354,10 @@ function Facts({ w }) {
     </Stack>
   );
 }
-Facts.propTypes = { w: PropTypes.object.isRequired };
+Facts.propTypes = { w: PropTypes.object.isRequired, traces: PropTypes.bool };
 
-/* The task, engineer detail and tool calls under an opened worker. */
-function WorkerDetail({ w, events }) {
+/* The worker's own steps, its sub-workers, and the engineer footer. */
+function WorkerDetail({ w, events, subs = [], traces, onOpen }) {
   const { enqueueSnackbar } = useSnackbar();
   const copy = () => {
     navigator.clipboard
@@ -388,8 +367,6 @@ function WorkerDetail({ w, events }) {
   };
   return (
     <Stack spacing={1}>
-      {/* The worker's own steps, read top to bottom: the hand-off it got,
-          each tool call, then its answer — the Raw events layout. */}
       {events.length ? (
         <Box
           sx={{
@@ -399,7 +376,11 @@ function WorkerDetail({ w, events }) {
           {events.map((e) => (
             <EventRow
               key={e.key}
-              e={{ ...e, depth: e.type === "Hand-off" ? 0 : 1 }}
+              e={{
+                ...e,
+                depth: e.type === "Hand-off" && e.to === w.name ? 0 : 1,
+              }}
+              traces={traces}
               folded
             />
           ))}
@@ -409,6 +390,32 @@ function WorkerDetail({ w, events }) {
           No events from this worker.
         </Typography>
       )}
+      {subs.length > 0 && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          useFlexGap
+          sx={{ flexWrap: "wrap", pt: 0.5 }}
+        >
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Handed work to
+          </Typography>
+          {subs.map((c) => (
+            <Button
+              key={c.id}
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() => onOpen(c.id)}
+              endIcon={<Iconify icon="solar:arrow-right-linear" width={12} />}
+              sx={miniBtn}
+            >
+              {c.name}
+            </Button>
+          ))}
+        </Stack>
+      )}
       <Stack
         direction="row"
         spacing={1.5}
@@ -416,7 +423,7 @@ function WorkerDetail({ w, events }) {
         sx={{ pt: 1, borderTop: "1px solid", borderColor: "divider" }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Facts w={w} />
+          <Facts w={w} traces={traces} />
           <Tooltip arrow title={ID_NOTE}>
             <Typography
               component="span"
@@ -443,80 +450,122 @@ function WorkerDetail({ w, events }) {
 WorkerDetail.propTypes = {
   w: PropTypes.object.isRequired,
   events: PropTypes.array.isRequired,
+  subs: PropTypes.array,
+  traces: PropTypes.bool,
+  onOpen: PropTypes.func,
 };
 
-/* One worker: name, what it did, what came back. The whole row opens. */
+/* Tool names as recorded; a failed one in red. */
+function Tools({ calls }) {
+  return (
+    <Stack spacing={0.25}>
+      {calls.map((c) => (
+        <Typography
+          key={c.id}
+          sx={{
+            ...mono,
+            fontSize: 11,
+            lineHeight: 1.7,
+            wordBreak: "break-word",
+            color:
+              c.failed || c.blocked ? "status.danger.fg" : "text.secondary",
+          }}
+        >
+          {c.name}
+          {c.failed ? " · failed" : c.blocked ? " · blocked" : ""}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+Tools.propTypes = { calls: PropTypes.array.isRequired };
+
+/* One worker: who handed it work, the tools it called, what came back. */
 function WorkerRow({ w, last, onOpen }) {
-  const toggle = onOpen;
   const timeout = w.state === "timeout";
   const unseen = w.state === "unobserved";
   const edge = last ? { borderBottom: 0 } : {};
+  const notes = [
+    w.transfer && {
+      text: `Control passed by ${w.parentName || "the coordinator"}`,
+    },
+    w.parentName && !w.transfer && { text: `Handed by ${w.parentName}` },
+    w.parallelWith && { text: `In parallel with ${w.parallelWith}` },
+    w.undeclared && { text: NOT_DECLARED, tone: "status.warning.fg" },
+    unseen && { text: "Not observed" },
+  ].filter(Boolean);
   return (
-    <Fragment>
-      <TableRow
-        hover
-        tabIndex={0}
-        aria-label={`Open ${w.name}'s steps`}
-        onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
+    <TableRow
+      hover
+      tabIndex={0}
+      aria-label={`Open ${w.name}'s steps`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      sx={{
+        cursor: "pointer",
+        height: "auto",
+        "&:hover": { bgcolor: "action.hover" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: -2,
+        },
+      }}
+    >
+      {/* Names stay aligned; "Handed by" says who the work came from. */}
+      <TableCell sx={{ ...cell, ...edge }}>
+        <Typography
+          sx={{ typography: "s2", fontWeight: 500, color: "text.primary" }}
+        >
+          {w.name}
+        </Typography>
+        {notes.map((n) => (
+          <Typography
+            key={n.text}
+            sx={{ typography: "s3", color: n.tone || "text.tertiary" }}
+          >
+            {n.text}
+          </Typography>
+        ))}
+      </TableCell>
+      <TableCell sx={{ ...cell, ...edge }}>
+        {unseen ? (
+          <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+            {NOT_RECORDED}
+          </Typography>
+        ) : w.calls.length ? (
+          <Tools calls={w.calls} />
+        ) : (
+          <Typography
+            sx={{
+              typography: "s2",
+              color: w.task ? "text.secondary" : "text.tertiary",
+            }}
+          >
+            {w.task || "No task or tool calls recorded"}
+          </Typography>
+        )}
+      </TableCell>
+      <TableCell
         sx={{
-          cursor: "pointer",
-          height: "auto",
-          "&:hover": { bgcolor: "action.hover" },
-          "&:focus-visible": {
-            outline: "2px solid",
-            outlineColor: "primary.main",
-            outlineOffset: -2,
-          },
+          ...cell,
+          ...edge,
+          color: timeout
+            ? "status.danger.fg"
+            : unseen
+              ? "text.tertiary"
+              : "text.secondary",
         }}
       >
-        <TableCell sx={{ ...cell, ...edge }}>
-          <Typography
-            sx={{ typography: "s2", fontWeight: 500, color: "text.primary" }}
-          >
-            {w.name}
-          </Typography>
-          {(timeout || unseen) && (
-            <Typography
-              sx={{
-                typography: "s3",
-                color: timeout ? "status.danger.fg" : "text.tertiary",
-              }}
-            >
-              {timeout ? `Timed out at ${clock(w.endedAt)}` : "Not observed"}
-            </Typography>
-          )}
-        </TableCell>
-        <TableCell
-          sx={{
-            ...cell,
-            ...edge,
-            color: unseen ? "text.tertiary" : "text.secondary",
-          }}
-        >
-          {unseen ? NOT_RECORDED : didLineOf(w)}
-        </TableCell>
-        <TableCell
-          sx={{
-            ...cell,
-            ...edge,
-            color: timeout
-              ? "status.danger.fg"
-              : unseen
-                ? "text.tertiary"
-                : "text.secondary",
-          }}
-        >
-          {resultSentenceOf(w)}
-        </TableCell>
-      </TableRow>
-    </Fragment>
+        {resultSentenceOf(w)}
+      </TableCell>
+    </TableRow>
   );
 }
 WorkerRow.propTypes = {
@@ -525,11 +574,41 @@ WorkerRow.propTypes = {
   onOpen: PropTypes.func.isRequired,
 };
 
+/* A tool call no worker claims: shown, never credited to anyone. */
+function UntiedRow({ c, last, label = NOT_TIED }) {
+  const edge = last ? { borderBottom: 0 } : {};
+  const st = callStatusOf(c);
+  return (
+    <TableRow sx={{ height: "auto" }}>
+      <TableCell sx={{ ...cell, ...edge, color: "text.tertiary" }}>
+        {label}
+      </TableCell>
+      <TableCell sx={{ ...cell, ...edge }}>
+        <Tools calls={[c]} />
+      </TableCell>
+      <TableCell
+        sx={{
+          ...cell,
+          ...edge,
+          color: st.kind === "error" ? "status.danger.fg" : "text.secondary",
+        }}
+      >
+        {st.text === "ok" ? "Returned ok." : st.text}
+      </TableCell>
+    </TableRow>
+  );
+}
+UntiedRow.propTypes = {
+  c: PropTypes.object.isRequired,
+  last: PropTypes.bool,
+  label: PropTypes.string,
+};
+
 /* One line of the raw list: time, who, what kind, then the payload. */
-function EventRow({ e, folded = false }) {
+function EventRow({ e, folded = false, traces = true }) {
   const [open, setOpen] = useState(!folded);
   const json = e.type === "Tool call";
-  const bad = e.type === "Timed out";
+  const bad = e.type === "No answer";
   return (
     <Box
       sx={{
@@ -537,7 +616,7 @@ function EventRow({ e, folded = false }) {
         gridTemplateColumns: "44px minmax(0, 1fr)",
         columnGap: 1,
         py: 0.75,
-        ml: e.depth ? 2.5 : 0,
+        ml: (e.depth || 0) * 2.5,
         pl: e.depth ? 1.5 : 0,
         borderLeft: e.depth ? "1px solid" : 0,
         borderColor: "divider",
@@ -554,7 +633,13 @@ function EventRow({ e, folded = false }) {
       </Typography>
       <Stack spacing={0.5} sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} alignItems="baseline">
-          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 500,
+              color: e.actor === NOT_TIED ? "text.tertiary" : "text.primary",
+            }}
+          >
             {e.actor}
           </Typography>
           <Typography
@@ -594,15 +679,17 @@ function EventRow({ e, folded = false }) {
               >
                 {e.tool}
               </Typography>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {durationLabel(e.duration)}
-              </Typography>
+              {e.duration != null && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {durationLabel(e.duration)}
+                </Typography>
+              )}
               <Typography
                 sx={{
                   typography: "s3",
@@ -625,7 +712,8 @@ function EventRow({ e, folded = false }) {
               >
                 {open ? "Hide JSON" : "Show JSON"}
               </Button>
-              <TracesButton />
+              {/* Only an app that sends traces has a span to open. */}
+              {traces && <TracesButton />}
             </Stack>
             {open && (
               <Stack spacing={0.75}>
@@ -655,9 +743,25 @@ function EventRow({ e, folded = false }) {
     </Box>
   );
 }
-EventRow.propTypes = { e: PropTypes.object.isRequired, folded: PropTypes.bool };
+EventRow.propTypes = {
+  e: PropTypes.object.isRequired,
+  folded: PropTypes.bool,
+  traces: PropTypes.bool,
+};
 
-/* Every event in time order, for debugging. */
+const TurnLabel = ({ t }) => (
+  <Typography
+    sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
+  >
+    {`Turn ${t.n}`}
+    <Box component="span" sx={{ color: "text.tertiary", fontWeight: 400 }}>
+      {` · ${clock(t.at)}`}
+    </Box>
+  </Typography>
+);
+TurnLabel.propTypes = { t: PropTypes.object.isRequired };
+
+/* Every event in time order, turn by turn, for debugging. */
 function RawEvents({ p }) {
   const events = rawEventsOf(p);
   if (!events.length)
@@ -666,6 +770,7 @@ function RawEvents({ p }) {
         No events recorded — the app sent no worker events.
       </Typography>
     );
+  const multi = p.turns.length > 1;
   return (
     <Box
       sx={{
@@ -677,8 +782,15 @@ function RawEvents({ p }) {
         "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
       }}
     >
-      {events.map((e) => (
-        <EventRow key={e.key} e={e} />
+      {events.map((e, i) => (
+        <Fragment key={e.key}>
+          {multi && e.turn !== events[i - 1]?.turn && (
+            <Box sx={{ py: 0.75 }}>
+              <TurnLabel t={p.turns.find((t) => t.n === e.turn)} />
+            </Box>
+          )}
+          <EventRow e={e} traces={p.traces} />
+        </Fragment>
       ))}
     </Box>
   );
@@ -694,29 +806,134 @@ const head = {
   height: "auto",
 };
 
+const Quiet = ({ children }) => (
+  <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+    {children}
+  </Typography>
+);
+Quiet.propTypes = { children: PropTypes.node };
+
+/* One turn: what the caller said, the workers it set off, the reply. */
+function Turn({ t, p, multi, last, onOpen }) {
+  const rows = [
+    ...t.workers.map((w) => ({ key: w.id, w })),
+    ...(t.untied || []).map((c) => ({ key: c.id, c })),
+    ...(t.own || []).map((c) => ({
+      key: c.id,
+      c,
+      label: `${p.coordinator.name} itself`,
+    })),
+  ];
+  return (
+    <Stack spacing={1.5}>
+      {multi && <TurnLabel t={t} />}
+      {t.request ? (
+        <Quote label="The caller asked" text={t.request} />
+      ) : (
+        <Quiet>This turn started without a caller message.</Quiet>
+      )}
+      {rows.length > 0 ? (
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            overflow: "hidden",
+          }}
+        >
+          <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
+            <TableHead>
+              <TableRow sx={{ height: "auto" }}>
+                <TableCell sx={{ ...head, width: "28%" }}>Worker</TableCell>
+                <TableCell sx={{ ...head, width: "36%" }}>
+                  What it did
+                </TableCell>
+                <TableCell sx={{ ...head, width: "36%" }}>Result</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((r, i) =>
+                r.w ? (
+                  <WorkerRow
+                    key={r.key}
+                    w={r.w}
+                    last={i === rows.length - 1}
+                    onOpen={() => onOpen(r.w.id)}
+                  />
+                ) : (
+                  <UntiedRow
+                    key={r.key}
+                    c={r.c}
+                    label={r.label}
+                    last={i === rows.length - 1}
+                  />
+                ),
+              )}
+            </TableBody>
+          </Table>
+        </Box>
+      ) : (
+        <Quiet>{`${p.coordinator.name} handled this turn itself.`}</Quiet>
+      )}
+      {t.reply ? (
+        <Quote label={`${p.coordinator.name} replied`} text={t.reply} />
+      ) : (
+        p.observed && (
+          <Quiet>
+            {last && p.outcome === "timeout"
+              ? "No reply — the call ended first."
+              : "This turn ended without a reply."}
+          </Quiet>
+        )
+      )}
+    </Stack>
+  );
+}
+Turn.propTypes = {
+  t: PropTypes.object.isRequired,
+  p: PropTypes.object.isRequired,
+  multi: PropTypes.bool,
+  last: PropTypes.bool,
+  onOpen: PropTypes.func.isRequired,
+};
+
 /**
- * A multi-agent trial's Participants: a summary sentence, what the caller
- * asked, a table with a row per worker (what it did, the result) that opens to
- * the task and tool calls, then what the front desk replied. Unobserved
- * workers stay as declared. Evidence, tool boundaries and shared state are
- * folded under Details.
+ * A multi-agent trial's Participants: a summary sentence, then the call turn
+ * by turn — what the caller asked, a row per worker (who handed it work, the
+ * tools it called, what came back) that opens to its own events, and what the
+ * front desk replied. Unobserved workers stay as declared. Evidence, the tool
+ * table and shared state are folded under Details.
  */
 export default function HandoffTimeline({ agent, task }) {
   const [rawOn, setRawOn] = useState(false);
-  /* The worker being read, opened from its table row; the table stays the
-     overview and never grows. */
-  const [focusId, setFocusId] = useState(null);
-  const p = participantsOf({ agent, task });
+  /* The workers opened, in the order they were opened: back returns to the
+     one before (or the table), wherever the reader came from. */
+  const [trail, setTrail] = useState([]);
+  const focusId = trail.at(-1) ?? null;
+  const open = (id) => setTrail((t) => [...t, id]);
+  const back = () => setTrail((t) => t.slice(0, -1));
+  const sample = contractSample();
+  const p = sample
+    ? participantsFromTimeline(CONTRACT_SAMPLES[sample])
+    : participantsOf({ agent, task });
   if (!p) return null;
-  const focus = p.workers.find((w) => w.id === focusId) || null;
+  const everyone = [...p.workers, ...p.undeclared];
+  const focus = everyone.find((w) => w.id === focusId) || null;
+  /* A worker's own events, with the hand-offs it made to its sub-workers. */
   const stepsOf = (w) =>
-    rawEventsOf(p).filter(
-      (e) =>
-        e.key === `handoff-${w.id}` ||
-        e.key === `end-${w.id}` ||
-        w.calls.some((c) => c.id === e.key),
-    );
-  if (focus)
+    rawEventsOf(p)
+      .filter(
+        (e) =>
+          e.key === `handoff-${w.id}` ||
+          e.key === `end-${w.id}` ||
+          w.calls.some((c) => c.id === e.key) ||
+          everyone.some(
+            (x) => x.parentId === w.id && e.key === `handoff-${x.id}`,
+          ),
+      )
+      .sort((a, b) => a.at - b.at);
+  if (focus) {
+    const before = everyone.find((w) => w.id === trail.at(-2));
     return (
       <Stack spacing={2} sx={{ p: 2 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
@@ -724,20 +941,33 @@ export default function HandoffTimeline({ agent, task }) {
             size="small"
             variant="outlined"
             color="inherit"
-            onClick={() => setFocusId(null)}
+            onClick={back}
             startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
           >
-            All workers
+            {before ? before.name : "All workers"}
           </Button>
           <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
             {focus.name}
           </Typography>
         </Stack>
-        <WorkerDetail w={focus} events={stepsOf(focus)} />
+        <WorkerDetail
+          w={focus}
+          events={stepsOf(focus)}
+          subs={everyone.filter((w) => w.parentId === focus.id)}
+          traces={p.traces}
+          onOpen={open}
+        />
       </Stack>
     );
+  }
+  const multi = p.turns.length > 1;
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
+      {sample && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {`API record · "${sample}" sample from the platform contract`}
+        </Typography>
+      )}
       <Stack direction="row" spacing={2} alignItems="flex-start">
         <Typography
           sx={{ typography: "s2", fontWeight: 600, lineHeight: 1.6, flex: 1 }}
@@ -763,44 +993,37 @@ export default function HandoffTimeline({ agent, task }) {
       {rawOn ? (
         <RawEvents p={p} />
       ) : (
-        <Fragment>
-          <Quote label="The caller asked" text={p.request} />
-          {p.workers.length > 0 && (
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "8px",
-                overflow: "hidden",
-              }}
-            >
-              <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
-                <TableHead>
-                  <TableRow sx={{ height: "auto" }}>
-                    <TableCell sx={{ ...head, width: "28%" }}>Worker</TableCell>
-                    <TableCell sx={{ ...head, width: "32%" }}>
-                      What it did
-                    </TableCell>
-                    <TableCell sx={{ ...head, width: "40%" }}>Result</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {p.workers.map((w, i) => (
-                    <WorkerRow
-                      key={w.id}
-                      w={w}
-                      last={i === p.workers.length - 1}
-                      onOpen={() => setFocusId(w.id)}
-                    />
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          )}
-          {p.reply && (
-            <Quote label={`${p.coordinator.name} replied`} text={p.reply} />
-          )}
-        </Fragment>
+        <Stack
+          spacing={2}
+          sx={
+            multi
+              ? {
+                  "& > * + *": {
+                    pt: 2,
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                  },
+                }
+              : undefined
+          }
+        >
+          {p.turns.map((t, i) => (
+            <Turn
+              key={t.n}
+              t={t}
+              p={p}
+              multi={multi}
+              last={i === p.turns.length - 1}
+              onOpen={open}
+            />
+          ))}
+        </Stack>
+      )}
+      {p.notRun.length > 0 && !rawOn && (
+        <Quiet>{`Declared, didn't run: ${p.notRun.join(", ")}.`}</Quiet>
+      )}
+      {p.notObserved?.length > 0 && !rawOn && (
+        <Quiet>{`Declared, sent no events: ${p.notObserved.join(", ")}.`}</Quiet>
       )}
       <Details p={p} agent={agent} task={task} />
     </Stack>
