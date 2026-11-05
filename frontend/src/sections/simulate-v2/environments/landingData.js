@@ -522,7 +522,9 @@ export const itemCount = CONNECT_GROUPS.reduce((n, g) => n + g.items.length, 0);
 export const WORLD_TYPES = [
   { id: "voice", label: "Voice" },
   { id: "chat", label: "Chat" },
-  { id: "computer", label: "Computer use", soon: true },
+  { id: "coding", label: "Coding" },
+  /* Unlocked by simulated websites (T47). */
+  { id: "computer", label: "Computer use" },
 ];
 const TYPE_OF_AGENT = {
   voice_platform: "voice",
@@ -531,7 +533,7 @@ const TYPE_OF_AGENT = {
   mcp_agent: "chat",
   browser_agent: "computer",
   game_agent: "computer",
-  coding_agent: null,
+  coding_agent: "coding",
   sim_agent: null,
 };
 /** The world's agent type, or null for one built for an agent type we don't offer. */

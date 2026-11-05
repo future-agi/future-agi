@@ -33,7 +33,11 @@ export const buildableAgentsOf = (agents = []) =>
 
 /** The channel a prebuilt world is for — "voice" or "chat". */
 export const worldChannelOf = (template) =>
-  MODALITY_FOR[template?.surface] === "voice" ? "voice" : "chat";
+  template?.surface === "cli"
+    ? "cli"
+    : MODALITY_FOR[template?.surface] === "voice"
+      ? "voice"
+      : "chat";
 
 /** The host an MCP server is reached at — or the command, for stdio. */
 export const mcpHostOf = (value = "") => {

@@ -17,6 +17,7 @@ import { effectiveModality } from "../_mock/rlContract";
 import { getSurface } from "../_mock/surfaces";
 import { browserAppOf } from "../_mock/runStream";
 import { allowedSitesOf, blockedAttemptsOf } from "../_mock/browserAgents";
+import { simSitesOf, siteChangesOf, siteHostOfApp } from "../_mock/simSites";
 import BrowserApp, { deriveState, focusOf, urlFor } from "./stages/BrowserApps";
 import { callDetail } from "../_mock/callDetail";
 import { checkEvidenceOf, rollupLine } from "../_mock/scenarioSubGoals";
@@ -1404,6 +1405,12 @@ function ActionTrace({ task, env, envState, stage, at, onScrub }) {
   const app = stage === "browser" ? browserAppOf(task) : null;
   const state = app ? deriveState(app, shown) : null;
   const focus = app ? focusOf(steps[index]) : null;
+  /* T47: the simulated site this trial ran on — reset first, changes recorded. */
+  const simHost =
+    app && simSitesOf(env?.templateId || env?.id).length
+      ? siteHostOfApp(app)
+      : null;
+  const changes = simHost ? siteChangesOf(app, shown) : [];
 
   const line = (st) => {
     if (st.action)
@@ -1494,6 +1501,16 @@ function ActionTrace({ task, env, envState, stage, at, onScrub }) {
                   {` · ${blocked.length} blocked`}
                 </Box>
               )}
+            </Typography>
+          )}
+          {simHost && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                {`Simulated site ${simHost}, reset before this trial · changes so far: `}
+              </Box>
+              {changes.map((c) => `${c.record} ${c.change}`).join(" · ")}
             </Typography>
           )}
         </Box>

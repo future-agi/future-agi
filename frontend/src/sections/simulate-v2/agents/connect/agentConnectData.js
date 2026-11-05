@@ -243,16 +243,22 @@ const CHANNEL_GROUP_TITLES = {};
 export const connectGroupsFor = (channel) =>
   !channel
     ? AGENT_CONNECT_GROUPS
-    : AGENT_CONNECT_GROUPS.map((g) => ({
-        ...g,
-        ...(CHANNEL_GROUP_TITLES[g.id]?.[channel] || {}),
-        items: g.items
-          .filter((it) => !it.channels || it.channels.includes(channel))
-          .map((it) => ({
-            ...it,
-            initial: { ...(it.initial || {}), agentType: channel },
-          })),
-      })).filter((g) => g.items.length);
+    : channel === "cli"
+      ? /* A command-line world takes a coding agent: Claude Code or Codex. */
+        AGENT_CONNECT_GROUPS.map((g) => ({
+          ...g,
+          items: g.items.filter((it) => it.kind === "coding"),
+        })).filter((g) => g.items.length)
+      : AGENT_CONNECT_GROUPS.map((g) => ({
+          ...g,
+          ...(CHANNEL_GROUP_TITLES[g.id]?.[channel] || {}),
+          items: g.items
+            .filter((it) => !it.channels || it.channels.includes(channel))
+            .map((it) => ({
+              ...it,
+              initial: { ...(it.initial || {}), agentType: channel },
+            })),
+        })).filter((g) => g.items.length);
 
 /*
   New agent opens on the PRD's three first choices (Flow 1): code — a GitHub

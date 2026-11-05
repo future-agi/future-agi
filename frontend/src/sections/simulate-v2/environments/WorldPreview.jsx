@@ -4,6 +4,7 @@ import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { resolveEval } from "../_mock/evals";
 import { worldFactsOf } from "../_mock/catalogue";
 import { worldPacksOf } from "./worldSource";
+import { simSitesOf } from "../_mock/simSites";
 
 /* A spec-sheet section: a title, then rows or text. */
 function Section({ title, aside, children }) {
@@ -117,6 +118,7 @@ export default function WorldPreview({ world }) {
   const packs = worldPacksOf(t);
   const checks = (t.evalPreset || []).map(resolveEval).filter(Boolean);
   const facts = worldFactsOf(entry, t);
+  const sites = simSitesOf(t.id);
   return (
     <Stack spacing={2.5}>
       <Section title="Source and support">
@@ -151,6 +153,23 @@ export default function WorldPreview({ world }) {
               </Typography>
             ))}
           </Stack>
+        </Section>
+      )}
+      {/* T47: the sites this world serves the agent's browser. */}
+      {sites.length > 0 && (
+        <Section
+          title="Simulated websites"
+          aside="Reset before every trial; changes are recorded"
+        >
+          <Rows
+            rows={sites.map((x) => ({
+              k: x.host,
+              v: `${x.name} · ${x.kind} · records ${x.records.join(", ")}`,
+              n: `${x.pages} ${x.pages === 1 ? "page" : "pages"}`,
+            }))}
+            mono
+            labelWidth={190}
+          />
         </Section>
       )}
       <Section

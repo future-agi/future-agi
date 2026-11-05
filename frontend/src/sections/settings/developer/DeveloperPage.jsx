@@ -17,14 +17,15 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import {
   PYTHON_DEFINE,
-  trainCmd,
-  serveCmd,
   INSTALL_CMD,
   MCP_ADD_CMD,
   AGENT_DOCS_URL,
 } from "src/sections/simulate-v2/environments/fromCode";
 import useFiKeys from "src/sections/get-started/useFiKeys";
 import KeyStrip from "src/sections/get-started/KeyStrip";
+import ConfigPlanDrawer from "./ConfigPlanDrawer";
+import { CONFIG_CMDS } from "./configPlan";
+import { rlLoopCodeOf } from "src/sections/simulate-v2/_mock/release";
 
 /*
   Developer — the reference for using Future AGI from code, for people who
@@ -77,6 +78,7 @@ GoButton.propTypes = {
 
 export default function DeveloperPage() {
   const [lang, setLang] = useState("python");
+  const [planOpen, setPlanOpen] = useState(false);
   const keys = useFiKeys();
 
   return (
@@ -134,9 +136,9 @@ export default function DeveloperPage() {
             ) : (
               <>
                 The TypeScript SDK is coming soon. Until then, register a
-                TypeScript agent by its URL: fi agents push --repo .
-                --type http --url http://localhost:3000/chat, then fi
-                run --env &lt;environment&gt; --agent my-agent
+                TypeScript agent by its URL: fi agents push --repo . --type http
+                --url http://localhost:3000/chat, then fi run --env
+                &lt;environment&gt; --agent my-agent
               </>
             )}
           </Note>
@@ -205,18 +207,50 @@ jobs:
           </Note>
         </Section>
 
+        {/* rl.md: RL endpoints and their docs, not a Train button. */}
         <Section
-          title="Train (RL)"
-          description="Train a model on an environment, with its evals as the reward, then check it on held-out cases it never saw."
+          title="RL endpoints"
+          description="Train your own model on a locked environment: many sessions at once, each in its own world, rewarded by the environment's checks."
         >
-          <CodeBlock code={trainCmd()} />
-          <Box sx={{ mt: 1.5 }}>
-            <CodeBlock code={serveCmd()} />
-          </Box>
+          <CodeBlock
+            code={rlLoopCodeOf(
+              { id: "<environment-id>" },
+              { lockedRelease: { version: "v1" } },
+            )}
+          />
           <Note>
-            The first trainer is TRL. fi sim env pull downloads a copy for
-            a trainer on another machine.
+            Open RL access on a locked environment&apos;s Overview for its key
+            and the full guide. Sessions use the same credits as simulations.
           </Note>
+        </Section>
+
+        {/* T38: workspace settings as code — profiles name workspaces. */}
+        <Section
+          title="Workspace settings as code"
+          description="Keep this workspace's evals, prompts, alerts and datasets in a file. Plan shows the diff, apply makes the reviewed changes, promote copies them to another workspace."
+          actions={
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setPlanOpen(true)}
+              startIcon={
+                <Iconify icon="solar:document-text-linear" width={14} />
+              }
+            >
+              Review a plan
+            </Button>
+          }
+        >
+          <CodeBlock code={CONFIG_CMDS} />
+          <Note>
+            A profile names a workspace (staging, production), not a simulation
+            environment. Every change says how far it can be rolled back. It
+            never deploys or changes your agent.
+          </Note>
+          <ConfigPlanDrawer
+            open={planOpen}
+            onClose={() => setPlanOpen(false)}
+          />
         </Section>
 
         <Section

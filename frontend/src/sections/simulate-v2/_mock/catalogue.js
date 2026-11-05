@@ -784,6 +784,64 @@ CATALOGUE_TEMPLATES.push(
   ),
 );
 
+/* Public benchmarks (T26), imported as locked releases with their own graders. */
+CATALOGUE_TEMPLATES.push(
+  world(
+    "env-bench-tau-retail",
+    "chat",
+    "ecommerce",
+    "τ-bench · Retail",
+    "Help a retail customer change, return or cancel orders under store policy",
+    "The public τ-bench retail suite, imported as a locked release. Simulated users ask for order changes; the benchmark's own grader compares the final database with the expected one.",
+    [
+      ["orders", 1000, "as shipped upstream"],
+      ["users", 500],
+      ["products", 50],
+    ],
+    [
+      ["get_order_details", "Look up an order"],
+      ["return_delivered_order_items", "Return delivered items"],
+      ["cancel_pending_order", "Cancel a pending order"],
+      ["exchange_delivered_order_items", "Exchange delivered items"],
+    ],
+    ["Follow the upstream retail policy as written"],
+  ),
+  world(
+    "env-bench-tau-airline",
+    "chat",
+    "travel",
+    "τ-bench · Airline",
+    "Book, change or cancel flights under airline policy",
+    "The public τ-bench airline suite, imported as a locked release with its own grader.",
+    [
+      ["reservations", 2000, "as shipped upstream"],
+      ["flights", 300],
+    ],
+    [
+      ["get_reservation_details", "Look up a reservation"],
+      ["update_reservation_flights", "Change flights"],
+      ["cancel_reservation", "Cancel a reservation"],
+    ],
+    ["Follow the upstream airline policy as written"],
+  ),
+  {
+    ...world(
+      "env-bench-terminal",
+      "chat",
+      "software",
+      "Terminal-Bench",
+      "Finish a task in a Linux terminal, checked by the task's own tests",
+      "The public Terminal-Bench suite, imported as a locked release. Each task runs in its own container; the benchmark's own tests decide pass or fail.",
+      [["tasks", 80, "each with its own container and tests"]],
+      [["terminal", "Run a command in the task's container"]],
+      ["Only the task's own tests decide the result"],
+    ),
+    agentType: "coding_agent",
+    /* Coding agents run from the command line. */
+    surface: "cli",
+  },
+);
+
 /* Releases: the version each task ships at, how ready it is, and anything
    that stops new adoption. `proved` is starter cases proved out of five. */
 const R = (version, status = "ready", proved = 5, extra = {}) => ({
@@ -1352,12 +1410,164 @@ CATALOGUE_ALL.push(
   },
 );
 
+/* Public benchmarks (T26): locked releases scored by their own graders.
+   A subset says so wherever its score shows. `parity` is the pinned
+   reference run: our hosted score against the benchmark's own grader. */
+const parityRows = (ids, fail) =>
+  ids.map((id) => ({
+    task: id,
+    upstream: id === fail ? "fail" : "pass",
+    hosted: id === fail ? "fail" : "pass",
+    known: id === fail,
+  }));
+CATALOGUE_ALL.push(
+  {
+    id: "B01",
+    domain: "τ-bench retail",
+    task: "Help a retail customer change, return or cancel orders under store policy",
+    templateId: "env-bench-tau-retail",
+    benchmark: {
+      name: "τ-bench",
+      upstream: "github.com/sierra-research/tau-bench",
+      pin: "14bf0ef",
+      grader: "τ-bench's own grader (final database match)",
+      subset: { tasks: 40, of: 115, label: "retail test tasks" },
+      parity: {
+        reference: "the pinned reference agent",
+        rows: parityRows(
+          ["retail-3", "retail-11", "retail-17", "retail-24", "retail-38"],
+          "retail-17",
+        ),
+        matched: 40,
+        total: 40,
+        knownFailures: 1,
+      },
+    },
+    release: R("tau-1.0-retail-40", "ready", 5, {
+      splits: { train: 30, test: 10 },
+    }),
+    scoring: "τ-bench's own grader, pinned at 14bf0ef",
+    requests: ["I want to return the blue kettle from my last order."],
+    actors: [],
+    recipe: { model: "gpt-4.1", limitations: [] },
+  },
+  {
+    id: "B02",
+    domain: "τ-bench airline",
+    task: "Book, change or cancel flights under airline policy",
+    templateId: "env-bench-tau-airline",
+    benchmark: {
+      name: "τ-bench",
+      upstream: "github.com/sierra-research/tau-bench",
+      pin: "14bf0ef",
+      grader: "τ-bench's own grader (final database match)",
+      parity: {
+        reference: "the pinned reference agent",
+        rows: parityRows(
+          ["airline-2", "airline-9", "airline-21", "airline-33"],
+          "airline-9",
+        ),
+        matched: 50,
+        total: 50,
+        knownFailures: 1,
+      },
+    },
+    release: R("tau-1.0-airline", "ready", 5, {
+      splits: { train: 0, test: 50 },
+    }),
+    scoring: "τ-bench's own grader, pinned at 14bf0ef",
+    requests: ["Move my reservation to the morning flight."],
+    actors: [],
+    recipe: { model: "gpt-4.1", limitations: [] },
+  },
+  {
+    id: "B03",
+    domain: "Terminal-Bench",
+    task: "Finish a task in a Linux terminal, checked by the task's own tests",
+    templateId: "env-bench-terminal",
+    benchmark: {
+      name: "Terminal-Bench",
+      upstream: "github.com/laude-institute/terminal-bench",
+      pin: "v0.2.1",
+      grader: "Each task's own tests, run in its container",
+      subset: { tasks: 20, of: 80, label: "tasks" },
+      parity: {
+        reference: "the pinned reference agent",
+        rows: parityRows(
+          ["hello-world", "fix-git", "build-tcc", "csv-to-parquet"],
+          "build-tcc",
+        ),
+        matched: 19,
+        total: 20,
+        knownFailures: 1,
+        mismatch: {
+          task: "sqlite-recover",
+          why: "Our run timed out at 180 s; upstream allows 360 s. Raise the limit to match before this release is ready.",
+        },
+      },
+    },
+    release: R("tb-0.2.1-20", "soon", 4, {
+      splits: { train: 0, test: 20 },
+    }),
+    scoring: "Each task's own tests, pinned at v0.2.1",
+    requests: ["Recover the rows from the corrupted SQLite file."],
+    actors: [],
+    recipe: { model: "gpt-4.1", limitations: [] },
+  },
+);
+
+/* Computer-use and game worlds (T47): simulated websites make them possible.
+   The browser world is ready; the game worlds are still being checked. */
+CATALOGUE_ALL.push(
+  {
+    id: "W01",
+    domain: "Web apps",
+    task: "Operate a todo app, a game and an admin console in a real browser",
+    templateId: "env-browser",
+    simSites: true,
+    release: R("2026.11.1"),
+    requests: ["Mark everything due today as done in Taskly."],
+    actors: [],
+    recipe: { model: "claude-sonnet-5-5", limitations: [] },
+  },
+  {
+    id: "W02",
+    domain: "Video games",
+    task: "Reach the next checkpoint in a classic game from the screen alone",
+    templateId: "env-videogamebench",
+    simSites: true,
+    release: R("2026.11.1", "soon", 2),
+    requests: ["Get past the first boss."],
+    actors: [],
+    recipe: { model: "claude-sonnet-5-5", limitations: [] },
+  },
+  {
+    id: "W03",
+    domain: "ARC-AGI-3",
+    task: "Learn an unseen game's rules by playing it",
+    templateId: "env-arc-agi-3",
+    simSites: true,
+    release: R("2026.11.1", "soon", 1),
+    requests: ["Solve level 1."],
+    actors: [],
+    recipe: { model: "claude-sonnet-5-5", limitations: [] },
+  },
+);
+
 /** Where a world comes from: our catalogue, or a third-party host. */
 export const SOURCES = {
   futureagi: "Future AGI",
   third_party: "Third party",
+  benchmark: "Public benchmark",
 };
-export const sourceOf = (entry) => (entry?.host ? "third_party" : "futureagi");
+export const sourceOf = (entry) =>
+  entry?.benchmark ? "benchmark" : entry?.host ? "third_party" : "futureagi";
+
+/** "Subset · 40 of 115 retail test tasks" — null for a whole benchmark. */
+export const subsetLineOf = (entry) => {
+  const sub = entry?.benchmark?.subset;
+  return sub ? `Subset · ${sub.tasks} of ${sub.of} ${sub.label}` : null;
+};
 
 /** Support for a third-party world, as a person reads it. */
 export const HOST_SUPPORT = {
@@ -1400,6 +1610,8 @@ export const CATALOGUE = CATALOGUE_ALL.filter(
     LAUNCH_IDS.includes(c.id) ||
     c.newDomain ||
     c.host ||
+    c.benchmark ||
+    c.simSites ||
     ["unsupported", "access"].includes(c.release.status),
 );
 
@@ -1424,6 +1636,9 @@ export const catalogueById = (id) =>
 export const adoptBlockOf = (entry) => {
   if (!entry) return null;
   const r = entry.release;
+  const mismatch = entry.benchmark?.parity?.mismatch;
+  if (mismatch)
+    return `Scores don't match ${entry.benchmark.name}'s own grader yet: ${entry.benchmark.parity.matched} of ${entry.benchmark.parity.total} on the pinned reference.`;
   if (r.status === "soon")
     return `Its starter cases aren't proved yet — ${r.proved} of 5 so far.`;
   if (["withdrawn", "unsupported", "access"].includes(r.status)) return r.note;
@@ -1493,11 +1708,13 @@ export const worldFactsOf = (entry, template) => {
   const status = entry?.release?.status;
   const untested = !entry || ["soon", "unsupported", "access"].includes(status);
   return {
-    source: entry?.host
-      ? `${entry.host.name} · ${HOST_SUPPORT[entry.host.support]} · release ${entry.release.version}`
-      : entry
-        ? `${status === "unsupported" ? "Discovered source" : "Future AGI catalogue"} · release ${entry.release.version}`
-        : "Future AGI template · not released",
+    source: entry?.benchmark
+      ? `${entry.benchmark.name} · ${entry.benchmark.upstream} @ ${entry.benchmark.pin} · locked`
+      : entry?.host
+        ? `${entry.host.name} · ${HOST_SUPPORT[entry.host.support]} · release ${entry.release.version}`
+        : entry
+          ? `${status === "unsupported" ? "Discovered source" : "Future AGI catalogue"} · release ${entry.release.version}`
+          : "Future AGI template · not released",
     scoring:
       entry?.scoring ||
       (rules

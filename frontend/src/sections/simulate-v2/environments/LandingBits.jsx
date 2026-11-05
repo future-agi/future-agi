@@ -267,7 +267,12 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
             ? `Ask ${world.release.owner.name} · ${world.release.owner.role}`
             : world.catalogueId
               ? [
-                  world.host ? world.host.name : world.catalogueId,
+                  world.entry?.benchmark
+                    ? /* A subset of a public benchmark says so (T26). */
+                      `${world.entry.benchmark.name}${world.entry.benchmark.subset ? " subset" : ""}`
+                    : world.host
+                      ? world.host.name
+                      : world.catalogueId,
                   /* With splits the version waits for the drawer, so the splits fit. */
                   ...(world.splits
                     ? [splitLine(world.splits)]

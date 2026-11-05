@@ -58,7 +58,7 @@ export function browserSetupOf(src) {
 /* ── the sites an environment's browser may open ─────────────────────────── */
 
 const DEFAULT_SITES = {
-  "env-browser": ["play.2048.io", "app.taskly.dev"],
+  "env-browser": ["play.2048.io", "app.taskly.dev", "app.acme-admin.com"],
 };
 
 /** "app.acme-admin.com" — a bare host, with an optional *. for subdomains. */

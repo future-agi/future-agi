@@ -10,7 +10,15 @@
 
   Connecting the first agent isn't a switch — there's nothing to compare with.
 */
-import { agentVersions, currentAgentVersion, environmentVersions, isEnvDraft, majorOf, nextAgentVersion, nextEnvVersion } from "./versions";
+import {
+  agentVersions,
+  currentAgentVersion,
+  environmentVersions,
+  isEnvDraft,
+  majorOf,
+  nextAgentVersion,
+  nextEnvVersion,
+} from "./versions";
 import { agentToolsFor } from "./toolFit";
 import { detectNudges, withNudges } from "./decoupled";
 import { coreNudgeOf } from "./nudgeEffects";
@@ -35,6 +43,9 @@ export const surfaceOfAgent = (picked, state) => {
 export const fitsEnvChannel = (picked, env, state) => {
   const want = env?.surface;
   if (!want || !picked) return true;
+  /* A command-line world (Terminal-Bench) is for coding agents only (T48). */
+  if (want === "cli")
+    return !!(picked?.values?.codingAgent || picked?.codingAgent);
   /* Channels the agent itself declares (a voice agent built in code). */
   const declared = picked?.values?.channels || picked?.channels;
   if (declared?.length) return declared.includes(want);
@@ -48,7 +59,17 @@ export const fitsEnvChannel = (picked, env, state) => {
 const toolsOfPicked = (picked, label, state) => {
   const u = (picked?.usedIn || []).find((x) => state?.byEnv?.[x.envId]);
   const e = u && (state?.myEnvironments || []).find((x) => x.id === u.envId);
-  if (e) return agentToolsFor(e, { ...state.byEnv[u.envId], agentVersions: picked.versions?.length ? picked.versions : state.byEnv[u.envId].agentVersions }, label);
+  if (e)
+    return agentToolsFor(
+      e,
+      {
+        ...state.byEnv[u.envId],
+        agentVersions: picked.versions?.length
+          ? picked.versions
+          : state.byEnv[u.envId].agentVersions,
+      },
+      label,
+    );
   return (picked?.versions || []).find((v) => v.label === label)?.tools || null;
 };
 
@@ -61,16 +82,34 @@ const toolsOfPicked = (picked, label, state) => {
 export const readAgentTools = (picked, label, state) => {
   /* Tools its MCP servers list come too — they aren't in the agent's own config. */
   const viaMcp = agentMcpTools(picked);
-  const withMcp = (list) => [...list, ...viaMcp.filter((t) => !list.some((x) => x.name === t.name))];
+  const withMcp = (list) => [
+    ...list,
+    ...viaMcp.filter((t) => !list.some((x) => x.name === t.name)),
+  ];
   const tested = toolsOfPicked(picked, label, state);
   /* Whole records: a tool that came from an MCP server keeps where it came from. */
-  if (tested?.length) return withMcp(tested.map((t) => ({ ...t, desc: t.desc || "" })));
+  if (tested?.length)
+    return withMcp(tested.map((t) => ({ ...t, desc: t.desc || "" })));
   const kind = sourceKindOf(picked);
   if (kind === "endpoint" || kind === "prompt") return viaMcp;
   /* Only what the agent's own source or versions declare — never a demo world's
      tools standing in for an agent that declares none. */
-  const own = [...(picked?.versions || [])].reverse().find((v) => v.tools?.length)?.tools || definitionOf(picked).tools || [];
-  return withMcp(own.map((t) => (typeof t === "string" ? { name: t, desc: "" } : { name: t.name, desc: t.desc || "", ...(t.args?.length && { args: t.args }) })));
+  const own =
+    [...(picked?.versions || [])].reverse().find((v) => v.tools?.length)
+      ?.tools ||
+    definitionOf(picked).tools ||
+    [];
+  return withMcp(
+    own.map((t) =>
+      typeof t === "string"
+        ? { name: t, desc: "" }
+        : {
+            name: t.name,
+            desc: t.desc || "",
+            ...(t.args?.length && { args: t.args }),
+          },
+    ),
+  );
 };
 
 /**
@@ -82,7 +121,11 @@ export const readAgentTools = (picked, label, state) => {
  * is re-checked: its reference solution was written without the tools.
  *   → { envPatch, statePatch, tools } or null when there's nothing to read
  */
-export const firstAgentReadPlan = (env, envState, { picked, label, agentName, state, now = new Date().toISOString() }) => {
+export const firstAgentReadPlan = (
+  env,
+  envState,
+  { picked, label, agentName, state, now = new Date().toISOString() },
+) => {
   if (envState?.agent || envState?.toolsRead) return null;
   /* A world built from an agent or a prebuilt world already knows its tools;
      one with only tools added from an MCP server still reads the agent. */
@@ -95,23 +138,59 @@ export const firstAgentReadPlan = (env, envState, { picked, label, agentName, st
   const kept = new Set(existing.map((t) => t.name));
   const tools = [...existing, ...fromAgent.filter((t) => !kept.has(t.name))];
   const note = `Tools read from ${agentName}${label ? ` ${label}` : ""} when it was connected.`;
-  const read = { from: agentName, label: label || null, at: now, count: fromAgent.length, names: fromAgent.map((t) => t.name) };
+  const read = {
+    from: agentName,
+    label: label || null,
+    at: now,
+    count: fromAgent.length,
+    names: fromAgent.map((t) => t.name),
+  };
   if (isEnvDraft(envState)) {
     const v1 = [...environmentVersions(env, envState)].reverse()[0];
     return {
-      tools, fromAgent,
+      tools,
+      fromAgent,
       envPatch: { tools, firstBuildTools: tools },
-      statePatch: { toolsRead: read, envVersions: [{ ...(({ current, ...rest }) => rest)(v1), tools, note: `First build, from your description. ${note}`, changed: [...new Set([...(v1.changed || []), "contract"])] }] },
+      statePatch: {
+        toolsRead: read,
+        envVersions: [
+          {
+            ...(({ current, ...rest }) => rest)(v1),
+            tools,
+            note: `First build, from your description. ${note}`,
+            changed: [...new Set([...(v1.changed || []), "contract"])],
+          },
+        ],
+      },
     };
   }
-  const minted = nextEnvVersion(env, envState, { changed: ["contract"], note, now, tools });
+  const minted = nextEnvVersion(env, envState, {
+    changed: ["contract"],
+    note,
+    now,
+    tools,
+  });
   return {
-    tools, fromAgent,
+    tools,
+    fromAgent,
     /* Unsaved edits ride along into the version — said, never silent. */
     savedEdits: (envState?.unsavedEnvChanges || []).length,
     /* Versions before this one keep the world they had: the first build's list is frozen as it was. */
-    envPatch: { tools, firstBuildTools: env?.firstBuildTools || env?.tools || [] },
-    statePatch: { toolsRead: read, envVersions: [...(envState.envVersions?.length ? envState.envVersions : [...environmentVersions(env, envState)].reverse()), minted], activeEnvVersion: minted.label, unsavedEnvChanges: [] },
+    envPatch: {
+      tools,
+      firstBuildTools: env?.firstBuildTools || env?.tools || [],
+    },
+    statePatch: {
+      toolsRead: read,
+      envVersions: [
+        ...(envState.envVersions?.length
+          ? envState.envVersions
+          : [...environmentVersions(env, envState)].reverse()),
+        minted,
+      ],
+      activeEnvVersion: minted.label,
+      unsavedEnvChanges: [],
+    },
   };
 };
 
@@ -124,18 +203,36 @@ export const agentSwitchPlan = (env, envState, { picked, label, state }) => {
   if (!envState?.agent || !picked) return null;
   const list = agentVersions(envState);
   const n = Math.max(0, ...list.map((v) => majorOf(v.label))) + 1;
-  const prev = currentAgentVersion(envState)?.label || list[list.length - 1]?.label || null;
+  const prev =
+    currentAgentVersion(envState)?.label ||
+    list[list.length - 1]?.label ||
+    null;
   const tools = toolsOfPicked(picked, label, state);
   const version = {
-    ...nextAgentVersion(envState, { note: `Pointed at ${picked.name}${label ? ` ${label}` : ""}.`, tools, basedOnVersion: prev }),
+    ...nextAgentVersion(envState, {
+      note: `Pointed at ${picked.name}${label ? ` ${label}` : ""}.`,
+      tools,
+      basedOnVersion: prev,
+    }),
     id: `agent-v${n}`,
     label: `v${n}`,
     origin: "switch",
-    switchedTo: { key: picked.key || null, name: picked.name, label: label || null },
+    switchedTo: {
+      key: picked.key || null,
+      name: picked.name,
+      label: label || null,
+    },
   };
   const after = { ...envState, agentVersions: [...list, version] };
   const { nudges } = detectNudges(env, after, version.label, prev);
-  const core = coreNudgeOf(env, after, { newLabel: version.label, prevLabel: prev, toSurface: fitsEnvChannel(picked, env, state) ? env?.surface : surfaceOfAgent(picked, state), agentName: picked.name });
+  const core = coreNudgeOf(env, after, {
+    newLabel: version.label,
+    prevLabel: prev,
+    toSurface: fitsEnvChannel(picked, env, state)
+      ? env?.surface
+      : surfaceOfAgent(picked, state),
+    agentName: picked.name,
+  });
   /* A different channel is a core change: the fork is the one question, and
      it already carries only the scenarios whose capabilities still exist —
      listing every tool added and removed beside it would ask the same thing
@@ -143,8 +240,16 @@ export const agentSwitchPlan = (env, envState, { picked, label, state }) => {
   if (core) {
     const added = nudges.filter((x) => x.kind === "add").length;
     const removed = nudges.filter((x) => x.kind === "remove").length;
-    const toolLine = added || removed ? ` Its tools differ too (${added} new, ${removed} missing); scenarios that need a missing one stay here.` : "";
-    return { version, prev, nudges: [{ ...core, detail: `${core.detail}${toolLine}` }], core };
+    const toolLine =
+      added || removed
+        ? ` Its tools differ too (${added} new, ${removed} missing); scenarios that need a missing one stay here.`
+        : "";
+    return {
+      version,
+      prev,
+      nudges: [{ ...core, detail: `${core.detail}${toolLine}` }],
+      core,
+    };
   }
   return { version, prev, nudges, core: null };
 };
@@ -153,12 +258,25 @@ export const agentSwitchPlan = (env, envState, { picked, label, state }) => {
  * The store calls a switch makes, in order: change the agent (its version list
  * continues with the new one) and record the nudges. Returns the plan.
  */
-export const applyAgentSwitch = ({ env, envState, plan, agent, versions, activeLabel, changeEnvAgent, patch }) => {
+export const applyAgentSwitch = ({
+  env,
+  envState,
+  plan,
+  agent,
+  versions,
+  activeLabel,
+  changeEnvAgent,
+  patch,
+}) => {
   if (!plan) {
     changeEnvAgent(env.id, { agent, versions, activeLabel });
     return null;
   }
-  changeEnvAgent(env.id, { agent, versions: [...agentVersions(envState), plan.version], activeLabel: plan.version.label });
+  changeEnvAgent(env.id, {
+    agent,
+    versions: [...agentVersions(envState), plan.version],
+    activeLabel: plan.version.label,
+  });
   const merged = withNudges(envState, plan.nudges);
   if (merged !== envState) patch({ nudges: merged.nudges });
   return plan;

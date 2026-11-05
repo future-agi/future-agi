@@ -492,7 +492,14 @@ export default function WorldAgentPicker({
       ),
     [all, surface, state],
   );
-  const typeWord = surface === "voice" ? "voice" : surface ? "chat" : null;
+  const typeWord =
+    surface === "voice"
+      ? "voice"
+      : surface === "cli"
+        ? "coding"
+        : surface
+          ? "chat"
+          : null;
   /* What stops the picked agent from being built from, said on this step. */
   const picked = agents.find((a) => a.id === value) || null;
   const pickedBlockers = useMemo(() => buildBlockersOf(picked), [picked]);

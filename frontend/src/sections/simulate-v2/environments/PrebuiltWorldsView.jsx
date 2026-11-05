@@ -81,7 +81,7 @@ export default function PrebuiltWorldsView({
   const withSandbox =
     (readiness === "all" || readiness === "ready") &&
     split === "all" &&
-    source !== "third_party" &&
+    (source === "all" || source === "futureagi") &&
     sandboxMatches({ query, type, domain });
   const countOf = (id) =>
     id === "all"

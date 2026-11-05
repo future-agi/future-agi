@@ -15,6 +15,7 @@ import ConnectCatalog from "../agents/connect/ConnectCatalog";
 import { SectionHead, WorldCard } from "./LandingBits";
 import { OUTLINE_BTN, focusRing } from "./landingStyles";
 import WorldDrawer from "./WorldDrawer";
+import ImageWorldDrawer from "./ImageWorldDrawer";
 import SaasSandboxRow from "./SaasSandbox";
 import { ConnectSubmitContext } from "../agents/connect/connectSubmit";
 import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
@@ -102,6 +103,7 @@ export default function EnvironmentsLanding({
   const ownWorldsRef = useRef(null);
   const worldsRef = givenExamplesRef || ownWorldsRef;
   const connectRef = useRef(null);
+  const [imageOpen, setImageOpen] = useState(false);
 
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
@@ -151,6 +153,51 @@ export default function EnvironmentsLanding({
           }
         >
           Open setup
+        </Button>
+      </Stack>
+
+      {/* T40: a world from the team's own container image. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{
+          px: 2,
+          py: 1.5,
+          /* Sits under Build from code as its pair, not a section of its own. */
+          mt: "-20px !important",
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          flexWrap: "wrap",
+          rowGap: 1,
+        }}
+      >
+        <Iconify
+          icon="solar:box-linear"
+          width={16}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+        <Box sx={{ flex: 1, minWidth: 220 }}>
+          <Typography
+            sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500 }}
+          >
+            From your container image
+          </Typography>
+          <Typography
+            sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}
+          >
+            A pinned image on a supported runtime. We inspect it, you review
+            what we found, and it becomes a private world.
+          </Typography>
+        </Box>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setImageOpen(true)}
+          sx={OUTLINE_BTN}
+        >
+          Inspect an image
         </Button>
       </Stack>
 
@@ -206,6 +253,8 @@ export default function EnvironmentsLanding({
           );
         }}
       />
+
+      <ImageWorldDrawer open={imageOpen} onClose={() => setImageOpen(false)} />
 
       {/* Or one already in Agents (Flow 2: pick the agent from Agents). */}
       <YourAgentsSection />
@@ -309,7 +358,15 @@ function PrebuiltSection({ sectionRef, onBrowse }) {
   const featured = useMemo(() => {
     const soon = new Set(WORLD_TYPES.filter((t) => t.soon).map((t) => t.id));
     const seen = new Set();
-    const open = worlds.filter((w) => !soon.has(w.type));
+    /* Only ready, launch-set worlds lead: not benchmarks, third-party or pending ones. */
+    const open = worlds.filter(
+      (w) =>
+        !soon.has(w.type) &&
+        (w.readiness || "ready") === "ready" &&
+        !w.entry?.benchmark &&
+        !w.entry?.host &&
+        !w.entry?.simSites,
+    );
     const firsts = open.filter((w) =>
       seen.has(w.type) ? false : seen.add(w.type),
     );

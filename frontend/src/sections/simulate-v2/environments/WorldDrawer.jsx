@@ -7,12 +7,14 @@ import SideDrawer from "../components/SideDrawer";
 import TemplateBuildPanel from "./TemplateBuildPanel";
 import WorldPreview from "./WorldPreview";
 import WorldRlAccess from "./WorldRlAccess";
+import WorldParity from "./WorldParity";
 import { QuietTag } from "./LandingBits";
 import {
   HOST_SUPPORT,
   READINESS,
   adoptBlockOf,
   catalogueById,
+  subsetLineOf,
 } from "../_mock/catalogue";
 
 /*
@@ -73,11 +75,17 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
                 noWrap
                 sx={{ typography: "s2", color: "text.secondary" }}
               >
-                {entry?.host
-                  ? `${entry.host.name} · ${entry.task} · release ${entry.release.version}`
-                  : entry
-                    ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
-                    : "Use it with one of your agents."}
+                {entry?.benchmark
+                  ? [
+                      `${entry.benchmark.name} @ ${entry.benchmark.pin}`,
+                      subsetLineOf(entry) || "All tasks",
+                      `release ${entry.release.version}`,
+                    ].join(" · ")
+                  : entry?.host
+                    ? `${entry.host.name} · ${entry.task} · release ${entry.release.version}`
+                    : entry
+                      ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
+                      : "Use it with one of your agents."}
               </Typography>
             </Box>
             <IconButton
@@ -91,7 +99,9 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
           </Stack>
 
           {/* Why it can't be started, or what a retired release means. */}
-          {(blocked || entry?.release?.status === "retired") && (
+          {(blocked ||
+            entry?.release?.status === "retired" ||
+            entry?.benchmark) && (
             <Stack
               direction="row"
               spacing={1}
@@ -113,7 +123,10 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
               <Typography
                 sx={{ typography: "s2", color: "text.secondary", flex: 1 }}
               >
-                {blocked || entry.release.note}
+                {blocked ||
+                  (entry.benchmark
+                    ? "A locked release: its tasks, splits and grader can't change, so scores stay comparable with the benchmark's. Copy it to edit; the copy isn't comparable."
+                    : entry.release.note)}
                 {replacement && onOpenWorld && (
                   <>
                     {" "}
@@ -170,12 +183,15 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             <Tab value="start" label="Use with your agent" />
             {/* rl.md step 1: a trainer starts from the catalogue. */}
             {entry && <Tab value="rl" label="RL access" />}
+            {/* T26: a public benchmark proves its scores match its own grader. */}
+            {entry?.benchmark && <Tab value="parity" label="Score parity" />}
           </CustomTabs>
 
           {/* Keyed by tab, so switching starts the new tab at its top. */}
           <Box key={tab} sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
             {tab === "world" && <WorldPreview world={world} />}
             {tab === "rl" && <WorldRlAccess world={world} />}
+            {tab === "parity" && <WorldParity entry={entry} />}
             {tab === "start" && (
               <TemplateBuildPanel
                 key={world.id}
