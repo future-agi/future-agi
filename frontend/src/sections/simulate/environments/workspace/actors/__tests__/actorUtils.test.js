@@ -278,3 +278,51 @@ describe("toRecord play", () => {
     expect(toRecord(actor, { play: "mocked" }, {})).not.toHaveProperty("play");
   });
 });
+
+describe("toRecord knowledge picks", () => {
+  const sources = {
+    files: ["docs/policy.md", "docs/faq.md"],
+    records: [{ store: "crm", collection: "deals" }],
+  };
+  it("puts the picked files and records in place of the earlier ones and keeps facts and a record's where", () => {
+    const actor = {
+      id: "m",
+      name: "Mia",
+      knowledge: [
+        { kind: "facts", text: "Limit is 15%" },
+        { kind: "files", paths: ["docs/faq.md"] },
+        {
+          kind: "records",
+          store: "crm",
+          collection: "deals",
+          where: { owner: "mia" },
+        },
+      ],
+    };
+    const record = toRecord(
+      actor,
+      { files: ["docs/policy.md"], recordsRead: ["crm.deals"] },
+      { knowledgeSources: sources },
+    );
+    expect(record.knowledge).toEqual([
+      { kind: "facts", text: "Limit is 15%" },
+      { kind: "files", paths: ["docs/policy.md"] },
+      {
+        kind: "records",
+        store: "crm",
+        collection: "deals",
+        where: { owner: "mia" },
+      },
+    ]);
+  });
+
+  it("leaves the knowledge as it was when nothing is picked anew", () => {
+    const knowledge = [{ kind: "files", paths: ["docs/faq.md"] }];
+    const record = toRecord(
+      { id: "m", name: "Mia", knowledge },
+      { files: ["docs/faq.md"] },
+      { knowledgeSources: sources },
+    );
+    expect(record.knowledge).toBe(knowledge);
+  });
+});

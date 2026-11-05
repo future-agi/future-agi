@@ -104,6 +104,44 @@ const triggerChoice = (trigger) => {
 const isWrittenFact = (one) =>
   one?.kind === "facts" && typeof one.text === "string" && one.text.trim();
 
+// The files and record collections an actor's knowledge names, as the form picks them.
+const readFiles = (knowledge) =>
+  (knowledge || [])
+    .filter((one) => one?.kind === "files")
+    .flatMap((one) => one.paths || []);
+export const recordKey = (one) => `${one.store || ""}.${one.collection || ""}`;
+const readRecords = (knowledge) =>
+  (knowledge || []).filter((one) => one?.kind === "records").map(recordKey);
+
+// The knowledge with what the form picked for files and records in place of what it named before; facts and any
+// other entry stay where they were. A record keeps the rest of its entry (a `where`) when it is still picked.
+const withReadable = (knowledge, files, records, sources) => {
+  const kept = knowledge.filter(
+    (one) => one?.kind !== "files" && one?.kind !== "records",
+  );
+  const before = Object.fromEntries(
+    knowledge
+      .filter((one) => one?.kind === "records")
+      .map((one) => [recordKey(one), one]),
+  );
+  const offered = Object.fromEntries(
+    (sources?.records || []).map((one) => [recordKey(one), one]),
+  );
+  return [
+    ...kept,
+    ...(files.length ? [{ kind: "files", paths: files }] : []),
+    ...records.map(
+      (key) =>
+        before[key] || {
+          kind: "records",
+          store: offered[key]?.store ?? key.split(".")[0],
+          collection:
+            offered[key]?.collection ?? key.split(".").slice(1).join("."),
+        },
+    ),
+  ];
+};
+
 // What each form field starts from, read from the record.
 export const initialFields = (actor) => {
   const activation = actor?.activation || {};
@@ -127,6 +165,8 @@ export const initialFields = (actor) => {
       .filter(isWrittenFact)
       .map((one) => one.text)
       .join("\n"),
+    files: readFiles(actor?.knowledge),
+    recordsRead: readRecords(actor?.knowledge),
     style: actor?.behaviour?.style || "",
     timing: timing.kind || "immediate",
     seconds: timing.seconds ?? 0,
@@ -245,6 +285,13 @@ export const toRecord = (actor, fields, context) => {
   }
   if (writes("facts"))
     record.knowledge = withFacts(actor.knowledge || [], lines(read("facts")));
+  if (edited("files") || edited("recordsRead"))
+    record.knowledge = withReadable(
+      record.knowledge || actor.knowledge || [],
+      read("files"),
+      read("recordsRead"),
+      context.knowledgeSources,
+    );
   if (writes("style", "timing", "seconds")) {
     record.behaviour = { ...actor.behaviour };
     if (writes("style")) record.behaviour.style = read("style");

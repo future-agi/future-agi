@@ -79,6 +79,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     actions: data?.actions || [],
     channels: data?.channels || {},
     loudness: data?.loudness || {},
+    knowledgeSources: data?.knowledge_sources || { files: [], records: [] },
     others: cast,
   };
 

@@ -25,6 +25,7 @@ import {
   idRule,
   idRuleText,
   initialFields,
+  recordKey,
   toRecord,
 } from "./actorUtils";
 
@@ -317,6 +318,44 @@ export default function ActorForm({
 
               {choice("kind", F.kind, Object.entries(F.kinds))}
               {many("facts", F.facts, F.factsHelp)}
+              <Autocomplete
+                multiple
+                size="small"
+                options={context.knowledgeSources?.files || []}
+                value={value("files")}
+                onChange={(_, next) => put("files", next)}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={F.files}
+                    helperText={
+                      context.knowledgeSources?.files?.length
+                        ? F.filesHelp
+                        : F.noFiles
+                    }
+                  />
+                )}
+              />
+              <Autocomplete
+                multiple
+                size="small"
+                options={(context.knowledgeSources?.records || []).map(
+                  recordKey,
+                )}
+                value={value("recordsRead")}
+                onChange={(_, next) => put("recordsRead", next)}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={F.recordsRead}
+                    helperText={
+                      context.knowledgeSources?.records?.length
+                        ? F.recordsHelp
+                        : F.noRecords
+                    }
+                  />
+                )}
+              />
               <Stack direction="row" spacing={1}>
                 {choice(
                   "timing",
@@ -513,6 +552,15 @@ ActorForm.propTypes = {
     records: PropTypes.object,
     channels: PropTypes.object,
     loudness: PropTypes.object,
+    knowledgeSources: PropTypes.shape({
+      files: PropTypes.arrayOf(PropTypes.string),
+      records: PropTypes.arrayOf(
+        PropTypes.shape({
+          store: PropTypes.string,
+          collection: PropTypes.string,
+        }),
+      ),
+    }),
     others: PropTypes.array,
   }).isRequired,
   busy: PropTypes.bool,

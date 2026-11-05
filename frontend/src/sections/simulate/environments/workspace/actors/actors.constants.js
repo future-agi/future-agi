@@ -129,6 +129,14 @@ export const ACTORS_COPY = {
       stopWhen: "Is done when (optional, one per line)",
       facts: "What they know (optional, one per line)",
       factsHelp: "Facts they can use, such as the refund limit is $500",
+      files: "Files they can read (optional)",
+      filesHelp:
+        "The environment's own documents. What only the grader reads and the harness's files are never offered.",
+      recordsRead: "Records they can read (optional)",
+      recordsHelp:
+        "Record collections in the world they can look up during a run",
+      noFiles: "This environment has no documents an actor can read",
+      noRecords: "This environment's world has no records yet",
       style: "How they behave (optional)",
       styleHelp: "Their manner, such as brisk and decides quickly",
       answers: "Answers",
