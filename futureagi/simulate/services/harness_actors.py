@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
@@ -96,6 +97,10 @@ class Cast(TypedDict):
     loudness: dict[str, Any]
     reserved_ids: list[str]
     knowledge_sources: KnowledgeSources
+    # The environment's actor limits; a key set to null is no limit, a missing key the channel's default.
+    limits: dict[str, Any]
+    # The models an actor may be played on; the first is the default.
+    actor_models: list[str]
 
 
 class Seen(TypedDict):
@@ -285,7 +290,71 @@ def _cast_view(
         "loudness": rules.get("loudness") or {},
         "reserved_ids": list(rules.get("reserved_ids") or []),
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),
+        "limits": _limits(environment_files),
+        "actor_models": list(ACTOR_MODELS),
     }
+
+
+# The models an actor may be played on for now (K-27): the caller simulator's own, first, and one more flash model.
+ACTOR_MODELS = ("gemini-3.8-flash", "gemini-3.7-flash")
+LIMIT_FIELDS = {
+    "max_active": int,
+    "caller_takes_back_after_turns": int,
+    "actor_seconds_per_call": float,
+    "max_messages": int,
+    "model": str,
+}
+
+
+def _limits(environment_files: dict[str, bytes]) -> dict[str, Any]:
+    body = (
+        _read_json(environment_files, ACTORS_FILE)
+        if ACTORS_FILE in environment_files
+        else {}
+    )
+    limits = body.get("limits") if isinstance(body, dict) else None
+    return dict(limits) if isinstance(limits, dict) else {}
+
+
+def write_actor_limits(
+    environment: HostedHarnessJob,
+    *,
+    limits: dict[str, Any],
+    user: User | None,
+    expected_revision: int | None,
+) -> Cast:
+    """Set the environment's actor limits in the draft: each a positive number or null for no limit, `model` one of
+    `ACTOR_MODELS`; a field left out takes the channel's default. Refuses `limits_invalid` (400)."""
+    problems = []
+    clean: dict[str, Any] = {}
+    for key, value in (limits or {}).items():
+        kind = LIMIT_FIELDS.get(key)
+        if kind is None:
+            problems.append(f"{key} is not an actor limit")
+        elif value is None:
+            clean[key] = None
+        elif kind is str:
+            if value not in ACTOR_MODELS:
+                problems.append(f"model is one of {', '.join(ACTOR_MODELS)}")
+            else:
+                clean[key] = value
+        elif (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+        ):
+            problems.append(f"{key} is a positive number, or null for no limit")
+        else:
+            clean[key] = kind(value)
+    if problems:
+        raise HostedHarnessError("limits_invalid", "; ".join(problems), status_code=400)
+    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    rules = actor_rules(environment_files)
+    return _written(
+        environment,
+        _with_cast(environment_files, _cast(environment_files), rules, limits=clean),
+        suite_files,
+        draft,
+        user,
+    )
 
 
 def read_actors(environment: HostedHarnessJob) -> Cast:
@@ -649,18 +718,25 @@ def _edited(
 
 
 def _with_cast(
-    environment_files: dict[str, bytes], actors: list[ActorRecord], rules: ActorRules
+    environment_files: dict[str, bytes],
+    actors: list[ActorRecord],
+    rules: ActorRules,
+    *,
+    limits: dict[str, Any] | None = None,
 ) -> dict[str, bytes]:
+    """The environment's files with this cast, keeping its limits (or these new ones)."""
+    kept = _limits(environment_files) if limits is None else limits
     files = dict(environment_files)
-    # No actors means no file, so removing the only actor leaves nothing to review.
+    # No actors and no limits means no file, so removing the only actor leaves nothing to review.
     files.pop(ACTORS_FILE, None)
-    if actors:
-        files[ACTORS_FILE] = (
-            json.dumps(
-                {"schema": rules["formats"][ACTORS_FILE], "actors": actors}, indent=2
-            )
-            + "\n"
-        ).encode("utf-8")
+    if actors or kept:
+        body: dict[str, Any] = {
+            "schema": rules["formats"][ACTORS_FILE],
+            "actors": actors,
+        }
+        if kept:
+            body["limits"] = kept
+        files[ACTORS_FILE] = (json.dumps(body, indent=2) + "\n").encode("utf-8")
     return files
 
 
@@ -692,18 +768,7 @@ def write_actor_edit(
             "actor_id_mismatch", "an actor's id never changes", status_code=400
         )
     actor_id = given
-    # The draft is read before its files, so an edit landing in between fails the write's revision check.
-    draft = drafts.fresh_draft(environment, "environment")
-    sides = drafts.edit_sides(environment)
-    environment_files, suite_files = sides["environment"], sides["suite"]
-    if expected_revision is not None and expected_revision != (
-        draft.revision if draft is not None else 0
-    ):
-        raise HostedHarnessError(
-            "draft_changed",
-            "the actors were edited elsewhere since you read them; read them again",
-            status_code=409,
-        )
+    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
     before = _cast(environment_files)
     actors = _edited(
         before, op=op, actor_id=actor_id, body=body, user=user, suite_files=suite_files
@@ -725,7 +790,41 @@ def write_actor_edit(
         )
     if problems:
         raise HostedHarnessError("actor_invalid", " ".join(problems), status_code=400)
-    environment_files = _with_cast(environment_files, actors, rules)
+    return _written(
+        environment,
+        _with_cast(environment_files, actors, rules),
+        suite_files,
+        draft,
+        user,
+    )
+
+
+def _draft_read(
+    environment: HostedHarnessJob, expected_revision: int | None
+) -> tuple[Any, dict[str, bytes], dict[str, bytes]]:
+    """The environment draft and both sides' files, refusing `draft_changed` (409) when the caller read an older
+    revision. The draft is read before its files, so an edit landing in between fails the write's revision check."""
+    draft = drafts.fresh_draft(environment, "environment")
+    sides = drafts.edit_sides(environment)
+    if expected_revision is not None and expected_revision != (
+        draft.revision if draft is not None else 0
+    ):
+        raise HostedHarnessError(
+            "draft_changed",
+            "the actors were edited elsewhere since you read them; read them again",
+            status_code=409,
+        )
+    return draft, sides["environment"], sides["suite"]
+
+
+def _written(
+    environment: HostedHarnessJob,
+    environment_files: dict[str, bytes],
+    suite_files: dict[str, bytes],
+    draft: Any,
+    user: User | None,
+) -> Cast:
+    """Record the environment side of the draft and return the cast as it now reads."""
     expected = {
         "environment": (
             drafts.DraftRef(str(draft.id), draft.revision)
@@ -750,6 +849,77 @@ def write_actor_edit(
     transaction.on_commit(lambda: drafts.retire_chat_runtime(environment))
     return _cast_view(
         environment_files, suite_files, written.environment, _stores(environment)
+    )
+
+
+# What a person may upload into an environment draft, by kind: the folder it lands in and the formats it may be. A
+# later kind (seed data, recordings) adds one entry here and a reader where it is used, nothing else.
+UPLOAD_KINDS: dict[str, dict[str, Any]] = {
+    # Documents an actor may be given to read (a policy, a price list), picked per actor like any environment file.
+    "knowledge": {"folder": "knowledge/", "formats": (".md", ".txt", ".json", ".csv")},
+}
+# An upload's size bound: an actor is given at most the start of a file, so a larger one only costs storage.
+UPLOAD_MAX_BYTES = 1024 * 1024
+_UPLOAD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$")
+
+
+def upload_environment_file(
+    environment: HostedHarnessJob,
+    *,
+    kind: str,
+    name: str,
+    content: bytes,
+    user: User | None,
+    expected_revision: int | None,
+) -> Cast:
+    """Put one uploaded file into the environment draft under its kind's folder and return the cast, whose knowledge
+    sources then list it. Refuses `upload_kind_unknown`, `upload_invalid` (400) and `draft_changed` (409); a file of
+    the same name is replaced."""
+    spec = UPLOAD_KINDS.get(kind)
+    if spec is None:
+        raise HostedHarnessError(
+            "upload_kind_unknown",
+            f"{kind!r} is not a kind of upload; one of {', '.join(sorted(UPLOAD_KINDS))}",
+            status_code=400,
+        )
+    base = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
+    problems = []
+    if not _UPLOAD_NAME.match(base):
+        problems.append(
+            "name it with letters, digits, spaces, dots, dashes or underscores, up to 120 characters"
+        )
+    if not base.lower().endswith(spec["formats"]):
+        problems.append(f"a {kind} file is one of {', '.join(spec['formats'])}")
+    if not content:
+        problems.append("the file is empty")
+    if len(content) > UPLOAD_MAX_BYTES:
+        problems.append(f"the file is larger than {UPLOAD_MAX_BYTES // 1024} KB")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        problems.append("the file is not UTF-8 text")
+        text = ""
+    if text and base.lower().endswith(".json"):
+        try:
+            json.loads(text)
+        except ValueError:
+            problems.append("the file is not valid JSON")
+    if problems:
+        raise HostedHarnessError(
+            "upload_invalid",
+            f"{base or 'The file'}: " + "; ".join(problems),
+            status_code=400,
+        )
+    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    path = spec["folder"] + base
+    if kind == "knowledge" and not _readable_file(path, actor_rules(environment_files)):
+        raise HostedHarnessError(
+            "upload_invalid",
+            f"{base}: an actor may not be given a file by this name; rename it",
+            status_code=400,
+        )
+    return _written(
+        environment, {**environment_files, path: content}, suite_files, draft, user
     )
 
 

@@ -1067,6 +1067,13 @@ class HarnessActorWriteSerializer(serializers.Serializer):
     )
 
 
+class HarnessActorLimitsWriteSerializer(serializers.Serializer):
+    # Each a positive number or null for no limit; `model` one of the actor models. A field left out takes the
+    # channel's default.
+    limits = serializers.DictField()
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
 class HarnessActorDeleteQuerySerializer(serializers.Serializer):
     # The draft revision the actors were read at; an edit made elsewhere since is refused.
     expected_revision = serializers.IntegerField(required=False, min_value=0)
@@ -1105,6 +1112,10 @@ class HarnessActorListSerializer(serializers.Serializer):
     reserved_ids = serializers.ListField(child=serializers.CharField())
     # What an actor may be given to read here: the environment's own files and its world's record collections.
     knowledge_sources = HarnessActorKnowledgeSourcesSerializer()
+    # The environment's actor limits: null is no limit, a missing key the channel's default.
+    limits = JsonObjectRequestField(required=False)
+    # The models an actor may be played on; the first is the default.
+    actor_models = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):
