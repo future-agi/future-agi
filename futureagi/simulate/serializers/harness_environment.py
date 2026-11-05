@@ -1080,6 +1080,16 @@ class HarnessWorldActionSerializer(serializers.Serializer):
     description = serializers.CharField(allow_blank=True)
 
 
+class HarnessActorRecordSourceSerializer(serializers.Serializer):
+    store = serializers.CharField(allow_blank=True)
+    collection = serializers.CharField()
+
+
+class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
+    files = serializers.ListField(child=serializers.CharField())
+    records = HarnessActorRecordSourceSerializer(many=True)
+
+
 class HarnessActorListSerializer(serializers.Serializer):
     actors = serializers.ListField(child=HarnessActorRecordField())
     source = serializers.ChoiceField(choices=("draft", "saved"))
@@ -1093,6 +1103,8 @@ class HarnessActorListSerializer(serializers.Serializer):
     loudness = JsonObjectRequestField()
     # Ids no actor may take.
     reserved_ids = serializers.ListField(child=serializers.CharField())
+    # What an actor may be given to read here: the environment's own files and its world's record collections.
+    knowledge_sources = HarnessActorKnowledgeSourcesSerializer()
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

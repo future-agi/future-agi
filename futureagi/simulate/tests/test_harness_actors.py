@@ -1392,3 +1392,75 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
         cleared,
     )
     assert TRIAL_STATE_KEY not in cleared
+
+
+def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_records(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessStageOutput
+
+    environment = record_tests._environment(user, workspace, "actors-knowledge")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "docs/discount-policy.md": "Up to 15% needs the manager.",
+                "sub_goals.json": "{}",
+            },
+        ),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Stores",
+        summary="",
+        kind="stores",
+        data=[
+            {
+                "capability": "crm",
+                "engine": "postgres",
+                "tables": [{"name": "deals", "rows": 3}],
+            }
+        ],
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    sources = listed["knowledge_sources"]
+    assert "docs/discount-policy.md" in sources["files"]
+    assert (
+        "sub_goals.json" not in sources["files"]
+        and "contract.json" not in sources["files"]
+    )
+    assert sources["records"] == [{"store": "crm", "collection": "deals"}]
+
+    reads = {
+        **MANAGER,
+        "knowledge": [
+            {"kind": "files", "paths": ["docs/discount-policy.md"]},
+            {"kind": "records", "store": "crm", "collection": "deals"},
+        ],
+    }
+    assert _add(auth_client, environment, reads).status_code == 200
+    for bad, said in (
+        (
+            {"kind": "files", "paths": ["sub_goals.json"]},
+            "may never read sub_goals.json",
+        ),
+        (
+            {"kind": "files", "paths": ["docs/missing.md"]},
+            "docs/missing.md is not a file of this environment",
+        ),
+        (
+            {"kind": "records", "store": "crm", "collection": "salaries"},
+            "crm.salaries is not a record collection",
+        ),
+    ):
+        refused = auth_client.put(
+            f"{BASE}/{environment.id}/actors/manager/",
+            {"actor": {**reads, "knowledge": [*reads["knowledge"], bad]}},
+            format="json",
+        )
+        assert refused.status_code == 400 and said in refused.json()["message"], (
+            refused.content
+        )

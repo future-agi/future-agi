@@ -8,7 +8,8 @@
       "tests",
       "setup_code",
       "ready_code",
-      "coverage"
+      "coverage",
+      "faults"
     ],
     "files": ["sub_goals.json", "certification.json", "runtime-validation.json"]
   },
@@ -27,6 +28,28 @@
     ["caller", "situation"]
   ],
   "private_to_actor": ["goal", "prompt", "instruction", "actions"],
+  "not_knowledge": {
+    "files": [
+      "contract.json",
+      "manifest.json",
+      "actors.json",
+      "actor_rules.json",
+      "credentials.json",
+      "world.py",
+      "world.sqlite",
+      "simulator_prompt.md",
+      "source-data-invariants.json",
+      "scenarios.json"
+    ],
+    "prefixes": [
+      "generic-harness/",
+      "handlers/",
+      "seed/",
+      "scenarios/",
+      "checks/",
+      "."
+    ]
+  },
   "situation_before": "Your details:",
   "reserved_ids": ["agent"],
   "references": {
@@ -243,7 +266,8 @@
           "default": "world",
           "enum": ["caller", "world"],
           "title": "Side",
-          "type": "string"
+          "type": "string",
+          "description": "Whose side the actor is on, for reading the cast; it changes no rule"
         },
         "role": {
           "default": "",
@@ -373,7 +397,8 @@
         "surface": {
           "default": "world.records",
           "title": "Surface",
-          "type": "string"
+          "type": "string",
+          "description": "Where the actor acts in the world; never how it speaks (that is `channel`)"
         },
         "permitted_actions": {
           "items": {
@@ -416,7 +441,8 @@
           "default": "mocked",
           "enum": ["mocked", "live", "both"],
           "title": "Play",
-          "type": "string"
+          "type": "string",
+          "description": "mocked: only the actions each scenario gives it; live: decides its own actions from what it sees when reached; both"
         },
         "channel": {
           "anyOf": [
@@ -428,7 +454,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "How the actor speaks in the conversation, if it does; empty: it never speaks there"
         },
         "loudness_ratio": {
           "anyOf": [

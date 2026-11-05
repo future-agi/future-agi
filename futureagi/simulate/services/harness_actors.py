@@ -74,6 +74,18 @@ class WorldAction(TypedDict):
     description: str
 
 
+class RecordSource(TypedDict):
+    store: str
+    collection: str
+
+
+class KnowledgeSources(TypedDict):
+    """What an actor may be given to read here: the environment's own files and its world's record collections."""
+
+    files: list[str]
+    records: list[RecordSource]
+
+
 class Cast(TypedDict):
     actors: list[ActorRecord]
     source: Literal["draft", "saved"]
@@ -83,6 +95,7 @@ class Cast(TypedDict):
     channels: dict[str, str]
     loudness: dict[str, Any]
     reserved_ids: list[str]
+    knowledge_sources: KnowledgeSources
 
 
 class Seen(TypedDict):
@@ -201,10 +214,58 @@ def world_actions(files: dict[str, bytes], rules: ActorRules) -> list[WorldActio
     return [{"action": name, **one} for name, one in sorted(actions.items())]
 
 
+def _readable_file(path: str, rules: ActorRules) -> bool:
+    """Whether an actor may be given this file, by the sealed rules: never what only the evaluator reads, never the
+    harness's own files."""
+    name = path.strip().lstrip("/")
+    hidden = rules.get("not_knowledge") or {}
+    return (
+        bool(name)
+        and ".." not in name.split("/")
+        and (
+            name.rsplit("/", 1)[-1]
+            not in (rules.get("evaluator_only") or {}).get("files", [])
+            and name not in hidden.get("files", [])
+            and not any(
+                name.startswith(prefix) for prefix in hidden.get("prefixes", [])
+            )
+        )
+    )
+
+
+def knowledge_sources(
+    environment_files: dict[str, bytes], rules: ActorRules, stores: Any
+) -> KnowledgeSources:
+    """The files and record collections an actor may be given to read in this environment."""
+    records: list[RecordSource] = [
+        {
+            "store": str(store.get("capability") or ""),
+            "collection": str(table.get("name") or ""),
+        }
+        for store in (stores if isinstance(stores, list) else [])
+        if isinstance(store, dict)
+        for table in store.get("tables") or []
+        if isinstance(table, dict) and table.get("name")
+    ]
+    return {
+        "files": sorted(
+            name for name in environment_files if _readable_file(name, rules)
+        ),
+        "records": records,
+    }
+
+
+def _stores(environment: HostedHarnessJob) -> Any:
+    from simulate.services.harness_environment import _stage_output
+
+    return _stage_output(environment, "stores")
+
+
 def _cast_view(
     environment_files: dict[str, bytes],
     suite_files: dict[str, bytes],
     draft: Any,
+    stores: Any = None,
 ) -> Cast:
     rules = actor_rules(environment_files)
     documents = suite_documents(suite_files)
@@ -223,6 +284,7 @@ def _cast_view(
         "channels": rules.get("channels") or {},
         "loudness": rules.get("loudness") or {},
         "reserved_ids": list(rules.get("reserved_ids") or []),
+        "knowledge_sources": knowledge_sources(environment_files, rules, stores),
     }
 
 
@@ -236,6 +298,7 @@ def read_actors(environment: HostedHarnessJob) -> Cast:
         sides["environment"],
         sides["suite"],
         drafts.fresh_draft(environment, "environment"),
+        _stores(environment),
     )
 
 
@@ -280,6 +343,7 @@ def _new_choices(
     rules: ActorRules,
     suite_files: dict[str, bytes] | None = None,
     modality: str | None = None,
+    stores: Any = None,
 ) -> list[str]:
     """Only what this edit adds must exist here, so an actor written elsewhere can still be edited."""
     before = before or {}
@@ -305,6 +369,7 @@ def _new_choices(
                     f"{actor_id} cannot reach a {modality} agent through {channel}; choose another channel."
                 )
         problems += _sharing_the_caller(before, after, suite_files or {}, rules)
+    problems += _knowledge_problems(before, after, files, rules, stores)
     known = [one["action"] for one in world_actions(files, rules)]
     old = set(before.get("permitted_actions") or [])
     added = [
@@ -324,6 +389,53 @@ def _new_choices(
     elif added:
         problems.append(
             f"{', '.join(added)} is not an action of this environment; choose from {', '.join(known)}."
+        )
+    return problems
+
+
+def _knowledge_problems(
+    before: ActorRecord,
+    after: ActorRecord,
+    files: dict[str, bytes],
+    rules: ActorRules,
+    stores: Any,
+) -> list[str]:
+    """Files and records this edit adds to an actor's knowledge must be ones it may read here."""
+    actor_id = str(after.get("id") or "")
+    offered = knowledge_sources(files, rules, stores)
+
+    def named(record: ActorRecord, kind: str) -> set[str]:
+        out = set()
+        for one in record.get("knowledge") or []:
+            if isinstance(one, dict) and one.get("kind") == kind == "files":
+                out |= {str(path) for path in one.get("paths") or []}
+            elif isinstance(one, dict) and one.get("kind") == kind == "records":
+                out.add(f"{one.get('store') or ''}.{one.get('collection') or ''}")
+        return out
+
+    problems = []
+    added_files = sorted(named(after, "files") - named(before, "files"))
+    refused = [path for path in added_files if not _readable_file(path, rules)]
+    if refused:
+        problems.append(
+            f"{actor_id} may never read {', '.join(refused)}: it is the evaluator's or the harness's own."
+        )
+    missing = [
+        path
+        for path in added_files
+        if path not in refused and path not in offered["files"]
+    ]
+    if missing:
+        problems.append(f"{', '.join(missing)} is not a file of this environment.")
+    collections = {f"{one['store']}.{one['collection']}" for one in offered["records"]}
+    unknown = [
+        one
+        for one in sorted(named(after, "records") - named(before, "records"))
+        if one not in collections
+    ]
+    if unknown:
+        problems.append(
+            f"{', '.join(unknown)} is not a record collection of this environment."
         )
     return problems
 
@@ -609,6 +721,7 @@ def write_actor_edit(
             rules,
             suite_files,
             _modality(environment_files),
+            _stores(environment),
         )
     if problems:
         raise HostedHarnessError("actor_invalid", " ".join(problems), status_code=400)
@@ -635,7 +748,9 @@ def write_actor_edit(
             status_code=409,
         )
     transaction.on_commit(lambda: drafts.retire_chat_runtime(environment))
-    return _cast_view(environment_files, suite_files, written.environment)
+    return _cast_view(
+        environment_files, suite_files, written.environment, _stores(environment)
+    )
 
 
 def _stamped(
