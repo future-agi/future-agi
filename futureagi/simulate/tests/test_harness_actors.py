@@ -123,7 +123,7 @@ def test_a_manager_added_to_the_draft_reads_back_and_the_saved_version_waits_for
     seen = {one["input"]: one["value"] for one in view.json()["sees"]}
     assert view.json()["permitted_actions"] == MANAGER["permitted_actions"]
     assert seen["actor.constraints"]["private"] == ["The quarter's discount budget"]
-    assert "scenario.solution" in view.json()["never_sees"]
+    assert "solution" in view.json()["never_sees"]["scenario_fields"]
     # The saved version is untouched until the draft is saved.
     environment.refresh_from_db()
     assert (
@@ -247,8 +247,8 @@ def test_a_view_hides_another_actor_s_private_material(
     view = auth_client.get(f"{BASE}/{environment.id}/actors/manager/").json()
 
     assert "CANARY" not in json.dumps(view["sees"])
-    assert {"coworker.goal", "coworker.prompt", "coworker.instruction"} <= set(
-        view["never_sees"]
+    assert {"Sam.goal", "Sam.prompt", "Sam.instruction"} <= set(
+        view["never_sees"]["other_actors"]
     )
 
 
@@ -295,7 +295,7 @@ def test_an_actor_a_scenario_includes_is_not_removed(
 
     documents = [
         _scenario(NAMES[0], actors=[{"id": "manager", "instruction": "Approve it"}]),
-        _scenario(NAMES[1], sub_actors=[{"id": "colleague"}]),
+        _scenario(NAMES[1], actors=[{"id": "colleague"}]),
     ]
     environment = record_tests._environment(user, workspace, "actors-in-use")
     record_authoring(
@@ -387,14 +387,18 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(
     )
     changed = fresh_draft(environment, "environment")
 
-    assert added.diff["actors"] == {"added": ["manager"], "removed": [], "changed": []}
+    assert added.diff["actors"] == {
+        "added": [{"id": "manager", "name": MANAGER["name"]}],
+        "removed": [],
+        "changed": [],
+    }
     assert "1 actor added" in added.summary
     # One actor edit is one change: `actors.json` is not counted again as a world file.
     assert "world file" not in added.summary and "actors.json" not in (
         added.diff["files"] or {}
     ).get("changed", [])
     assert (
-        changed.diff["actors"]["added"] == ["manager"]
+        changed.diff["actors"]["added"] == [{"id": "manager", "name": MANAGER["name"]}]
         and changed.diff["actors"]["changed"] == []
     )
     # The save bar counts the actor change.
@@ -424,97 +428,83 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(
     assert before != after and before == restamped
 
 
-def test_a_sub_actor_is_in_the_cast_and_edited_where_the_call_reads_it(
+def test_an_actor_who_speaks_takes_the_whole_contract_in_the_one_actor_list(
     user, workspace, storage, auth_client
 ):
+    """TH-8927 done-when with the one actor type: a Manager who joins the call is read back with its permissions and
+    its view, and no field is refused because it speaks (Rishav #221-1 / #3698-1)."""
     from simulate.services.harness_versioning.drafts import edit_sides, fresh_draft
 
-    environment = _built(user, workspace, "actors-sub-actor")
+    environment = _built(user, workspace, "actors-actor")
+    manager_on_call = {
+        **MANAGER,
+        "role": "the caller's manager",
+        "channel": "audio_handoff",
+        "goal": "Approve only discounts she can justify",
+        "knowledge": [{"kind": "facts", "text": "The limit is 15%."}],
+    }
     colleague = {
         "id": "colleague",
         "name": "Jordan Taylor",
         "role": "the caller's colleague",
-        "side": "caller",
         "channel": "audio_mix",
         "loudness_ratio": 0.5,
     }
-    added = _add(auth_client, environment, colleague)
-    _add(auth_client, environment, MANAGER)
+    added = _add(auth_client, environment, manager_on_call)
+    assert added.status_code == 200, added.content
+    _add(auth_client, environment, colleague)
     files = edit_sides(environment)["environment"]
 
-    assert added.status_code == 200, added.content
-    assert json.loads(files["sub_actors.json"])["sub_actors"] == [
-        {
-            "id": "colleague",
-            "name": "Jordan Taylor",
-            "role": "the caller's colleague",
-            "channel": "audio_mix",
-            "loudness_ratio": 0.5,
-            "provenance": json.loads(files["sub_actors.json"])["sub_actors"][0][
-                "provenance"
-            ],
-        }
-    ]
-    assert [one["id"] for one in json.loads(files["actors.json"])["actors"]] == [
-        "manager"
-    ]
-    cast = {
-        one["id"]: one
-        for one in auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]
-    }
-    assert (cast["colleague"]["side"], cast["colleague"]["channel"]) == (
-        "caller",
-        "audio_mix",
-    )
+    # One file, one shape: no second actor file.
+    assert set(files) & {"sub_actors.json", "call_actors.json"} == set()
+    stored = {one["id"]: one for one in json.loads(files["actors.json"])["actors"]}
+    assert stored["manager"]["permitted_actions"] == MANAGER["permitted_actions"]
+    assert stored["manager"]["channel"] == "audio_handoff"
+    assert "side" not in stored["colleague"]
     assert fresh_draft(environment, "environment").diff["actors"]["added"] == [
-        "colleague",
-        "manager",
+        {"id": "colleague", "name": "Jordan Taylor"},
+        {"id": "manager", "name": MANAGER["name"]},
     ]
 
-    replaced = auth_client.put(
-        f"{BASE}/{environment.id}/actors/colleague/",
-        {"actor": {**colleague, "channel": "audio_handoff"}},
-        format="json",
-    )
-    assert replaced.status_code == 200, replaced.content
-    assert json.loads(edit_sides(environment)["environment"]["sub_actors.json"])[
-        "sub_actors"
-    ][0]["channel"] == ("audio_handoff")
-    from simulate.tests.test_harness_amend_archive import NAMES, _key
-
-    view = auth_client.get(
-        f"{BASE}/{environment.id}/actors/colleague/", {"scenario_key": _key(NAMES[0])}
-    ).json()
-    assert view["permitted_actions"] == [] and "manager.goal" in view["never_sees"]
-    # As the call gives a sub-actor the caller's situation, so does its view.
-    assert "caller.situation" in {one["input"] for one in view["sees"]}
-
-    refused = auth_client.put(
+    # A goal on an actor who speaks is kept, never refused.
+    goal = auth_client.put(
         f"{BASE}/{environment.id}/actors/colleague/",
         {"actor": {**colleague, "goal": "Get a bigger discount"}},
         format="json",
     )
-    assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
-    assert (
-        "colleague has no goal in sub_actors.json; remove it."
-        in refused.json()["message"]
-    )
-    loud = auth_client.put(
-        f"{BASE}/{environment.id}/actors/colleague/",
-        {"actor": {**colleague, "side": "world"}},
-        format="json",
-    )
-    assert (loud.status_code, loud.json()["error"]) == (400, "actor_invalid")
+    assert goal.status_code == 200, goal.content
+    from simulate.tests.test_harness_amend_archive import NAMES, _key
+
+    view = auth_client.get(
+        f"{BASE}/{environment.id}/actors/manager/", {"scenario_key": _key(NAMES[0])}
+    ).json()
+    assert view["permitted_actions"] == MANAGER["permitted_actions"]
+    assert view["played_from_view"] is True and view["unused_reason"] is None
+    # Named by name, apart from the grader's material.
+    assert "Jordan Taylor.goal" in view["never_sees"]["other_actors"]
+    assert "solution" in view["never_sees"]["scenario_fields"]
+    seen = {one["input"] for one in view["sees"]}
+    assert {"actor.goal", "actor.knowledge", "caller.situation"} <= seen
 
     removed = auth_client.delete(f"{BASE}/{environment.id}/actors/colleague/")
     assert removed.status_code == 200, removed.content
-    assert (
-        json.loads(edit_sides(environment)["environment"]["sub_actors.json"])[
-            "sub_actors"
-        ]
-        == []
-    )
     assert [one["id"] for one in removed.json()["actors"]] == ["manager"]
+
+
+def test_an_actor_who_only_acts_in_the_world_is_told_its_view_is_not_played(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-world-only")
+    _add(auth_client, environment, MANAGER)
+    view = auth_client.get(f"{BASE}/{environment.id}/actors/manager/").json()
+    assert view["played_from_view"] is False and view["unused_reason"]
+    auth_client.put(
+        f"{BASE}/{environment.id}/actors/manager/",
+        {"actor": {**MANAGER, "play": "live"}},
+        format="json",
+    )
+    view = auth_client.get(f"{BASE}/{environment.id}/actors/manager/").json()
+    assert view["played_from_view"] is True and view["unused_reason"] is None
 
 
 def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_with(
@@ -558,7 +548,7 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
         "coworker's loudness_ratio: 0.8 is greater than the maximum of 0.5."
         in loud.json()["message"]
     )
-    assert "scenario.rubric" in view["never_sees"]
+    assert "rubric" in view["never_sees"]["scenario_fields"]
     # A bundle sealed before any release declared its rules is checked by the first declared ones.
     refused = _add(auth_client, earlier, {**MANAGER, "mood": "patient"})
     assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
@@ -573,8 +563,8 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
     )
     assert _add(auth_client, earlier, MANAGER).status_code == 200
     earlier_view = auth_client.get(f"{BASE}/{earlier.id}/actors/manager/").json()
-    assert "scenario.solution" in earlier_view["never_sees"]
-    assert "scenario.rubric" not in earlier_view["never_sees"]
+    assert "solution" in earlier_view["never_sees"]["scenario_fields"]
+    assert "rubric" not in earlier_view["never_sees"]["scenario_fields"]
 
 
 def test_an_actor_is_given_only_actions_the_world_has_and_is_told_which(
@@ -633,7 +623,12 @@ def test_an_actor_is_given_only_actions_the_world_has_and_is_told_which(
             "description": "Ask a manager to approve a discount",
         },
     ]
-    assert set(listed["channels"]) == {"audio_mix", "audio_handoff", "ivr"}
+    assert set(listed["channels"]) == {
+        "audio_mix",
+        "audio_handoff",
+        "ivr",
+        "chat_message",
+    }
     assert added.status_code == 200, added.content
     assert (wrong.status_code, wrong.json()["error"]) == (400, "actor_invalid")
     assert (
@@ -661,14 +656,13 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     assert harness_actors._new_choices(None, MANAGER, files, rules) != []
 
     environment = _built(user, workspace, "actors-kept-values")
-    sub_actor = {
+    call_actor = {
         "id": "colleague",
         "name": "Jordan",
         "role": "colleague",
-        "side": "caller",
         "channel": "audio_mix",
     }
-    added = _add(auth_client, environment, sub_actor)
+    added = _add(auth_client, environment, call_actor)
     listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
     listed = listed.get("result", listed)
     [colleague] = [one for one in listed["actors"] if one["id"] == "colleague"]
@@ -679,23 +673,21 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     )
     bad_channel = auth_client.put(
         f"{BASE}/{environment.id}/actors/colleague/",
-        {"actor": {**sub_actor, "channel": "smoke_signal"}},
+        {"actor": {**call_actor, "channel": "smoke_signal"}},
         format="json",
     )
 
     assert added.status_code == 200, added.content
     assert colleague["scenarios"] == 0
     assert resent.status_code == 200, resent.content
-    stored = json.loads(edit_sides(environment)["environment"]["sub_actors.json"])[
-        "sub_actors"
-    ]
+    stored = json.loads(edit_sides(environment)["environment"]["actors.json"])["actors"]
     assert "scenarios" not in stored[0]
     assert (bad_channel.status_code, bad_channel.json()["error"]) == (
         400,
         "actor_invalid",
     )
     assert (
-        "colleague's channel: 'smoke_signal' is not one of: audio_handoff, audio_mix, ivr."
+        "colleague's channel: 'smoke_signal' is not one of: audio_handoff, audio_mix, chat_message, ivr."
         in bad_channel.json()["message"]
     )
 
@@ -711,7 +703,7 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
         environment,
         _authoring(
             contract=CRM_CONTRACT,
-            **{"sub_actors.json": json.dumps({"sub_actors": [colleague]})},
+            **{"actors.json": json.dumps({"actors": [colleague]})},
         ),
         origin="authoring",
     )
@@ -727,7 +719,7 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
 
     edited = auth_client.put(
         f"{BASE}/{environment.id}/actors/colleague/",
-        {"actor": {**colleague, "side": "caller", "role": "the caller's colleague"}},
+        {"actor": {**colleague, "role": "the caller's colleague"}},
         format="json",
     )
 
@@ -735,13 +727,13 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
     draft = fresh_draft(environment, "environment")
     assert draft.diff["actors"] == {
         "added": [],
-        "changed": ["colleague"],
+        "changed": [{"id": "colleague", "name": "Jordan"}],
         "removed": [],
     }
     assert draft.summary == "1 actor changed"
 
 
-def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
+def test_a_call_actor_never_takes_the_name_of_a_caller_it_is_with():
     from simulate.services import harness_actors
 
     rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
@@ -750,7 +742,7 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
             {
                 "scenario_key": "one",
                 "persona": {"name": "Mei Lin"},
-                "sub_actors": [{"id": "colleague"}],
+                "actors": [{"id": "colleague"}],
             }
         ).encode(),
         "scenarios/two/scenario.json": json.dumps(
@@ -763,7 +755,7 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
             "simulate.services.harness_actors.suite_documents",
             lambda files: [json.loads(raw) for raw in files.values()],
         )
-        # The caller of a scenario that does not include the sub-actor may share its name.
+        # The caller of a scenario that does not include the actor may share its name.
         assert harness_actors._new_choices(None, colleague, {}, rules, suite) == []
         renamed = {**colleague, "name": "mei lin"}
         problems = harness_actors._new_choices(colleague, renamed, {}, rules, suite)
@@ -851,7 +843,7 @@ def test_an_actor_s_fields_are_bounded_on_the_server(
     assert huge.status_code == 400
     assert "Keep an actor under 65536 characters." in huge.content.decode()
     # The editor reads its limits from the schemas the cast is sent with.
-    for file in ("actors.json", "sub_actors.json"):
+    for file in ("actors.json", "actors.json"):
         properties = listed["record_schemas"][file]["properties"]
         assert (properties["name"]["maxLength"], properties["role"]["maxLength"]) == (
             80,
@@ -1046,10 +1038,27 @@ def test_an_unknown_cast_on_either_side_shows_no_actor_diff_rather_than_all_adde
     assert later["actors"] is None and "actor" not in later_summary
 
 
-def test_a_replace_never_moves_an_actor_between_the_call_and_the_world(
+def test_any_actor_can_start_or_stop_speaking_unless_a_scenario_includes_it_as_it_joins_now(
     user, workspace, storage, auth_client
 ):
-    environment = _built(user, workspace, "actors-no-move")
+    from simulate.tests.test_harness_versioning_record import _scenario
+
+    documents = [_scenario(NAMES[0], actors=[{"id": "colleague"}])]
+    environment = record_tests._environment(user, workspace, "actors-joins")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "scenarios.json": json.dumps(documents),
+                **{
+                    f"scenarios/{one['name']}/scenario.json": json.dumps(one)
+                    for one in documents
+                },
+            },
+        ),
+        origin="authoring",
+    )
     colleague = {
         "id": "colleague",
         "name": "Jordan",
@@ -1060,28 +1069,24 @@ def test_a_replace_never_moves_an_actor_between_the_call_and_the_world(
     _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
     url = f"{BASE}/{environment.id}/actors/"
 
-    into_world = auth_client.put(
-        f"{url}colleague/",
-        {"actor": {"name": "Jordan", "side": "caller"}},
-        format="json",
-    )
     onto_call = auth_client.put(
         f"{url}coworker/",
-        {"actor": {"name": "Sam", "channel": "audio_mix"}},
+        {"actor": {"name": "Sam", "role": "a coworker", "channel": "audio_mix"}},
+        format="json",
+    )
+    moved = auth_client.put(
+        f"{url}colleague/",
+        {"actor": {**colleague, "channel": "audio_handoff"}},
         format="json",
     )
 
-    assert (into_world.status_code, into_world.json()["error"]) == (
-        400,
-        "actor_invalid",
-    )
-    assert into_world.json()["message"] == (
-        "colleague speaks on the call; remove it and add it again to change that"
-    )
-    assert (onto_call.status_code, onto_call.json()["error"]) == (400, "actor_invalid")
-    assert "coworker acts in the world" in onto_call.json()["message"]
+    # One actor type: a world actor starts speaking with no remove and re-add.
+    assert onto_call.status_code == 200, onto_call.content
+    # A scenario's trigger and level were written for how the actor joins it now.
+    assert (moved.status_code, moved.json()["error"]) == (409, "actor_in_use")
     cast = {one["id"]: one for one in auth_client.get(url).json()["actors"]}
-    assert "channel" in cast["colleague"] and "channel" not in cast["coworker"]
+    assert cast["coworker"]["channel"] == "audio_mix"
+    assert cast["colleague"]["channel"] == "audio_mix"
 
 
 def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
@@ -1189,7 +1194,7 @@ def test_a_world_actor_s_actions_come_from_the_transcript_and_never_join_the_age
     from simulate.models import CallExecution
     from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
     from simulate.services.run_results_v3 import function_calls
-    from simulate.tests.test_harness_sub_actors import _ingest
+    from simulate.tests.test_harness_call_actors import _ingest
 
     at = datetime(2026, 9, 29, 9, 0, tzinfo=UTC).timestamp()
     approve = {
@@ -1266,7 +1271,7 @@ def test_a_call_stored_with_actor_rows_in_its_tool_calls_still_lists_them():
     assert function_calls(call) == [row]
 
 
-def test_a_sub_actor_follows_the_sealed_persona_role_and_channel_rules(
+def test_a_call_actor_follows_the_sealed_persona_role_and_channel_rules(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "actors-sealed-persona")

@@ -33,7 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
-from simulate.types import CallSubActors
+from simulate.types import CallCallActors
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -918,8 +918,7 @@ def _apply_receipt_to_call(
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed). "
             + (
-                "The trial ended with "
-                f"{failure.get('code') or failure.get('message')}."
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
                 if failure
                 else "This is a grading failure, not an agent failure."
             )
@@ -1351,15 +1350,15 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
-# Where a call keeps its world actors' actions, sealed in the transcript beside the sub-actors.
+# Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
 
 
-def _sub_actor_record(raw: object) -> CallSubActors | None:
-    """The transcript's sub-actor record, keeping only the entries of its three lists."""
+def _call_actor_record(raw: object) -> CallCallActors | None:
+    """The transcript's actor record, keeping only the entries of its three lists."""
     if not isinstance(raw, dict):
         return None
-    record: CallSubActors = {}
+    record: CallCallActors = {}
     for key in ("resolved", "summary", "events"):
         if isinstance(raw.get(key), list):
             record[key] = [one for one in raw[key] if isinstance(one, dict)]
@@ -1400,13 +1399,13 @@ def _ingest_hosted_transcript(
         messages = payload.get("messages") if isinstance(payload, dict) else []
         # Who else was in the call, who took part and when; a rerun without them clears it.
         if metadata is not None:
-            record = _sub_actor_record(
-                payload.get("sub_actors") if isinstance(payload, dict) else None
+            record = _call_actor_record(
+                payload.get("call_actors") if isinstance(payload, dict) else None
             )
             if record:
-                metadata["harness_sub_actors"] = record
+                metadata["harness_call_actors"] = record
             else:
-                metadata.pop("harness_sub_actors", None)
+                metadata.pop("harness_call_actors", None)
             # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
             world = payload.get("world_actors") if isinstance(payload, dict) else None
             actions = world.get("actions") if isinstance(world, dict) else None
@@ -1558,12 +1557,12 @@ def _ingest_hosted_transcript(
                         speaker_role=role if role in valid_roles else "unknown",
                         speaker_name=(
                             str(message.get("name") or "")[:255]
-                            if role == CallTranscript.SpeakerRole.SUB_ACTOR
+                            if role == CallTranscript.SpeakerRole.ACTOR
                             else ""
                         ),
-                        sub_actor_id=(
-                            str(message.get("sub_actor") or "")[:255] or None
-                            if role == CallTranscript.SpeakerRole.SUB_ACTOR
+                        actor_id=(
+                            str(message.get("actor") or "")[:255] or None
+                            if role == CallTranscript.SpeakerRole.ACTOR
                             else None
                         ),
                         content=str(content),

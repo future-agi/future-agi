@@ -1515,8 +1515,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                         speaker_role=seg["speaker_role"],
                         speaker_name=(
                             seg.get("speaker_name") or ""
-                            if seg["speaker_role"]
-                            == CallTranscript.SpeakerRole.SUB_ACTOR
+                            if seg["speaker_role"] == CallTranscript.SpeakerRole.ACTOR
                             else ""
                         ),
                         content=seg["content"],

@@ -603,6 +603,8 @@ def _environment_diff(
         files=files or {},
         previous_actors=previous.get("actor_digests"),
         actors=current.get("actor_digests"),
+        previous_actor_names=previous.get("actor_names"),
+        actor_names=current.get("actor_names"),
     )
 
 

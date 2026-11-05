@@ -28,8 +28,8 @@ from simulate.selectors.runs import user_executions
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
-from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -48,14 +48,14 @@ from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
     build_run_analytics,
     build_run_reliability,
+    call_actor_delivery,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
-    sub_actor_delivery,
 )
-from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -63,7 +63,7 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
-from simulate.types import SubActorDelivery
+from simulate.types import CallActorDelivery
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -123,8 +123,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
-            "sub_actor",
-            "sub_actor_not",
+            "actor",
+            "actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -350,22 +350,22 @@ class LabelledFacetValueSerializer(FacetValueSerializer):
     label = serializers.CharField()
 
 
-class SubActorFacetValueSerializer(LabelledFacetValueSerializer):
+class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
     delivered = serializers.IntegerField(
-        help_text="Calls where at least one of the sub-actor's lines reached the agent."
+        help_text="Calls where at least one of the actor's lines reached the agent."
     )
     dropped = serializers.IntegerField(
-        help_text="Calls where the sub-actor was triggered but none of its lines reached the agent."
+        help_text="Calls where the actor was triggered but none of its lines reached the agent."
     )
     not_triggered = serializers.IntegerField(
-        help_text="Calls the sub-actor was planned for but never triggered in."
+        help_text="Calls the actor was planned for but never triggered in."
     )
 
 
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
-    sub_actor = SubActorFacetValueSerializer(many=True, required=False)
+    call_actor = CallActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -588,13 +588,13 @@ class FunctionCallSerializer(serializers.Serializer):
         ref_name = "SimulateRunV3FunctionCall"
 
 
-class CallSubActorSerializer(serializers.Serializer):
+class CallCallActorSerializer(serializers.Serializer):
     """Someone on the person's side in the call; a call stored by an older build may lack any field."""
 
     id = serializers.CharField(
         required=False,
         allow_blank=True,
-        help_text="The sub-actor's id in the environment.",
+        help_text="The actor's id in the environment.",
     )
     name = serializers.CharField(
         required=False, allow_blank=True, help_text="The name the transcript shows."
@@ -608,7 +608,7 @@ class CallSubActorSerializer(serializers.Serializer):
         help_text="The channel id they joined the call on.",
     )
     delivery = serializers.ChoiceField(
-        choices=list(get_args(SubActorDelivery)),
+        choices=list(get_args(CallActorDelivery)),
         required=False,
         help_text="How far they got in the call; absent on a call stored without a summary.",
     )
@@ -627,7 +627,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
-    sub_actors = CallSubActorSerializer(many=True)
+    call_actors = CallCallActorSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -647,7 +647,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
-            "sub_actors",
+            "call_actors",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -863,15 +863,15 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
-def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
-    """Who each of the call's sub-actors is, how they were heard and how far they got."""
-    record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
+def _call_call_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's actors is, how they were heard and how far they got."""
+    record = metadata.get("harness_call_actors") if isinstance(metadata, dict) else None
     resolved = record.get("resolved") if isinstance(record, dict) else None
     summary = record.get("summary") if isinstance(record, dict) else None
     deliveries = {
-        one["sub_actor"]: sub_actor_delivery(one)
+        one["actor"]: call_actor_delivery(one)
         for one in summary or []
-        if isinstance(one, dict) and isinstance(one.get("sub_actor"), str)
+        if isinstance(one, dict) and isinstance(one.get("actor"), str)
     }
     return [
         {
@@ -936,7 +936,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
-            "sub_actors": _call_sub_actors(call.call_metadata),
+            "call_actors": _call_call_actors(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

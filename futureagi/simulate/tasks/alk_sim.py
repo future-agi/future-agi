@@ -199,7 +199,7 @@ def _build_transcript_text(call: CallExecution) -> str | None:
         # declaring the completed call to have no CSAT evidence.
 
     from simulate.models.test_execution import CallTranscript
-    from simulate.utils.stored_transcript_roles import sub_actor_label
+    from simulate.utils.stored_transcript_roles import call_actor_label
 
     segments = list(
         CallTranscript.objects.filter(call_execution=call).order_by("start_time_ms")
@@ -208,8 +208,8 @@ def _build_transcript_text(call: CallExecution) -> str | None:
         return None
     lines: list[str] = []
     for seg in segments:
-        if seg.speaker_role == CallTranscript.SpeakerRole.SUB_ACTOR:
-            role = sub_actor_label(seg.speaker_name)
+        if seg.speaker_role == CallTranscript.SpeakerRole.ACTOR:
+            role = call_actor_label(seg.speaker_name)
         elif seg.speaker_role == CallTranscript.SpeakerRole.USER:
             role = "Customer"
         else:

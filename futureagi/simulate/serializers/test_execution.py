@@ -79,7 +79,7 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
             "id",
             "speaker_role",
             "speaker_name",
-            "sub_actor_id",
+            "actor_id",
             "content",
             "start_time_ms",
             "start_time_seconds",

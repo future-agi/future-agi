@@ -53,7 +53,7 @@ def clear_call_for_rerun(
             call_execution.transcripts.values(
                 "speaker_role",
                 "speaker_name",
-                "sub_actor_id",
+                "actor_id",
                 "content",
                 "start_time_ms",
                 "end_time_ms",

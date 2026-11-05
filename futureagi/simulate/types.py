@@ -1,12 +1,12 @@
-"""Typed shapes of the sub-actor JSON that simulate stores and serves."""
+"""Typed shapes of the actor JSON that simulate stores and serves."""
 
 from __future__ import annotations
 
 from typing import Literal, NotRequired, TypedDict
 
 
-class SubActorTrigger(TypedDict, total=False):
-    """When a sub-actor enters a call; the harness writes only the keys its kind uses."""
+class CallActorTrigger(TypedDict, total=False):
+    """When an actor enters a call; the harness writes only the keys its kind uses."""
 
     kind: str
     turn: int
@@ -16,16 +16,17 @@ class SubActorTrigger(TypedDict, total=False):
     p: float
 
 
-class ScenarioSubActor(TypedDict):
-    """A sub-actor a scenario includes, as `HostedHarnessScenario.sub_actors` stores it."""
+class ScenarioCallActor(TypedDict):
+    """An actor a scenario includes, as `HostedHarnessScenario.call_actors` stores it."""
 
     id: str
     instruction: str
-    trigger: SubActorTrigger
+    trigger: CallActorTrigger
+    actions: NotRequired[list[dict[str, object]]]
 
 
-class SubActorPersona(TypedDict, total=False):
-    """The caller persona fields a sub-actor's voice is chosen from."""
+class CallActorPersona(TypedDict, total=False):
+    """The caller persona fields an actor's voice is chosen from."""
 
     name: str
     gender: str
@@ -39,27 +40,27 @@ class SubActorPersona(TypedDict, total=False):
     accent: str
 
 
-class SubActor(TypedDict):
-    """One entry of the environment's sub-actor list."""
+class CallActor(TypedDict):
+    """One entry of the environment's actor list."""
 
     id: str
     name: str
     role: str
     channel: str
-    persona: SubActorPersona
+    persona: CallActorPersona
     loudness_ratio: NotRequired[float]
 
 
-class ContractSubActor(SubActor):
+class ContractCallActor(CallActor):
     """A list entry on the contract, with how many scenarios include it."""
 
     scenarios_count: int
 
 
-class SubActorTookPart(TypedDict, total=False):
-    """Whether one sub-actor was triggered in a call and how many lines reached the agent."""
+class CallActorTookPart(TypedDict, total=False):
+    """Whether one actor was triggered in a call and how many lines reached the agent."""
 
-    sub_actor: str
+    actor: str
     name: str | None
     triggered: bool
     delivered: int
@@ -67,13 +68,13 @@ class SubActorTookPart(TypedDict, total=False):
     dropped: list[str]
 
 
-# A sub-actor's part in one call: heard by the agent, triggered with nothing heard, never
+# An actor's part in one call: heard by the agent, triggered with nothing heard, never
 # triggered, or left out by the call's draw.
-SubActorDelivery = Literal["delivered", "dropped", "not_triggered", "not_drawn"]
+CallActorDelivery = Literal["delivered", "dropped", "not_triggered", "not_drawn"]
 
 
-class SubActorFacetValue(TypedDict):
-    """A run's calls one sub-actor was planned for, by how far they got; or the calls with none."""
+class CallActorFacetValue(TypedDict):
+    """A run's calls one actor was planned for, by how far they got; or the calls with none."""
 
     value: str
     label: str
@@ -83,10 +84,10 @@ class SubActorFacetValue(TypedDict):
     not_triggered: int
 
 
-class SubActorEvent(TypedDict, total=False):
-    """One step of a sub-actor's part in a call."""
+class CallActorEvent(TypedDict, total=False):
+    """One step of an actor's part in a call."""
 
-    sub_actor: str
+    actor: str
     name: str | None
     channel: str | None
     kind: str
@@ -97,9 +98,9 @@ class SubActorEvent(TypedDict, total=False):
     asked_at: float | None
 
 
-class CallSubActors(TypedDict, total=False):
-    """`call_metadata["harness_sub_actors"]`: who else was in the call, who took part and when."""
+class CallCallActors(TypedDict, total=False):
+    """`call_metadata["harness_call_actors"]`: who else was in the call, who took part and when."""
 
-    resolved: list[SubActor]
-    summary: list[SubActorTookPart]
-    events: list[SubActorEvent]
+    resolved: list[CallActor]
+    summary: list[CallActorTookPart]
+    events: list[CallActorEvent]

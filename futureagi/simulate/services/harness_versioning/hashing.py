@@ -296,27 +296,40 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     }
 
 
+def _actor_records(environment: Mapping[str, bytes]) -> list[dict[str, Any]] | None:
+    raw = environment.get("actors.json")
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        return None
+    return [
+        actor
+        for actor in (body.get("actors") if isinstance(body, dict) else None) or []
+        if isinstance(actor, dict) and actor.get("id")
+    ]
+
+
 def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str] | None:
-    """A digest of each actor's record in the environment's `actors.json` and of each sub-actor's in its
-    `sub_actors.json`, keyed by its id; who last set it is left out, so only a change to the actor itself reads as a
-    change. None when either file is not valid JSON: the cast is unknown."""
-    digests = {}
-    for name, key in (("actors.json", "actors"), ("sub_actors.json", "sub_actors")):
-        raw = environment.get(name)
-        try:
-            body = json.loads(raw) if raw else {}
-        except ValueError:
-            return None
-        for actor in (body.get(key) if isinstance(body, dict) else None) or []:
-            if isinstance(actor, dict) and actor.get("id"):
-                digests[str(actor["id"])] = canonical_digest(
-                    {
-                        field: value
-                        for field, value in actor.items()
-                        if field != "provenance"
-                    }
-                )
-    return digests
+    """A digest of each actor's record in the environment's `actors.json`, keyed by its id; who last set it is left
+    out, so only a change to the actor itself reads as a change. None when the file is not valid JSON: the cast is
+    unknown."""
+    actors = _actor_records(environment)
+    if actors is None:
+        return None
+    return {
+        str(actor["id"]): canonical_digest(
+            {field: value for field, value in actor.items() if field != "provenance"}
+        )
+        for actor in actors
+    }
+
+
+def actor_names(environment: Mapping[str, bytes]) -> dict[str, str] | None:
+    """Each actor's name by its id, so a change is shown by who it is about; None when the cast is unknown."""
+    actors = _actor_records(environment)
+    if actors is None:
+        return None
+    return {str(actor["id"]): str(actor.get("name") or actor["id"]) for actor in actors}
 
 
 def organization_credential_key(organization_id: object) -> bytes:
