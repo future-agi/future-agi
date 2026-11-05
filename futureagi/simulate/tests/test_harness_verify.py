@@ -983,6 +983,56 @@ class TestWhatACodingAgentReads:
             coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
         )
 
+    def test_its_result_rows_name_each_failure_s_domain_and_code(
+        self, api_client, environment, keys
+    ):
+        chosen = ensure_held_back(environment)
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        created = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 2},
+            HTTP_IDEMPOTENCY_KEY="coder-errored",
+        )
+        assert created.status_code == 202, created.content
+        execution = created.json()["test_execution_id"]
+        calls = list(CallExecution.objects.filter(test_execution_id=execution))
+        for call, code in zip(
+            calls, ("evidence_missing", "not a code: it said hi"), strict=True
+        ):
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "hosted_harness_receipt": {
+                    "status": "error",
+                    "failure": {
+                        "domain": "simulator",
+                        "stage": "grading",
+                        "code": code,
+                        "message": "free text",
+                    },
+                },
+            }
+            call.save(update_fields=["call_metadata"])
+
+        response = _as(
+            api_client,
+            keys.coder,
+            "get",
+            f"/simulate/v3/test-executions/{execution}/calls/",
+        )
+
+        assert response.status_code == 200, response.content
+        rows = {row["id"]: row for row in response.json()["results"]}
+        assert rows[str(calls[0].id)]["failure_domain"] == "simulator"
+        assert rows[str(calls[0].id)]["failure_code"] == "evidence_missing"
+        # A code that is not a code is free text; it is left out.
+        assert rows[str(calls[1].id)]["failure_domain"] == "simulator"
+        assert rows[str(calls[1].id)]["failure_code"] is None
+
     def test_a_person_s_read_chooses_nothing(self, api_client, environment, keys):
         _as(api_client, keys.user, "get", f"{BASE}/{environment.id}/")
 
