@@ -105,6 +105,7 @@ export default function VoiceCallDrawer({
   const hasWorkers = useHasWorkers(task.id, task.completedAt);
   // Held here because the panel unmounts while the next call's detail loads.
   const [chosenTab, setChosenTab] = useState("transcript");
+  const [openTraceId, setOpenTraceId] = useState(null);
   // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
   const showWorkers =
     hasWorkers || (hasWorkers === undefined && chosenTab === "workers");
@@ -121,6 +122,7 @@ export default function VoiceCallDrawer({
             testExecutionId={executionId}
             isError={callTraces.isError}
             onMountedChange={onTracePanelMountedChange}
+            openTraceId={openTraceId}
           />
         ),
       },
@@ -132,7 +134,14 @@ export default function VoiceCallDrawer({
               icon: "solar:users-group-two-rounded-linear",
               content: (
                 <Box {...ownsArrowKeys} sx={{ outline: "none" }}>
-                  <CallWorkersPanel key={task.id} callExecutionId={task.id} />
+                  <CallWorkersPanel
+                    key={task.id}
+                    callExecutionId={task.id}
+                    onOpenTrace={(traceId) => {
+                      setOpenTraceId(traceId);
+                      setChosenTab("traces");
+                    }}
+                  />
                 </Box>
               ),
             },
@@ -147,6 +156,7 @@ export default function VoiceCallDrawer({
       callTraces.traces,
       executionId,
       onTracePanelMountedChange,
+      openTraceId,
     ],
   );
 
@@ -190,7 +200,10 @@ export default function VoiceCallDrawer({
         hideAnnotationTab
         leftPanelTabs={leftPanelTabs}
         leftPanelTab={chosenTab}
-        onLeftPanelTabChange={setChosenTab}
+        onLeftPanelTabChange={(value) => {
+          setOpenTraceId(null);
+          setChosenTab(value);
+        }}
         // The product header defaults both arrows to enabled, so always pass
         // real values.
         onPrev={onPrev}

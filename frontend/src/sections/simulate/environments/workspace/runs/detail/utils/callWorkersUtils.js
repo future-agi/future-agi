@@ -1,3 +1,5 @@
+import { CALL_WORKERS_COPY as C } from "../callTraces.constants";
+
 // About six lines of text; a longer answer opens on request.
 const CLAMP_LINES = 6;
 const CLAMP_CHARS = 480;
@@ -99,4 +101,160 @@ export const nest = (data) => {
     overlapUnknown: Boolean(data.overlap_unknown),
     depthOf: data.worker_depths || {},
   };
+};
+
+/** Every hand-off in a nested tree, each followed by the ones it made. */
+export const handOffRows = (items) =>
+  items.flatMap((item) =>
+    item.kind === "handoff" ? [item, ...handOffRows(item.items)] : [],
+  );
+
+const hasFailedCall = (block) =>
+  block.items.some(
+    (item) => item.kind === "call" && item.event.status === "error",
+  );
+
+/**
+ * How a hand-off ended. A return decides it, even after a tool failed, since the worker may have recovered.
+ * A control pass never returns, so only a failed tool marks it; a record cut at its limit can't say.
+ */
+export const handOffEnd = (block, cutOff) => {
+  if (block.returned)
+    return block.returned.status === "error" ? "failed" : "finished";
+  if (block.transfer) return hasFailedCall(block) ? "failed" : "passed";
+  return cutOff ? "cut_off" : "no_return";
+};
+
+/** How many hand-offs ended each way, and how many workers they went to. */
+export const handOffCounts = (rows, cutOff) => {
+  const ends = rows.map((row) => handOffEnd(row, cutOff));
+  const count = (...kinds) => ends.filter((end) => kinds.includes(end)).length;
+  return {
+    handOffs: rows.length,
+    workers: new Set(rows.map((row) => row.worker_id)).size,
+    finished: count("finished"),
+    didNotFinish: count("failed", "no_return"),
+    passed: count("passed"),
+    cutOff: count("cut_off"),
+  };
+};
+
+const toolEvent = (event, depth, names, relationship) => ({
+  key: `call-${event.seq}`,
+  unknown: relationship === "unknown",
+  traceId: event.trace_id,
+  at: event.at,
+  actor:
+    event.attribution === "unattributed"
+      ? C.unknown
+      : names.ofWorker(event.worker_id),
+  type: C.toolCallStep,
+  depth,
+  call: event,
+});
+
+const handOffEvent = (block, names) => ({
+  key: `handoff-${block.key}`,
+  at: block.delegated.at,
+  actor: block.delegated.by
+    ? names.ofWorker(block.delegated.by)
+    : names.coordinator,
+  type: block.transfer ? C.controlPassStep : C.handOffStep,
+  unknown: block.relationship === "unknown",
+  traceId: block.delegated.trace_id,
+  depth: block.depth - 1,
+  to: names.ofBlock(block),
+  parallel: block.parallel,
+  text: block.delegated.task,
+});
+
+// How a hand-off ended, as a step. A control pass never returns, so it has none.
+const endEvents = (block, names, cutOff) => {
+  if (block.transfer) return [];
+  const base = {
+    key: `end-${block.key}`,
+    actor: names.ofBlock(block),
+    depth: block.depth,
+  };
+  if (block.returned)
+    return [
+      {
+        ...base,
+        at: block.returned.at,
+        type: C.answerStep,
+        bad: block.returned.status === "error",
+        text: block.returned.result,
+        empty: C.noResult,
+      },
+    ];
+  return [
+    cutOff
+      ? {
+          ...base,
+          type: C.notShownStep,
+          note: C.returnCutOff(base.actor),
+        }
+      : {
+          ...base,
+          type: C.noReturnStep,
+          bad: true,
+          note: C.noReturn(base.actor),
+        },
+  ];
+};
+
+const stepsOf = (block, names, cutOff, nested) => [
+  ...(block.delegated ? [handOffEvent(block, names)] : []),
+  ...block.items.flatMap((item) => {
+    if (item.kind === "call")
+      return [toolEvent(item.event, block.depth, names, item.relationship)];
+    return nested ? stepsOf(item, names, cutOff, true) : [];
+  }),
+  ...endEvents(block, names, cutOff),
+];
+
+/** One hand-off's own steps, leaving out the hand-offs it made, which have their own table rows. */
+export const handOffEvents = (block, names, cutOff) =>
+  stepsOf(block, names, cutOff, false);
+
+const stepsOfItems = (items, names, cutOff) =>
+  items.flatMap((item) =>
+    item.kind === "call"
+      ? [toolEvent(item.event, 0, names, item.relationship)]
+      : stepsOf(item, names, cutOff, true),
+  );
+
+/** How a turn is named beside its request and reply: only when the call has more than one. */
+export const turnLabel = (round, rounds) =>
+  rounds.length > 1 ? `${C.turn(round.turn)} · ` : "";
+
+/** Every step of a call in reading order: each turn's request, its steps, then its reply. */
+export const callEvents = (data, tree, names, cutOff, hasHandOffs) => {
+  if (!hasHandOffs) return stepsOfItems(tree.items, names, cutOff);
+  return tree.rounds.flatMap((round) => [
+    // Work before the caller spoke has no request to show.
+    ...(round.turn === 0 && !round.request && tree.rounds.length > 1
+      ? []
+      : [
+          {
+            key: `request-${round.turn}`,
+            at: round.request?.at,
+            actor: C.caller,
+            type: `${turnLabel(round, tree.rounds)}${C.messageStep}`,
+            depth: 0,
+            text: round.request?.text,
+            empty: C.noRequest,
+          },
+        ]),
+    ...stepsOfItems(round.items, names, cutOff),
+    {
+      key: `reply-${round.turn}`,
+      at: round.response?.at,
+      actor: names.coordinator,
+      type: `${turnLabel(round, tree.rounds)}${C.replyStep}`,
+      depth: 0,
+      text: round.response?.text,
+      empty: C.noReply,
+    },
+  ]);
 };

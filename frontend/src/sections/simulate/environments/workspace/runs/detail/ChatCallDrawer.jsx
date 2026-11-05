@@ -101,6 +101,11 @@ export default function ChatCallDrawer({
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
   const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [openTraceId, setOpenTraceId] = useState(null);
+  const openTrace = (traceId) => {
+    setOpenTraceId(traceId);
+    setChosenArtifact("traces");
+  };
   const hasWorkers = useHasWorkers(task.id, task.completedAt);
   // Stays on Participants while the next call's record is unread; a call known to have none falls back.
   const artifact =
@@ -188,7 +193,10 @@ export default function ChatCallDrawer({
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
             value={artifact}
-            onChange={(_, value) => setChosenArtifact(value)}
+            onChange={(_, value) => {
+              setOpenTraceId(null);
+              setChosenArtifact(value);
+            }}
             sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             <Tab value="transcript" label="Transcript" />
@@ -200,7 +208,7 @@ export default function ChatCallDrawer({
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
             {artifact === "workers" ? (
-              <CallWorkersPanel key={task.id} callExecutionId={task.id} />
+              <CallWorkersPanel key={task.id} callExecutionId={task.id} onOpenTrace={openTrace} />
             ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
@@ -209,6 +217,7 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
+                  openTraceId={openTraceId}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (

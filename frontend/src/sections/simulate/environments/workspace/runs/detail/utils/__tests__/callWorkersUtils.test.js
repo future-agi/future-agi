@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { asShown, isLong, nest, seconds } from "../callWorkersUtils";
+import {
+  asShown,
+  handOffCounts,
+  handOffEnd,
+  handOffRows,
+  isLong,
+  nest,
+  seconds,
+} from "../callWorkersUtils";
 
 describe("seconds", () => {
   it("reads a stored time with no zone as UTC, and anything else as unknown", () => {
@@ -134,6 +142,61 @@ describe("nest", () => {
       parallel: 0,
       overlapUnknown: false,
       depthOf: {},
+    });
+  });
+});
+
+describe("hand-off rows", () => {
+  const failedTool = {
+    kind: "call",
+    key: 9,
+    event: { tool: "issue_refund", status: "error" },
+  };
+  const block = (key, extra) => ({
+    kind: "handoff",
+    key,
+    worker_id: `w${key}`,
+    items: [],
+    ...extra,
+  });
+
+  it("lists each hand-off followed by the ones it made, leaving tool calls out", () => {
+    const nested = block(2);
+    const tree = [block(1, { items: [failedTool, nested] }), block(3)];
+    expect(handOffRows(tree).map((one) => one.key)).toEqual([1, 2, 3]);
+  });
+
+  it("reads how a hand-off ended from its return, a control pass from its tools, and a cut record as unknown", () => {
+    const ok = { status: "ok" };
+    const error = { status: "error" };
+    expect(handOffEnd(block(1, { returned: ok }))).toBe("finished");
+    // The worker recovered from its failed tool and returned.
+    expect(handOffEnd(block(1, { returned: ok, items: [failedTool] }))).toBe(
+      "finished",
+    );
+    expect(handOffEnd(block(1, { returned: error }))).toBe("failed");
+    expect(handOffEnd(block(1, { transfer: true }))).toBe("passed");
+    expect(handOffEnd(block(1, { transfer: true, items: [failedTool] }))).toBe(
+      "failed",
+    );
+    expect(handOffEnd(block(1))).toBe("no_return");
+    expect(handOffEnd(block(1), true)).toBe("cut_off");
+  });
+
+  it("counts a worker handed work twice once, and a control pass on its own", () => {
+    const rows = [
+      block(1, { worker_id: "a", returned: { status: "ok" } }),
+      block(2, { worker_id: "a", returned: { status: "error" } }),
+      block(3, { worker_id: "b" }),
+      block(4, { worker_id: "c", transfer: true }),
+    ];
+    expect(handOffCounts(rows, false)).toEqual({
+      handOffs: 4,
+      workers: 3,
+      finished: 1,
+      didNotFinish: 2,
+      passed: 1,
+      cutOff: 0,
     });
   });
 });

@@ -21,41 +21,27 @@ export const CALL_WORKERS_COPY = {
   error: "Couldn't load this call's participants.",
   coordinator: "Coordinator",
   unknown: "Unknown",
-  notObserved: "not observed",
-  undeclared: "not declared",
-  intro:
-    "How the coordinator handed work to the other participants in this call: each hand-off, the tools each one used, and what it returned.",
-  seenFlat: "One level, one hand-off at a time",
-  seen: (depth, parallel, overlapUnknown) =>
-    `${depth === 1 ? "One level" : `${depth} levels deep`} · ${
-      parallel
-        ? `${parallel} hand-off${parallel === 1 ? "" : "s"} ran in parallel`
-        : overlapUnknown
-          ? "can't tell if hand-offs overlapped, some have no start time"
-          : "one hand-off at a time"
-    }`,
-  inParallel: "in parallel",
-  // The record does not say which hand-off this ran in, so it sits under the coordinator.
+  turn: (n) => (n === 0 ? "Before the caller spoke" : `Turn ${n}`),
+  // The record does not say which hand-off this ran in, so it sits at the top of its turn.
   parentUnknown: "parent unknown",
   noEvidence:
     "Nothing was recorded for this call's participants: the app sent no traces and the sandbox recorded no hand-offs.",
+  modelTokens: (model, tokens) =>
+    [model, tokens ? `${tokens.toLocaleString()} tokens` : null]
+      .filter(Boolean)
+      .join(" · "),
+  openInTraces: "Open in Traces",
+  inParallel: "in parallel",
   payloadOmitted: "Not kept: this call's record reached its size limit",
   eventsOmitted: (count) =>
     `${count} more step${count === 1 ? "" : "s"} not shown: this call's record reached its size limit`,
-  workersSummary: (total, observed, missing) =>
-    `${total} participants · ${observed} observed · ${missing} not observed`,
-  showWorkers: "Show all participants",
-  hideWorkers: "Hide participants",
   request: "Caller's request",
   noRequest: "No request recorded",
   response: "Coordinator's reply",
   noReply: "No reply recorded",
-  turn: (n) => (n === 0 ? "Before the caller spoke" : `Turn ${n}`),
-  delegated: (name) => `Delegated to ${name}`,
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
-  returned: (name) => `${name} returned`,
   noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
   returnCutOff: (name) =>
@@ -64,6 +50,44 @@ export const CALL_WORKERS_COPY = {
   input: "Input",
   output: "Output",
   noPayload: "Nothing recorded",
+  ok: "ok",
+  showJson: "Show JSON",
+  hideJson: "Hide JSON",
+  caller: "Caller",
+  messageStep: "Message",
+  handOffStep: "Hand-off",
+  controlPassStep: "Control pass",
+  toolCallStep: "Tool call",
+  answerStep: "Answer",
+  noReturnStep: "No return",
+  notShownStep: "Not shown",
+  replyStep: "Reply",
   showMore: "Show more",
   showLess: "Show less",
+  rawEvents: "Raw events",
+  workerColumn: "Worker",
+  taskColumn: "Task",
+  resultColumn: "Result",
+  showRow: (name) => `Show raw data for ${name}`,
+  hideRow: (name) => `Hide raw data for ${name}`,
+  handOffSummary: ({
+    handOffs,
+    workers,
+    finished,
+    didNotFinish,
+    passed,
+    cutOff,
+  }) => {
+    const ends = [
+      finished && `${finished} finished`,
+      didNotFinish && `${didNotFinish} didn't`,
+      passed && `${passed} passed control`,
+      cutOff && `${cutOff} cut off`,
+    ].filter(Boolean);
+    return `${handOffs} hand-off${handOffs === 1 ? "" : "s"} to ${workers} worker${workers === 1 ? "" : "s"}. ${ends.join(", ")}.`;
+  },
+  callsOutsideTable: (count) =>
+    `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
+  workersNotObserved: (names) => `Not observed: ${names}`,
+  workersNotDeclared: (names) => `Not declared: ${names}`,
 };
