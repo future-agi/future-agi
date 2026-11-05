@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertContractedResponse,
   findOpenApiEndpoint,
   shouldEnforceApiResponseContracts,
   validateContractedRequestConfig,
@@ -565,6 +566,24 @@ describe("OpenAPI runtime contract", () => {
       "response contract validation failed",
     );
     expect(result.error.message).toContain("result");
+  });
+
+  it("skips an empty 204 on an endpoint that only declares a 200, in strict mode too", () => {
+    vi.stubEnv("VITE_API_CONTRACT_STRICT_RESPONSES", "true");
+    const config = {
+      url: "/simulate/v3/call-executions/call-1/workers/",
+      method: "get",
+    };
+    const empty = { config, status: 204, data: "" };
+    expect(assertContractedResponse(empty)).toBe(empty);
+    // A 204 that does carry a body is still checked, as is an empty 200.
+    expect(
+      validateContractedResponse({ config, status: 204, data: { workers: 1 } })
+        .ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({ config, status: 200, data: "" }).ok,
+    ).toBe(false);
   });
 
   it("validates default error responses instead of falling back to success schemas", () => {

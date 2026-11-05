@@ -465,6 +465,7 @@ class TestRunResultsV3Views:
         goals = [
             {"name": "Verify identity", "held": True},
             {"name": "Create refund", "held": False},
+            {"name": "Lookup stayed read-only", "held": False, "subject": "worker:order_lookup"},
             {"name": "Send confirmation", "held": None},
             {
                 "name": "Offer upgrade",
@@ -488,6 +489,7 @@ class TestRunResultsV3Views:
         expected = [
             {"name": "Verify identity", "passed": True},
             {"name": "Create refund", "passed": False},
+            {"name": "Lookup stayed read-only", "passed": False, "subject": "worker:order_lookup"},
             {"name": "Send confirmation", "passed": None},
             {
                 "name": "Offer upgrade",
@@ -2545,7 +2547,12 @@ class TestRunResultsV3Views:
                         "arguments": {"order_id": "AB-1"},
                         "result": {"status": "shipped"},
                         "duration_ms": 309,
-                    }
+                    },
+                    {
+                        "name": "Refund worker",
+                        "delegated_to": "Refund worker",
+                        "result": "refunded",
+                    },
                 ]
             }
         }
@@ -2562,7 +2569,13 @@ class TestRunResultsV3Views:
                 "arguments": {"order_id": "AB-1"},
                 "result": {"status": "shipped"},
                 "duration_ms": 309,
-            }
+            },
+            # A hand-off keeps who it went to, so a reader can tell it from a tool call.
+            {
+                "name": "Refund worker",
+                "delegated_to": "Refund worker",
+                "result": "refunded",
+            },
         ]
 
     def test_analytics_exposes_truthful_coverage(

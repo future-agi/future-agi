@@ -18,13 +18,15 @@ import { ShareDialog } from "src/components/share-dialog";
 import {
   useCallDetail,
   useCallTraces,
+  useHasWorkers,
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
 import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import { CALL_TRACES_COPY, CALL_WORKERS_COPY } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
@@ -113,7 +115,18 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [artifact, setArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [openTraceId, setOpenTraceId] = useState(null);
+  const openTrace = (traceId) => {
+    setOpenTraceId(traceId);
+    setChosenArtifact("traces");
+  };
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back.
+  const artifact =
+    chosenArtifact === "workers" && hasWorkers === false
+      ? "transcript"
+      : chosenArtifact;
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -247,13 +260,18 @@ export default function ChatCallDrawer({
         >
           <CustomTabs
             value={
-              showTraces
-                ? "traces"
-                : showChanges
-                  ? "world_changes"
-                  : "transcript"
+              artifact === "workers"
+                ? "workers"
+                : showTraces
+                  ? "traces"
+                  : showChanges
+                    ? "world_changes"
+                    : "transcript"
             }
-            onChange={(_, value) => setArtifact(value)}
+            onChange={(_, value) => {
+              setOpenTraceId(null);
+              setChosenArtifact(value);
+            }}
             sx={{
               boxShadow: "none",
               borderBottom: "1px solid",
@@ -265,13 +283,22 @@ export default function ChatCallDrawer({
             {callDetail?.trial_state && (
               <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
             )}
+            {hasWorkers || artifact === "workers" ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {showChanges ? (
+            {artifact === "workers" ? (
+              <CallWorkersPanel
+                key={task.id}
+                callExecutionId={task.id}
+                onOpenTrace={openTrace}
+              />
+            ) : showChanges ? (
               <TrialChangesPanel trialState={callDetail.trial_state} />
             ) : showTraces ? (
               <Box
@@ -289,6 +316,7 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
+                  openTraceId={openTraceId}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (
@@ -476,6 +504,7 @@ ChatCallDrawer.propTypes = {
     turns: PropTypes.number,
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
+    completedAt: PropTypes.string,
     provider: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,

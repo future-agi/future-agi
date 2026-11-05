@@ -79,6 +79,20 @@ describe("CallTracesPanel", () => {
     });
   });
 
+  it("opens the trace a Participants step asked for, once the call lists it", () => {
+    renderPanel({ testExecutionId: "run-1", openTraceId: "trace-1" });
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
+      traceId: "trace-1",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+    });
+  });
+
+  it("opens nothing for a trace the call does not list", () => {
+    renderPanel({ testExecutionId: "run-1", openTraceId: "trace-9" });
+    expect(mocks.store.setTraceDetailDrawerOpen).not.toHaveBeenCalled();
+  });
+
   it("clears the trace drawer state and its URL key when it unmounts", () => {
     const { unmount } = renderPanel();
     expect(mocks.store.resetStates).not.toHaveBeenCalled();

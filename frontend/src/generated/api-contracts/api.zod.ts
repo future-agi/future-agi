@@ -43769,6 +43769,10 @@ export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
+  new RegExp("^(task|worker:\\S+)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -43850,6 +43854,12 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       judged: zod.boolean(),
       verdict: zod
         .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .optional(),
+      subject: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax)
+        .regex(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp)
         .optional(),
     }),
   ),
@@ -53169,6 +53179,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       passed: zod.boolean().nullable(),
       result: zod.enum(["not_applicable", "inconclusive"]).optional(),
       reason: zod.string().optional(),
+      subject: zod.string().min(1).optional(),
     }),
   ),
   outcome: zod.enum([
@@ -53260,6 +53271,15 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           faulted: zod.number(),
           duplicate: zod.number(),
           committed_actions: zod.array(zod.string().min(1)),
+          refused_actions: zod
+            .array(
+              zod.object({
+                action: zod.string().min(1),
+                code: zod.string(),
+                reason: zod.string(),
+              }),
+            )
+            .optional(),
         }),
       )
       .optional(),
@@ -53291,6 +53311,187 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "skipped",
   ]),
   csat_reason: zod.string().min(1),
+});
+
+/**
+ * Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.
+ */
+export const SimulateV3CallExecutionWorkersParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const SimulateV3CallExecutionWorkersResponse = zod.object({
+  workers: zod.array(
+    zod.object({
+      worker_id: zod.string().min(1),
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      observed: zod.boolean(),
+      undeclared: zod.boolean(),
+      instance_ids: zod.array(zod.string().min(1)),
+      model: zod.string().min(1).optional(),
+      tokens: zod.number().optional(),
+      state: zod
+        .enum([
+          "completed",
+          "failed",
+          "no_return",
+          "timed_out",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+        ])
+        .optional(),
+    }),
+  ),
+  events: zod.array(
+    zod.object({
+      seq: zod.number(),
+      type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+      worker_id: zod.string().min(1),
+      by: zod.string().min(1).optional(),
+      delegation_id: zod.string().min(1).optional(),
+      task: zod.string().min(1).optional(),
+      result: zod.string().min(1).optional(),
+      tool: zod.string().min(1).optional(),
+      status: zod.enum(["ok", "error"]).optional(),
+      span_id: zod.string().min(1).optional(),
+      trace_id: zod.string().min(1).optional(),
+      input: zod.object({}).passthrough().optional(),
+      output: zod.object({}).passthrough().optional(),
+      input_omitted: zod.boolean().optional(),
+      output_omitted: zod.boolean().optional(),
+      refusal_code: zod.string().min(1).optional(),
+      relationship: zod.enum(["observed", "unknown"]).optional(),
+      at: zod.string().min(1),
+      attribution: zod.enum(["reported", "unattributed"]),
+    }),
+  ),
+  events_omitted: zod.number().optional(),
+  coordinator: zod
+    .object({
+      name: zod.string().min(1),
+    })
+    .optional(),
+  request: zod
+    .object({
+      text: zod.string().min(1),
+      at: zod.string().min(1),
+    })
+    .optional(),
+  response: zod
+    .object({
+      text: zod.string().min(1),
+      at: zod.string().min(1),
+    })
+    .optional(),
+  started_at: zod.string().min(1).optional(),
+  spans_received: zod.boolean().optional(),
+  collected_at: zod.string().min(1),
+  collection: zod.enum(["complete", "no_evidence"]).optional(),
+  steps: zod.array(
+    zod.object({
+      kind: zod.enum(["handoff", "tool_call"]),
+      key: zod.number(),
+      parent: zod.number(),
+      depth: zod.number(),
+      worker_id: zod.string().min(1),
+      transfer: zod.boolean().optional(),
+      handoff: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      returned: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      started_at: zod.string().min(1).optional(),
+      ended_at: zod.string().min(1).optional(),
+      parallel: zod.boolean().optional(),
+      call: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod.object({}).passthrough().optional(),
+          output: zod.object({}).passthrough().optional(),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      turn: zod.number(),
+      order: zod.number(),
+      relationship: zod.enum(["observed", "unknown"]),
+    }),
+  ),
+  turns: zod.array(
+    zod.object({
+      turn: zod.number(),
+      request: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+      }),
+      response: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+      }),
+    }),
+  ),
+  depth: zod.number(),
+  parallel: zod.number(),
+  overlap_unknown: zod.boolean(),
+  worker_depths: zod.record(zod.string(), zod.number()),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
@@ -54250,6 +54451,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           passed: zod.boolean().nullable(),
           result: zod.enum(["not_applicable", "inconclusive"]).optional(),
           reason: zod.string().optional(),
+          subject: zod.string().min(1).optional(),
         }),
       ),
       harness_outcome_status: zod.string().min(1),

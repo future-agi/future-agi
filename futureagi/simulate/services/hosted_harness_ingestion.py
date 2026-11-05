@@ -1082,6 +1082,9 @@ def _apply_receipt_to_call(
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
+    # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
+    finished_id = call.id
+    transaction.on_commit(lambda: _dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -1128,6 +1131,18 @@ def _apply_receipt_to_call(
                 lambda: locked_call_metadata_update(call_id, _mark_eval_side),
                 robust=True,
             )
+
+
+def _dispatch_worker_read(call_id: UUID) -> None:
+    """Read the call's worker timeline once its spans have had time to arrive."""
+    from datetime import timedelta
+
+    from simulate.services.harness_workers import FIRST_READ
+    from simulate.tasks.alk_sim import record_call_workers
+
+    record_call_workers.apply_async(
+        args=(str(call_id),), start_delay=timedelta(seconds=FIRST_READ)
+    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:

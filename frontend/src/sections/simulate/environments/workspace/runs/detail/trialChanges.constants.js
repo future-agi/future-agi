@@ -14,6 +14,10 @@ export const TRIAL_CHANGES_COPY = {
       .filter(Boolean)
       .join(" · "),
   committed: (actions) => `Committed: ${actions.join(", ")}`,
+  // A worker the world told apart from the rest of the agent.
+  worker: (name) => `Worker · ${name}`,
+  refusedHeading: "Refused attempts",
+  refused: (one) => [one.action, one.reason].filter(Boolean).join(": "),
   decisionsHeading: "What the actors chose",
   plays: {
     mocked: "As scheduled",
