@@ -1,0 +1,750 @@
+"""An environment's actors and sub-actors, read and edited as one cast in its draft, checked for structure only."""
+
+from __future__ import annotations
+
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
+
+import jsonschema
+from django.db import transaction
+
+from simulate.models import HostedHarnessJob
+from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning.versions import suite_documents
+from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from accounts.models.user import User
+
+ACTORS_FILE = "actors.json"
+SUB_ACTORS_FILE = "sub_actors.json"
+# What ALK decides about actors, sealed into each bundle by the release that built it; never kept here.
+ACTOR_RULES_FILE = "actor_rules.json"
+# The first sealing release's rules, for bundles sealed before any release did; generated once, never edited.
+_RULES_BEFORE_DECLARED = Path(__file__).with_name(
+    "harness_actor_rules_before_declared.json"
+)
+# Fields the platform writes on a record, beside the ones its rules declare.
+_PLATFORM_FIELDS = ("provenance",)
+# A sub-actor is a person on the caller's side; the cast shows it so.
+_SUB_ACTOR_CAST = {"kind": "person", "side": "caller"}
+
+
+class ActorRecord(TypedDict, total=False):
+    """One record as its file holds it; fields a later release declares pass through unchanged."""
+
+    id: str
+    name: str
+    role: str
+    kind: str
+    side: str
+    channel: str
+    parent: str | None
+    permitted_actions: list[str]
+    activation: dict[str, Any] | None
+    provenance: dict[str, Any]
+    scenarios: int
+
+
+class ActorRules(TypedDict, total=False):
+    """The sealed `actor_rules.json`; `records` holds each actor file's JSON Schema."""
+
+    records: dict[str, dict[str, Any]]
+    reserved_ids: list[str]
+    references: dict[str, list[str]]
+    acyclic: list[str]
+    world_actions: dict[str, Any]
+    loudness: dict[str, Any]
+    distinct_from_caller: list[str]
+    channels: dict[str, str]
+    channel_modalities: dict[str, list[str]]
+    equal_when_set: dict[str, str]
+    formats: dict[str, str]
+    brief_inputs: list[list[str]]
+    situation_before: str
+    evaluator_only: dict[str, list[str]]
+    private_to_actor: list[str]
+
+
+class WorldAction(TypedDict):
+    action: str
+    tool: str
+    description: str
+
+
+class Cast(TypedDict):
+    actors: list[ActorRecord]
+    source: Literal["draft", "saved"]
+    revision: int
+    record_schemas: dict[str, dict[str, Any]]
+    actions: list[WorldAction]
+    channels: dict[str, str]
+    loudness: dict[str, Any]
+
+
+class Seen(TypedDict):
+    input: str
+    value: Any
+    source: str
+
+
+class ActorView(TypedDict):
+    actor_id: str
+    permitted_actions: list[str]
+    sees: list[Seen]
+    never_sees: list[str]
+
+
+def _not_found(actor_id: str) -> HostedHarnessError:
+    return HostedHarnessError(
+        "actor_not_found",
+        f"{actor_id} is not an actor of this environment",
+        status_code=404,
+    )
+
+
+def _read_json(files: dict[str, bytes], name: str) -> Any:
+    raw = files.get(name)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except ValueError as exc:
+        raise _unreadable(name) from exc
+
+
+def _unreadable(name: str) -> HostedHarnessError:
+    return HostedHarnessError(
+        "actors_unreadable",
+        f"This environment's {name} cannot be read; ask the builder chat to fix it",
+        status_code=409,
+    )
+
+
+def _entries(files: dict[str, bytes], name: str, key: str) -> list[ActorRecord]:
+    body = _read_json(files, name)
+    if body is None:
+        return []
+    entries = (body.get(key) or []) if isinstance(body, dict) else None
+    if not isinstance(entries, list) or not all(
+        isinstance(one, dict) for one in entries
+    ):
+        raise _unreadable(name)
+    return entries
+
+
+def _is_sub_actor(actor: ActorRecord) -> bool:
+    """A sub-actor speaks on a call channel; a world actor has none."""
+    return "channel" in actor
+
+
+def _sub_actor_entry(actor: ActorRecord) -> ActorRecord:
+    return {name: value for name, value in actor.items() if name not in _SUB_ACTOR_CAST}
+
+
+def _cast(files: dict[str, bytes]) -> list[ActorRecord]:
+    return _entries(files, ACTORS_FILE, "actors") + [
+        {**entry, **_SUB_ACTOR_CAST}
+        for entry in _entries(files, SUB_ACTORS_FILE, "sub_actors")
+    ]
+
+
+@lru_cache(maxsize=1)
+def _rules_before_declared() -> ActorRules:
+    return json.loads(_RULES_BEFORE_DECLARED.read_text(encoding="utf-8"))
+
+
+def actor_rules(files: dict[str, bytes]) -> ActorRules:
+    """The actor rules of the release that sealed these files."""
+    return _read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
+
+
+def _value_at(record: ActorRecord, path: str) -> Any:
+    value: Any = record
+    for part in path.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def world_actions(files: dict[str, bytes], rules: ActorRules) -> list[WorldAction]:
+    """Each tool entrypoint's route an actor can send to, named as the sealing release names it."""
+    naming = rules.get("world_actions") or {}
+    contract = _read_json(files, "contract.json")
+    contract = contract if isinstance(contract, dict) else {}
+    about = {
+        str(one.get("name")): str(one.get("description") or "")
+        for one in contract.get("tools") or []
+        if isinstance(one, dict)
+    }
+    actions = {}
+    for entry in contract.get(naming.get("from", "tool_entrypoints")) or []:
+        if not isinstance(entry, dict):
+            continue
+        route = str(entry.get(naming.get("route", "endpoint")) or "").strip("/")
+        method = str(entry.get(naming.get("method", "method")) or "POST").upper()
+        # Rules that name the methods and path placeholders keep only routes an actor's action can be sent to.
+        if (
+            not route
+            or ("methods" in naming and method not in naming["methods"])
+            or ("placeholder" in naming and naming["placeholder"] in route)
+        ):
+            continue
+        tool = str(entry.get(naming.get("tool", "tool")) or "")
+        actions[route.replace("/", naming.get("separator", "."))] = {
+            "tool": tool,
+            "description": about.get(tool, ""),
+        }
+    return [{"action": name, **one} for name, one in sorted(actions.items())]
+
+
+def _cast_view(
+    environment_files: dict[str, bytes],
+    suite_files: dict[str, bytes],
+    draft: Any,
+) -> Cast:
+    rules = actor_rules(environment_files)
+    documents = suite_documents(suite_files)
+    return {
+        "actors": [
+            {
+                **one,
+                "scenarios": len(_scenarios_using(documents, str(one.get("id") or ""))),
+            }
+            for one in _cast(environment_files)
+        ],
+        "source": "draft" if draft is not None else "saved",
+        "revision": draft.revision if draft is not None else 0,
+        "record_schemas": rules["records"],
+        "actions": world_actions(environment_files, rules),
+        "channels": rules.get("channels") or {},
+        "loudness": rules.get("loudness") or {},
+    }
+
+
+def read_actors(environment: HostedHarnessJob) -> Cast:
+    """The cast the next run would use (the draft's, else the saved version's) and what an actor can be given.
+
+    Raises `actors_unreadable` (409) when an actor file is not valid JSON.
+    """
+    sides = drafts.edit_sides(environment)
+    return _cast_view(
+        sides["environment"],
+        sides["suite"],
+        drafts.fresh_draft(environment, "environment"),
+    )
+
+
+def _sharing_the_caller(
+    before: ActorRecord,
+    after: ActorRecord,
+    suite_files: dict[str, bytes],
+    rules: ActorRules,
+) -> list[str]:
+    """Two speakers of one name make a transcript unreadable, so a sub-actor never shares its caller's."""
+    actor_id = str(after.get("id") or "")
+    problems = []
+    for field in rules.get("distinct_from_caller") or []:
+        value = str(after.get(field) or "").strip().lower()
+        if not value or value == str(before.get(field) or "").strip().lower():
+            continue
+        for scenario in suite_documents(suite_files):
+            included = any(
+                isinstance(one, dict) and one.get("id") == actor_id
+                for one in scenario.get("sub_actors") or []
+            )
+            caller = str((scenario.get("persona") or {}).get(field) or "").strip()
+            if included and caller.lower() == value:
+                key = scenario.get("scenario_key") or scenario.get("name")
+                problems.append(
+                    f"{actor_id}'s {field} is the caller's in {key} ({caller}); choose another."
+                )
+    return problems
+
+
+def _modality(files: dict[str, bytes]) -> str | None:
+    """The agent's modality as authoring reported it; unknown before then, so no channel is refused for it."""
+    contract = _read_json(files, "contract.json")
+    modality = contract.get("modality") if isinstance(contract, dict) else None
+    return str(modality).strip().lower() or None if modality else None
+
+
+def _new_choices(
+    before: ActorRecord | None,
+    after: ActorRecord,
+    files: dict[str, bytes],
+    rules: ActorRules,
+    suite_files: dict[str, bytes] | None = None,
+    modality: str | None = None,
+) -> list[str]:
+    """Only what this edit adds must exist here, so an actor written elsewhere can still be edited."""
+    before = before or {}
+    actor_id = str(after.get("id") or "")
+    problems = []
+    if _is_sub_actor(after):
+        channels = rules.get("channels") or {}
+        channel = after.get("channel")
+        listed = (
+            rules["records"][SUB_ACTORS_FILE].get("properties", {}).get("channel", {})
+        )
+        reaches = (rules.get("channel_modalities") or {}).get(channel)
+        if channel != before.get("channel"):
+            # A schema that lists the channels already names an unknown one.
+            if channels and channel not in channels and "enum" not in listed:
+                problems.append(
+                    f"{actor_id}'s channel {channel!r} is not one of: {', '.join(channels)}."
+                )
+            if modality and reaches is not None and modality not in reaches:
+                problems.append(
+                    f"{actor_id} cannot reach a {modality} agent through {channel}; choose another channel."
+                )
+        return problems + _sharing_the_caller(before, after, suite_files or {}, rules)
+    known = [one["action"] for one in world_actions(files, rules)]
+    old = set(before.get("permitted_actions") or [])
+    added = [
+        one
+        for one in after.get("permitted_actions") or []
+        if one not in old and one not in known
+    ]
+    tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
+    old_tool = ((before.get("activation") or {}).get("trigger") or {}).get("tool")
+    if tool and tool != old_tool and tool not in known:
+        added.append(tool)
+    if added and not known:
+        problems.append(
+            f"{actor_id} cannot be given {', '.join(added)}: this environment has no world actions, because its tools "
+            "run inside the agent. Leave them empty."
+        )
+    elif added:
+        problems.append(
+            f"{', '.join(added)} is not an action of this environment; choose from {', '.join(known)}."
+        )
+    return problems
+
+
+def _reason(error: jsonschema.ValidationError) -> str:
+    """An optional field allows null too, so the limit is named by the branch that is not null."""
+    branches = [
+        one
+        for one in error.context or ()
+        if not (one.validator == "type" and one.validator_value == "null")
+    ]
+    broken = jsonschema.exceptions.best_match(branches) if branches else error
+    described = (
+        broken.schema.get("description") if isinstance(broken.schema, dict) else None
+    )
+    if broken.validator == "pattern" and described:
+        return f"{broken.instance!r} is not valid; use {described}"
+    if broken.validator == "maxLength":
+        return f"use at most {broken.validator_value} characters"
+    if broken.validator == "enum":
+        return f"{broken.instance!r} is not one of: {', '.join(map(str, broken.validator_value))}"
+    if broken.validator == "minLength":
+        return "it cannot be empty"
+    return broken.message
+
+
+def _record_schema(actor: ActorRecord, rules: ActorRules) -> dict[str, Any]:
+    """The record's own schema, with every actor's id following the world actor's rule and a name required."""
+    records = rules["records"]
+    schema = records[SUB_ACTORS_FILE if _is_sub_actor(actor) else ACTORS_FILE]
+    properties = dict(schema.get("properties") or {})
+    properties["id"] = records[ACTORS_FILE]["properties"]["id"]
+    properties["name"] = {"minLength": 1, **(properties.get("name") or {})}
+    return {
+        **schema,
+        "properties": properties,
+        "required": sorted({*(schema.get("required") or []), "id", "name"}),
+    }
+
+
+def _record_problems(
+    actor: ActorRecord, rules: ActorRules, *, new_id: bool
+) -> list[str]:
+    actor_id = str(actor.get("id") or "")
+    sub_actor = _is_sub_actor(actor)
+    file = SUB_ACTORS_FILE if sub_actor else ACTORS_FILE
+    schema = _record_schema(actor, rules)
+    record = _sub_actor_entry(actor) if sub_actor else dict(actor)
+    problems = []
+    if sub_actor and actor.get("side", "caller") != "caller":
+        problems.append(
+            f"{actor_id} speaks on the call ({actor['channel']}), so it is on the caller's side."
+        )
+    extra = sorted(set(record) - set(schema["properties"]) - set(_PLATFORM_FIELDS))
+    if extra:
+        problems.append(
+            f"{actor_id} has no {', '.join(extra)} in {file}; remove {'it' if len(extra) == 1 else 'them'}."
+        )
+    checked = {
+        name: value
+        for name, value in record.items()
+        if name not in extra and name not in _PLATFORM_FIELDS
+    }
+    for error in jsonschema.Draft202012Validator(schema).iter_errors(checked):
+        where = ".".join(str(part) for part in error.absolute_path)
+        # An id never changes, so one already in the cast is kept as it is.
+        if where == "id" and not new_id:
+            continue
+        # A bad id cannot name its own actor, so the sentence names the field instead.
+        subject = (
+            "The id"
+            if where == "id"
+            else f"{actor_id}'s {where}:"
+            if where
+            else f"{actor_id}:"
+        )
+        problems.append(f"{subject} {_reason(error)}.")
+    for path, field in (rules.get("equal_when_set") or {}).items():
+        named = _value_at(actor, path)
+        if (
+            isinstance(named, str)
+            and named.strip()
+            and named.strip() != actor.get(field)
+        ):
+            problems.append(
+                f"{actor_id}'s {path} is {named.strip()!r} but its {field} is {actor.get(field)!r}; make them the same."
+            )
+    if new_id and actor_id in rules.get("reserved_ids", []):
+        problems.append(f"{actor_id!r} is reserved; give the actor another id.")
+    return problems
+
+
+def _broken_references(
+    actor: ActorRecord, known: set[str], rules: ActorRules
+) -> list[tuple[str, Any]]:
+    actor_id = str(actor.get("id") or "")
+    return [
+        (path, other)
+        for path, also in (rules.get("references") or {}).items()
+        if (other := _value_at(actor, path)) is not None
+        and other not in also
+        and other not in known - {actor_id}
+    ]
+
+
+def _in_a_cycle(actor_id: str, actors: list[ActorRecord], path: str) -> bool:
+    links = {str(one.get("id") or ""): _value_at(one, path) for one in actors}
+    seen, at = set(), links.get(actor_id)
+    while at is not None and at in links and at not in seen:
+        if at == actor_id:
+            return True
+        seen.add(at)
+        at = links[at]
+    return False
+
+
+def actor_problems(
+    actors: list[ActorRecord], actor_id: str, rules: ActorRules, *, new_id: bool
+) -> list[str]:
+    """The edited record checked against the sealing release's rules, one sentence each with its fix.
+
+    Other records are taken as they are, so a value written elsewhere never blocks an edit; what an actor should do
+    is never judged.
+    """
+    known = {str(one.get("id") or "") for one in actors}
+    actor = next(one for one in actors if one.get("id") == actor_id)
+    problems = _record_problems(actor, rules, new_id=new_id)
+    problems += [
+        f"{actor_id}'s {path} {other!r} is not another listed actor."
+        for path, other in _broken_references(actor, known, rules)
+    ]
+    problems += [
+        f"{actor_id} is in a cycle of {path} links; break it."
+        for path in rules.get("acyclic", [])
+        if _in_a_cycle(actor_id, actors, path)
+    ]
+    return problems
+
+
+def _removal_problems(
+    actors: list[ActorRecord], actor_id: str, rules: ActorRules
+) -> list[str]:
+    """Another actor naming the removed one would point at nobody."""
+    known = {str(one.get("id") or "") for one in actors}
+    return [
+        f"{one.get('id')}'s {path} is {actor_id}; change it first."
+        for one in actors
+        for path, other in _broken_references(one, known, rules)
+        if other == actor_id
+    ]
+
+
+def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str]:
+    return sorted(
+        str(scenario.get("scenario_key") or scenario.get("name") or "")
+        for scenario in documents
+        if any(
+            isinstance(one, dict) and one.get("id") == actor_id
+            for one in [
+                *(scenario.get("actors") or []),
+                *(scenario.get("sub_actors") or []),
+            ]
+        )
+    )
+
+
+def _edited(
+    actors: list[ActorRecord],
+    *,
+    op: str,
+    actor_id: str,
+    body: ActorRecord,
+    user: User | None,
+    suite_files: dict[str, bytes],
+) -> list[ActorRecord]:
+    """The cast after one create, replace or delete; refused with the reason when the change cannot apply."""
+    index = next((i for i, one in enumerate(actors) if one.get("id") == actor_id), None)
+    actors = list(actors)
+    if op == "create" and index is not None:
+        raise HostedHarnessError(
+            "actor_exists",
+            f"The id {actor_id!r} is already used by {actors[index].get('name') or actor_id}; choose another id",
+            status_code=409,
+        )
+    if op == "create":
+        return [*actors, _stamped({**body, "id": actor_id}, user)]
+    if op not in ("replace", "delete"):
+        raise HostedHarnessError(
+            "actor_op_unknown", f"unknown change {op!r}", status_code=400
+        )
+    if index is None:
+        raise _not_found(actor_id)
+    if op == "replace":
+        after = _stamped({**body, "id": actor_id}, user, before=actors[index])
+        if _is_sub_actor(after) != _is_sub_actor(actors[index]):
+            # Scenarios include it under its own kind, so a move would leave them pointing at nobody.
+            raise HostedHarnessError(
+                "actor_invalid",
+                f"{actor_id} "
+                + (
+                    "speaks on the call"
+                    if _is_sub_actor(actors[index])
+                    else "acts in the world"
+                )
+                + "; remove it and add it again to change that",
+                status_code=400,
+            )
+        actors[index] = after
+        return actors
+    using = _scenarios_using(suite_documents(suite_files), actor_id)
+    if using:
+        many = len(using) != 1
+        raise HostedHarnessError(
+            "actor_in_use",
+            f"{actors[index].get('name') or actor_id} is in {len(using)} scenario{'s' if many else ''} "
+            f"({', '.join(using)}); take them out of {'those' if many else 'it'} first",
+            status_code=409,
+        )
+    actors.pop(index)
+    return actors
+
+
+def _with_cast(
+    environment_files: dict[str, bytes], actors: list[ActorRecord], rules: ActorRules
+) -> dict[str, bytes]:
+    world = [one for one in actors if not _is_sub_actor(one)]
+    speaking = [_sub_actor_entry(one) for one in actors if _is_sub_actor(one)]
+    files = dict(environment_files)
+    # No world actors means no file, so removing the only actor leaves nothing to review.
+    files.pop(ACTORS_FILE, None)
+    if world:
+        files[ACTORS_FILE] = (
+            json.dumps(
+                {"schema": rules["formats"][ACTORS_FILE], "actors": world}, indent=2
+            )
+            + "\n"
+        ).encode("utf-8")
+    if speaking or SUB_ACTORS_FILE in files:
+        files[SUB_ACTORS_FILE] = (
+            json.dumps({"sub_actors": speaking}, indent=2) + "\n"
+        ).encode("utf-8")
+    return files
+
+
+def write_actor_edit(
+    environment: HostedHarnessJob,
+    *,
+    op: str,
+    actor_id: str | None,
+    body: ActorRecord | None,
+    user: User | None,
+    expected_revision: int | None,
+) -> Cast:
+    """Create, replace or delete one actor in the environment draft and return the cast after it.
+
+    `expected_revision` is the draft revision the caller read; an edit made elsewhere since is refused with
+    `draft_changed` (409). Also refuses `actor_exists`, `actor_in_use` (409), `actor_not_found` (404) and
+    `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400), and retires the builder chat's runtime
+    once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
+    """
+    # The scenario count is read-side only; it is never written into a record.
+    body = {name: value for name, value in (body or {}).items() if name != "scenarios"}
+    given = body.pop("id", None) or actor_id
+    if op != "delete" and not given:
+        raise HostedHarnessError(
+            "actor_id_missing", "give the actor an id", status_code=400
+        )
+    if op != "delete" and actor_id is not None and given != actor_id:
+        raise HostedHarnessError(
+            "actor_id_mismatch", "an actor's id never changes", status_code=400
+        )
+    actor_id = given
+    # The draft is read before its files, so an edit landing in between fails the write's revision check.
+    draft = drafts.fresh_draft(environment, "environment")
+    sides = drafts.edit_sides(environment)
+    environment_files, suite_files = sides["environment"], sides["suite"]
+    if expected_revision is not None and expected_revision != (
+        draft.revision if draft is not None else 0
+    ):
+        raise HostedHarnessError(
+            "draft_changed",
+            "the actors were edited elsewhere since you read them; read them again",
+            status_code=409,
+        )
+    before = _cast(environment_files)
+    actors = _edited(
+        before, op=op, actor_id=actor_id, body=body, user=user, suite_files=suite_files
+    )
+    rules = actor_rules(environment_files)
+    if op == "delete":
+        problems = _removal_problems(actors, actor_id, rules)
+    else:
+        problems = actor_problems(
+            actors, actor_id, rules, new_id=op == "create"
+        ) + _new_choices(
+            next((one for one in before if one.get("id") == actor_id), None),
+            next(one for one in actors if one.get("id") == actor_id),
+            environment_files,
+            rules,
+            suite_files,
+            _modality(environment_files),
+        )
+    if problems:
+        raise HostedHarnessError("actor_invalid", " ".join(problems), status_code=400)
+    environment_files = _with_cast(environment_files, actors, rules)
+    expected = {
+        "environment": (
+            drafts.DraftRef(str(draft.id), draft.revision)
+            if draft is not None
+            else drafts.NO_DRAFT
+        )
+    }
+    written = drafts.record_draft(
+        environment,
+        archives.pack_archive(archives.compose(environment_files, suite_files)),
+        origin="manual",
+        user=user,
+        expected=expected,
+        pieces={"environment"},
+    )
+    if written is None:
+        raise HostedHarnessError(
+            "drafts_unavailable",
+            "this environment does not keep drafts",
+            status_code=409,
+        )
+    transaction.on_commit(lambda: drafts.retire_chat_runtime(environment))
+    return _cast_view(environment_files, suite_files, written.environment)
+
+
+def _stamped(
+    actor: ActorRecord, user: User | None, *, before: ActorRecord | None = None
+) -> ActorRecord:
+    """Who set the record and each field this edit changed: set here, never taken from a client."""
+    old = before or {}
+    skipped = {"id", "provenance", *(_SUB_ACTOR_CAST if _is_sub_actor(actor) else ())}
+    fields = {
+        **((old.get("provenance") or {}).get("fields") or {}),
+        **{
+            name: "editor"
+            for name, value in actor.items()
+            if name not in skipped and (before is None or old.get(name) != value)
+        },
+    }
+    return {
+        **actor,
+        "provenance": {
+            "origin": "editor",
+            "by": str(getattr(user, "id", "") or "") or None,
+            "fields": fields,
+        },
+    }
+
+
+def actor_view(
+    environment: HostedHarnessJob, actor_id: str, *, scenario_key: str | None = None
+) -> ActorView:
+    """What one actor is given, with each value's source, what it may do, and what it never sees; optionally in one
+    scenario. Raises `actor_not_found` or `scenario_not_found` (404)."""
+    sides = drafts.edit_sides(environment)
+    environment_files, suite_files = sides["environment"], sides["suite"]
+    actors = _cast(environment_files)
+    actor = next((one for one in actors if one.get("id") == actor_id), None)
+    if actor is None:
+        raise _not_found(actor_id)
+    scenario = None
+    if scenario_key is not None:
+        scenario = next(
+            (
+                one
+                for one in suite_documents(suite_files)
+                if (one.get("scenario_key") or one.get("name")) == scenario_key
+            ),
+            None,
+        )
+        if scenario is None:
+            raise HostedHarnessError(
+                "scenario_not_found",
+                f"{scenario_key} is not a scenario of this environment",
+                status_code=404,
+            )
+    entry = next(
+        (
+            one
+            for one in [
+                *((scenario or {}).get("actors") or []),
+                *((scenario or {}).get("sub_actors") or []),
+            ]
+            if isinstance(one, dict) and one.get("id") == actor_id
+        ),
+        None,
+    )
+    rules = actor_rules(environment_files)
+    sees: list[Seen] = []
+    for source, field in rules["brief_inputs"]:
+        if source == "actor":
+            value = actor.get(field)
+        elif source == "scenario":
+            value = (entry or {}).get(field) if entry is not None else None
+        else:
+            value = (
+                str(scenario.get("instruction") or "")
+                .split(rules["situation_before"])[0]
+                .strip()
+                # The caller has its whole situation already; anyone else, a sub-actor beside it included, is given
+                # the part before its details.
+                if scenario is not None
+                and (actor.get("side") != "caller" or _is_sub_actor(actor))
+                else None
+            )
+        if value in (None, "", [], {}):
+            continue
+        sees.append({"input": f"{source}.{field}", "value": value, "source": source})
+    hidden = rules["evaluator_only"]
+    never = [f"scenario.{name}" for name in hidden["scenario_fields"]] + [
+        f"file.{name}" for name in hidden["files"]
+    ]
+    never += [
+        f"{one.get('id')}.{name}"
+        for one in actors
+        if one.get("id") != actor_id
+        for name in rules["private_to_actor"]
+    ]
+    return {
+        "actor_id": actor_id,
+        "permitted_actions": list(actor.get("permitted_actions") or []),
+        "sees": sees,
+        "never_sees": never,
+    }

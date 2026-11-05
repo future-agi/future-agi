@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from rest_framework import serializers
 
+from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.models import HarnessNudge
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
@@ -721,7 +724,7 @@ class HarnessDraftItemSerializer(HarnessVersionSerializer):
         child=serializers.IntegerField(),
         help_text=(
             "Counts against the parent: added, removed and changed for the suite;"
-            " tools, rules, sub_goals and world_files for the environment."
+            " actors, tools, rules, sub_goals and world_files for the environment."
         ),
     )
 
@@ -1036,3 +1039,70 @@ class HarnessNudgeListQuerySerializer(serializers.Serializer):
 
 class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
+
+
+# Bounds every field of one actor record together; each field's own limit comes from the sealed rules.
+ACTOR_RECORD_MAX_CHARS = 65_536
+
+
+class HarnessActorRecordField(JsonObjectRequestField):
+    """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if len(json.dumps(value, ensure_ascii=False)) > ACTOR_RECORD_MAX_CHARS:
+            raise serializers.ValidationError(
+                f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
+            )
+        return value
+
+
+class HarnessActorWriteSerializer(serializers.Serializer):
+    actor = HarnessActorRecordField()
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0
+    )
+
+
+class HarnessActorDeleteQuerySerializer(serializers.Serializer):
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class HarnessWorldActionSerializer(serializers.Serializer):
+    """One action the world lets an actor take, named as the world names it, with the tool behind it."""
+
+    action = serializers.CharField()
+    tool = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+
+
+class HarnessActorListSerializer(serializers.Serializer):
+    actors = serializers.ListField(child=HarnessActorRecordField())
+    source = serializers.ChoiceField(choices=("draft", "saved"))
+    revision = serializers.IntegerField()
+    # Each actor file's record schema, from the rules of the release that sealed the environment.
+    record_schemas = JsonObjectRequestField()
+    # What an actor can be given here: the world's actions, and the call channels a sub-actor speaks on.
+    actions = HarnessWorldActionSerializer(many=True)
+    channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
+    # Which channels have a loudness, and the range a call draws from when none is set.
+    loudness = JsonObjectRequestField()
+
+
+class HarnessActorViewQuerySerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(required=False, max_length=255)
+
+
+class HarnessActorSeenSerializer(serializers.Serializer):
+    input = serializers.CharField()
+    value = serializers.JSONField()
+    source = serializers.ChoiceField(choices=("actor", "scenario", "caller"))
+
+
+class HarnessActorViewSerializer(serializers.Serializer):
+    actor_id = serializers.CharField()
+    permitted_actions = serializers.ListField(child=serializers.CharField())
+    sees = HarnessActorSeenSerializer(many=True)
+    never_sees = serializers.ListField(child=serializers.CharField())

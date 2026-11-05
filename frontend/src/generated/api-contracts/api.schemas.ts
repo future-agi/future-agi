@@ -18582,6 +18582,73 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessActorListApiActorsItem = { [key: string]: unknown };
+
+export type HarnessActorListApiSource =
+  (typeof HarnessActorListApiSource)[keyof typeof HarnessActorListApiSource];
+
+export const HarnessActorListApiSource = {
+  draft: "draft",
+  saved: "saved",
+} as const;
+
+export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
+
+export type HarnessActorListApiChannels = { [key: string]: string };
+
+export type HarnessActorListApiLoudness = { [key: string]: unknown };
+
+export interface HarnessWorldActionApi {
+  /** @minLength 1 */
+  action: string;
+  tool: string;
+  description: string;
+}
+
+export interface HarnessActorListApi {
+  actors: HarnessActorListApiActorsItem[];
+  source: HarnessActorListApiSource;
+  revision: number;
+  record_schemas: HarnessActorListApiRecordSchemas;
+  actions: HarnessWorldActionApi[];
+  channels: HarnessActorListApiChannels;
+  loudness: HarnessActorListApiLoudness;
+}
+
+export type HarnessActorWriteApiActor = { [key: string]: unknown };
+
+export interface HarnessActorWriteApi {
+  actor: HarnessActorWriteApiActor;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
+export type HarnessActorSeenApiSource =
+  (typeof HarnessActorSeenApiSource)[keyof typeof HarnessActorSeenApiSource];
+
+export const HarnessActorSeenApiSource = {
+  actor: "actor",
+  scenario: "scenario",
+  caller: "caller",
+} as const;
+
+export type HarnessActorSeenApiValue = { [key: string]: unknown };
+
+export interface HarnessActorSeenApi {
+  /** @minLength 1 */
+  input: string;
+  value: HarnessActorSeenApiValue;
+  source: HarnessActorSeenApiSource;
+}
+
+export interface HarnessActorViewApi {
+  /** @minLength 1 */
+  actor_id: string;
+  permitted_actions: string[];
+  sees: HarnessActorSeenApi[];
+  never_sees: string[];
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -18698,7 +18765,7 @@ export type HarnessDraftItemApiSource = { [key: string]: unknown };
 export type HarnessDraftItemApiPreflightReport = { [key: string]: unknown };
 
 /**
- * Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.
+ * Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.
  */
 export type HarnessDraftItemApiChanges = { [key: string]: number };
 
@@ -18760,7 +18827,7 @@ export interface HarnessDraftItemApi {
    * @minLength 1
    */
   default_label: string | null;
-  /** Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment. */
+  /** Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment. */
   changes: HarnessDraftItemApiChanges;
 }
 
@@ -24238,6 +24305,25 @@ export interface SimulateRunV3FunctionCallApi {
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
   start_time_ms?: number;
+  ok?: boolean;
+  error?: string;
+  refused?: boolean;
+  at?: number;
+  /** @minLength 1 */
+  action_id?: string;
+  /** @minLength 1 */
+  outcome?: string;
+  /** @minLength 1 */
+  actor_id?: string;
+  /** @minLength 1 */
+  actor_name?: string;
+  actor_role?: string;
+  /** @minLength 1 */
+  refusal_code?: string;
+  /** @minLength 1 */
+  parent_event_id?: string;
+  /** @minLength 1 */
+  on_behalf_of?: string;
 }
 
 export interface CallSubActorApi {
@@ -38211,6 +38297,21 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsActorViewParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsDeleteActorParams = {
+  /**
+   * @minimum 0
+   */
+  expected_revision?: number;
 };
 
 export type SimulateApiHarnessEnvironmentsCompareParams = {

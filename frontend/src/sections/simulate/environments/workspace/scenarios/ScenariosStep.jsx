@@ -10,7 +10,9 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
+import { useActors } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
+import { speaks } from "../actors/actorUtils";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
@@ -93,6 +95,16 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
+  // With versioning, names come from the draft's cast, as the Actors tab shows them: a draft rename or a draft-only
+  // sub-actor reads the same here before Save.
+  const { data: cast } = useActors(env?.id, {
+    enabled: Boolean(env?.versioning?.enabled),
+  });
+  const envWithCast = useMemo(
+    () =>
+      cast?.actors ? { ...env, subActors: cast.actors.filter(speaks) } : env,
+    [cast, env],
+  );
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -489,7 +501,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               <PagedScenarioViews
                 pageData={pageData}
                 selection={sel}
-                env={env}
+                env={envWithCast}
                 view={view}
                 hiddenGroupIds={hiddenGroupIds}
                 onHideGroup={toggleGroupHidden}
@@ -525,7 +537,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       />
       <ScenarioDrawer
         row={openRow}
-        env={env}
+        env={envWithCast}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => { setOpenRow(null); setEditing(row); }}
         locked={locked}

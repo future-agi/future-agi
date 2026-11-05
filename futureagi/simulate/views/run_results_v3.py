@@ -554,6 +554,21 @@ class FunctionCallSerializer(serializers.Serializer):
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
     start_time_ms = serializers.IntegerField(required=False)
+    ok = serializers.BooleanField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True)
+    refused = serializers.BooleanField(required=False)
+    # Epoch seconds the world logged it.
+    at = serializers.FloatField(required=False)
+    # The world's action log: its id, and how the world took it (committed, refused, faulted or duplicate).
+    action_id = serializers.CharField(required=False, allow_null=True)
+    outcome = serializers.CharField(required=False, allow_null=True)
+    # Set on a world actor's action; the agent's own calls carry none.
+    actor_id = serializers.CharField(required=False)
+    actor_name = serializers.CharField(required=False)
+    actor_role = serializers.CharField(required=False, allow_blank=True)
+    refusal_code = serializers.CharField(required=False, allow_null=True)
+    parent_event_id = serializers.CharField(required=False, allow_null=True)
+    on_behalf_of = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"

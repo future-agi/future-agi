@@ -325,23 +325,27 @@ def _side(files: Mapping[str, bytes], piece: str) -> dict[str, bytes]:
 
 
 def _piece_files(environment: HostedHarnessJob, piece: str, version: Any):
-    """A version's files; a backfilled version whose archive is gone reads the default
-    pair's side instead."""
+    """A version's files; an environment with no version yet, or a backfilled version whose
+    archive is gone, reads the default pair's side instead."""
+    fallback = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_object_key")
+        or ""
+    )
+    if version is None:
+        return (
+            _side(archives.read_archive(archives.get_archive(fallback)), piece)
+            if fallback
+            else {}
+        )
     try:
         return _side(
             archives.read_archive(archives.get_archive(version.archive_object_key)),
             piece,
         )
     except (S3Error, HostedHarnessError):
-        key = str(
-            ((environment.payload or {}).get("metadata") or {}).get(
-                "authoring_object_key"
-            )
-            or ""
-        )
-        if not key:
+        if not fallback:
             raise
-        return _side(archives.read_archive(archives.get_archive(key)), piece)
+        return _side(archives.read_archive(archives.get_archive(fallback)), piece)
 
 
 def _sealed_files(key: str) -> dict[str, bytes] | None:
@@ -793,6 +797,19 @@ def record_draft(
     )
 
 
+def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
+    """The files the next edit builds on, per piece: its open draft, else its saved default."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    return {
+        piece: _piece_files(
+            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+        )
+        for piece in DRAFT_PIECES
+    }
+
+
 def write_suite_edit(
     environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
 ) -> DraftWrite | None:
@@ -802,13 +819,7 @@ def write_suite_edit(
         _rewritten_authoring_archive,
     )
 
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    sides = {}
-    for piece in DRAFT_PIECES:
-        version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
-        sides[piece] = _piece_files(head, piece, version)
+    sides = edit_sides(environment)
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )
@@ -1412,7 +1423,11 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
     rules = contract.get("rules") or {}
     sub_goals = diff.get("sub_goals") or {}
     files = diff.get("files") or {}
+    actors = diff.get("actors") or {}
     return {
+        "actors": size(
+            actors.get("added"), actors.get("removed"), actors.get("changed")
+        ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
         "sub_goals": size(

@@ -66,4 +66,52 @@ describe("ChatTranscriptPane", () => {
     expect(tabLabels()).toEqual(["All", "Assistant", "Customer"]);
     expect(screen.queryByText("On the call:")).toBeNull();
   });
+
+  it("names a world actor with their role and shows their action as an event", async () => {
+    render(
+      <ChatTranscriptPane
+        turns={[
+          { role: "customer", text: "Can I get a discount?" },
+          {
+            role: "world_actor",
+            speakerName: "Pat Lee",
+            actorRole: "store manager",
+            text: 'Refused · crm.approve_discount\n→ args: {"percent":20}',
+          },
+          { role: "world_actor", text: "crm.reject_discount" },
+        ]}
+      />,
+    );
+
+    // On their own turns only: acting in the world doesn't put them on the call.
+    expect(screen.getByText("Pat Lee · store manager")).toBeInTheDocument();
+    expect(screen.getByText("Someone")).toBeInTheDocument();
+    expect(screen.queryByText("On the call:")).toBeNull();
+    expect(
+      screen.getByText("Refused · crm.approve_discount"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/args:/)).toBeNull();
+    expect(screen.queryByText(/world_actor|in the world/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Details/ }));
+    expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
+
+  it("opens a world action's fold when a search matched inside it", async () => {
+    render(
+      <ChatTranscriptPane
+        turns={[
+          {
+            role: "world_actor",
+            speakerName: "Pat Lee",
+            text: 'crm.approve_discount\n→ args: {"percent":20}',
+          },
+        ]}
+      />,
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Search transcript"),
+      "percent",
+    );
+    expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
 });

@@ -51572,6 +51572,186 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/actors/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_actors",
+                "description": "The environment's cast as the next run would use it: the draft's when there is one.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_harness-environments_create_actor",
+                "description": "Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/actors/{actor_id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_actor_view",
+                "description": "What one actor sees and may do, optionally in one scenario, and what it never sees.",
+                "parameters": [
+                    {
+                        "name": "scenario_key",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorView"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "simulate_api_harness-environments_replace_actor",
+                "description": "Replace one actor in the draft; its id never changes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness-environments_delete_actor",
+                "description": "Take one actor out of the draft; refused while a scenario includes it.",
+                "parameters": [
+                    {
+                        "name": "expected_revision",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "actor_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/compare/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_compare",
@@ -131164,6 +131344,168 @@
                 }
             }
         },
+        "HarnessWorldAction": {
+            "required": [
+                "action",
+                "tool",
+                "description"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tool": {
+                    "title": "Tool",
+                    "type": "string"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessActorList": {
+            "required": [
+                "actors",
+                "source",
+                "revision",
+                "record_schemas",
+                "actions",
+                "channels",
+                "loudness"
+            ],
+            "type": "object",
+            "properties": {
+                "actors": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "saved"
+                    ]
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "record_schemas": {
+                    "title": "Record schemas",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessWorldAction"
+                    }
+                },
+                "channels": {
+                    "title": "Channels",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "loudness": {
+                    "title": "Loudness",
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "HarnessActorWrite": {
+            "required": [
+                "actor"
+            ],
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "title": "Actor",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessActorSeen": {
+            "required": [
+                "input",
+                "value",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "input": {
+                    "title": "Input",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "actor",
+                        "scenario",
+                        "caller"
+                    ]
+                }
+            }
+        },
+        "HarnessActorView": {
+            "required": [
+                "actor_id",
+                "permitted_actions",
+                "sees",
+                "never_sees"
+            ],
+            "type": "object",
+            "properties": {
+                "actor_id": {
+                    "title": "Actor id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "permitted_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sees": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActorSeen"
+                    }
+                },
+                "never_sees": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
         "HarnessCompareInterval": {
             "description": "Newcombe 95% interval of the difference.",
             "required": [
@@ -131668,7 +132010,7 @@
                 },
                 "changes": {
                     "title": "Changes",
-                    "description": "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+                    "description": "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "integer"
@@ -144067,6 +144409,66 @@
                 "start_time_ms": {
                     "title": "Start time ms",
                     "type": "integer"
+                },
+                "ok": {
+                    "title": "Ok",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "refused": {
+                    "title": "Refused",
+                    "type": "boolean"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "number"
+                },
+                "action_id": {
+                    "title": "Action id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "actor_id": {
+                    "title": "Actor id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "actor_name": {
+                    "title": "Actor name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "actor_role": {
+                    "title": "Actor role",
+                    "type": "string"
+                },
+                "refusal_code": {
+                    "title": "Refusal code",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "parent_event_id": {
+                    "title": "Parent event id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "on_behalf_of": {
+                    "title": "On behalf of",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },

@@ -28,7 +28,10 @@ from simulate.models import (
     RunTest,
 )
 from simulate.services.harness_versioning import diffs
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import (
+    versioning_enabled,
+    with_actor_digests,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 
 logger = logging.getLogger(__name__)
@@ -598,6 +601,8 @@ def _environment_diff(
         sub_goals=_digests(goals, current_id, "sub_goal_digests") or {},
         previous_files=previous_files if known else None,
         files=files or {},
+        previous_actors=previous.get("actor_digests"),
+        actors=current.get("actor_digests"),
     )
 
 
@@ -701,7 +706,12 @@ def version_diff(
     previous = _mapping(other.documents, other.id, "documents")
     current = _mapping(version.documents, version.id, "documents")
     if piece == "environment":
-        diff = _environment_diff(previous, current, other.id, version.id)
+        diff = _environment_diff(
+            with_actor_digests(other, previous),
+            with_actor_digests(version, current),
+            other.id,
+            version.id,
+        )
         return {
             "summary": diffs.summarize_environment(diff),
             "diff": diff,

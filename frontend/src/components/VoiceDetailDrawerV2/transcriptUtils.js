@@ -22,7 +22,7 @@ export const normalizeRole = (role) => {
 };
 
 // Roles of anyone on the call other than the agent and the customer.
-const OTHER_ROLES = new Set(["sub_actor"]);
+const OTHER_ROLES = new Set(["sub_actor", "world_actor"]);
 export const isOtherRole = (role) => OTHER_ROLES.has(role);
 
 // `Name · role`; a call stored before roles were kept shows just the name.
@@ -234,14 +234,15 @@ export const enrichTurns = (
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap between consecutive spoken turns. A tool call
-  // sits inline at the moment it ran, often mid-turn; it is not speech, so it
-  // neither interrupts nor splits the gap between the turns around it.
+  // Step 7: silence + overlap between consecutive spoken turns. A tool call or
+  // a world actor's action sits inline at the moment it ran, often mid-turn; it
+  // is not speech, so it neither interrupts nor splits the gap between the
+  // turns around it.
   let prev = null;
   for (const cur of sorted) {
     cur.silenceBefore = null;
     cur.overlapsPrev = false;
-    if (cur.role === "tool") continue;
+    if (cur.role === "tool" || cur.role === "world_actor") continue;
     if (prev && prev.end != null && cur.start != null) {
       const gap = cur.start - prev.end;
       if (gap < -0.1) {

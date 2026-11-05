@@ -7,6 +7,8 @@ import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
+import ActorsTab from "./actors/ActorsTab";
+import { showActorsTab } from "./actors/actorUtils";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
@@ -84,7 +86,8 @@ export default function WorkspacePanels({
     (t) =>
       (t.id !== "runs" || showRuns) &&
       (t.id !== "improvements" || showImprovements) &&
-      (t.id !== "versions" || showVersions),
+      (t.id !== "versions" || showVersions) &&
+      (t.id !== "actors" || showActorsTab(env)),
   );
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -116,6 +119,8 @@ export default function WorkspacePanels({
     switch (current.id) {
       case "contract":
         return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
+      case "actors":
+        return <ActorsTab env={env} locked={locked} />;
       case "scenarios":
         return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
       case "evals":

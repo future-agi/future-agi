@@ -30,10 +30,15 @@ import {
   otherParties,
   otherPartyLabel,
 } from "./transcriptUtils";
-import { DEFAULT_ROLE_LABELS, OTHER_PARTY_SERIES } from "./constants";
+import {
+  DEFAULT_ROLE_LABELS,
+  OTHER_PARTY_SERIES,
+  WORLD_ACTOR_SERIES,
+} from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
 import OtherPartyName from "./OtherPartyName";
 import CallParticipants from "./CallParticipants";
+import WorldActorAction from "./WorldActorAction";
 import { statusColors } from "src/utils/runStatus";
 import { seriesColor } from "src/theme/data-colors";
 
@@ -89,6 +94,7 @@ const useSpeakerColors = () => {
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
       sub_actor: seriesColor(theme, OTHER_PARTY_SERIES),
+      world_actor: seriesColor(theme, WORLD_ACTOR_SERIES),
       others: seriesColor(theme, OTHER_PARTY_SERIES),
       unknown: theme.palette.text.disabled,
     }),
@@ -477,6 +483,12 @@ const TurnRow = React.forwardRef(
           {isFunctionCall ? (
             <FunctionCallContent
               calls={turn.toolCalls}
+              renderText={(text) => highlightMatches(text, query)}
+            />
+          ) : turn.role === "world_actor" ? (
+            <WorldActorAction
+              text={turn.content}
+              query={query}
               renderText={(text) => highlightMatches(text, query)}
             />
           ) : query ? (

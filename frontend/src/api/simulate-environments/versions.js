@@ -82,6 +82,14 @@ const discardDraftPath = (envId, piece) =>
     piece,
   });
 
+const actorsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actors/", { id: envId });
+const actorPath = (envId, actorId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actors/{actor_id}/", {
+    id: envId,
+    actor_id: actorId,
+  });
+
 const runPlanPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/run-plan/", { id: envId });
 
@@ -168,6 +176,51 @@ export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
 export const discardDraft = async (envId, piece) =>
   (await axios.delete(discardDraftPath(envId, piece))).data;
 
+/**
+ * The cast the next run uses (the draft's when there is one), with the record schemas, world actions,
+ * channels and loudness an actor can be given.
+ * @param {string} envId
+ */
+export const getActors = async (envId) =>
+  (await axios.get(actorsPath(envId))).data;
+/**
+ * One actor's view: what it sees and may do, and what it never sees. 404 `actor_not_found` for an unknown id.
+ * @param {string} envId
+ * @param {string} actorId
+ */
+export const getActorView = async (envId, actorId) =>
+  (await axios.get(actorPath(envId, actorId))).data;
+/**
+ * Create, replace or delete one actor in the environment draft; resolves to the cast after it.
+ * `revision` is the draft revision the cast was read at, so an edit made elsewhere is refused with
+ * `draft_changed`, never overwritten.
+ * @param {string} envId
+ * @param {{ op: "create"|"replace"|"delete", actor?: Object, actorId?: string, revision: number }} change
+ */
+export const editActor = async (envId, { op, actor, actorId, revision }) => {
+  if (op === "create") {
+    return (
+      await axios.post(actorsPath(envId), {
+        actor,
+        expected_revision: revision,
+      })
+    ).data;
+  }
+  if (op === "replace") {
+    return (
+      await axios.put(actorPath(envId, actorId), {
+        actor,
+        expected_revision: revision,
+      })
+    ).data;
+  }
+  return (
+    await axios.delete(actorPath(envId, actorId), {
+      params: { expected_revision: revision },
+    })
+  ).data;
+};
+
 export const environmentVersionsKey = (envId) => [
   "harness-env-versions",
   envId,
@@ -194,6 +247,9 @@ export const draftsKey = (envId) => [
   ...environmentVersionsKey(envId),
   "drafts",
 ];
+// Under the drafts, so whatever refreshes the drafts refreshes the cast too.
+export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
+export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
 export const runPlanKey = (envId, picks = {}) => [
   ...environmentVersionsKey(envId),
@@ -697,6 +753,60 @@ export function useSaveDrafts(envId) {
         queryClient.invalidateQueries({
           queryKey: environmentVersionsKey(envId),
         });
+      }
+    },
+  });
+}
+
+/**
+ * The environment's cast; see `getActors`.
+ * @param {string} envId
+ * @param {{ enabled?: boolean }} [options]
+ */
+export function useActors(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: actorsKey(envId),
+    queryFn: () => getActors(envId),
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+/**
+ * One actor's view; see `getActorView`.
+ * @param {string} envId
+ * @param {string} actorId
+ * @param {{ enabled?: boolean }} [options]
+ */
+export function useActorView(envId, actorId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: actorViewKey(envId, actorId),
+    queryFn: () => getActorView(envId, actorId),
+    enabled: Boolean(envId && actorId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+/**
+ * Create, replace or remove one actor in the draft. The answer is the cast, so it seeds the list; the
+ * drafts (the Save bar) are asked again. A refusal because the draft moved on refreshes the drafts, and
+ * the cast under them, so the user edits what is current and the Save bar counts it.
+ * @param {string} envId
+ */
+export function useEditActor(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (change) => editActor(envId, change),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(actorsKey(envId), data);
+      refreshDrafts(queryClient, envId);
+    },
+    onError: (error) => {
+      if (DRAFTS_REFRESH_CODES.has(error?.error)) {
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
       }
     },
   });

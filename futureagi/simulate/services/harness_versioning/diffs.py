@@ -91,15 +91,37 @@ def environment_diff(
     sub_goals: Mapping[str, str],
     previous_files: Mapping[str, str] | None,
     files: Mapping[str, str],
+    previous_actors: Mapping[str, str] | None = None,
+    actors: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Contract items, sub-goal definitions and world files, each added, removed or changed.
+    """Contract items, sub-goal definitions, world files and actors, each added, removed or changed.
 
-    A parent whose world files are unknown (backfilled without its archive) has no file diff.
+    A parent whose world files are unknown (backfilled without its archive) has no file diff; a side whose cast is
+    unknown has no actor diff.
     """
+    with_actors = bool(previous_actors or actors)
+    file_diff = None if previous_files is None else keyed_diff(previous_files, files)
+    if file_diff is not None and with_actors:
+        # The actors section shows the cast one actor at a time; listing its files too counts each edit twice.
+        file_diff = {
+            key: [
+                name for name in names if name not in ("actors.json", "sub_actors.json")
+            ]
+            for key, names in file_diff.items()
+        }
     return {
         "contract": contract_diff(previous_contract, contract),
         "sub_goals": keyed_diff(previous_sub_goals, sub_goals),
-        "files": None if previous_files is None else keyed_diff(previous_files, files),
+        "files": file_diff,
+        **(
+            {
+                "actors": None
+                if previous_actors is None or actors is None
+                else keyed_diff(previous_actors, actors)
+            }
+            if with_actors
+            else {}
+        ),
     }
 
 
@@ -165,6 +187,7 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
     use_cases = contract.get("use_cases") or {}
     sub_goals = diff.get("sub_goals") or {}
     files = diff.get("files") or {}
+    actors = diff.get("actors") or {}
     parts = [
         _count("tool", "tools", "added", tools.get("added")),
         _count("tool", "tools", "removed", tools.get("removed")),
@@ -180,6 +203,9 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
         _count("world file", "world files", "added", files.get("added")),
         _count("world file", "world files", "removed", files.get("removed")),
         _count("world file", "world files", "changed", files.get("changed")),
+        _count("actor", "actors", "added", actors.get("added")),
+        _count("actor", "actors", "removed", actors.get("removed")),
+        _count("actor", "actors", "changed", actors.get("changed")),
     ]
     if "modality" in contract:
         modality = contract["modality"]

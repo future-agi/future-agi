@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipants";
 import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
+import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 import {
   isOtherRole,
@@ -135,7 +136,17 @@ export default function ChatTranscriptPane({ turns, customerName }) {
                 ROLE_LABEL[s.role] || s.role
               )}
             </Typography>
-            {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
+            {s.role === "world_actor" && s.text ? (
+              <Box sx={{ mt: 0.25 }}>
+                <WorldActorAction text={s.text} query={query} />
+              </Box>
+            ) : (
+              s.text && (
+                <Typography sx={{ typography: "s1", mt: 0.25 }}>
+                  {s.text}
+                </Typography>
+              )
+            )}
             {Array.isArray(s.toolCalls) &&
               s.toolCalls.map((c, ci) => <ToolCall key={ci} call={c} />)}
           </Box>

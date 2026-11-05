@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
 // Save keys are counted so a test can tell a reused key from a fresh one.
 let keyCount = 0;
@@ -34,6 +34,8 @@ const {
   useDrafts,
   useSaveDrafts,
   useDiscardDraft,
+  useEditActor,
+  actorsKey,
   draftsKey,
   toDrafts,
   nudgesKey,
@@ -1462,5 +1464,65 @@ describe("drafts", () => {
     expect(invalidated(spy)).toContainEqual({
       queryKey: environmentVersionsKey("env-1"),
     });
+  });
+});
+
+describe("useEditActor", () => {
+  const ACTORS = "/simulate/api/harness-environments/env-1/actors/";
+  const edit = async (change) => {
+    const { result } = renderHook(() => useEditActor("env-1"), { wrapper });
+    await act(() => result.current.mutateAsync(change).catch(() => {}));
+    return result;
+  };
+
+  it("sends each change with the revision it was read at, and seeds the cast with the answer", async () => {
+    const answer = { actors: [], revision: 4 };
+    const actor = { id: "manager", name: "Priya" };
+    axios.post.mockResolvedValue({ data: answer });
+    axios.put.mockResolvedValue({ data: answer });
+    axios.delete.mockResolvedValue({ data: answer });
+
+    await edit({ op: "create", actor, revision: 3 });
+    await edit({ op: "replace", actor, actorId: "manager", revision: 3 });
+    await edit({ op: "delete", actorId: "manager", revision: 3 });
+
+    expect(axios.post).toHaveBeenCalledWith(ACTORS, {
+      actor,
+      expected_revision: 3,
+    });
+    expect(axios.put).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      actor,
+      expected_revision: 3,
+    });
+    expect(axios.delete).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      params: { expected_revision: 3 },
+    });
+    expect(client.getQueryData(actorsKey("env-1"))).toEqual(answer);
+  });
+
+  it("refreshes the cast and the Save bar on a draft_changed refusal, and keeps its code for the form", async () => {
+    const refusal = { error: "draft_changed", message: "m", statusCode: 409 };
+    axios.put.mockRejectedValue(refusal);
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    const result = await edit({
+      op: "replace",
+      actor: {},
+      actorId: "manager",
+      revision: 3,
+    });
+
+    await waitFor(() => expect(result.current.error).toEqual(refusal));
+    expect(spy).toHaveBeenCalledWith({ queryKey: draftsKey("env-1") });
+    expect(actorsKey("env-1").slice(0, draftsKey("env-1").length)).toEqual(
+      draftsKey("env-1"),
+    );
+  });
+
+  it("leaves the drafts alone when the actor itself was refused", async () => {
+    axios.put.mockRejectedValue({ error: "actor_invalid", statusCode: 400 });
+    const spy = vi.spyOn(client, "invalidateQueries");
+    await edit({ op: "replace", actor: {}, actorId: "manager", revision: 3 });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

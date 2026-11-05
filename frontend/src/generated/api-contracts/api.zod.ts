@@ -37255,6 +37255,160 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
+ * The environment's cast as the next run would use it: the draft's when there is one.
+ */
+export const SimulateApiHarnessEnvironmentsActorsParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
+ * Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.
+ */
+export const SimulateApiHarnessEnvironmentsCreateActorParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
+  actor: zod.record(zod.string(), zod.unknown()),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
+ * What one actor sees and may do, optionally in one scenario, and what it never sees.
+ */
+export const SimulateApiHarnessEnvironmentsActorViewParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax = 255;
+
+export const SimulateApiHarnessEnvironmentsActorViewQueryParams = zod.object({
+  scenario_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorViewResponse = zod.object({
+  actor_id: zod.string().min(1),
+  permitted_actions: zod.array(zod.string().min(1)),
+  sees: zod.array(
+    zod.object({
+      input: zod.string().min(1),
+      value: zod.object({}).passthrough(),
+      source: zod.enum(["actor", "scenario", "caller"]),
+    }),
+  ),
+  never_sees: zod.array(zod.string().min(1)),
+});
+
+/**
+ * Replace one actor in the draft; its id never changes.
+ */
+export const SimulateApiHarnessEnvironmentsReplaceActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
+  actor: zod.record(zod.string(), zod.unknown()),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
+ * Take one actor out of the draft; refused while a scenario includes it.
+ */
+export const SimulateApiHarnessEnvironmentsDeleteActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDeleteActorQueryParams = zod.object({
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
  * Two runs of this environment, scenario by scenario; against defaults to
 the previous completed run. Not gated on versioning: a run from before
 versioning compares too, with null versions.
@@ -37506,7 +37660,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -37611,7 +37765,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -37716,7 +37870,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     }),
   ),
@@ -51328,6 +51482,18 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       output: zod.object({}).passthrough().optional(),
       duration_ms: zod.number().optional(),
       start_time_ms: zod.number().optional(),
+      ok: zod.boolean().optional(),
+      error: zod.string().optional(),
+      refused: zod.boolean().optional(),
+      at: zod.number().optional(),
+      action_id: zod.string().min(1).optional(),
+      outcome: zod.string().min(1).optional(),
+      actor_id: zod.string().min(1).optional(),
+      actor_name: zod.string().min(1).optional(),
+      actor_role: zod.string().optional(),
+      refusal_code: zod.string().min(1).optional(),
+      parent_event_id: zod.string().min(1).optional(),
+      on_behalf_of: zod.string().min(1).optional(),
     }),
   ),
   sub_actors: zod.array(

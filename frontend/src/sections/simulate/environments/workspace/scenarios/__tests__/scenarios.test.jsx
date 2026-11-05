@@ -50,6 +50,7 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
   };
 });
 const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { default: axios } = await import("src/utils/axios");
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -76,6 +77,44 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
+});
+
+describe("ScenariosStep sub-actor names", () => {
+  const SAVED = { id: "friend", name: "Saved name", channel: "audio_mix" };
+  const renderWithFriend = (env) => {
+    const rows = [
+      { ...SERVER_ROWS[0], sub_actors: [{ id: "friend", trigger: {} }] },
+    ];
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, rows),
+    );
+    renderWithClient(
+      <ScenariosStep
+        env={{ ...TEST_ENV, subActors: [SAVED], ...env }}
+        envState={envStateFor(rows)}
+        patch={vi.fn()}
+      />,
+    );
+  };
+
+  it("reads them from the draft's cast with versioning on", async () => {
+    const get = vi.spyOn(axios, "get").mockResolvedValue({
+      data: {
+        actors: [{ ...SAVED, name: "Draft name" }, { id: "boss", name: "Pat" }],
+      },
+    });
+    renderWithFriend({ versioning: { enabled: true } });
+    expect(await screen.findByText("With Draft name")).toBeInTheDocument();
+    get.mockRestore();
+  });
+
+  it("keeps the saved names and never asks for the cast with versioning off", async () => {
+    const get = vi.spyOn(axios, "get");
+    renderWithFriend();
+    expect(await screen.findByText("With Saved name")).toBeInTheDocument();
+    expect(get.mock.calls.map(([url]) => url).join()).not.toMatch(/actors/);
+    get.mockRestore();
+  });
 });
 
 describe("ScenariosStep", () => {

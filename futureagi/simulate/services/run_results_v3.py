@@ -31,6 +31,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.hosted_harness_ingestion import (
     SUB_GOAL_PASSED,
+    WORLD_ACTIONS_KEY,
     sub_goal_result,
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
@@ -239,17 +240,21 @@ def _provider(call: CallExecution) -> str | None:
 
 
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """Return provider-recorded function calls without exposing provider internals."""
+    """Return provider-recorded function calls without exposing provider internals.
+
+    A hosted call's world actors' actions follow the agent's calls; each carries its `actor_id`.
+    """
     provider_data = call.provider_call_data
-    if not isinstance(provider_data, dict):
-        return []
     calls: list[dict[str, Any]] = []
-    for payload in provider_data.values():
+    for payload in (provider_data if isinstance(provider_data, dict) else {}).values():
         if not isinstance(payload, dict) or not isinstance(
             payload.get("tool_calls"), list
         ):
             continue
         calls.extend(item for item in payload["tool_calls"] if isinstance(item, dict))
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    actions = metadata.get(WORLD_ACTIONS_KEY)
+    calls.extend(one for one in actions or [] if isinstance(one, dict))
     return calls
 
 

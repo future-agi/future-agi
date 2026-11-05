@@ -10,6 +10,11 @@ from rest_framework.response import Response
 from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
+    HarnessActorDeleteQuerySerializer,
+    HarnessActorListSerializer,
+    HarnessActorViewQuerySerializer,
+    HarnessActorViewSerializer,
+    HarnessActorWriteSerializer,
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCompareQuerySerializer,
@@ -334,6 +339,99 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if identifier is None:
             raise version_reads.version_not_found()
         return Response(version_reads.suite_members(job, identifier))
+
+    @validated_request(
+        responses={200: HarnessActorListSerializer},
+        operation_id="simulate_api_harness-environments_actors",
+    )
+    @action(detail=True, methods=["get"], url_path="actors")
+    def actors(self, request, pk=None):
+        """The environment's cast as the next run would use it: the draft's when there is one."""
+        from simulate.services.harness_actors import read_actors
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(read_actors(job))
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["POST"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_create_actor",
+    )
+    @actors.mapping.post
+    def create_actor(self, request, pk=None):
+        """Add one actor to the environment's draft; the saved version is unchanged until the draft is saved."""
+        return self._actor_edit(request, pk, op="create")
+
+    @validated_request(
+        query_serializer=HarnessActorViewQuerySerializer,
+        responses={200: HarnessActorViewSerializer},
+        operation_id="simulate_api_harness-environments_actor_view",
+    )
+    @action(detail=True, methods=["get"], url_path=r"actors/(?P<actor_id>[^/]{1,64})")
+    def actor_detail(self, request, pk=None, actor_id=None):
+        """What one actor sees and may do, optionally in one scenario, and what it never sees."""
+        from simulate.services.harness_actors import actor_view
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            actor_view(
+                job,
+                actor_id,
+                scenario_key=request.validated_query_data.get("scenario_key"),
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessActorWriteSerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["PUT"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_replace_actor",
+    )
+    @actor_detail.mapping.put
+    def replace_actor(self, request, pk=None, actor_id=None):
+        """Replace one actor in the draft; its id never changes."""
+        return self._actor_edit(request, pk, op="replace", actor_id=actor_id)
+
+    @validated_request(
+        query_serializer=HarnessActorDeleteQuerySerializer,
+        responses={200: HarnessActorListSerializer},
+        request_methods=["DELETE"],
+        operation_id="simulate_api_harness-environments_delete_actor",
+    )
+    @actor_detail.mapping.delete
+    def delete_actor(self, request, pk=None, actor_id=None):
+        """Take one actor out of the draft; refused while a scenario includes it."""
+        return self._actor_edit(request, pk, op="delete", actor_id=actor_id)
+
+    def _actor_edit(self, request, pk, *, op, actor_id=None):
+        from simulate.services.harness_actors import write_actor_edit
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = (
+            request.validated_query_data if op == "delete" else request.validated_data
+        )
+        return Response(
+            write_actor_edit(
+                job,
+                op=op,
+                actor_id=actor_id,
+                body=data.get("actor"),
+                user=request.user,
+                expected_revision=data.get("expected_revision"),
+            )
+        )
 
     @validated_request(responses={200: HarnessDraftsSerializer})
     @action(detail=True, methods=["get"], url_path="drafts")

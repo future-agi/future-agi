@@ -389,25 +389,57 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+// How the world took a world actor's action, from its sealed outcome.
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+  duplicate: "Duplicate",
+};
+// A world actor's action as one record, or null for the agent's own call. The serializer keeps every field optional:
+// a row logged before the world kept outcomes has only `refused`, and one kept without a name is shown by its id.
+const worldAction = (call) =>
+  call.actor_id && call.actor_id !== "agent"
+    ? {
+        name: call.actor_name || call.actor_id,
+        role: call.actor_role,
+        outcome:
+          ACTOR_OUTCOMES[call.outcome] ||
+          (call.refused ? ACTOR_OUTCOMES.refused : ""),
+      }
+    : null;
+
+/**
+ * Each recorded call as a transcript row; a world actor's action reads as theirs.
+ * @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls
+ */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    // A world actor's action is theirs, not one of the agent's tool calls.
+    const actor = worldAction(call);
+    const heading = actor
+      ? [actor.outcome, name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor?.name,
+      actor_role: actor?.role,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }

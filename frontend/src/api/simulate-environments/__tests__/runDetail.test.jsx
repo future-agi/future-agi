@@ -638,6 +638,83 @@ describe("callTranscript", () => {
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
   });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          refused: true,
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "faulted",
+          refused: false,
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "refused",
+          refused: true,
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        { name: "approve", actor_id: "manager" },
+        { name: "approve", actor_id: "manager", outcome: "duplicate" },
+        // A row logged before the world kept outcomes says only whether it was refused.
+        { name: "approve", actor_id: "manager", refused: true },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "approve",
+      "Duplicate · approve",
+      "Refused · approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+      "",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
+  });
 });
 
 const makeWrapper = () => {
