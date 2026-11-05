@@ -178,7 +178,10 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     },
     {
       label: "Worst latency",
-      value: fmtMs(worstLatency * 1000, { forceMs: true }),
+      value:
+        worstLatency != null
+          ? fmtMs(worstLatency * 1000, { forceMs: true })
+          : "—",
       hint: "Longest silence before an agent turn",
     },
     { label: "User / AI", value: talkRatioValue, hint: "Talk time split (%)" },
