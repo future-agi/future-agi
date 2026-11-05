@@ -1535,6 +1535,11 @@ def _ingest_hosted_transcript(
                             if role == CallTranscript.SpeakerRole.SUB_ACTOR
                             else ""
                         ),
+                        sub_actor_id=(
+                            str(message.get("sub_actor") or "")[:255] or None
+                            if role == CallTranscript.SpeakerRole.SUB_ACTOR
+                            else None
+                        ),
                         content=str(content),
                         start_time_ms=start_ms,
                         end_time_ms=end_ms,

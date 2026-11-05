@@ -196,6 +196,7 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
                 },
                 {
                     "role": "sub_actor",
+                    "sub_actor": "friend",
                     "name": "Rowan",
                     "content": "Add a stop.",
                     "started_speaking_at": at + 2,
@@ -214,10 +215,10 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
     )
 
     rows = list(call.transcripts.order_by("start_time_ms"))
-    assert [(row.speaker_role, row.speaker_name) for row in rows] == [
-        ("assistant", ""),
-        ("sub_actor", "Rowan"),
-        ("user", ""),
+    assert [(row.speaker_role, row.speaker_name, row.sub_actor_id) for row in rows] == [
+        ("assistant", "", None),
+        ("sub_actor", "Rowan", "friend"),
+        ("user", "", None),
     ]
     assert metadata["harness_sub_actors"] == record
     from simulate.tasks.alk_sim import _build_transcript_text
@@ -313,11 +314,12 @@ def test_a_transcript_written_without_a_speaker_name_is_stored_with_none(
             "VALUES (gen_random_uuid(), now(), now(), false, %s, 'user', 'Hi', 0, 0, 1)",
             [call_execution.id],
         )
-    assert CallTranscript.objects.get(call_execution=call_execution).speaker_name == ""
+    row = CallTranscript.objects.get(call_execution=call_execution)
+    assert (row.speaker_name, row.sub_actor_id) == ("", None)
 
 
 @pytest.mark.django_db
-def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
+def test_run_results_filter_and_count_calls_by_each_sub_actor_planned_for_them(
     organization, workspace
 ):
     from simulate.services.run_results_v3_queries import (
@@ -562,7 +564,12 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
         CallExecution.SimulationCallType.VOICE,
         {
             "messages": [
-                {"role": "sub_actor", "name": "Rowan", "content": "Add a stop."}
+                {
+                    "role": "sub_actor",
+                    "sub_actor": "friend",
+                    "name": "Rowan",
+                    "content": "Add a stop.",
+                }
             ]
         },
         {},
@@ -570,4 +577,8 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
     clear_call_for_rerun(call)
 
     [turn] = CallExecutionSnapshot.objects.get(call_execution=call).transcripts
-    assert (turn["speaker_role"], turn["speaker_name"]) == ("sub_actor", "Rowan")
+    assert (turn["speaker_role"], turn["speaker_name"], turn["sub_actor_id"]) == (
+        "sub_actor",
+        "Rowan",
+        "friend",
+    )

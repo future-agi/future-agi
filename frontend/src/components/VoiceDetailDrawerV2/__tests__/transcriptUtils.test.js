@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enrichTurns } from "../transcriptUtils";
+import { enrichTurns, otherParties } from "../transcriptUtils";
 
 describe("enrichTurns", () => {
   it("preserves structured function calls through normalization", () => {
@@ -47,5 +47,39 @@ describe("enrichTurns", () => {
     ]);
 
     expect(turns[1].overlapsPrev).toBe(true);
+  });
+});
+
+describe("otherParties", () => {
+  it("keeps two sub-actors who share a name apart by their id, and an older turn by name", () => {
+    const turns = enrichTurns([
+      {
+        speaker_role: "sub_actor",
+        sub_actor_id: "kid",
+        speaker_name: "Sam",
+        content: "a",
+      },
+      {
+        speaker_role: "sub_actor",
+        sub_actor_id: "uncle",
+        speaker_name: "Sam",
+        content: "b",
+      },
+      {
+        speaker_role: "sub_actor",
+        sub_actor_id: "kid",
+        speaker_name: "Sam",
+        content: "c",
+      },
+      { speaker_role: "sub_actor", speaker_name: "Rowan", content: "d" },
+      { speaker_role: "sub_actor", speaker_name: "Rowan", content: "e" },
+    ]);
+    expect(
+      otherParties(turns).map((t) => [t.subActorId, t.speakerName]),
+    ).toEqual([
+      ["kid", "Sam"],
+      ["uncle", "Sam"],
+      ["", "Rowan"],
+    ]);
   });
 });

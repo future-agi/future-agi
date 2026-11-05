@@ -1624,4 +1624,34 @@ describe("sub-actor turns in a call", () => {
       ["", ""],
     ]);
   });
+
+  it("joins each sub-actor's turn by their id, so two with the same name keep their own role", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "sub_actor",
+          sub_actor_id: "uncle",
+          speaker_name: "Sam",
+          content: "a",
+        },
+        {
+          speaker_role: "sub_actor",
+          sub_actor_id: "kid",
+          speaker_name: "Sam",
+          content: "b",
+        },
+      ],
+      sub_actors: [
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+        { id: "uncle", name: "Sam", role: "uncle", channel: "audio_mix" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.subActorId, t.actorRole, t.channel]),
+    ).toEqual([
+      ["uncle", "uncle", "audio_mix"],
+      ["kid", "son", "audio_handoff"],
+    ]);
+  });
 });

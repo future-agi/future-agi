@@ -678,6 +678,8 @@ class CallTranscript(BaseModel):
     speaker_name = models.CharField(
         max_length=255, blank=True, default="", db_default=""
     )
+    # Which sub-actor spoke, by their id in the environment; null on other turns and older rows.
+    sub_actor_id = models.CharField(max_length=255, null=True, blank=True)
 
     content = models.TextField(help_text="Transcript content")
 
