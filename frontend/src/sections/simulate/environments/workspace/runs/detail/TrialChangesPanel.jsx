@@ -12,8 +12,12 @@ const quiet = {
 // attempted, refused and committed are never summed into one number.
 export default function TrialChangesPanel({ trialState }) {
   const changes = trialState?.state_changes || [];
-  const decisions = trialState?.decisions || [];
-  if (!changes.length && !decisions.length)
+  const all = trialState?.decisions || [];
+  // A message written before the run is the trial's starting point, shown apart from what actors chose in it.
+  const preRun = all.filter((one) => one.play === "history");
+  const decisions = all.filter((one) => one.play !== "history");
+  const approvals = trialState?.approvals || [];
+  if (!changes.length && !all.length)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.empty}</Typography>;
   const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
   const name = (id) => names[id] || id;
@@ -48,6 +52,31 @@ export default function TrialChangesPanel({ trialState }) {
           )}
         </Box>
       ))}
+      {preRun.length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.preRunHeading}
+          </Typography>
+          <Typography sx={quiet}>{C.preRunAbout}</Typography>
+          {preRun.map((one, index) => (
+            <Typography key={`pre-${index}`} sx={quiet}>
+              {`${name(one.actor)}: ${one.arguments?.text || one.action}`}
+            </Typography>
+          ))}
+        </Box>
+      )}
+      {approvals.length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.approvalsHeading}
+          </Typography>
+          {approvals.map((one, index) => (
+            <Typography key={`approval-${index}`} sx={quiet}>
+              {`${C.approval(one, name)} · ${one.acted_before_decision ? C.actedBefore : C.waitedFor}`}
+            </Typography>
+          ))}
+        </Box>
+      )}
       {decisions.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -75,5 +104,6 @@ TrialChangesPanel.propTypes = {
   trialState: PropTypes.shape({
     state_changes: PropTypes.arrayOf(PropTypes.object),
     decisions: PropTypes.arrayOf(PropTypes.object),
+    approvals: PropTypes.arrayOf(PropTypes.object),
   }),
 };

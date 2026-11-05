@@ -182,4 +182,49 @@ describe("TrialChangesPanel", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("shows what actors wrote before the run apart, and each approval with whether the agent waited", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "priya",
+              name: "Priya",
+              attempted: 1,
+              committed: 1,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["approve"],
+            },
+          ],
+          decisions: [
+            {
+              actor: "priya",
+              play: "history",
+              action: "slack.post",
+              arguments: { text: "20% for Acme?" },
+            },
+          ],
+          approvals: [
+            {
+              request: { action: "request_discount" },
+              decision: { by: "priya", action: "approve" },
+              before_decision: [],
+              after_decision: [],
+              acted_before_decision: false,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Priya: 20% for Acme?")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "request_discount, then Priya: approve · the agent waited for the decision",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Before the run · /)).toBeNull();
+  });
 });

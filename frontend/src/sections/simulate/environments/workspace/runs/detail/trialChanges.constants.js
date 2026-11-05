@@ -49,6 +49,14 @@ export const TRIAL_CHANGES_COPY = {
       "Could not act: this agent's tools run where no actor can act",
     not_listed: "Not an actor in this environment",
   },
+  preRunHeading: "Before the run",
+  preRunAbout:
+    "What the actors wrote in the world before the agent started: the trial's starting point, never graded.",
+  approvalsHeading: "Approvals",
+  approval: (one, name) =>
+    `${one.request?.action || "A request"}, then ${name(one.decision?.by)}: ${one.decision?.action || "?"}`,
+  actedBefore: "the agent committed a write before the decision",
+  waitedFor: "the agent waited for the decision",
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
 };
