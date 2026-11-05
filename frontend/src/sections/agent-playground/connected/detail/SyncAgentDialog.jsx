@@ -38,7 +38,7 @@ function SpeaksFirst({ checked, onChange }) {
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           Agent speaks first
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>

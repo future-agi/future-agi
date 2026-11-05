@@ -86,7 +86,7 @@ function SetupCode() {
         sx={{ alignSelf: "flex-start" }}
       >
         {LANGUAGES.map((l) => (
-          <ToggleButton key={l.value} value={l.value} sx={{ px: 1.5 }}>
+          <ToggleButton key={l.value} value={l.value}>
             {l.label}
           </ToggleButton>
         ))}
