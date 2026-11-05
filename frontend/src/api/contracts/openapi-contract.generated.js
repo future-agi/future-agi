@@ -117962,6 +117962,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        refused_actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialRefusedAction",
+          },
+        },
       },
     },
     InvestigationEvidenceWindow: {
@@ -130008,6 +130014,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         metadata: {
           $ref: "#/definitions/AgentPromptOptimiserIndividualResultMetadata",
+        },
+      },
+    },
+    TrialRefusedAction: {
+      required: ["action", "code", "reason"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },

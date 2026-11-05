@@ -1464,3 +1464,27 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
         assert refused.status_code == 400 and said in refused.json()["message"], (
             refused.content
         )
+
+
+def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recorded_it():
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    worker = {
+        "who": "worker:order_lookup",
+        "name": "order_lookup",
+        "attempted": 2,
+        "committed": 1,
+        "refused": 1,
+        "faulted": 0,
+        "duplicate": 0,
+        "committed_actions": ["get_order"],
+        "refused_actions": [
+            {
+                "action": "update_order_status",
+                "code": "not_permitted",
+                "reason": "orders.update_status is not permitted for order_lookup",
+            }
+        ],
+    }
+    served = TrialStateSerializer({"state_changes": [worker]}).data
+    assert served["state_changes"][0]["refused_actions"] == worker["refused_actions"]

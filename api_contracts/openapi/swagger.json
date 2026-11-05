@@ -153931,6 +153931,29 @@
                 }
             }
         },
+        "TrialRefusedAction": {
+            "required": [
+                "action",
+                "code",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
         "TrialStateChange": {
             "required": [
                 "who",
@@ -153979,6 +154002,12 @@
                     "items": {
                         "type": "string",
                         "minLength": 1
+                    }
+                },
+                "refused_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TrialRefusedAction"
                     }
                 }
             }

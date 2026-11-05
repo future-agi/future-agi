@@ -25241,6 +25241,13 @@ export interface CallCallActorApi {
   delivery?: CallCallActorApiDelivery;
 }
 
+export interface TrialRefusedActionApi {
+  /** @minLength 1 */
+  action: string;
+  code: string;
+  reason: string;
+}
+
 export interface TrialStateChangeApi {
   /** @minLength 1 */
   who: string;
@@ -25252,6 +25259,7 @@ export interface TrialStateChangeApi {
   faulted: number;
   duplicate: number;
   committed_actions: string[];
+  refused_actions?: TrialRefusedActionApi[];
 }
 
 export type ActorDecisionApiPlay =

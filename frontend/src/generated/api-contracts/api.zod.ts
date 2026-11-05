@@ -53271,6 +53271,15 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           faulted: zod.number(),
           duplicate: zod.number(),
           committed_actions: zod.array(zod.string().min(1)),
+          refused_actions: zod
+            .array(
+              zod.object({
+                action: zod.string().min(1),
+                code: zod.string(),
+                reason: zod.string(),
+              }),
+            )
+            .optional(),
         }),
       )
       .optional(),
