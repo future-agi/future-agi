@@ -4405,8 +4405,7 @@ class HostedHarnessGateway:
         """Scope the relaunch to the calls this attempt left without a result, as an in-run
         re-run is scoped to its chosen calls. The results that arrived stay the Run's.
 
-        With no result in, that scope is every call. A build, or an attempt that lost only
-        its terminal event, relaunches whole.
+        With no result in, that scope is every call. A build relaunches whole.
         """
         missing = self._results_missing(attempt)
         if not missing:
@@ -4690,6 +4689,25 @@ class HostedHarnessGateway:
                 "hosted run kept without its manifest attempt=%s provider_ref=%s",
                 attempt.id,
                 attempt.provider_ref,
+            )
+        elif (
+            exit_code == 0
+            and not attempt.terminal_event_received
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in and only the guest's terminal event was lost. The
+            # platform records its own ending, as it does for a cancel: a reason no guest
+            # sends, and terminal_event_received stays False.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            attempt.save(
+                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
+            )
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
             )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked

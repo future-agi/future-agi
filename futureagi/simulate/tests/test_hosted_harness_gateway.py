@@ -3073,11 +3073,39 @@ def test_reconcile_exit0_keeps_a_scored_run_whose_manifest_was_lost(
 
 
 @pytest.mark.django_db
+def test_reconcile_exit0_completes_a_scored_run_whose_terminal_event_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-terminal", receipts=2)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Kept as a Run whose manifest was lost is kept. No relaunch, so no call runs or
+    # is charged a second time.
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert job.attempts.count() == 1
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # The ending is the platform's conclusion and says so; no guest sent it.
+    assert attempt.terminal_event_received is False
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("terminal_stage", "receipts", "retried"),
     [
         ("completed", 1, True),  # a result never arrived
-        (None, 2, True),  # the terminal event never arrived
+        (None, 1, True),  # neither a result nor the terminal event arrived
         ("canceled", 2, False),  # the guest's own ending is not retried
     ],
 )
