@@ -165,7 +165,7 @@ export default function WorldPanel({
           ? `No agent connected yet — the world answers the ${fit.world.length} tools it was built for.`
           : "No agent connected yet, and no tools in the world yet."
         : mcpMissing
-          ? `Agent ${activeAgent} calls ${callsCount} tools — the world answers ${callsCount - mcpMissing}; ${mcpMissing} from its MCP server it doesn't answer yet.`
+          ? `Agent ${activeAgent} calls ${callsCount} tools; the world answers ${callsCount - mcpMissing}, ${mcpMissing} from its MCP server aren't answered yet.`
           : `Agent ${activeAgent} calls ${callsCount} tools — the world answers every one.`;
   const allRows = [
     ...fit.world.map((t) => ({ tool: t, answered: true })),

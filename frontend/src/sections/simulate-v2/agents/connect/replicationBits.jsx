@@ -211,7 +211,7 @@ export function HowWeCopyIt({
               text={
                 r.mode === "wrapped_endpoint"
                   ? "Acknowledge below that simulations drive your real agent."
-                  : "You'll be asked to agree that we create test copies or drafts in your account and call the agent — its tools reach your real systems."
+                  : "You'll be asked to agree that we create test copies in your account and call the agent; its tools reach real systems."
               }
             />
           </Stack>

@@ -4,7 +4,12 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { envUpdateCli } from "../_mock/catalogue";
 
-const AREA = { rules: "Rule", tools: "Tool", scenarios: "Scenarios" };
+const AREA = {
+  rules: "Rule",
+  tools: "Tool",
+  scenarios: "Scenarios",
+  evaluations: "Grading",
+};
 
 /* A titled, bordered list. */
 function Group({ title, children }) {
@@ -64,6 +69,35 @@ export default function ReviewUpdateDialog({
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {`You're on ${update.from}. ${update.notes}`}
           </Typography>
+          {/* Changed tasks or grading: earlier scores can't be read against new ones. */}
+          {review.newBaseline && (
+            <Box
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "status.warning.border",
+                bgcolor: "status.warning.bg",
+              }}
+            >
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  color: "status.warning.fg",
+                }}
+              >
+                This update changes tasks or grading, so scores before it are
+                not comparable with scores after it.
+              </Typography>
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+              >
+                Runs after this update start a new baseline.
+              </Typography>
+            </Box>
+          )}
           <Group
             title={`From the release · ${applies} of ${review.items.length} apply`}
           >

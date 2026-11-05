@@ -82,8 +82,18 @@ export const handoffsOf = ({ agent, task }) => {
       from: coord,
       text: `${coord.name} settled it itself — no worker was involved.`,
     });
-    return { members, evidence, events, outcome: "settled" };
+    return {
+      members,
+      evidence,
+      events,
+      outcome: "settled",
+      enforced: evidence.source === "instrumented",
+    };
   }
+  const enforced = evidence.source === "instrumented";
+  /* A boundary: what a worker's tool call was held against. A call that ran
+     was allowed; declared limits are not enforced, so they're only declared. */
+  const boundary = enforced ? "Allowed" : "Declared";
   const failed = task.status === "failed" || task.status === "flaky";
   const timeout = failed && hashSeed(`${task.id}:worker-timeout`) % 3 === 0;
   let t = 2.4;
@@ -102,11 +112,37 @@ export const handoffsOf = ({ agent, task }) => {
         at: t,
         kind: "tool",
         from: worker,
+        boundary,
         text: `${worker.name} called ${c.name || c.tool || "a tool"}.`,
       });
     });
+  /* Now and then a worker reaches for another member's tool. */
+  const outside = members
+    .filter((m) => m.id !== worker.id && m.id !== coord.id)
+    .flatMap((m) => workerToolsOf(m))
+    .find((n) => !workerToolsOf(worker).includes(n));
+  if (outside && hashSeed(`${task.id}:out-of-bounds`) % 7 === 0) {
+    t += 1.1;
+    events.push({
+      at: t,
+      kind: "tool",
+      from: worker,
+      boundary: enforced ? "Blocked" : "Declared",
+      text: enforced
+        ? `${worker.name} tried ${outside}, outside its tools — blocked.`
+        : `${worker.name} called ${outside}, outside its declared tools.`,
+    });
+  }
   if (timeout) {
     const last = calls[calls.length - 1];
+    /* What the coordinator did after it: retried? a duplicate write? told the
+       customer it worked? Only said as fact when the events are observed. */
+    const retried = hashSeed(`${task.id}:retry`) % 3 === 0;
+    const after = {
+      retried,
+      duplicateWrite: retried && !!last && hashSeed(`${task.id}:dup`) % 2 === 0,
+      toldSuccess: false,
+    };
     events.push({
       at: t + 30,
       kind: "timeout",
@@ -126,6 +162,8 @@ export const handoffsOf = ({ agent, task }) => {
       events,
       outcome: "timeout",
       failedWorker: worker,
+      after,
+      enforced,
     };
   }
   t += 1.4;
@@ -142,5 +180,5 @@ export const handoffsOf = ({ agent, task }) => {
     from: coord,
     text: `${coord.name} told the caller the outcome.`,
   });
-  return { members, evidence, events, outcome: "returned" };
+  return { members, evidence, events, outcome: "returned", enforced };
 };

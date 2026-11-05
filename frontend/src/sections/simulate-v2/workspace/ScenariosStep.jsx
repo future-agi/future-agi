@@ -1466,7 +1466,7 @@ export default function ScenariosStep({
         icon: "solar:server-linear",
         attention: true,
         title: `${n} imported draft${n === 1 ? "" : "s"} waiting for review`,
-        sub: `From ${(ids || []).join(", ")}. Review the starting state, mapping, personal data and what should happen — only ready drafts are added.`,
+        sub: `From ${(ids || []).join(", ")}. Review each draft; only ready ones are added.`,
         actions: [
           {
             label: "Review",
@@ -1481,7 +1481,7 @@ export default function ScenariosStep({
       icon: "solar:inbox-linear",
       attention: true,
       title: `${proposed.length} proposed scenario${proposed.length === 1 ? "" : "s"} waiting to be added`,
-      sub: "Generated, failing-case, Error Feed and production scenarios join the environment only once you add them. Until then they don't run.",
+      sub: "Imported scenarios join the environment only once you add them.",
       actions: [
         {
           label: "Review",
@@ -1968,7 +1968,7 @@ export default function ScenariosStep({
               arrow
               title={
                 readiness.ready
-                  ? `${baselineScope?.sitOut ? `Runs ${baselineScope.count} of the ${baselineScope.runnable} scenarios that can run (${baselineScope.sitOut} wait on Needs input)` : `Runs all ${baselineScope?.count ?? live.length} scenarios`}, 3 times each`
+                  ? `${baselineScope?.sitOut ? `Runs ${baselineScope.count} of ${baselineScope.runnable} runnable scenarios (${baselineScope.sitOut} wait on Needs input)` : `Runs all ${baselineScope?.count ?? live.length} scenarios`}, 3 times each`
                   : readiness.reason
               }
             >

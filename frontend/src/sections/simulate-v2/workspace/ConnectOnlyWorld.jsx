@@ -184,11 +184,11 @@ ResultsMovedNote.propTypes = { move: PropTypes.object, sx: PropTypes.object };
 const KIND_COPY = {
   sealed: {
     icon: "solar:lock-keyhole-minimalistic-linear",
-    line: "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox. Sub-goals are checked against the world's end state and the agent's tool calls.",
+    line: "Sealed — tool calls are answered by this environment's world in our sandbox.",
   },
   live: {
     icon: "solar:plug-circle-linear",
-    line: "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation.",
+    line: "Live — the agent runs in your account and its tools reach real systems. Only the starting state is checked.",
   },
   "prompt-only": {
     icon: "solar:document-text-linear",
@@ -198,7 +198,7 @@ const KIND_COPY = {
 
 /* Built to run on the person's machine: the CLI serves the world there. */
 const LOCAL_SEALED_LINE =
-  "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI. Sub-goals are checked against the world's end state and the agent's tool calls.";
+  "Sealed — tool calls are answered by this environment's world, running on your machine through the CLI.";
 const runsLocally = (env) =>
   env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local";
 

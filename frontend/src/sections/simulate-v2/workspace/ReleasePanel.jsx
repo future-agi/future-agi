@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -17,7 +18,13 @@ import { SectionCard } from "../components/primitives";
 import {
   RELEASE_CHECKS,
   checksStateOf,
+  REWARD_VERSIONS,
+  RL_REFUSALS,
+  TOOL_FORMATS,
+  isToolFormat,
   lockPatch,
+  openSessionPatch,
+  rewardLabelOf,
   rlCodeOf,
   rlKeyPatch,
   runChecksPatch,
@@ -48,6 +55,7 @@ const WHY_OF = {
 export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
   const st = checksStateOf(env, envState);
   const locked = envState?.lockedRelease || null;
+  const copied = envState?.copiedFromLocked || null;
   /* Versions as the header names them, not the world's internal labels. */
   const shown = (label) => envLabelOf(env, envState, label);
   const [runningHere, setRunning] = useState(false);
@@ -99,6 +107,27 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
       }
       sx={{ mb: 3 }}
     >
+      {/* A copy of a locked release is editable, and its scores don't line up with the locked ones. */}
+      {copied && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ px: 1.5, py: 0.75, borderBottom: 1, borderColor: "divider" }}
+        >
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={14}
+            sx={{ color: "status.warning.fg", flexShrink: 0 }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            Copy of a locked release · not comparable
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {`Scores don't line up with the locked release${copied.version ? ` ${copied.version}` : ""}.`}
+          </Typography>
+        </Stack>
+      )}
       {/* ── the five release checks ── */}
       <Box component="table" sx={{ width: 1, borderCollapse: "collapse" }}>
         <Box component="thead">
@@ -202,7 +231,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
           }}
         >
           {locked
-            ? `Locked ${new Date(locked.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })} · train ${locked.splits.train.length} · test ${locked.splits.test.length} scenarios · scorer ${locked.rewardVersion}. A copy is editable and isn't comparable with these scores.`
+            ? `Locked ${new Date(locked.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })} · train ${locked.splits.train.length} · test ${locked.splits.test.length} scenarios · scorer ${rewardLabelOf(locked.rewardVersion)}. A copy is editable but not comparable.`
             : st.stale
               ? `Checks last ran on ${shown(st.checkedVersion)}. This is ${shown(st.version)}, so they run again.`
               : running
@@ -250,7 +279,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
               title={
                 !st.ready && !running
                   ? st.stale
-                    ? `The checks passed on ${shown(st.checkedVersion)}, not this version. Run them again — all five must pass before this release can be locked.`
+                    ? `The checks passed on ${shown(st.checkedVersion)}, not this version. Run them again; all five must pass to lock.`
                     : "Run the checks first — all five must pass before this release can be locked."
                   : ""
               }
@@ -342,6 +371,12 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
   const keys = envState.rlKeys || [];
   const sessions = envState.rlSessions || [];
   const credits = sessions.reduce((n, s) => n + (s.credits || 0), 0);
+  /* Demo: ?rl=capacity or ?rl=credits refuses new sessions; ?rl_format=x is unknown. */
+  const [params] = useSearchParams();
+  const refusal = RL_REFUSALS[params.get("rl")] || null;
+  const format = envState.rlToolFormat || params.get("rl_format") || "openai";
+  const reward = envState.rlReward || rewardLabelOf(locked.rewardVersion);
+  const badFormat = !isToolFormat(format);
   const cell = {
     typography: "s2",
     py: 0.75,
@@ -378,6 +413,72 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
         </Typography>
       </Stack>
 
+      {refusal && (
+        <Box
+          role="alert"
+          sx={{
+            border: 1,
+            borderColor: "status.danger.fg",
+            borderRadius: 1,
+            px: 1.5,
+            py: 1,
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {refusal.title}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {refusal.todo}
+          </Typography>
+        </Box>
+      )}
+
+      <Stack direction="row" spacing={1.5} alignItems="flex-start">
+        <TextField
+          select
+          size="small"
+          label="Tool format"
+          value={format}
+          error={badFormat}
+          helperText={
+            badFormat
+              ? `Unknown format "${format}". Use OpenAI tools, Anthropic tools or MCP.`
+              : undefined
+          }
+          onChange={(e) => patch?.({ rlToolFormat: e.target.value })}
+          SelectProps={{
+            renderValue: (v) =>
+              TOOL_FORMATS.find((f) => f.id === v)?.label || v,
+          }}
+          sx={{ minWidth: 200 }}
+        >
+          {badFormat && (
+            <MenuItem value={format} disabled>
+              {format}
+            </MenuItem>
+          )}
+          {TOOL_FORMATS.map((f) => (
+            <MenuItem key={f.id} value={f.id}>
+              {f.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          select
+          size="small"
+          label="Reward version"
+          value={reward}
+          onChange={(e) => patch?.({ rlReward: e.target.value })}
+          sx={{ minWidth: 160 }}
+        >
+          {REWARD_VERSIONS.map((v) => (
+            <MenuItem key={v} value={v}>
+              {v}
+            </MenuItem>
+          ))}
+        </TextField>
+      </Stack>
+
       <Stack direction="row" spacing={1.5} alignItems="center">
         <Typography
           sx={{ typography: "s2", color: "text.secondary", width: 72 }}
@@ -406,13 +507,29 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
         </Button>
       </Stack>
 
-      <CodeBlock code={rlCodeOf(env, envState, split)} />
+      <CodeBlock
+        code={rlCodeOf(env, envState, split, badFormat ? "openai" : format)}
+      />
 
       <Box>
         <Stack direction="row" alignItems="baseline" sx={{ mb: 0.5 }}>
           <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
             Sessions
           </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!patch || !!refusal}
+            onClick={() => patch?.(openSessionPatch(envState, split, reward))}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              mr: 1.5,
+              alignSelf: "center",
+            }}
+          >
+            Open a session
+          </Button>
           <Typography
             sx={{
               typography: "s3",
@@ -431,7 +548,14 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
           <Box component="table" sx={{ width: 1, borderCollapse: "collapse" }}>
             <Box component="thead">
               <Box component="tr">
-                {["Task", "Split", "Status", "Final reward"].map((h, i) => (
+                {[
+                  "Task",
+                  "Split",
+                  "Release",
+                  "Reward version",
+                  "Status",
+                  "Final reward",
+                ].map((h, i) => (
                   <Box
                     component="th"
                     key={h}
@@ -440,7 +564,7 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                       typography: "s3",
                       color: "text.tertiary",
                       fontWeight: 500,
-                      textAlign: i === 3 ? "right" : "left",
+                      textAlign: i === 5 ? "right" : "left",
                     }}
                   >
                     {h}
@@ -458,6 +582,21 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                     {s.split === "test" ? "Test" : "Train"}
                   </Box>
                   <Box component="td" sx={{ ...cell, color: "text.secondary" }}>
+                    {envLabelOf(env, envState, s.release || locked.version)}
+                  </Box>
+                  <Box component="td" sx={{ ...cell, color: "text.secondary" }}>
+                    {rewardLabelOf(s.rewardVersion)}
+                  </Box>
+                  <Box
+                    component="td"
+                    sx={{
+                      ...cell,
+                      color:
+                        s.status === "Failed" || s.status === "Grading error"
+                          ? "status.danger.fg"
+                          : "text.secondary",
+                    }}
+                  >
                     {s.status}
                   </Box>
                   <Box

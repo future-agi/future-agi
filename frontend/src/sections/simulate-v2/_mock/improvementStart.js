@@ -769,8 +769,19 @@ export const buildImprovement = ({
   /* Nothing falls short of the goal: the improvement ends before searching. */
   const nothing =
     !!engine && !hold && !!result.goal && result.goalTargets === 0;
+  /* The goal is ambiguous, or the targets conflict with a rule the agent
+     keeps: it ends before searching with the question to answer. Demo:
+     ?improve=clarify on the page. */
+  const clarify =
+    !!engine &&
+    !hold &&
+    !nothing &&
+    (!!trigger?.clarify ||
+      (typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("improve") ===
+          "clarify"));
   const by = kTime < kMoney ? "time" : "money";
-  const stopBefore = overBefore && !hold && !nothing;
+  const stopBefore = overBefore && !hold && !nothing && !clarify;
   const infra = hold ? null : infraFailureOf(env, es, result.trials.length);
   const proof = proofKindOf(es?.agent);
   /* Fresh variations the held-back set wrote are the improvement's too. */
@@ -804,11 +815,13 @@ export const buildImprovement = ({
     ? OPT_STATUS.NOT_REPRODUCED
     : nothing
       ? OPT_STATUS.NOTHING
-      : stopBefore
-        ? OPT_STATUS.OVER_BUDGET
-        : infra
-          ? OPT_STATUS.FAILED
-          : OPT_STATUS.RUNNING;
+      : clarify
+        ? OPT_STATUS.CLARIFY
+        : stopBefore
+          ? OPT_STATUS.OVER_BUDGET
+          : infra
+            ? OPT_STATUS.FAILED
+            : OPT_STATUS.RUNNING;
   /* An ending known before searching still reproduces first: the record
      starts running and settles to it once Reproduce has played
      (optimizationRuns.statusOf). Records kept exactly as seeded (no engine
@@ -823,6 +836,11 @@ export const buildImprovement = ({
     status: pendingEnding ? OPT_STATUS.RUNNING : ending,
     ...(pendingEnding && { pendingEnding, startedAt: createdAt }),
     ...(nothing && { nothing: { goal: result.goal } }),
+    ...(clarify && {
+      clarify: {
+        question: `Should "${result.goal?.label || goal?.label || "the goal"}" win over the rule that protects passing cases?`,
+      },
+    }),
     createdAt,
     fromRunId,
     baseAgentVersion: baseVersion,
@@ -947,7 +965,7 @@ export const buildImprovement = ({
         : {}),
     /* Held back when the run stops before searching — kept for "Continue anyway". */
     ...(result.calibration && { calibration: result.calibration }),
-    ...(hold || infra || nothing || stopBefore
+    ...(hold || infra || nothing || clarify || stopBefore
       ? { result: null, pendingResult: result }
       : { result }),
     ...(infra && { infra }),

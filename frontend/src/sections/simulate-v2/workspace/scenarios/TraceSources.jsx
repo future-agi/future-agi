@@ -288,7 +288,7 @@ export default function TraceSources({ row, env, envState }) {
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
           >
             {chain[chain.length - 1].status === "passed"
-              ? `The production failure no longer happens on agent ${chain[chain.length - 1].run.agentVersion}. If the scenario's data changed since, its earlier runs are re-scored before calling it fixed.`
+              ? `The production failure no longer happens on agent ${chain[chain.length - 1].run.agentVersion}.`
               : `Still ${RESULT[chain[chain.length - 1].status]?.toLowerCase() || "open"} on agent ${chain[chain.length - 1].run.agentVersion}.`}
           </Typography>
         )}

@@ -416,7 +416,7 @@ export function ReproTag({ repro, target = false }) {
   const label = REPRO_LABEL[repro.state] || repro.state;
   const tip =
     repro.state === "reproduced"
-      ? `Failed ${repro.fails} of ${repro.of} on today's agent — ${target ? "a target the fix has to make pass" : "it becomes a target"}.`
+      ? `Failed ${repro.fails} of ${repro.of} on today's agent — ${target ? "a target for the fix" : "it becomes a target"}.`
       : repro.state === "inconclusive"
         ? `Failed ${repro.fails} of ${repro.of} — once in three is neither a reproduction nor a pass. Not a target.`
         : "Passed every time on today's agent — the failure didn't happen. Not a target.";

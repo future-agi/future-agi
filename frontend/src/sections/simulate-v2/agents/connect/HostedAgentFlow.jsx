@@ -382,7 +382,7 @@ export default function HostedAgentFlow({
   return (
     <ConnectSteps
       title={title}
-      subtitle="An assistant on a managed platform. Add the key, pick the assistant — its config comes in as v1. Everything else can wait for the agent's page."
+      subtitle="An assistant on a managed platform. Add the key and pick the assistant."
       steps={STEPS}
       active={0}
       next={next}
@@ -717,7 +717,7 @@ export default function HostedAgentFlow({
                         {prefill?.project ? "" : " — created when you connect"}
                       </>
                     ) : (
-                      `Off — its production ${voice ? "calls" : "conversations"} stay out of Observe. Turn it on later from the agent's Next steps.`
+                      `Off — its production ${voice ? "calls" : "conversations"} stay out of Observe.`
                     )
                   }
                   hint={

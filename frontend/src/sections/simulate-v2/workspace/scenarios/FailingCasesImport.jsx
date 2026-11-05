@@ -187,7 +187,7 @@ export default function FailingCasesImport({ env, envState, onAdd, selected }) {
         >
           {runCount
             ? `Every scenario passed in ${runCount === 1 ? "this environment's run" : `all ${runCount} of this environment's runs`}. Failed and flaky scenarios show up here to turn into scenarios that reproduce them.`
-            : "Failing cases come from this environment's runs. Run the baseline first — anything that fails or comes out flaky shows up here."}
+            : "Failing cases come from this environment's runs. Run the baseline first."}
         </Typography>
       </Stack>
     );

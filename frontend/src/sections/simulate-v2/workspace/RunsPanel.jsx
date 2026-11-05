@@ -142,7 +142,7 @@ export default function RunsPanel({ env, envState, onGo }) {
             <EmptyState
               icon="solar:play-circle-linear"
               title={`No runs of agent ${scope} on this selection`}
-              body="This environment has runs, but none with that agent and environment version together. Widen the scope, or run the suite against it."
+              body="No runs with that agent and environment version together. Widen the scope, or run the suite."
             />
           </Box>
         )}

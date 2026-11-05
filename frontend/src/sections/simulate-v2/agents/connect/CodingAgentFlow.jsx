@@ -171,7 +171,7 @@ export default function CodingAgentFlow({ title, onSave, initial = null }) {
     >
       <Stack spacing={2.25}>
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          {`Your agent is ${meta.label} plus your repository's set-up. We run it in a sandbox on your tasks and grade the result with checks it can't see. Fixes change its set-up and come back as a pull request (a patch, for an upload).`}
+          {`Your agent is ${meta.label} plus your repository's set-up. We run it in a sandbox; fixes come back as a pull request (a patch, for an upload).`}
         </Typography>
 
         <Box>
@@ -278,7 +278,7 @@ export default function CodingAgentFlow({ title, onSave, initial = null }) {
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
               >
-                {`Tool connections that need a secret (${missingSecrets.map((m) => m.secret).join(", ")}) can be added after connecting, in Finish setting up.`}
+                {`Add secrets (${missingSecrets.map((m) => m.secret).join(", ")}) after connecting, in Finish setting up.`}
               </Typography>
             )}
           </Box>

@@ -10,6 +10,16 @@
   Saved on the environment: envState.trialEvals[runId] = [ask, …], newest first.
 */
 import { scenarioTitle } from "./scenarios";
+import {
+  FIELDS_OF_READS,
+  GRADING_ERROR,
+  GRADING_ERROR_REASON,
+  evidenceOf,
+  gradingErrorKeys,
+  missingOf,
+  newResultId,
+  skippedMapOf,
+} from "./evalEvidence";
 
 export const ANSWER_TYPES = { YES_NO: "yes_no", CATEGORY: "category" };
 export const MAX_QUESTIONS = 5;
@@ -77,21 +87,11 @@ export const SCOPES = [
 ];
 export const scopeLabelOf = (v) =>
   SCOPES.find((s) => s.value === v)?.label || v;
+/* A saved ask's scope, as it was named when it ran. */
+export const askScopeLabelOf = (ask) =>
+  ask.scopeLabel || scopeLabelOf(ask.scope);
 export const scopeTasksOf = (scope, tasks) =>
   scope === "all" ? tasks : tasks.filter((t) => outcomeOf(t) === scope);
-
-/*
-  What can't be read, said before anything is spent: a trial that never
-  finished has no conversation, and one with no saved tool calls can't
-  answer a question about them. These are counted apart, never as answers.
-*/
-export const missingOf = (t, reads) => {
-  if (t.status === "error")
-    return "The trial didn't finish, so there's nothing saved to read";
-  if (reads !== "conversation" && !(t.callLog?.length || t.steps?.length))
-    return "No tool calls were saved for this trial";
-  return null;
-};
 
 export const labelsOf = (q) =>
   q.type === ANSWER_TYPES.YES_NO ? ["Yes", "No"] : q.labels;
@@ -165,17 +165,17 @@ export function answerOf(q, t, salt) {
   };
 }
 
-/* Runs one ask over the chosen trials: answers, plus what couldn't be read. */
-export function runAsk({ questions, reads, scope, tasks }) {
-  const id = `ASK-${Date.now().toString(36).toUpperCase()}`;
-  const chosen = scopeTasksOf(scope, tasks);
-  const skipped = {};
-  const readable = [];
-  chosen.forEach((t) => {
-    const why = missingOf(t, reads);
-    if (why) skipped[t.id] = why;
-    else readable.push(t);
-  });
+/*
+  Runs one ask over the chosen trials: answers, what couldn't be read, and
+  the trials the judge didn't answer — each kept apart. `trials` is the
+  exact selection the person reviewed (see scopeTrialsOf).
+*/
+export function runAsk({ questions, reads, scope, scopeLabel, trials, ctx }) {
+  const id = newResultId();
+  const fields = FIELDS_OF_READS[reads] || ["transcript"];
+  const missing = missingOf(trials, fields, ctx);
+  const lacking = new Set(missing.map((m) => m.key));
+  const readable = trials.filter((t) => !lacking.has(t.id));
   const qs = questions.map((q, i) => ({
     id: `q${i + 1}`,
     text: q.text.trim(),
@@ -184,21 +184,31 @@ export function runAsk({ questions, reads, scope, tasks }) {
   }));
   const answers = {};
   qs.forEach((q) => {
+    const errors = gradingErrorKeys(
+      readable.map((t) => t.id),
+      `${id}|${q.id}`,
+    );
     answers[q.id] = {};
     readable.forEach((t) => {
-      answers[q.id][t.id] = answerOf(q, t, id);
+      answers[q.id][t.id] = errors.has(t.id)
+        ? { error: true, answer: null, reason: GRADING_ERROR_REASON }
+        : answerOf(q, t, id);
     });
   });
   return {
     id,
     at: new Date().toISOString(),
     by: "You",
+    /* Instant eval is the evaluator; the question is its criterion. */
+    evaluator: { name: "Instant eval", version: "v1" },
     reads,
     scope,
-    taskIds: chosen.map((t) => t.id),
+    scopeLabel,
+    taskIds: trials.map((t) => t.id),
+    evidence: evidenceOf({ fields, trials, thisRunId: ctx.runId }),
     questions: qs,
     answers,
-    skipped,
+    skipped: skippedMapOf(missing),
     credits: estimateOf(readable.length, qs.length),
     durationS: Math.max(6, Math.round(readable.length * 0.6)),
   };
@@ -207,6 +217,7 @@ export function runAsk({ questions, reads, scope, tasks }) {
 /* Counts for one question, in the question's label order. */
 export const countsOf = (ask, q) => {
   const by = Object.values(ask.answers[q.id] || {}).reduce((m, a) => {
+    if (a.error) return m;
     m[a.answer] = (m[a.answer] || 0) + 1;
     return m;
   }, {});
@@ -244,6 +255,7 @@ export const byScenario = (tasks) => {
 const csvCell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 export function csvOf(ask, tasks) {
   const head = [
+    "run",
     "trial",
     "scenario",
     "persona",
@@ -251,12 +263,14 @@ export function csvOf(ask, tasks) {
     ...ask.questions.flatMap((q) => [q.text, `${q.text} — why`]),
   ];
   const rows = tasks.map((t) => [
-    t.id,
+    t.runLabel || "",
+    t.trialNo ?? t.id,
     scenarioTitle(t.title || t.name),
     t.persona?.name || "",
     OUTCOME_LABEL[outcomeOf(t)],
     ...ask.questions.flatMap((q) => {
       const a = ask.answers[q.id]?.[t.id];
+      if (a?.error) return [GRADING_ERROR, a.reason];
       return a ? [a.answer, a.reason] : ["Not read", ask.skipped[t.id] || ""];
     }),
   ]);

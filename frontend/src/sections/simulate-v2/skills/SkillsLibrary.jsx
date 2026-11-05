@@ -261,9 +261,10 @@ function SkillDetail({
   );
   const used = usedByOf(skill.id, settings);
   /* Agents a code skill can be attached to; the rest say why not. */
-  const eligible = agents.filter(
-    (a) => skillRuntimeOf(a).canAdd && !used.some((u) => u.agentKey === a.key),
+  const attachable = agents.filter(
+    (a) => !used.some((u) => u.agentKey === a.key),
   );
+  const eligible = attachable.filter((a) => skillRuntimeOf(a).canAdd);
   useEffect(() => {
     if (!testing) return undefined;
     const t = setTimeout(() => {
@@ -401,7 +402,7 @@ function SkillDetail({
           sx={{ typography: "s3", color: "text.tertiary", mt: -2.25, mb: 3 }}
         >
           {tester
-            ? "A test runs an attached agent in one of its environments and compares the version with the one it loads now, on the same scenarios. Loaded shows Observed when the agent reports each skill it loads, Unknown when it doesn't."
+            ? "A test runs an attached agent and compares the version with the one it loads now. Loaded shows Observed when the agent reports each skill it loads, Unknown when it doesn't."
             : "Attach it to an agent to test a version in that agent's environment."}
         </Typography>
 
@@ -469,11 +470,16 @@ function SkillDetail({
                   ? "Attach to an agent…"
                   : "No other agent can load skills"}
               </MenuItem>
-              {eligible.map((a) => (
-                <MenuItem key={a.key} value={a.key}>
-                  {a.name}
-                </MenuItem>
-              ))}
+              {attachable.map((a) => {
+                const rt = skillRuntimeOf(a);
+                return (
+                  <MenuItem key={a.key} value={a.key} disabled={!rt.canAdd}>
+                    {rt.canAdd
+                      ? a.name
+                      : `${a.name} · Unsupported — ${rt.short || "can't load skills"}`}
+                  </MenuItem>
+                );
+              })}
             </TextField>
             <TextField
               select
@@ -732,6 +738,7 @@ function CreateSkillDialog({ onClose, onCreate }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
+  const missing = !!name.trim() && !body.trim();
   return (
     <ConfirmDialog
       open
@@ -762,7 +769,31 @@ function CreateSkillDialog({ onClose, onCreate }) {
             onChange={(e) => setBody(e.target.value)}
             multiline
             minRows={4}
+            error={missing}
+            helperText={
+              missing ? "SKILL.md is missing" : "Paste it, or upload the file."
+            }
           />
+          <Box>
+            <Button
+              size="small"
+              variant="outlined"
+              component="label"
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Upload SKILL.md
+              <input
+                hidden
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) f.text().then((t) => setBody(t));
+                  e.target.value = "";
+                }}
+              />
+            </Button>
+          </Box>
         </Stack>
       }
       action={
@@ -770,12 +801,14 @@ function CreateSkillDialog({ onClose, onCreate }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={!name.trim()}
+          disabled={!name.trim() || !body.trim()}
           onClick={() =>
             onCreate({
               name,
               description,
-              text: `---\nname: ${name.trim()}\ndescription: ${description.trim()}\n---\n\n${body.trim()}\n`,
+              text: body.trimStart().startsWith("---")
+                ? body
+                : `---\nname: ${name.trim()}\ndescription: ${description.trim()}\n---\n\n${body.trim()}\n`,
             })
           }
         >

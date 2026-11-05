@@ -51,7 +51,7 @@ export function FinalistsTable({ result, bare = false }) {
             borderColor: "divider",
           }}
         >
-          {`Scored once on held-back scenarios, never shown while searching${result.textSearch ? ", as real calls" : ""} — the winner is the best that passes.`}
+          {`Scored once on held-back scenarios${result.textSearch ? ", as real calls" : ""}. The winner is the best that passes.`}
         </Typography>
       )}
       <Box sx={bare ? undefined : box}>
@@ -273,8 +273,8 @@ export function ContractNotice({
           >
             {approval
               ? approval.candidate
-                ? `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to}: change ${approval.candidate.train}% vs baseline ${approval.baseline.train}% on targets (${signedPts(approval.candidate.train - approval.baseline.train)}).`
-                : `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. Baseline on ${approval.to}: ${approval.baseline.train}% on targets.`
+                ? `Approved environment ${approval.to} — ${contract.tool} takes ${contract.param}. Baseline re-run: change ${approval.candidate.train}% vs ${approval.baseline.train}% on targets (${signedPts(approval.candidate.train - approval.baseline.train)}).`
+                : `Approved environment ${approval.to} — ${contract.tool} takes ${contract.param}. Baseline: ${approval.baseline.train}% on targets.`
               : contractMessage(contract, envVersion || "the frozen version")}
           </Typography>
           {contract.why && !approval && (

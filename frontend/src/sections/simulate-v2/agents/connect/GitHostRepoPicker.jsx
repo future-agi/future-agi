@@ -196,7 +196,7 @@ export function GitHostConnectForm({
             sx={{ typography: "s3", color: "text.subtitle" }}
           >
             <HintLine
-              hint={`We scan the ${meta.account.toLowerCase()}'s repositories and find the agents in them. Write access is asked for at your first draft ${review.long}.`}
+              hint={`We scan the ${meta.account.toLowerCase()}'s repositories for agents. Write access is asked at your first draft ${review.long}.`}
             >
               {`Once for the workspace · read only`}
             </HintLine>
@@ -238,7 +238,7 @@ export function GitHostConnectForm({
           placeholder={meta.tokenSlot}
           value={tokenRef}
           onChange={setTokenRef}
-          helper={`A token belongs to one ${meta.account.toLowerCase()}${meta.accounts.length > 1 ? " — the one above" : ""}; we list its repositories when you connect. Stored encrypted, never shown again, never sent to the improver.`}
+          helper={`A token belongs to one ${meta.account.toLowerCase()}${meta.accounts.length > 1 ? " — the one above" : ""}. Stored encrypted, never shown again.`}
         />
         <Box
           sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}

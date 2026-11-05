@@ -37,6 +37,12 @@ export default function HandoffTimeline({ agent, task }) {
         </Typography>
       </Stack>
 
+      {!h.enforced && (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          Not a controlled run — a worker could bypass a block
+        </Typography>
+      )}
+
       <Box
         sx={{
           border: "1px solid",
@@ -81,6 +87,21 @@ export default function HandoffTimeline({ agent, task }) {
               >
                 {observed ? e.text : `${e.text} (declared, not observed)`}
               </Typography>
+              {e.boundary && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    ml: "auto !important",
+                    flexShrink: 0,
+                    color:
+                      e.boundary === "Blocked"
+                        ? "status.danger.fg"
+                        : "text.tertiary",
+                  }}
+                >
+                  {e.boundary}
+                </Typography>
+              )}
             </Stack>
           );
         })}
@@ -107,6 +128,18 @@ export default function HandoffTimeline({ agent, task }) {
             submit a fresh run against the same scenarios. This run&apos;s
             evidence stays.
           </Typography>
+          <Box sx={{ mt: 0.75 }}>
+            {[
+              ["Coordinator retried", h.after.retried],
+              ["Duplicate write", h.after.duplicateWrite],
+              ["Customer told it succeeded", h.after.toldSuccess],
+            ].map(([label, yes]) => (
+              <Stack key={label} direction="row" sx={{ typography: "s3" }}>
+                <Box sx={{ width: 200, color: "text.tertiary" }}>{label}</Box>
+                <Box>{!observed ? "Unknown" : yes ? "Yes" : "No"}</Box>
+              </Stack>
+            ))}
+          </Box>
         </Box>
       )}
     </Stack>

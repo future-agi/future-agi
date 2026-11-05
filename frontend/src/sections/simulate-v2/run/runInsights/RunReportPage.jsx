@@ -28,7 +28,7 @@ import {
   trialNoOf,
   whenOf,
 } from "../../_mock/runInsightReports";
-import { aboutCredits } from "../../_mock/trialQuestions";
+import { aboutCredits, estimateOf } from "../../_mock/trialQuestions";
 
 /*
   One Insights report on a run — Observe's report page, over trials: the
@@ -367,7 +367,7 @@ export default function RunReportPage({
                   <Stack
                     alignItems="flex-end"
                     spacing={0.75}
-                    sx={{ width: 220, flexShrink: 0 }}
+                    sx={{ width: 300, flexShrink: 0 }}
                   >
                     {cat && (
                       <Stack
@@ -403,13 +403,30 @@ export default function RunReportPage({
                         const credits = debug.creditsOf(ids);
                         return (
                           <Stack alignItems="flex-end" spacing={0.25}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => debug.open(ids)}
+                            <Stack
+                              direction="row"
+                              flexWrap="wrap"
+                              justifyContent="flex-end"
+                              gap={0.75}
                             >
-                              {`Debug ${ids.length === 1 ? "this scenario" : `these ${ids.length} scenarios`}`}
-                            </Button>
+                              {/* These trials failed — improve from them without a diagnosis first. */}
+                              {debug.improve && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => debug.improve(ids)}
+                                >
+                                  Improve agent
+                                </Button>
+                              )}
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => debug.open(ids)}
+                              >
+                                {`Debug ${ids.length === 1 ? "this scenario" : `these ${ids.length} scenarios`}`}
+                              </Button>
+                            </Stack>
                             <Typography
                               sx={{ typography: "s3", color: "text.tertiary" }}
                             >
@@ -838,6 +855,12 @@ export default function RunReportPage({
             bgcolor: "background.paper",
           }}
         >
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}
+          >
+            Each question reads this report&apos;s {report.analysed} trials ·{" "}
+            {aboutCredits(estimateOf(report.analysed, 1))}
+          </Typography>
           <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mb: 1 }}>
             {ASK_SUGGESTIONS.map((s) => (
               <Chip

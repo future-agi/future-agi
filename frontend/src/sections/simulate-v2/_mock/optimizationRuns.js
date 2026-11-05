@@ -40,6 +40,9 @@ export const OPT_STATUS = {
   /* A new goal improvement where every scenario already meets the goal —
      it ends before searching. */
   NOTHING: "nothing-to-improve",
+  /* The goal is ambiguous or the targets conflict with a rule: it ends before
+     searching, with the question to answer. Nothing to ship. */
+  CLARIFY: "needs-clarification",
   /* Today's agent can't be measured inside the budget (or time cap) — the
      baseline isn't established, so it stops before searching. */
   OVER_BUDGET: "over-budget",
@@ -1118,6 +1121,13 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ending: { key: "nothing", label: "Nothing to improve" },
       headline: `Nothing to improve — every scenario already meets ${goalWords(record.nothing?.goal)}.`,
+    };
+  }
+  if (record?.status === OPT_STATUS.CLARIFY) {
+    return {
+      ending: { key: "clarify", label: "Needs clarification" },
+      headline: record.clarify?.question || "The goal needs an answer first.",
+      beforeSearch: true,
     };
   }
   if (record?.status === OPT_STATUS.NOT_REPRODUCED) {

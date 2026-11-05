@@ -262,7 +262,7 @@ export default function AnalyticsPanel({ env, envState }) {
     <Stack spacing={2} sx={{ p: 2 }}>
       {envVersions.length > 1 && (
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {`These runs span ${envVersions.length} environment versions (${envVersions.map((v) => envLabelOf(env, envState, v)).join(", ")}). The test changed between them — the dashed lines on the trend — so compare runs on the scenarios they share.`}
+          {`These runs span ${envVersions.length} environment versions (${envVersions.map((v) => envLabelOf(env, envState, v)).join(", ")}). The test changed between them (dashed lines) — compare only shared scenarios.`}
         </Typography>
       )}
 

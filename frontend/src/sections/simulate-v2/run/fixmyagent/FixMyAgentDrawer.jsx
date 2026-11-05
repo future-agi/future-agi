@@ -72,6 +72,7 @@ export default function FixMyAgentDrawer({
   onOpenTask,
   onViewIssue,
   openOptimizationId,
+  openSetup = false,
 }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -209,6 +210,10 @@ export default function FixMyAgentDrawer({
     page finds it.
   */
   const [setupOpen, setSetupOpen] = useState(false);
+  /* Opened straight onto the setup — Improve agent from an Insights finding. */
+  useEffect(() => {
+    if (open && openSetup) setSetupOpen(true);
+  }, [open, openSetup]);
   const startFromSetup = ({
     name,
     model,
@@ -680,6 +685,8 @@ export default function FixMyAgentDrawer({
 }
 
 FixMyAgentDrawer.propTypes = {
+  /* Start on the improvement's setup, not the diagnosis. */
+  openSetup: PropTypes.bool,
   open: PropTypes.bool,
   onClose: PropTypes.func,
   env: PropTypes.object,

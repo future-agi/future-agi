@@ -315,7 +315,7 @@ export default function ProductionReplayImport({
                 : `Cancelled — ${queue.done} of ${total} drafted`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`Import ${queue.importId} · ≈ ${cost.low}–${cost.high} credits for drafting · completed drafts are kept if you cancel; a retry does only what's left, under the same import`}
+            {`Import ${queue.importId} · ≈ ${cost.low}–${cost.high} credits for drafting · completed drafts are kept if you cancel`}
           </Typography>
         </Box>
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -958,7 +958,7 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", pt: 0.5 }}
           >
-            {`Persona inferred: ${draft.persona?.name} · ${draft.persona?.archetype}. The agent's side isn't replayed — your agent answers for itself.`}
+            {`Persona inferred: ${draft.persona?.name} · ${draft.persona?.archetype}. The agent's side isn't replayed.`}
           </Typography>
         </Stack>
       </Collapse>

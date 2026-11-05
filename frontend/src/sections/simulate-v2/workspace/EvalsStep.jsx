@@ -238,7 +238,7 @@ export default function EvalsStep({
             sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
           >
             {hasTools
-              ? "Tool calling that happens during the calls will be evaluated — the right tool, with the right arguments, at the right time."
+              ? "Tool calls are evaluated: right tool, right arguments, right time."
               : "This environment has no tools yet — there are no tool calls to evaluate."}
           </Typography>
         </Box>
@@ -339,7 +339,7 @@ export default function EvalsStep({
         }
         subtitle={
           appliedEvals.length
-            ? `Every task is scored against these · ${cappedCount} of ${MAX_APPLIED_EVALS}${toolCallEvalOn ? " plus the tool-call judge" : ""}${requiredCount ? ` · ${requiredCount} required` : ""}.`
+            ? `Scored against these · ${cappedCount} of ${MAX_APPLIED_EVALS}${toolCallEvalOn ? " plus the tool-call judge" : ""}${requiredCount ? ` · ${requiredCount} required` : ""}.`
             : undefined
         }
       >
@@ -556,7 +556,7 @@ export default function EvalsStep({
           }}
         >
           {meteredCount > 0
-            ? `This environment's evals cost about ${creditsPerRun.toLocaleString()} credits per run (${runnable} scenario${runnable === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"}).`
+            ? `Evals cost about ${creditsPerRun.toLocaleString()} credits per run (${runnable} scenario${runnable === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"}).`
             : "This environment's evals are free — each one is rule-based or judged by your own model key."}
           {meteredCount > 0 && meteredCount < appliedEvals.length && (
             <Box component="span" sx={{ color: "text.tertiary" }}>

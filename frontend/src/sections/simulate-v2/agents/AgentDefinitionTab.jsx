@@ -113,7 +113,7 @@ export default function AgentDefinitionTab({
           </Box>
         )}
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {`Read-only${source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}`}
+          {`Read-only${source.kind === "endpoint" ? " · shows what the agent does, not its setup" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}`}
         </Typography>
       </Stack>
 
@@ -137,7 +137,7 @@ export default function AgentDefinitionTab({
                   {
                     label: "Snapshot",
                     value: snapshotLineOf({ definition, files }),
-                    hint: `The prompts, tools and models we found ${source.kind === "upload" ? "in that upload" : "at that commit"}, kept with the version.`,
+                    hint: `Prompts, tools and models found ${source.kind === "upload" ? "in that upload" : "at that commit"}.`,
                   },
                 ]
               : []),

@@ -258,7 +258,7 @@ export function DuplicateWriteNote({ task, sx }) {
         ...sx,
       }}
     >
-      {`Failed: money written twice — ${summary} went through ${times} times. A retry has to check whether the first one landed.`}
+      {`Failed: money written twice — ${summary} went through ${times} times.`}
     </Typography>
   );
 }

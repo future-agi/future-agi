@@ -201,7 +201,9 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
                 ? "Retired"
                 : world.readiness === "unsupported"
                   ? "Discovered · Unsupported"
-                  : "Withdrawn"}
+                  : world.readiness === "access"
+                    ? "Needs access"
+                    : "Withdrawn"}
           </QuietTag>
         )}
         <QuietTag>{world.typeLabel}</QuietTag>
@@ -239,9 +241,11 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {world.catalogueId
-            ? `${world.catalogueId} · ${world.release.version} · ${world.tools} tools · ${world.scenarios} cases`
-            : `${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
+          {world.readiness === "access" && world.release?.owner
+            ? `Ask ${world.release.owner.name} · ${world.release.owner.role}`
+            : world.catalogueId
+              ? `${world.catalogueId} · ${world.release.version} · ${world.tools} tools · ${world.scenarios} cases`
+              : `${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
         </Typography>
         <Typography
           noWrap

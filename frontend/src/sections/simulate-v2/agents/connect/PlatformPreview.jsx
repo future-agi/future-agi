@@ -197,7 +197,7 @@ export default function PlatformPreview({ preview, cli }) {
               <Typography
                 sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
               >
-                {`Platform actions don't go through your server, so we can't redirect them.${risky.length ? " A test that reaches one asks first, with the destination named." : ""}`}
+                {`Platform actions can't be redirected.${risky.length ? " A test that reaches one asks first." : ""}`}
               </Typography>
             )}
           </Box>

@@ -1,31 +1,53 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
-import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
+import { useEffect, useMemo, useState } from "react";
+import { Box, Button, ButtonBase, Stack, Tab, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { runAsk, whenOf } from "../../_mock/trialQuestions";
+import { poolOf, resultTitleOf, runEvaluation } from "../../_mock/evalEvidence";
 import AskTrialsComposer from "./AskTrialsComposer";
+import EvaluationResultView from "./EvaluationResultView";
 import TrialAnswersView from "./TrialAnswersView";
+import UseEvaluationComposer from "./UseEvaluationComposer";
 
 /*
-  The run's Evaluate tab (evals.md, Run → Evaluate selected evidence) — the
-  same Instant eval as Observe: past questions on the left, ask or read the
-  answers on the right. Nothing runs until the user asks; each ask is saved
-  with the run and never rewrites its task checks.
+  The run's Evaluate tab (evals.md, Run → Evaluate selected evidence): saved
+  results on the left; on the right, either ask a question (the same Instant
+  eval as Observe) or use one of the environment's evaluations. Nothing runs
+  until the user asks; each result is saved with the run, with its own id,
+  and never rewrites the run's task checks.
 */
+const MODES = { ASK: "ask", EVALUATION: "evaluation" };
 const TICK_MS = 120;
 
 export default function EvaluateTab({
+  env,
   envState,
   patch,
   runId,
   runLabel,
   tasks,
+  others,
+  voice,
+  worldHeld,
+  filter,
+  selectedIds,
   onOpenTask,
 }) {
   const asks = envState.trialEvals?.[runId] || [];
   const [openId, setOpenId] = useState(() => asks[0]?.id || null);
   const [composing, setComposing] = useState(() => !asks.length);
+  const [mode, setMode] = useState(MODES.ASK);
   const [seed, setSeed] = useState(null);
+  /* This run, and the other runs a result can reach, with what each saved. */
+  const ctx = useMemo(
+    () => ({ runId, runLabel, tasks, others, voice, worldHeld }),
+    [runId, runLabel, tasks, others, voice, worldHeld],
+  );
+  const pool = useMemo(() => [...poolOf(ctx).values()], [ctx]);
+  const openFromThisRun = (t) => {
+    if (t?.runId === runId) onOpenTask?.(t.sourceTask);
+  };
   /* The ask just started fills in a few trials at a time. */
   const [fresh, setFresh] = useState(null);
 
@@ -48,8 +70,8 @@ export default function EvaluateTab({
     return () => clearTimeout(id);
   }, [fresh]);
 
-  const ask = (draft) => {
-    const record = runAsk({ ...draft, tasks });
+  /* Saved beside the run's other results; the older ones stay. */
+  const save = (record) => {
     patch({
       trialEvals: {
         ...(envState.trialEvals || {}),
@@ -59,11 +81,21 @@ export default function EvaluateTab({
     setOpenId(record.id);
     setComposing(false);
     setSeed(null);
+  };
+  const ask = (draft) => {
+    const record = runAsk({ ...draft, ctx });
+    save(record);
     setFresh({
       id: record.id,
       n: 0,
       total: Object.keys(record.answers.q1 || {}).length,
     });
+  };
+  const useEvaluation = (draft) => save(runEvaluation({ ...draft, ctx }));
+  const begin = (next) => {
+    setSeed(null);
+    setMode(next);
+    setComposing(true);
   };
 
   return (
@@ -87,24 +119,22 @@ export default function EvaluateTab({
       >
         <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
           <Typography sx={{ typography: "m3", fontWeight: 500, flex: 1 }}>
-            Instant eval
+            Results
           </Typography>
           <Button
             variant="outlined"
             size="small"
             startIcon={<Iconify icon="solar:add-linear" width={14} />}
-            onClick={() => {
-              setSeed(null);
-              setComposing(true);
-            }}
+            onClick={() => begin(mode)}
             sx={{ color: "text.primary" }}
           >
-            New question
+            New
           </Button>
         </Stack>
         {!asks.length ? (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Questions you ask about this run are kept here with their answers.
+            Questions and evaluations you run on this run&apos;s trials are kept
+            here, each with its own id.
           </Typography>
         ) : (
           <Stack spacing={0.25}>
@@ -138,13 +168,13 @@ export default function EvaluateTab({
                       color: "text.primary",
                     }}
                   >
-                    {a.questions[0].text}
+                    {resultTitleOf(a)}
                   </Typography>
                   <Typography
                     noWrap
                     sx={{ typography: "s3", color: "text.tertiary" }}
                   >
-                    {a.questions.length > 1
+                    {a.questions?.length > 1
                       ? `${a.questions.length} questions · `
                       : ""}
                     {a.taskIds.length} trials · {whenOf(a.at)}
@@ -158,27 +188,75 @@ export default function EvaluateTab({
 
       {/* ── ask, or read the answers ── */}
       <Box sx={{ minWidth: 0 }}>
+        {/* Two ways to evaluate saved trials; reading a result shows the mode it came from. */}
+        <SegmentedTabs
+          value={
+            composing || !open
+              ? mode
+              : open.kind === "evaluation"
+                ? MODES.EVALUATION
+                : MODES.ASK
+          }
+          onChange={(_, v) => begin(v)}
+          sx={{ mb: 2.5 }}
+        >
+          <Tab value={MODES.ASK} label="Ask a question" />
+          <Tab value={MODES.EVALUATION} label="Use an evaluation" />
+        </SegmentedTabs>
         {composing || !open ? (
-          <AskTrialsComposer
-            key={seed?.id || "new"}
-            tasks={tasks}
+          mode === MODES.EVALUATION ? (
+            <UseEvaluationComposer
+              key={`evaluation-${seed?.id || "new"}`}
+              env={env}
+              envState={envState}
+              ctx={ctx}
+              filter={filter}
+              selectedIds={selectedIds}
+              runLabel={runLabel}
+              initial={seed?.kind === "evaluation" ? seed : null}
+              onCancel={asks.length ? () => setComposing(false) : undefined}
+              onRun={useEvaluation}
+            />
+          ) : (
+            <AskTrialsComposer
+              key={`ask-${seed?.id || "new"}`}
+              ctx={ctx}
+              filter={filter}
+              selectedIds={selectedIds}
+              runLabel={runLabel}
+              initial={seed?.kind === "evaluation" ? null : seed}
+              onCancel={asks.length ? () => setComposing(false) : undefined}
+              onAsk={ask}
+            />
+          )
+        ) : open.kind === "evaluation" ? (
+          <EvaluationResultView
+            key={open.id}
+            result={open}
+            tasks={pool}
+            runId={runId}
             runLabel={runLabel}
-            initial={seed}
-            onCancel={asks.length ? () => setComposing(false) : undefined}
-            onAsk={ask}
+            onRunAgain={() => {
+              setSeed(open);
+              setMode(MODES.EVALUATION);
+              setComposing(true);
+            }}
+            onOpenTask={openFromThisRun}
           />
         ) : (
           <TrialAnswersView
             key={open.id}
             ask={open}
-            tasks={tasks}
+            tasks={pool}
+            runId={runId}
             runLabel={runLabel}
             answering={fresh?.id === open.id ? fresh.n : undefined}
             onAskAgain={() => {
               setSeed(open);
+              setMode(MODES.ASK);
               setComposing(true);
             }}
-            onOpenTask={onOpenTask}
+            onOpenTask={openFromThisRun}
           />
         )}
       </Box>
@@ -186,10 +264,16 @@ export default function EvaluateTab({
   );
 }
 EvaluateTab.propTypes = {
+  env: PropTypes.object,
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
   runId: PropTypes.string.isRequired,
   runLabel: PropTypes.string.isRequired,
   tasks: PropTypes.array.isRequired,
+  others: PropTypes.array,
+  voice: PropTypes.bool,
+  worldHeld: PropTypes.bool,
+  filter: PropTypes.object,
+  selectedIds: PropTypes.array,
   onOpenTask: PropTypes.func,
 };

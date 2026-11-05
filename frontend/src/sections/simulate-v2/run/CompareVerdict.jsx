@@ -327,7 +327,7 @@ export default function CompareVerdict({
             {counts.rechecked > 0 && (
               <Tooltip
                 arrow
-                title="Rechecked pairs count in the delta, badged: a world element they touch changed, so the delta may mix agent and world effects."
+                title="Rechecked pairs count in the delta, badged: the world changed, so it may mix agent and world effects."
               >
                 <FormControlLabel
                   sx={{
@@ -442,7 +442,7 @@ export default function CompareVerdict({
               key={q.version.label + q.impact.rule.id}
               icon="solar:question-circle-linear"
               title={`Fix or policy change? ${q.version.label} changed how the agent handles ${q.impact.rule.id}`}
-              body={`Not answered yet, so its ${q.impact.subGoals.length} sub-goal${q.impact.subGoals.length === 1 ? "" : "s"} grade under the old rule. A policy answer reports them as criteria changed, outside the delta.`}
+              body={`Not answered yet, so its ${q.impact.subGoals.length} sub-goal${q.impact.subGoals.length === 1 ? "" : "s"} grade under the old rule.`}
               action={
                 <Button
                   size="small"
@@ -459,7 +459,7 @@ export default function CompareVerdict({
             <Line
               icon="solar:checklist-minimalistic-linear"
               title={`Criteria changed on ${criteria.length} sub-goal${criteria.length === 1 ? "" : "s"}: ${criteria.map((c) => c.name).join(", ")}`}
-              body={`Changed as policy — out of the delta. The ${criteriaScenarios} scenario${criteriaScenarios === 1 ? "" : "s"} using ${criteria.length === 1 ? "it" : "them"} still pair on their other sub-goals.`}
+              body={`Changed as policy — out of the delta for ${criteriaScenarios} scenario${criteriaScenarios === 1 ? "" : "s"}.`}
             />
           )}
         </Stack>
@@ -560,7 +560,7 @@ export default function CompareVerdict({
             }}
           >
             {promote.disabled ||
-              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}; ${promote.baseline} stays available.`}
+              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}.`}
           </Typography>
           <Button
             size="small"

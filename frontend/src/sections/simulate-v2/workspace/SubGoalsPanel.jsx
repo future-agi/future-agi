@@ -119,7 +119,7 @@ export default function SubGoalsPanel({
           <EmptyState
             icon="solar:checklist-minimalistic-linear"
             title="No sub-goals yet"
-            body="Sub-goals come from the scenarios — each check a scenario grades with is collected here once, however many scenarios use it."
+            body="Sub-goals come from the scenarios; each check is listed here once."
             action={
               onGo && (
                 <Button
@@ -895,7 +895,7 @@ function SubGoalDetail({
             <Typography
               sx={{ typography: "s3", color: "text.secondary", mt: 1 }}
             >
-              {`Publishes ${next}${kind === "policy" ? " marked as a policy change" : " as a grader fix"}, used by ${n} scenario${n === 1 ? "" : "s"}. `}
+              {`Publishes ${next}${kind === "policy" ? " as a policy change" : " as a grader fix"} for ${n} scenario${n === 1 ? "" : "s"}. `}
               {SUBGOAL_EDIT_KINDS[kind].note}
               {` ${label} stays on every past run.`}
             </Typography>

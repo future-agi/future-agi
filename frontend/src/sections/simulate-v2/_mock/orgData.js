@@ -28,16 +28,29 @@ import {
   environmentVersions,
 } from "./versions";
 import { currentUser } from "./scenarioProvenance";
+import { ORG_SOURCES, kbFileOf } from "./kbCatalog";
+import { personalDataOf } from "./dataMapping";
+
+export { ORG_SOURCES };
 
 /* ── what a file is for, and who can read it ────────────────────────────── */
 
 export const ROLES = [
   {
     id: "policy",
-    label: "Policy / reference",
-    note: "Rules the agent must follow",
+    label: "Policy",
+    note: "Policy text suggests rules the agent must follow",
   },
-  { id: "seed", label: "Seed records", note: "Rows the world starts with" },
+  {
+    id: "reference",
+    label: "Reference",
+    note: "Reference material the agent can read; it makes no rules",
+  },
+  {
+    id: "seed",
+    label: "Records",
+    note: "Records are mapped to world tables and seed the world",
+  },
   {
     id: "task-input",
     label: "Task input",
@@ -76,7 +89,7 @@ export const visibilityLabel = (id) =>
 export const defaultVisibility = (role) =>
   role === "evaluation-reference"
     ? "evaluator"
-    : role === "task-input" || role === "example"
+    : role === "task-input" || role === "example" || role === "reference"
       ? "agent"
       : "tool";
 
@@ -87,13 +100,39 @@ export const PRIVACY = [
   { id: "omit", label: "Leave out" },
 ];
 
-export const SUPPORTED = ["pdf", "txt", "md", "csv", "json", "jsonl", "tsv"];
+/* One list: the upload menu, the file picker and the error message all read it. */
+export const SUPPORTED = [
+  "pdf",
+  "docx",
+  "xlsx",
+  "csv",
+  "tsv",
+  "json",
+  "jsonl",
+  "txt",
+  "md",
+];
+export const SUPPORTED_NAMES = SUPPORTED.map((e) => e.toUpperCase()).join(", ");
+export const SUPPORTED_ACCEPT = SUPPORTED.map((e) => `.${e}`).join(",");
 /* Each route's own limits (data.md): the builder's cloud sandbox parses
    these; the Knowledge base has its own, smaller per-file limit. */
-export const SUPPORTED_LINE =
-  "PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT, MD · up to 25 MB a file · 100 files or 200 MB per design";
+export const SUPPORTED_LINE = `${SUPPORTED_NAMES} · up to 25 MB a file · 100 files or 200 MB per design`;
 export const KB_LIMIT_LINE =
-  "New documents go into the Knowledge base first — up to 5 MB a file there.";
+  "Knowledge base uploads take PDF, DOCX, RTF and TXT — up to 5 MB a file, 1 GB in all.";
+export const KB_SNAPSHOT_LINE =
+  "Copies a snapshot of the revision you pick — not linked live.";
+export const KB_STATE_LINE =
+  "Added to the draft only, until you accept.";
+
+/** The type column: the file's own kind. */
+export const typeLabelOf = (source) =>
+  String(
+    source?.ext ||
+      String(source?.name || "")
+        .split(".")
+        .pop() ||
+      "",
+  ).toUpperCase() || "—";
 
 /* Connectors that aren't built yet: listed, off, and saying so. */
 export const UNAVAILABLE_CONNECTORS = [
@@ -108,11 +147,11 @@ const extOf = (name) =>
     .split(".")
     .pop()
     .toLowerCase();
-const isTable = (ext) => ["csv", "tsv", "json", "jsonl"].includes(ext);
+const isTable = (ext) => ["csv", "tsv", "json", "jsonl", "xlsx"].includes(ext);
 
 /* ── reading a file (mock) ──────────────────────────────────────────────── */
 
-const POLICY_PASSAGES = (days) => [
+const POLICY_PASSAGES = (days, { approval = 500, extra = false } = {}) => [
   {
     id: "p1",
     page: 1,
@@ -138,19 +177,112 @@ const POLICY_PASSAGES = (days) => [
   {
     id: "p5",
     page: 3,
-    text: "Refunds over $500 need a supervisor's approval before they are issued.",
-    rule: "Refunds over $500 wait for a supervisor's approval.",
-    approval: { above: 500, by: "Supervisor" },
+    text: `Refunds over $${approval} need a supervisor's approval before they are issued.`,
+    rule: `Refunds over $${approval} wait for a supervisor's approval.`,
+    approval: { above: approval, by: "Supervisor" },
+  },
+  ...(extra
+    ? [
+        {
+          id: "p6",
+          page: 3,
+          text: "Gift-card purchases are refunded as store credit, never to the card.",
+          rule: "Gift-card purchases are refunded as store credit only.",
+        },
+      ]
+    : []),
+];
+
+/* Reference material reads as background; none of it becomes a rule. */
+const REFERENCE_PASSAGES = [
+  {
+    id: "p1",
+    page: 1,
+    text: "Greet the caller by name and confirm the order number before anything else.",
+  },
+  {
+    id: "p2",
+    page: 1,
+    text: "When a refund is declined, offer store credit and explain the window in one sentence.",
+  },
+  {
+    id: "p3",
+    page: 2,
+    text: "Hand the caller to a supervisor when they ask for one twice.",
   },
 ];
 
+/* The passages of a Knowledge base policy at one revision. */
+export const policyPassagesAt = (rev) =>
+  rev >= 3
+    ? POLICY_PASSAGES(14, { approval: 300, extra: true })
+    : POLICY_PASSAGES(30);
+
 const TABLES = [
+  /* The ID-mapping example (data.md): orders calls the customer buyer_id, the
+     customers file calls it customer_id. The builder proposes the match and
+     checks that C17 exists; orders 104 and 377 name buyers the customers
+     file doesn't have. A price column stored as text, and two fields the
+     world's orders table has no column for, are left for the person. */
+  {
+    match: /orders?[-_ ]?q3|buyer/,
+    table: "orders",
+    columns: [
+      { name: "order_id", type: "string", key: true, stableId: true },
+      {
+        name: "buyer_id",
+        type: "string",
+        proposal: {
+          to: "customers.customer_id",
+          id: "C17",
+          mismatches: [
+            { row: 104, reason: "buyer_id C-881 isn't in customers" },
+            { row: 377, reason: "buyer_id C-902 isn't in customers" },
+          ],
+        },
+      },
+      { name: "delivered_at", type: "date" },
+      {
+        name: "price",
+        type: "string",
+        textRows: [
+          { row: 212, value: "$45.99", reads: 45.99 },
+          { row: 340, value: "120.00 USD", reads: 120 },
+          { row: 466, value: "1,299.00", reads: 1299 },
+        ],
+      },
+      {
+        name: "promo_code",
+        type: "string",
+        unmatched: true,
+        suggest: "discount_code",
+      },
+      {
+        name: "loyalty_tier",
+        type: "string",
+        unmatched: true,
+        suggest: "customer_tier",
+      },
+      { name: "email", type: "string", sensitive: true },
+    ],
+    rows: 500,
+    rejected: [],
+    sample: {
+      order_id: "O-104",
+      buyer_id: "C17",
+      delivered_at: "2026-09-28",
+      price: "$45.99",
+      promo_code: "FALL10",
+      loyalty_tier: "gold",
+      email: "dana.liu@example.com",
+    },
+  },
   {
     match: /order/,
     table: "orders",
     columns: [
       { name: "order_id", type: "string", key: true },
-      { name: "customer_id", type: "string", ref: "customers.id" },
+      { name: "customer_id", type: "string", ref: "customers.customer_id" },
       { name: "delivered_at", type: "date" },
       { name: "amount_cents", type: "integer" },
       { name: "email", type: "string", sensitive: true },
@@ -162,7 +294,7 @@ const TABLES = [
     ],
     sample: {
       order_id: "O-104",
-      customer_id: "C-881",
+      customer_id: "C17",
       delivered_at: "2026-09-28",
       amount_cents: 4599,
       email: "dana.liu@example.com",
@@ -172,7 +304,7 @@ const TABLES = [
     match: /customer|account|user/,
     table: "customers",
     columns: [
-      { name: "id", type: "string", key: true },
+      { name: "customer_id", type: "string", key: true, stableId: true },
       { name: "name", type: "string", sensitive: true },
       { name: "email", type: "string", sensitive: true },
       { name: "tier", type: "string" },
@@ -180,7 +312,7 @@ const TABLES = [
     rows: 200,
     rejected: [],
     sample: {
-      id: "C-881",
+      customer_id: "C17",
       name: "Dana Liu",
       email: "dana.liu@example.com",
       tier: "gold",
@@ -206,13 +338,39 @@ const TABLES = [
   },
 ];
 
-/** A Knowledge base source, by reference and pinned to its revision. */
-export const sourceFromOrg = (o) => ({
-  ...readFile({ name: o.name, size: 64000 }),
-  owner: o.owner,
-  byReference: true,
-  kb: { collection: o.collection, revision: o.revision },
-});
+/**
+ * A Knowledge base source: a copy of the revision picked, pinned to it. A
+ * newer revision is offered as a refresh to review, never applied on its own.
+ */
+export const sourceFromOrg = (o) => {
+  const base = readFile({ name: o.name, size: 64000 });
+  const file = kbFileOf(o.id) || o;
+  const parsed =
+    base.parsed?.kind === "text" && file.role === "policy"
+      ? { ...base.parsed, passages: policyPassagesAt(o.revision) }
+      : base.parsed;
+  const at = new Date().toISOString();
+  return {
+    ...base,
+    parsed,
+    owner: o.owner,
+    byReference: true,
+    kb: {
+      fileId: o.id,
+      collection: o.collection,
+      revision: o.revision,
+      pickedAt: at,
+    },
+    versions: [
+      {
+        v: 1,
+        at,
+        rev: o.revision,
+        note: `Copied from the Knowledge base · ${o.collection} · rev ${o.revision}`,
+      },
+    ],
+  };
+};
 
 /** What reading the file found — deterministic from its name. */
 export const readFile = (file) => {
@@ -239,7 +397,7 @@ export const readFile = (file) => {
       role: null,
       visibility: null,
       status: "unsupported",
-      statusNote: `Can't read .${ext} — ${SUPPORTED_LINE}.`,
+      statusNote: `Can't read .${ext} files. Supported: ${SUPPORTED_NAMES}.`,
     };
   if (/scan/.test(lower))
     return {
@@ -305,19 +463,33 @@ export const readFile = (file) => {
         format:
           ext === "csv"
             ? "CSV · comma · header row · UTF-8"
-            : "JSON · array of objects",
+            : ext === "xlsx"
+              ? "XLSX · first sheet · header row"
+              : ext === "tsv"
+                ? "TSV · tab · header row · UTF-8"
+                : "JSON · array of objects",
       },
       privacy,
     };
   }
   const days = (lower.match(/(\d{2})/) || [])[1] || "30";
+  const role = /chat|conversation|transcript/.test(lower)
+    ? "example"
+    : /guide|faq|handbook|reference|catalog|macro|manual/.test(lower)
+      ? "reference"
+      : "policy";
   return {
     ...base,
-    role: /chat|conversation|transcript/.test(lower) ? "example" : "policy",
-    visibility: "tool",
+    role,
+    visibility: role === "reference" ? "agent" : "tool",
     status: "ready",
-    parsed: { kind: "text", pages: 2, passages: POLICY_PASSAGES(days) },
-    effectiveFrom: "2026-01-01",
+    parsed: {
+      kind: "text",
+      pages: 2,
+      passages:
+        role === "reference" ? REFERENCE_PASSAGES : POLICY_PASSAGES(days),
+    },
+    ...(role !== "reference" && { effectiveFrom: "2026-01-01" }),
   };
 };
 
@@ -675,6 +847,40 @@ export const dataProposalOf = (
       ],
     });
   }
+  /* Reference material is made readable; it suggests no rules. */
+  sources
+    .filter((s) => s.role === "reference" && s.status === "ready")
+    .forEach((s) =>
+      items.push({
+        id: `reference-${s.id}`,
+        kind: "reference",
+        title: `${s.name} becomes reference material`,
+        detail:
+          s.visibility === "agent"
+            ? "The agent can read it when it needs background. It adds no rules."
+            : "Kept as reference material. It adds no rules.",
+        cite: { sourceId: s.id, ref: s.name },
+      }),
+    );
+  /* Personal data is a choice, made by the person — never by the builder. */
+  sources
+    .filter((s) => s.status !== "unsupported" && personalDataOf(s).has)
+    .forEach((s) => {
+      const pd = personalDataOf(s);
+      items.push({
+        id: `personal-${s.id}`,
+        kind: "personal",
+        title: `Personal data in ${s.name}`,
+        detail: pd.columns.length
+          ? `The builder found columns that look personal: ${pd.columns.join(", ")}.`
+          : "The builder found conversations that name people.",
+        cite: { sourceId: s.id, ref: s.name },
+        sourceId: s.id,
+        suggested: pd.suggested,
+        choice: pd.choice,
+        needsChoice: !pd.choice,
+      });
+    });
   sources
     .filter((s) => s.visibility === "evaluator")
     .forEach((s) =>
@@ -762,7 +968,7 @@ const actorPartOf = (envState, items, edits, cast) => {
   return { customActors, actorEdits, actors: ids };
 };
 
-const nextRuleNumber = (env, envState, n) => {
+export const nextRuleNumber = (env, envState, n) => {
   const ids = [
     ...(env?.rules || []).map((_, i) => i + 1),
     ...(envState?.ruleChanges || []).map(
@@ -890,7 +1096,18 @@ export const acceptDataPatch = (
     ],
     sources: (envState?.sources || []).map((s) =>
       usedSources.has(s.id) || s.visibility === "evaluator"
-        ? { ...s, inEnv: true, snapshot, inVersion: minted.label }
+        ? {
+            ...s,
+            inEnv: true,
+            snapshot,
+            inVersion: minted.label,
+            /* The revision this version pinned, for trials to name later. */
+            versions: (s.versions || []).map((v, i, all) =>
+              i === all.length - 1 && !v.inVersion
+                ? { ...v, inVersion: minted.label }
+                : v,
+            ),
+          }
         : s,
     ),
     scenarios: [...(envState?.scenarios || []), ...newScenarios],
@@ -1219,37 +1436,6 @@ export const exportPreviewOf = (source) => {
     .map((c) => c.name);
   return { allowed: true, left, masked, version: source.version };
 };
-
-/* Workspace sources someone else owns — added by reference, never copied. */
-export const ORG_SOURCES = [
-  {
-    id: "org-refund-policy",
-    name: "Refund policy 2026.pdf",
-    owner: "Legal",
-    collection: "Policies",
-    revision: 3,
-    access: true,
-    role: "policy",
-  },
-  {
-    id: "org-orders-q3",
-    name: "orders-q3-sample.csv",
-    owner: "Data team",
-    collection: "Order exports",
-    revision: 7,
-    access: true,
-    role: "seed",
-  },
-  {
-    id: "org-payroll",
-    name: "HR payroll 2026.xlsx",
-    owner: "People team",
-    collection: "People",
-    revision: 2,
-    access: false,
-    role: "evaluation-reference",
-  },
-];
 
 /** Patch fragment for sources changed by the person (role, visibility, mapping, privacy). */
 export const sourceEditPatch = (envState, id, fields, detail) => {

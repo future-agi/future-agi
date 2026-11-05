@@ -58,7 +58,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 /* Re-reads are automatic — there is no per-agent switch (RSI PRD: "it also
    re-reads whenever the release branch moves and once a day"). */
 const AUTO_REREAD =
-  "We re-read each agent whenever its release branch moves and once a day. A change becomes a new version, linked to its commit.";
+  "We re-read each agent when its release branch moves, and daily. A change becomes a new version.";
 
 const CAPABILITIES = [
   {
@@ -69,17 +69,17 @@ const CAPABILITIES = [
   {
     icon: "solar:layers-minimalistic-linear",
     title: "A version for every change",
-    body: "We re-read the agent when its release branch moves, and daily — each change becomes a version you can test, tied to its commit.",
+    body: "We re-read the agent when its release branch moves, and daily.",
   },
   {
     icon: "solar:code-square-linear",
     title: "Fixes as pull requests",
-    body: "A Verified fix opens a pull request with the diagnosis and before/after results; a Limited validation one opens as a draft. We push only to branches we create; you review and merge.",
+    body: "A Verified fix opens a pull request; a Limited validation one opens as a draft. You review and merge.",
   },
   {
     icon: "solar:chart-2-linear",
     title: "Simulation results on the PR",
-    body: "The PR carries a check with the scenarios it was tested on — re-run on every push. It informs the review; it never blocks a merge.",
+    body: "The PR carries a check, re-run on every push. It never blocks a merge.",
   },
 ];
 
@@ -281,7 +281,7 @@ export default function GithubIntegrationPage() {
         >
           {justConnected.usedIn?.length
             ? `It's tested in ${justConnected.usedIn.map((u) => u.envName).join(", ")}. Fixes for it open as pull requests here.`
-            : "Next, build an environment for it — every fix is proved in simulation first. The first one you build becomes its main environment."}
+            : "Next, build an environment for it. The first becomes its main environment."}
         </Notice>
       )}
       {buildFor && (
@@ -477,7 +477,7 @@ export default function GithubIntegrationPage() {
               >{`Uninstall from ${uninstalling}?`}</DialogTitle>
               <DialogContent>
                 <DialogContentText sx={{ typography: "s2" }}>
-                  {`Agents from ${uninstalling} keep their versions and history; re-reads and pull requests stop. To remove the app itself, uninstall it in GitHub settings.`}
+                  {`Agents from ${uninstalling} keep their versions and history; re-reads and pull requests stop.`}
                 </DialogContentText>
               </DialogContent>
               <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -692,7 +692,7 @@ export default function GithubIntegrationPage() {
                         title={
                           projects.length
                             ? "Its production traces land here — Error Feed issues from it can be fixed."
-                            : "Its traces don't reach an Observe project yet, so its Error Feed issues can't be fixed. Set it on the agent's Connections tab."
+                            : "Its traces don't reach an Observe project yet. Set it on the agent's Connections tab."
                         }
                       >
                         <Typography

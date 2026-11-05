@@ -115,7 +115,7 @@ export default function ToolFitBanner({
         {!added.length ? (
           latestFits && (
             <>
-              {`Environment ${envLabelOf(env, envState, latest.label)} already answers the new arguments — switch to it for a clean run of ${agentV.label}.`}
+              {`Environment ${envLabelOf(env, envState, latest.label)} already answers the new arguments; switch to it to run ${agentV.label}.`}
             </>
           )
         ) : latestFits ? (

@@ -77,7 +77,7 @@ export default function SwitchVersionDialog({
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
           {follows
-            ? `It tests ${name}, the production version, and follows each new one from now on. Nothing runs now; earlier runs keep their version.`
+            ? `Tests ${name} and follows each new production version. Earlier runs keep theirs.`
             : `It stays on ${name} — new production versions won't move it. Nothing runs now; earlier runs keep their version.`}
         </Typography>
         {!follows && newerKeys.length > 0 && (

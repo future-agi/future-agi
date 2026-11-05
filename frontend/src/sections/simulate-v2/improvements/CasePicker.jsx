@@ -16,7 +16,15 @@ const STATUS = {
 };
 
 /* One list: search, select all/none, back to the suggestion, then rows. */
-function CaseList({ title, note, items, chosen, onChange, emptyText }) {
+function CaseList({
+  title,
+  note,
+  items,
+  chosen,
+  onChange,
+  emptyText,
+  readOnly,
+}) {
   const [q, setQ] = useState("");
   const set = new Set(chosen);
   const shown = items.filter(
@@ -43,15 +51,17 @@ function CaseList({ title, note, items, chosen, onChange, emptyText }) {
         >
           {`${chosen.length} of ${items.length}`}
         </Typography>
-        {!isSuggested && (
+        {!readOnly && !isSuggested && (
           <TextLink onClick={() => onChange(suggested)}>
             Back to suggested
           </TextLink>
         )}
-        <TextLink onClick={() => onChange(items.map((x) => x.id))}>
-          All
-        </TextLink>
-        <TextLink onClick={() => onChange([])}>None</TextLink>
+        {!readOnly && (
+          <TextLink onClick={() => onChange(items.map((x) => x.id))}>
+            All
+          </TextLink>
+        )}
+        {!readOnly && <TextLink onClick={() => onChange([])}>None</TextLink>}
       </Stack>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}>
         {note}
@@ -94,47 +104,42 @@ function CaseList({ title, note, items, chosen, onChange, emptyText }) {
                 direction="row"
                 alignItems="center"
                 spacing={1}
-                {...clickable(() => toggle(x.id), {
-                  role: "checkbox",
-                  checked: on,
-                })}
+                {...(readOnly
+                  ? {}
+                  : clickable(() => toggle(x.id), {
+                      role: "checkbox",
+                      checked: on,
+                    }))}
                 sx={{
                   ...focusRing,
                   px: 1.25,
                   height: 32,
-                  cursor: "pointer",
-                  "&:hover": { bgcolor: "action.hover" },
+                  ...(!readOnly && {
+                    cursor: "pointer",
+                    "&:hover": { bgcolor: "action.hover" },
+                  }),
                   ...(i > 0 && {
                     borderTop: "1px solid",
                     borderColor: "divider",
                   }),
                 }}
               >
-                <Checkbox
-                  size="small"
-                  checked={on}
-                  tabIndex={-1}
-                  disableRipple
-                  inputProps={{ "aria-hidden": true }}
-                  sx={{ p: 0 }}
-                />
+                {!readOnly && (
+                  <Checkbox
+                    size="small"
+                    checked={on}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0 }}
+                  />
+                )}
                 <Typography
                   noWrap
                   sx={{ typography: "s2", flex: 1, minWidth: 0 }}
                 >
                   {x.title}
                 </Typography>
-                {x.held && (
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      flexShrink: 0,
-                    }}
-                  >
-                    Held back
-                  </Typography>
-                )}
                 <Typography
                   sx={{
                     typography: "s3",
@@ -168,38 +173,55 @@ CaseList.propTypes = {
   chosen: PropTypes.array.isRequired,
   onChange: PropTypes.func.isRequired,
   emptyText: PropTypes.string,
+  readOnly: PropTypes.bool,
 };
 
 /**
- * Edit plan → Cases to fix and Cases to protect (Fix my agent v0): start on
- * the suggestion — the failing cases as targets (some held back to prove the
- * fix), and every case passing each repeat today as protected — and let the
- * person change either list. Held-back cases stay held back; unticking a
- * case leaves it out of this improvement, it isn't deleted.
+ * Edit plan → three separate lists (Fix my agent v0): Targets (to fix),
+ * Protected (must keep passing) and Held back (untouched, used to verify).
+ * A case is in only one. Start on the suggestion; unticking a case leaves it
+ * out of this improvement, it isn't deleted. Held-back cases aren't editable.
  */
 export default function CasePicker({ pickable, pick, onChange }) {
-  const fix =
-    pick?.fix || pickable.fix.filter((x) => x.suggested).map((x) => x.id);
-  const protect =
-    pick?.protect ||
-    pickable.protect.filter((x) => x.suggested).map((x) => x.id);
+  const heldItems = pickable.fix.filter((x) => x.held);
+  const heldIds = heldItems.map((x) => x.id);
+  const targets = pickable.fix.filter((x) => !x.held);
+  const taken = new Set(pickable.fix.map((x) => x.id));
+  const protectItems = pickable.protect.filter((x) => !taken.has(x.id));
+  const fix = (
+    pick?.fix || targets.filter((x) => x.suggested).map((x) => x.id)
+  ).filter((id) => !heldIds.includes(id));
+  const protect = (
+    pick?.protect || protectItems.filter((x) => x.suggested).map((x) => x.id)
+  ).filter((id) => !taken.has(id));
   return (
     <Stack spacing={2}>
       <CaseList
-        title="Cases to fix"
-        note="The failing cases this improvement works on. Held-back ones prove the fix — it never sees them."
-        items={pickable.fix}
+        title="Targets"
+        note="Failing cases this improvement works on."
+        items={targets}
         chosen={fix}
-        onChange={(ids) => onChange({ fix: ids, protect })}
+        onChange={(ids) => onChange({ fix: [...ids, ...heldIds], protect })}
         emptyText="Nothing is failing — there's nothing to fix."
       />
       <CaseList
-        title="Cases to protect"
-        note="Cases that must keep passing. Suggested: every case that passes all its repeats today."
-        items={pickable.protect}
+        title="Protected"
+        note="Cases that must keep passing."
+        items={protectItems}
         chosen={protect}
-        onChange={(ids) => onChange({ fix, protect: ids })}
+        onChange={(ids) =>
+          onChange({ fix: [...fix, ...heldIds], protect: ids })
+        }
         emptyText="No other cases to protect."
+      />
+      <CaseList
+        readOnly
+        title="Held back"
+        note="Untouched — used to verify the fix."
+        items={heldItems}
+        chosen={heldIds}
+        onChange={() => {}}
+        emptyText="Nothing is held back."
       />
     </Stack>
   );

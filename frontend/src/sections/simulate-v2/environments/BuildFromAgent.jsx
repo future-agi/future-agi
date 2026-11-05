@@ -20,11 +20,19 @@ import {
   Chip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import NeedsRepairStrip from "./NeedsRepairStrip";
 import { enqueueSnackbar, useSnackbar } from "notistack";
 import { buildCreditsCheck } from "../_mock/metering";
 import useCreditBalance from "../usage/useCreditBalance";
 import { paths } from "src/routes/paths";
-import { pipelineStatus, pipelineSummary } from "../_mock/buildPipeline";
+import {
+  affectedScenarios,
+  pipelineStatus,
+  pipelineSummary,
+  buildBlockersOf,
+  validateWorld,
+} from "../_mock/buildPipeline";
+import { BuildBlockerNote } from "./AgentChoice";
 import {
   subscribeScenarioSelection,
   getScenarioSelection,
@@ -136,6 +144,14 @@ export default function BuildFromAgent() {
      modality/kind selection UI and lands the user straight in the chat
      + derivation view. */
   const presetSource = location.state?.presetSource || null;
+  /* The agent it builds for, when something stops the build: shown before
+     anything starts (builder.md, build from an existing Agent version). */
+  const blockedAgent = useMemo(() => {
+    const a = presetSource?.connectedAgent;
+    return a && buildBlockersOf(a).some((b) => b.severity === "blocked")
+      ? a
+      : null;
+  }, [presetSource]);
   /* Sent here by an Error Feed issue's Fix: the agent had no environment, and
      this first one becomes its main — Fix runs there. */
   const fromIssue = location.state?.fromIssue || null;
@@ -183,6 +199,9 @@ export default function BuildFromAgent() {
      the job said, and whether trying again can work. A retry runs the stage
      it stopped at again; what was done before it stays. */
   const [halt, setHalt] = useState(null);
+  /* ?build=fk shows the validation failure once; a repair then goes through. */
+  const buildDemo = new URLSearchParams(location.search).get("build");
+  const fkDemoUsed = useRef(false);
   const [retryStage, setRetryStage] = useState(null);
   const [cancelAsk, setCancelAsk] = useState(false);
   /*
@@ -206,10 +225,23 @@ export default function BuildFromAgent() {
   const [buildId] = useState(
     () => `env-returns-line-${Date.now().toString(36)}`,
   );
-  const env = useMemo(
+  const baseEnv = useMemo(
     () => (source ? derivedEnvironment(source, { id: buildId }) : null),
     [source, buildId],
   );
+  /* The proposal as edited on Review design (a tool, rule or person
+     removed, a rule reworded, a stand-in added) and any repair to the
+     world: { tools?, rules?, actors?, depChoices?, tables? }. */
+  const [designEdit, setDesignEdit] = useState({});
+  const env = useMemo(() => {
+    if (!baseEnv || !Object.keys(designEdit).length) return baseEnv;
+    const { tables, ...rest } = designEdit;
+    return {
+      ...baseEnv,
+      ...rest,
+      ...(tables && { seed: { ...baseEnv.seed, tables } }),
+    };
+  }, [baseEnv, designEdit]);
   /* Depth is a property of generation, so changing it regenerates the pool
      rather than just relabelling the environment. */
   const buildDone = done.includes("build");
@@ -317,10 +349,10 @@ export default function BuildFromAgent() {
   };
 
   useEffect(() => {
-    if (!env) return;
+    if (!baseEnv) return;
     /* Numbered up front if the name is taken, so it doesn't change mid-build. */
-    setName(uniqueEnvName(env.name || "", envsRef.current, env.id));
-    setDifficulty(env.difficulty || "Advanced");
+    setName(uniqueEnvName(baseEnv.name || "", envsRef.current, baseEnv.id));
+    setDifficulty(baseEnv.difficulty || "Advanced");
     /*
       Don't auto-seed the preset into envState.evals — the Evaluations
       panel now treats the preset as **suggestions** that the user
@@ -329,7 +361,7 @@ export default function BuildFromAgent() {
       the empty Suggested list reads as broken.
     */
     setEvalIds([]);
-  }, [env]);
+  }, [baseEnv]);
 
   /*
     Derivation runs itself. There is nothing for a person to decide between
@@ -474,7 +506,7 @@ export default function BuildFromAgent() {
 
   useEffect(() => {
     /* Only fire once, once source is present, and only for preset flows. */
-    if (!presetSource || !source || intake) return;
+    if (!presetSource || !source || intake || blockedAgent) return;
     beginBuild({ name: "", difficulty: "Advanced" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, presetSource]);
@@ -560,6 +592,59 @@ export default function BuildFromAgent() {
       );
       return;
     }
+    /* Validating the environment (builder.md step 4): a table that points at
+       one the world doesn't have stops the build in Needs repair — the draft
+       and its source are kept, and the person chooses what to do. */
+    const invalid =
+      id === "build" && env
+        ? validateWorld(env, fkDemoUsed.current ? null : buildDemo)
+        : null;
+    if (invalid) {
+      if (invalid.demo) fkDemoUsed.current = true;
+      const affected = affectedScenarios(invalid, draft);
+      setRunning(true);
+      setChips([]);
+      const turnId = `t-${Date.now()}`;
+      setTurns((prev) => [
+        ...prev,
+        { id: turnId, role: "builder", title: stage.title, steps: [] },
+      ]);
+      stage.steps.slice(0, 3).forEach((step, i) =>
+        timers.current.push(
+          setTimeout(
+            () => {
+              setTurns((prev) =>
+                prev.map((t) =>
+                  t.id === turnId ? { ...t, steps: [...t.steps, step] } : t,
+                ),
+              );
+            },
+            pace * (i + 1),
+          ),
+        ),
+      );
+      timers.current.push(
+        setTimeout(() => {
+          setRunning(false);
+          setHalt({
+            kind: "repair",
+            stage: "build",
+            stepId: "validate-env",
+            title: `${invalid.check} failed`,
+            message: `${invalid.orphanRows.toLocaleString()} ${invalid.table} rows point at ${invalid.missing}, which the world doesn't have. The draft and its source are kept.`,
+            invalid,
+            affected,
+          });
+          if (env?.id)
+            dispatch({
+              type: "patchEnvironment",
+              envId: env.id,
+              patch: { buildStatus: "failed", needsRepair: true },
+            });
+        }, pace * 4.5),
+      );
+      return;
+    }
     if (id === "build") {
       /* Writing handlers (steps 1–3), then seeding the world (steps 3–5). */
       streamFound("handlers", env?.tools?.length || 0, pace, pace * 3);
@@ -638,7 +723,7 @@ export default function BuildFromAgent() {
             {
               kind: "note",
               text: toDesign
-                ? `Added ${files.map((f) => f.name).join(", ")} to the design — Review design above shows what ${files.length === 1 ? "it adds" : "they add"}. Nothing is built until you approve.`
+                ? `Added ${files.map((f) => f.name).join(", ")} to the design. Nothing is built until you approve.`
                 : `${files.map((f) => f.name).join(", ")} ${files.length === 1 ? "wasn't" : "weren't"} added: the build is already running. Add ${files.length === 1 ? "it" : "them"} from World & tools → Sources once it's ready — that makes the next version.`,
             },
           ],
@@ -849,6 +934,22 @@ export default function BuildFromAgent() {
                      the stages are.
   */
   const adoptedRef = useRef(null);
+  /* An edit to the proposal on Review design. Once the environment is in My
+     environments its saved copy follows, so the two never disagree. */
+  const changeDesign = (p) => {
+    setDesignEdit((c) => ({ ...c, ...p }));
+    if (!env?.id || adoptedRef.current !== env.id) return;
+    const { tables, ...rest } = p;
+    dispatch({
+      type: "patchEnvironment",
+      envId: env.id,
+      patch: {
+        ...rest,
+        ...(tables && { seed: { ...env.seed, tables } }),
+      },
+    });
+    if (p.actors && envPatch) envPatch({ actors: p.actors });
+  };
   const readyStampedRef = useRef(false);
   const syncedScenariosRef = useRef(0);
   /*
@@ -1199,10 +1300,10 @@ export default function BuildFromAgent() {
         {
           kind: "note",
           text: fromIssue
-            ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above: the fix's first step runs them on agent ${agentLabel}, so there's nothing to run by hand.`
+            ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above; the fix runs them on agent ${agentLabel}.`
             : toImprove
-              ? `Built. Run it once on agent ${agentLabel} to see where it fails — ${saved.length} scenarios, 3 repeats each — then improve from what it finds. Run simulation, top right, starts it; when it finishes, the run's page picks the improvement up.`
-              : `Built. Run it once on agent ${agentLabel} to see where it stands today — ${saved.length} scenarios, 3 repeats each. Run simulation, top right, starts it, and you watch it as it goes.`,
+              ? `Built — ${saved.length} scenarios. Run simulation, top right, runs them on agent ${agentLabel} (3 repeats each) to see where it fails.`
+              : `Built — ${saved.length} scenarios. Run simulation, top right, runs them on agent ${agentLabel} (3 repeats each).`,
         },
       ],
       [],
@@ -1281,9 +1382,34 @@ export default function BuildFromAgent() {
       dispatch({
         type: "patchEnvironment",
         envId: env.id,
-        patch: { buildStatus: "building" },
+        patch: { buildStatus: "building", needsRepair: false },
       });
     setRetryStage(from);
+  };
+  /* Repair adds the table the reference needs; removing drops the table that
+     pointed at it. Either changes the world, so each is asked first (the
+     strip does) — then the build runs again from the same draft. */
+  const repairWorld = () => {
+    const { invalid } = halt;
+    const tables = env?.seed?.tables || [];
+    changeDesign({
+      tables: [
+        ...tables,
+        {
+          name: invalid.missing,
+          rows: Math.max(20, invalid.orphanRows * 4),
+          note: `added so ${invalid.table} resolves`,
+        },
+      ],
+    });
+    restartBuild();
+  };
+  const removeRequirement = () => {
+    const { invalid } = halt;
+    changeDesign({
+      tables: (env?.seed?.tables || []).filter((t) => t.name !== invalid.table),
+    });
+    restartBuild();
   };
   useEffect(() => {
     if (!retryStage || !source) return;
@@ -1351,7 +1477,20 @@ export default function BuildFromAgent() {
         awaitingApproval={!!awaitApproval}
       />
 
-      {halt && <BuildHaltStrip halt={halt} onRestart={restartBuild} />}
+      {halt && (
+        <BuildHaltStrip
+          halt={halt}
+          onRestart={restartBuild}
+          onRepair={repairWorld}
+          onRemove={removeRequirement}
+        />
+      )}
+      {blockedAgent && (
+        <BuildBlockerNote
+          agent={blockedAgent}
+          blockers={buildBlockersOf(blockedAgent)}
+        />
+      )}
       {!halt && creditsAhead && !creditsAhead.ok && (
         <BuildCreditsStrip
           credits={creditsAhead}
@@ -1368,7 +1507,7 @@ export default function BuildFromAgent() {
           Stop this build?
         </Typography>
         <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
-          {`It stops at ${(STAGE_LABEL[stageNow] || "the current step").toLowerCase()}. What's done so far stays, and nothing more is built or charged. You can restart it from here.`}
+          {`It stops at ${(STAGE_LABEL[stageNow] || "the current step").toLowerCase()}. What's done stays; nothing more is charged.`}
         </Typography>
         <Stack
           direction="row"
@@ -1499,6 +1638,7 @@ export default function BuildFromAgent() {
                     onAddFiles:
                       awaitApproval && envPatch ? addDesignFiles : null,
                     onAddOrg: awaitApproval && envPatch ? addDesignOrg : null,
+                    onChange: awaitApproval ? changeDesign : null,
                     onApprove: () => {
                       /* Files added to the design join this first build. */
                       const fromFiles = env
@@ -1584,7 +1724,7 @@ function buildQuestions(env) {
     questions.push({
       id: "tool-side-effects",
       title: `Does ${lastTool.name} change data?`,
-      why: "It's called from your code but never described in the prompt. Your answer decides whether a scenario may trigger real side-effects.",
+      why: "Called from your code but not described in the prompt. Can scenarios trigger its real side-effects?",
       kind: "choice",
       options: [
         { id: "read", label: "Read-only" },
@@ -1681,8 +1821,14 @@ function Header({
     done,
     running && !halt,
     "setup",
-    halt?.kind === "failed"
-      ? { stepId: halt.stepId, message: halt.message }
+    halt?.kind === "failed" || halt?.kind === "repair"
+      ? {
+          stepId: halt.stepId,
+          title: halt.title,
+          detail: halt.message,
+          message: halt.message,
+          needsRepair: halt.kind === "repair",
+        }
       : null,
   );
   const pipeSummary = pipelineSummary(pipeline);
@@ -2867,8 +3013,19 @@ const STAGE_LABEL = {
   failed — the job's own message, and Retry when trying again can work. Out
   of credits, the retry offers the most scenarios the credits left cover.
 */
-function BuildHaltStrip({ halt, onRestart }) {
+function BuildHaltStrip({ halt, onRestart, onRepair, onRemove }) {
+  const repair = halt.kind === "repair";
   const failed = halt.kind === "failed";
+  if (repair)
+    return (
+      <NeedsRepairStrip
+        invalid={halt.invalid}
+        affected={halt.affected}
+        message={halt.message}
+        onRepair={onRepair}
+        onRemove={onRemove}
+      />
+    );
   return (
     <Stack
       direction="row"
@@ -2930,6 +3087,8 @@ function BuildHaltStrip({ halt, onRestart }) {
 BuildHaltStrip.propTypes = {
   halt: PropTypes.object.isRequired,
   onRestart: PropTypes.func.isRequired,
+  onRepair: PropTypes.func,
+  onRemove: PropTypes.func,
 };
 
 /* Out of credits for the scenarios still to come — said while there's time to build fewer. */

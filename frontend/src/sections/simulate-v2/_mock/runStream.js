@@ -1515,8 +1515,10 @@ function injectToolFaults({ seed, sc, callLog, toolFaults, stage }) {
  * it is drawn the same way as a fault profile. Mutates the call log.
  */
 function applyTestCondition({ seed, sc, callLog, stage }) {
-  const { tool, kind } = sc.testCondition;
-  if (!RECOVERY[kind]) return null;
+  const { tool, kind, commit } = sc.testCondition;
+  /* "Approval refused" is a permission denial worded as the refusal it is. */
+  const base = kind === "approval_refused" ? "permission" : kind;
+  if (!RECOVERY[base]) return null;
   let c = callLog.calls.find((x) => x.name === tool);
   if (!c) {
     c = {
@@ -1526,21 +1528,45 @@ function applyTestCondition({ seed, sc, callLog, stage }) {
       status: "ok",
       rows: 0,
       ms: 180,
-      wrote: false,
+      wrote: /refund|issue|create|update|cancel|book/.test(tool),
     };
     callLog.calls.push(c);
   }
+  /* A timeout on a write names its commit point: "after" lands the write and
+     the agent only sees the timeout (a lost response); otherwise nothing lands. */
+  const lost = kind === "timeout" && c.wrote && commit === "after";
+  const effective = lost ? "after_commit" : base;
   const v = unit(`${seed}:${sc.id}:condition`);
   let cum = 0;
-  const outcome = (RECOVERY[kind].find(([, p]) => {
+  const outcome = (RECOVERY[effective].find(([, p]) => {
     cum += p;
     return v < cum;
-  }) || RECOVERY[kind][RECOVERY[kind].length - 1])[0];
-  const note = `Test condition: ${faultNote(c.name, kind, outcome, stage, c.wrote)}`;
-  c.status = kind;
-  c.fault = { kind, outcome, note, condition: true };
+  }) || RECOVERY[effective][RECOVERY[effective].length - 1])[0];
+  let note = faultNote(c.name, effective, outcome, stage, c.wrote);
+  if (kind === "approval_refused")
+    note = note.replace(
+      "was denied permission",
+      "needed approval, and approval was refused",
+    );
+  note = `Test condition: ${note}`;
+  c.status = effective;
+  c.fault = {
+    kind: effective,
+    outcome,
+    note,
+    condition: true,
+    ...(kind === "approval_refused" && { refused: true }),
+  };
+  if (kind === "timeout" && c.wrote) c.committed = lost;
   return {
-    hit: { callId: c.id, tool: c.name, kind, outcome, note, condition: true },
+    hit: {
+      callId: c.id,
+      tool: c.name,
+      kind: effective,
+      outcome,
+      note,
+      condition: true,
+    },
     failed: outcome === "failed" ? note : null,
   };
 }

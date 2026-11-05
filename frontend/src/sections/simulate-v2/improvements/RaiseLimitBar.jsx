@@ -99,12 +99,12 @@ export default function RaiseLimitBar({
       : "The best it found is kept. Raise it to continue the search?"
     : byTime
       ? "It already had the longest time cap — improve towards a narrower goal instead."
-      : `The whole search needs about ${creditsLabel(needed || 0)}, more than the largest budget — improve towards a narrower goal instead.`;
+      : `The search needs about ${creditsLabel(needed || 0)}, over the largest budget. Try a narrower goal.`;
 
   /* What Continue keeps and what it starts over — before it acts. */
   const resumeNote = before
     ? "Continue runs the whole search. Reproduce already ran, so it isn't repeated."
-    : `Continue keeps the ${s.trials} candidate${s.trials === 1 ? "" : "s"} it finished — not repeated or charged again — and runs the other ${Math.max(0, (s.of || 0) - s.trials)}. A candidate that was partway starts over from its seed.`;
+    : `Continue keeps the ${s.trials} finished candidate${s.trials === 1 ? "" : "s"} and runs the other ${Math.max(0, (s.of || 0) - s.trials)}.`;
   const controls = steps.length > 0 && (
     <Box>
       <Stack

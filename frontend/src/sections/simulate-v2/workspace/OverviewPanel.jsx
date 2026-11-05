@@ -2116,7 +2116,7 @@ function NextStepsChecklist({ env, envState, onGo }) {
       title: "Run your first simulation",
       /* This list only shows while no agent is connected, and a run needs one —
          so the step says that instead of offering a button that can't work. */
-      body: "Needs a connected agent. Then Run simulation in the header starts it — transcripts, tool calls and eval verdicts land as it runs.",
+      body: "Needs a connected agent. Then Run simulation in the header starts it.",
       done: runCount > 0,
       cta: null,
       icon: "solar:play-circle-linear",
@@ -2369,7 +2369,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
           }}
         >
           {streaming
-            ? "Filling in as the builder reads your agent — tools first, then the rules, then the data the world is seeded with. Each carries where it was read from."
+            ? "Filling in as the builder reads your agent: tools, then rules, then data."
             : "Every derived fact carries where it was read from and what it became in the sandbox."}
         </Typography>
       </Box>

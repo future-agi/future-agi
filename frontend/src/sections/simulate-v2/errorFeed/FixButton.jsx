@@ -31,11 +31,11 @@ const IN_FLIGHT = {
   },
   review: {
     label: "View fix",
-    why: "The fix is shipped as a draft. Once it's deployed, mark it released on the fix — the Error Feed then watches for the issue.",
+    why: "The fix is shipped as a draft. Once deployed, mark it released.",
   },
   watching: {
     label: "View fix",
-    why: "The fix is released and the Error Feed is watching for this issue. If it comes back, the issue reopens and Fix again starts a new fix.",
+    why: "The fix is released and Error Feed is watching. If the issue comes back, it reopens.",
   },
   resolved: {
     label: "View fix",
@@ -164,7 +164,7 @@ export default function FixButton({ issue, onOpenSheet, rootCause = null }) {
       )}
     </Box>
   ) : !agent ? (
-    `No agent in Agents is linked to ${link.name || "this issue's project"}. Connect it once — this project comes with it, and Fix works for every issue from it.`
+    `No agent is linked to ${link.name || "this issue's project"}. Connect it once to fix its issues.`
   ) : again ? (
     `${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${["no-fix", "not-reproduced"].includes(status.key) ? "Last fix says what to try first — the same fix again would likely end the same way. " : ""}${AGAIN_HOW[status.key] || "Fix again"} starts a new fix; the last one stays on its page.`
   ) : gate?.key === "consent" ? (

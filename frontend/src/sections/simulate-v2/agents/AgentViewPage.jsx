@@ -106,6 +106,9 @@ import { clickable, focusRing } from "../components/clickable";
 import { EmptyState } from "../components/primitives";
 import SettingsSection from "./SettingsSection";
 import ConnectionCheckSection from "./ConnectionCheckSection";
+import ProbeDetails from "./connect/ProbeDetails";
+import SourceMoved from "./connect/SourceMoved";
+import { sourceIdentityOf } from "./sourceIdentity";
 import PlatformTestCall from "./PlatformTestCall";
 import AgentCompatibilityTab from "../compat/AgentCompatibilityTab";
 import AgentSkillsTab from "./skills/AgentSkillsTab";
@@ -499,7 +502,7 @@ export default function AgentViewPage() {
     });
     recordAgentVersion(agent.key, v);
     enqueueSnackbar(
-      `API key replaced — saved as ${v.label}, credentials only. It behaves as ${v.sameAs}, so its environments have nothing to check.`,
+      `API key replaced — saved as ${v.label}. Behaves as ${v.sameAs}; nothing to re-check.`,
       { variant: "success" },
     );
   };
@@ -1068,6 +1071,7 @@ export default function AgentViewPage() {
         </CustomTabs>
       </Box>
 
+      <SourceMoved agent={agent} onSaveValues={saveValues} />
       {tab !== "connections" && (
         <AgentStatusBanner
           agent={agent}
@@ -1850,6 +1854,23 @@ function ConnectionTab({
     ...(isPlatform && !agent.values?.hasApiKey && !agent.values?.apiKeyRef
       ? [{ label: "API key", value: "Not stored", keyRow: true, missing: true }]
       : []),
+    /* The exact source each version was read from. */
+    ...(() => {
+      const v =
+        agent.versions.find((x) => x.label === agent.production) ||
+        agent.versions[agent.versions.length - 1];
+      const id = sourceIdentityOf(agent, v);
+      return id
+        ? [
+            {
+              label: uploaded ? "Digest" : "Commit",
+              value: id.full,
+              mono: true,
+              hint: "Recorded when it was connected.",
+            },
+          ]
+        : [];
+    })(),
     {
       label: "Connected",
       value: agent.connectedAt
@@ -1902,6 +1923,7 @@ function ConnectionTab({
       {checksConnection(agent) && (
         <ConnectionCheckSection agent={agent} onSaveValues={onSaveValues} />
       )}
+      {checksConnection(agent) && <ProbeDetails agent={agent} />}
 
       <SettingsSection
         title="How we reach it"
@@ -2199,7 +2221,7 @@ function ConnectionTab({
         sub={
           <>
             Where its traces or call logs feed the Error Feed.
-            <InfoTip text="Error Feed issues from this project are this agent's — Fix, Copy for coding agent and an environment's From Error Feed all read it." />
+            <InfoTip text="Error Feed issues from this project belong to this agent." />
           </>
         }
       >
@@ -2217,7 +2239,7 @@ function ConnectionTab({
               {uploaded ? "Upload" : "Sync"}
               {source.syncable && (
                 <InfoTip
-                  text={`Starting an improvement syncs it too. A change found there is marked "${OUTSIDE_CHANGE_LABEL}" and the improvement starts from it.`}
+                  text={`Starting an improvement syncs it too. A change found is marked "${OUTSIDE_CHANGE_LABEL}".`}
                 />
               )}
             </>
@@ -2406,7 +2428,7 @@ function DisconnectDialog({ open, agent, onClose, onConfirm }) {
         <Typography
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
-          {`It leaves Agents and every picker. Its ${plural(agent.versions.length, "version")}, and the runs, improvements and proofs that name it, are kept — they still open its history.${agentStatusOf(agent).status === "archived" ? "" : " Archive it instead to keep it listed."}`}
+          {`It leaves Agents and every picker. Its ${plural(agent.versions.length, "version")}, runs and proofs are kept.${agentStatusOf(agent).status === "archived" ? "" : " Archive it instead to keep it listed."}`}
         </Typography>
       </Box>
       <Stack

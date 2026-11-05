@@ -509,8 +509,8 @@ const SOURCES = [
 function NotConnectedYet({ onConnect }) {
   const steps = [
     "Runs the agent's current version on its environment's scenarios, to see what fails.",
-    `Tries up to ${MAX_CANDIDATES} changes on the failing ones, within ${creditsLabel(FIX_DEFAULTS.dollars)} or ${hoursLabel(FIX_DEFAULTS.minutes)} by default.`,
-    "Proves the best on held-back and must-pass scenarios. A winner comes back as a new version; you decide whether to make it the default.",
+    `Tries up to ${MAX_CANDIDATES} changes, within ${creditsLabel(FIX_DEFAULTS.dollars)} or ${hoursLabel(FIX_DEFAULTS.minutes)}.`,
+    "Proves the best on held-back and must-pass scenarios. A winner comes back as a new version.",
   ];
   return (
     <Stack spacing={3} sx={{ mt: 3 }}>

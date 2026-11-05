@@ -120,7 +120,7 @@ export default function EnvironmentValues({
       );
     if (invalid.length)
       parts.push(
-        `Skipped ${invalid.length} line${invalid.length === 1 ? "" : "s"} that ${invalid.length === 1 ? "isn't" : "aren't"} NAME=value.`,
+        `Skipped ${invalid.length} line${invalid.length === 1 ? "" : "s"} not in NAME=value form.`,
       );
     setNote(
       parts.length

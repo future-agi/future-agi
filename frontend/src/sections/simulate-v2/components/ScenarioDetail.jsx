@@ -765,7 +765,7 @@ function DrawerSheet({
         <Row label="First message">
           <Typography className="sd-val">
             {row.firstMessage ||
-              "The simulated customer opens in their own words, from the instruction below. Only that message reaches the agent — never the instruction itself."}
+              "The simulated customer opens in their own words. Only that message reaches the agent."}
           </Typography>
         </Row>
       </Part>

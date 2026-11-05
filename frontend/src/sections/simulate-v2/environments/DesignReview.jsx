@@ -5,11 +5,19 @@ import {
   Button,
   ButtonBase,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import AddSourceMenu from "../workspace/data/AddSourceMenu";
+import { getActor } from "../_mock/actors";
+import {
+  leaveOutDepPatch,
+  scenarioGroupsOf,
+  simulateDepPatch,
+  unsupportedOf,
+} from "../_mock/scratchDesign";
 
 /*
   Builder → Review design (builder.md). The proposal — world, data, tools,
@@ -31,9 +39,16 @@ export default function DesignReview({
   sources = null,
   onAddFiles,
   onAddOrg,
+  onChange,
   question = null,
 }) {
   const [anchor, setAnchor] = useState(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  /* The rule being reworded, and its text so far. */
+  const [editing, setEditing] = useState(null);
+  const [draft, setDraft] = useState("");
+  /* The last removal, so it can be put back. */
+  const [undo, setUndo] = useState(null);
   /* Built from scratch there's no agent: the world comes from the words. */
   const scratch = env?.builtFrom?.kind === "scratch";
   /* Files before the build (plan: "Attach a policy and optional CSV"):
@@ -57,18 +72,15 @@ export default function DesignReview({
           ? "Your description"
           : "The agent alone"}
       {canAdd && (
-        <ButtonBase
+        <Button
+          size="small"
+          variant="outlined"
           onClick={(e) => setAnchor(e.currentTarget)}
-          sx={{
-            typography: "s2",
-            fontWeight: 600,
-            textDecoration: "underline",
-            ml: 1,
-            verticalAlign: "baseline",
-          }}
+          startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+          sx={{ ...actionSx, ml: 1, "& .MuiButton-startIcon": { mr: 0.5 } }}
         >
           {files.length ? "Add another" : "Add files"}
-        </ButtonBase>
+        </Button>
       )}
     </>
   );
@@ -90,6 +102,38 @@ export default function DesignReview({
     ["Scenarios", `${draftCount} to write`],
   ];
   const status = parked ? "Parked" : waiting ? "Awaiting approval" : "Approved";
+  const tools = env?.tools || [];
+  const rules = env?.rules || [];
+  const actors = env?.actors || [];
+  const tables = env?.seed?.tables || [];
+  /* Behaviors the description asks for that the world can't stand up. */
+  const deps = unsupportedOf(env?.builtFrom?.intake?.flow);
+  const choiceOf = (d) => env?.depChoices?.[d.id] || null;
+  const pending = deps.filter((d) => !choiceOf(d));
+  const groups = scenarioGroupsOf(env, draftCount);
+  const saveRule = (i) => {
+    const text = draft.trim();
+    if (text && text !== rules[i])
+      onChange({ rules: rules.map((r, j) => (j === i ? text : r)) });
+    setEditing(null);
+  };
+  /* Removing a simulation's stand-in is leaving that behavior out. */
+  const removing = (label, patch) => {
+    setUndo({
+      label,
+      restore: { tools, rules, actors, depChoices: env?.depChoices || {} },
+    });
+    onChange(patch);
+  };
+  const removeTool = (t) => {
+    const dep = deps.find((d) => d.alt.name === t.name);
+    removing(
+      t.name,
+      dep
+        ? leaveOutDepPatch(env, dep)
+        : { tools: tools.filter((x) => x.name !== t.name) },
+    );
+  };
   /* Framed: the full-width card above every tab, so the one thing to do
      shows wherever the person is — chat folded or not, any tab. */
   if (framed)
@@ -117,6 +161,7 @@ export default function DesignReview({
             sources={sources}
             onAddFiles={onAddFiles}
             onAddOrg={onAddOrg}
+            onChange={onChange}
             question={question}
           />
         </Box>
@@ -125,7 +170,7 @@ export default function DesignReview({
   /* Compact: title, status and the one action on a row; the proposal as
      one wrapping line of facts; one line on what happens next. */
   const note = parked
-    ? `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up this same proposal.`
+    ? `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.`
     : waiting && question
       ? `One question first, in the builder chat: ${question}`
       : waiting
@@ -231,12 +276,355 @@ export default function DesignReview({
         </Stack>
       )}
 
+      {waiting && pending.length > 0 && (
+        <Box sx={{ mt: 0.75 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            Can&apos;t be built here — simulate it instead
+          </Typography>
+          {pending.map((d) => (
+            <Stack
+              key={d.id}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ py: 0.25 }}
+            >
+              <Typography
+                component="div"
+                sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+              >
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {d.request}
+                </Box>
+                <Box
+                  component="span"
+                  sx={{ color: "text.secondary", ml: 0.75 }}
+                >
+                  {`${d.why} Adds ${d.alt.name}: ${d.alt.desc.charAt(0).toLowerCase()}${d.alt.desc.slice(1)}.`}
+                </Box>
+              </Typography>
+              {onChange && (
+                <>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onChange(simulateDepPatch(env, d))}
+                    sx={{
+                      color: "text.primary",
+                      borderColor: "divider",
+                      flexShrink: 0,
+                    }}
+                  >
+                    Simulate it
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onChange(leaveOutDepPatch(env, d))}
+                    sx={actionSx}
+                  >
+                    Leave out
+                  </Button>
+                </>
+              )}
+            </Stack>
+          ))}
+        </Box>
+      )}
+
+      {waiting && (
+        <ButtonBase
+          onClick={() => setPlanOpen((v) => !v)}
+          aria-expanded={planOpen}
+          sx={{ ...linkSx, color: "text.primary", mt: 0.5, gap: 0.5 }}
+        >
+          <Iconify
+            icon={
+              planOpen
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+            width={14}
+          />
+          {planOpen ? "Hide the plan" : "Show the plan"}
+        </ButtonBase>
+      )}
+      {waiting && planOpen && (
+        <Box sx={{ maxHeight: 320, overflowY: "auto", mt: 0.5 }}>
+          <Box component="table" sx={{ width: 1, borderCollapse: "collapse" }}>
+            <Box component="tbody">
+              <PlanRow label="Records">
+                {tables.length ? (
+                  tables.map((t) => (
+                    <PlanLine key={t.name}>
+                      <Box component="span" sx={{ fontWeight: 500 }}>
+                        {t.name}
+                      </Box>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", ml: 0.75 }}
+                      >
+                        {`${(t.rows || 0).toLocaleString()} rows${t.note ? ` · ${t.note}` : ""}`}
+                      </Box>
+                    </PlanLine>
+                  ))
+                ) : (
+                  <PlanLine>No records — the description named none</PlanLine>
+                )}
+              </PlanRow>
+              <PlanRow label="Tools">
+                {tools.length ? (
+                  tools.map((t) => (
+                    <PlanLine
+                      key={t.name}
+                      onRemove={onChange && (() => removeTool(t))}
+                    >
+                      <Box component="span" sx={{ fontWeight: 500 }}>
+                        {t.name}
+                      </Box>
+                      {t.desc && (
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", ml: 0.75 }}
+                        >
+                          {t.desc}
+                        </Box>
+                      )}
+                    </PlanLine>
+                  ))
+                ) : (
+                  <PlanLine>None yet</PlanLine>
+                )}
+                {deps
+                  .filter((d) => choiceOf(d) === "skip")
+                  .map((d) => (
+                    <PlanLine key={d.id}>
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        {`${d.request} — can't be built here, left out`}
+                      </Box>
+                    </PlanLine>
+                  ))}
+              </PlanRow>
+              <PlanRow label="Rules">
+                {rules.length ? (
+                  rules.map((r, i) =>
+                    editing === i ? (
+                      <Stack
+                        key={`${i}-edit`}
+                        direction="row"
+                        alignItems="center"
+                        spacing={1}
+                      >
+                        <TextField
+                          size="small"
+                          fullWidth
+                          autoFocus
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveRule(i);
+                            if (e.key === "Escape") setEditing(null);
+                          }}
+                          sx={{
+                            "& .MuiInputBase-input": {
+                              typography: "s2",
+                              py: 0.5,
+                            },
+                          }}
+                        />
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => saveRule(i)}
+                          sx={{
+                            color: "text.primary",
+                            borderColor: "divider",
+                            flexShrink: 0,
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <ButtonBase
+                          onClick={() => setEditing(null)}
+                          sx={{ ...linkSx, flexShrink: 0 }}
+                        >
+                          Cancel
+                        </ButtonBase>
+                      </Stack>
+                    ) : (
+                      <PlanLine
+                        key={`${i}-${r}`}
+                        onEdit={
+                          onChange &&
+                          (() => {
+                            setEditing(i);
+                            setDraft(r);
+                          })
+                        }
+                        onRemove={
+                          onChange &&
+                          (() =>
+                            removing("The rule", {
+                              rules: rules.filter((_, j) => j !== i),
+                            }))
+                        }
+                      >
+                        {r}
+                      </PlanLine>
+                    ),
+                  )
+                ) : (
+                  <PlanLine>None yet</PlanLine>
+                )}
+              </PlanRow>
+              <PlanRow label="People">
+                <PlanLine>
+                  Caller
+                  <Box
+                    component="span"
+                    sx={{ color: "text.secondary", ml: 0.75 }}
+                  >
+                    the person the agent serves
+                  </Box>
+                </PlanLine>
+                {actors.map((id) => (
+                  <PlanLine
+                    key={id}
+                    onRemove={
+                      onChange &&
+                      (() =>
+                        removing(getActor(id)?.name || id, {
+                          actors: actors.filter((x) => x !== id),
+                        }))
+                    }
+                  >
+                    {getActor(id)?.name || id}
+                  </PlanLine>
+                ))}
+              </PlanRow>
+              <PlanRow label="Scenarios">
+                {groups.length ? (
+                  groups.map((g) => (
+                    <PlanLine key={g.label}>
+                      <Box
+                        component="span"
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {g.n}
+                      </Box>
+                      <Box component="span" sx={{ ml: 0.75 }}>
+                        {g.label}
+                      </Box>
+                    </PlanLine>
+                  ))
+                ) : (
+                  <PlanLine>{`${draftCount} written after the build, one per use case`}</PlanLine>
+                )}
+              </PlanRow>
+            </Box>
+          </Box>
+        </Box>
+      )}
+
+      {waiting && undo && (
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.5 }}>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {`${undo.label} removed from the plan.`}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              onChange(undo.restore);
+              setUndo(null);
+            }}
+            sx={actionSx}
+          >
+            Undo
+          </Button>
+        </Stack>
+      )}
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
         {note}
       </Typography>
     </Box>
   );
 }
+
+/* Small outlined actions beside a line, like Edit and Remove. */
+const actionSx = {
+  height: 24,
+  px: 1,
+  minWidth: 0,
+  typography: "s3",
+  color: "text.primary",
+  borderColor: "divider",
+  flexShrink: 0,
+};
+
+/* Text-only toggles and Cancel. */
+const linkSx = {
+  typography: "s2",
+  fontWeight: 600,
+  textDecoration: "underline",
+  color: "text.secondary",
+};
+
+function PlanRow({ label, children }) {
+  return (
+    <Box component="tr">
+      <Box
+        component="td"
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          width: 84,
+          py: 0.5,
+          verticalAlign: "top",
+        }}
+      >
+        {label}
+      </Box>
+      <Box component="td" sx={{ py: 0.5 }}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+PlanRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
+
+function PlanLine({ children, onEdit, onRemove }) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.125 }}>
+      <Typography
+        component="div"
+        sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+      >
+        {children}
+      </Typography>
+      {onEdit && (
+        <Button size="small" variant="outlined" onClick={onEdit} sx={actionSx}>
+          Edit
+        </Button>
+      )}
+      {onRemove && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onRemove}
+          sx={actionSx}
+        >
+          Remove
+        </Button>
+      )}
+    </Stack>
+  );
+}
+PlanLine.propTypes = {
+  children: PropTypes.node,
+  onEdit: PropTypes.func,
+  onRemove: PropTypes.func,
+};
 DesignReview.propTypes = {
   env: PropTypes.object,
   draftCount: PropTypes.number,
@@ -250,6 +638,9 @@ DesignReview.propTypes = {
   sources: PropTypes.object,
   onAddFiles: PropTypes.func,
   onAddOrg: PropTypes.func,
+  /* The proposal changed: { tools?, rules?, actors?, depChoices? } — the
+     fields to patch on the environment. Absent: the plan is read-only. */
+  onChange: PropTypes.func,
   /* The builder's open question — Approve waits for its answer. */
   question: PropTypes.string,
 };

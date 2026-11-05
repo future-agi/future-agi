@@ -1069,7 +1069,11 @@ export const CATALOGUE_ALL = [
     domain: "HubSpot CRM",
     task: "HubSpot inbound lead qualification and CRM follow-up",
     templateId: "env-task-hubspot",
-    release: R("2026.10.1"),
+    /* Its source needs a licence nobody here holds yet: listed, never launchable. */
+    release: R("2026.10.1", "access", 5, {
+      note: "Needs a HubSpot developer licence. Ask Priya Nair, workspace admin.",
+      owner: { name: "Priya Nair", role: "Workspace admin" },
+    }),
     requests: ["Qualify the leads from yesterday's webinar."],
     actors: ["Sales rep"],
     recipe: { model: "gpt-4.1-mini", limitations: ["Duplicates contacts"] },
@@ -1142,7 +1146,9 @@ const LAUNCH_IDS = [
   "M05",
 ];
 export const CATALOGUE = CATALOGUE_ALL.filter(
-  (c) => LAUNCH_IDS.includes(c.id) || c.release.status === "unsupported",
+  (c) =>
+    LAUNCH_IDS.includes(c.id) ||
+    ["unsupported", "access"].includes(c.release.status),
 );
 
 /* Release states, as a person reads them. */
@@ -1152,6 +1158,7 @@ export const READINESS = {
   retired: { label: "Retired", runnable: true },
   withdrawn: { label: "Withdrawn", runnable: false },
   unsupported: { label: "Discovered · Unsupported", runnable: false },
+  access: { label: "Needs access", runnable: false },
 };
 
 /** The catalogue entry for a world template (the first, when two tasks share one). */
@@ -1167,7 +1174,7 @@ export const adoptBlockOf = (entry) => {
   const r = entry.release;
   if (r.status === "soon")
     return `Its starter cases aren't proved yet — ${r.proved} of 5 so far.`;
-  if (r.status === "withdrawn" || r.status === "unsupported") return r.note;
+  if (["withdrawn", "unsupported", "access"].includes(r.status)) return r.note;
   return null;
 };
 
@@ -1217,3 +1224,35 @@ export const envUpdateCli = (env, to) =>
 
 /** The command that lists the catalogue from the CLI. */
 export const CATALOGUE_CLI = "fi sim env list --catalogue";
+
+/*
+  What a world's detail says about where it comes from and what it has been
+  proved with (catalogue.md "Discover and preview a world"). An entry's own
+  `scoring` or `tested` wins; otherwise they read off the world and release.
+*/
+const TESTED_BY_SURFACE = {
+  voice: "Voice agents",
+  chat: "Chat agents",
+};
+
+/** Source, native scoring and tested support for a catalogue world — `entry` may be null for a world outside the catalogue. */
+export const worldFactsOf = (entry, template) => {
+  const rules = (template?.rules || []).length;
+  const status = entry?.release?.status;
+  const untested = !entry || ["soon", "unsupported", "access"].includes(status);
+  return {
+    source: entry
+      ? `${status === "unsupported" ? "Discovered source" : "Future AGI catalogue"} · release ${entry.release.version}`
+      : "Future AGI template · not released",
+    scoring:
+      entry?.scoring ||
+      (rules
+        ? `${rules} hard rules, checked on every scenario`
+        : "None — graded by your evaluations"),
+    tested: untested
+      ? "Not yet tested with any agent"
+      : entry.tested ||
+        TESTED_BY_SURFACE[template?.surface] ||
+        "Not yet tested with any agent",
+  };
+};

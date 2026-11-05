@@ -26,7 +26,7 @@ const RULE_TEXT = {
   },
   structure: {
     text: "Always with a written rationale",
-    hint: "A structural change — splitting a member, adding a step or a node — ships with a written explanation of why, and gets stricter review.",
+    hint: "A structural change ships with a written rationale and stricter review.",
   },
 };
 /* Code — its own switch, listed with the areas. */
@@ -305,7 +305,7 @@ export default function AgentConfigAreasCard({
                 icon="solar:lock-keyhole-minimalistic-linear"
                 labels={never.map((a) => a.label)}
                 why="Never changed"
-                hint="Analysis acts as a judge, and the improver may not edit its judges. Account holds credentials, numbers and compliance settings."
+                hint="Analysis is a judge the improver can't edit. Account holds credentials and compliance settings."
               />
             )}
           </Stack>

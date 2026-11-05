@@ -19,12 +19,12 @@ import {
   MAX_CATEGORIES,
   MAX_QUESTIONS,
   READS,
-  SCOPES,
   aboutCredits,
   estimateOf,
-  missingOf,
-  scopeTasksOf,
 } from "../../_mock/trialQuestions";
+import { FIELDS_OF_READS } from "../../_mock/evalEvidence";
+import ScopePicker, { ScopeReview } from "./ScopePicker";
+import { useEvalScope } from "./useEvalScope";
 
 /*
   Ask about these trials — Observe's Instant eval composer, pointed at one
@@ -49,7 +49,9 @@ const FieldLabel = ({ children }) => (
 FieldLabel.propTypes = { children: PropTypes.node };
 
 export default function AskTrialsComposer({
-  tasks,
+  ctx,
+  filter,
+  selectedIds,
   runLabel,
   initial,
   onCancel,
@@ -65,19 +67,13 @@ export default function AskTrialsComposer({
         }))
       : [blank()],
   );
-  const [scope, setScope] = useState(initial?.scope || "all");
   const [reads, setReads] = useState(initial?.reads || "conversation");
-
-  const scopes = SCOPES.map((s) => ({
-    ...s,
-    n: scopeTasksOf(s.value, tasks).length,
-  })).filter((s) => s.value === "all" || s.n > 0);
-  const chosen = scopeTasksOf(scope, tasks);
-  const missing = useMemo(
-    () => chosen.filter((t) => missingOf(t, reads)),
-    [chosen, reads],
+  const fields = useMemo(
+    () => FIELDS_OF_READS[reads] || ["transcript"],
+    [reads],
   );
-  const readable = chosen.length - missing.length;
+  const state = useEvalScope({ ctx, filter, selectedIds, fields, initial });
+  const { scope, trials, readable, scopeLabel } = state;
   const ready = questions.filter((q) => q.text.trim());
   const invalid = questions.some(
     (q) =>
@@ -103,36 +99,18 @@ export default function AskTrialsComposer({
 
   return (
     <Box sx={{ maxWidth: 760 }}>
-      <Typography sx={{ typography: "m1", fontWeight: 600 }}>
-        Ask about these trials
-      </Typography>
-      <Typography sx={{ typography: "s1", color: "text.secondary", mt: 0.5 }}>
-        Each trial&apos;s saved evidence is read once and answered. Your agent
-        isn&apos;t run again, and the run&apos;s task checks stay as they are.
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+        Answers from saved trials. Your agent isn&apos;t run again.
       </Typography>
 
       <Stack spacing={2.5} sx={{ mt: 3 }}>
-        <Box>
-          <FieldLabel>Which trials</FieldLabel>
-          <TextField
-            select
-            size="small"
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            sx={{ minWidth: 280 }}
-          >
-            {scopes.map((s) => (
-              <MenuItem key={s.value} value={s.value}>
-                {s.label} · {s.n}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Typography
-            sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
-          >
-            From {runLabel}. Answers are saved with this run.
-          </Typography>
-        </Box>
+        <ScopePicker
+          ctx={ctx}
+          filter={filter}
+          selectedIds={selectedIds}
+          state={state}
+          runLabel={runLabel}
+        />
 
         {questions.map((q, i) => {
           const labels = labelsFrom(q.labelsText);
@@ -260,16 +238,13 @@ export default function AskTrialsComposer({
         </Box>
 
         <Box sx={{ pt: 1 }}>
-          {missing.length > 0 && (
-            <Typography
-              sx={{ typography: "s1", color: "text.secondary", mb: 1.5 }}
-            >
-              {missing.length} of {chosen.length} trials can&apos;t be read —{" "}
-              {missingOf(missing[0], reads).charAt(0).toLowerCase() +
-                missingOf(missing[0], reads).slice(1)}
-              . They&apos;re listed as not read, not as answers.
-            </Typography>
-          )}
+          <ScopeReview ctx={ctx} state={state} />
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mt: 2, mb: 1.5 }}
+          >
+            Extra to the run&apos;s task checks ·{" "}
+            {aboutCredits(estimateOf(readable, Math.max(1, ready.length)))}.
+          </Typography>
           <Stack direction="row" alignItems="center" spacing={1.5}>
             <Button
               variant="contained"
@@ -283,6 +258,8 @@ export default function AskTrialsComposer({
                     labels: labelsFrom(q.labelsText),
                   })),
                   scope,
+                  scopeLabel,
+                  trials,
                   reads,
                 })
               }
@@ -295,8 +272,6 @@ export default function AskTrialsComposer({
               </Button>
             )}
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {aboutCredits(estimateOf(readable, Math.max(1, ready.length)))}
-              {" · "}
               {Math.max(1, ready.length)}{" "}
               {ready.length > 1 ? "questions" : "question"}
             </Typography>
@@ -307,7 +282,9 @@ export default function AskTrialsComposer({
   );
 }
 AskTrialsComposer.propTypes = {
-  tasks: PropTypes.array.isRequired,
+  ctx: PropTypes.object.isRequired,
+  filter: PropTypes.object,
+  selectedIds: PropTypes.array,
   runLabel: PropTypes.string.isRequired,
   initial: PropTypes.object,
   onCancel: PropTypes.func,

@@ -306,7 +306,7 @@ export default function ScenarioEditor({
             label="Use case"
             value={draft.useCase || ""}
             disabled
-            helperText="Read-only — the use case comes from the scenario pack and groups this row with its siblings. Move to a different pack to change it."
+            helperText="Read-only — the use case comes from the scenario pack. Move to a different pack to change it."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <TextField
@@ -865,7 +865,7 @@ export default function ScenarioEditor({
           setSwapNote(
             rewrote
               ? `Now played by ${picked[0].name} — brief, opening line and caller settings rewritten in their voice.`
-              : `Now played by ${picked[0].name} — caller settings updated. This scenario scripts its own pressure, so its brief is kept.`,
+              : `Now played by ${picked[0].name} — caller settings updated. Its brief is kept.`,
           );
         }}
       />

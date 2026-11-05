@@ -1,16 +1,20 @@
 import PropTypes from "prop-types";
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
   ButtonBase,
   IconButton,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { useConnectedAgents } from "../store";
 import { agentSourceOf } from "../_mock/agentRegistry";
+import { buildBlockersOf } from "../_mock/buildPipeline";
 import { agentChannelsOf } from "../_mock/agentLifecycle";
 import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
 import { ConnectSubmitContext } from "../agents/connect/connectSubmit";
@@ -58,6 +62,87 @@ const metaLine = (a) => {
 
 /* ── Your agents (landing) ──────────────────────────────────────────────── */
 
+const hardBlockersOf = (agent) =>
+  buildBlockersOf(agent).filter((b) => b.severity === "blocked");
+
+/* The blocker, with its fix, where the version is picked. */
+export function BuildBlockerNote({ agent, blockers, onDismiss }) {
+  const navigate = useNavigate();
+  const hard = blockers.some((b) => b.severity === "blocked");
+  return (
+    <Stack
+      direction="row"
+      alignItems="flex-start"
+      spacing={1.25}
+      sx={{
+        mt: 1,
+        px: 1.5,
+        py: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.neutral",
+      }}
+    >
+      <Iconify
+        icon={
+          hard ? "solar:danger-triangle-linear" : "solar:info-circle-linear"
+        }
+        width={16}
+        sx={{
+          color: hard ? "status.warning.fg" : "text.secondary",
+          flexShrink: 0,
+          mt: 0.25,
+        }}
+      />
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {hard
+            ? `${agent.name} can't be built from yet`
+            : `${agent.name} · worth knowing`}
+        </Typography>
+        {blockers.map((b) => (
+          <Typography
+            key={b.id}
+            sx={{ typography: "s3", color: "text.subtitle" }}
+          >
+            <Box component="span" sx={{ color: "text.primary" }}>
+              {b.title}.
+            </Box>{" "}
+            {b.fix}
+          </Typography>
+        ))}
+      </Box>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() =>
+          navigate(
+            `${paths.dashboard.agents}/connected/${agent.id}?tab=connections`,
+          )
+        }
+        sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+      >
+        Open Connections
+      </Button>
+      {onDismiss && (
+        <IconButton size="small" onClick={onDismiss} aria-label="Dismiss">
+          <Iconify
+            icon="solar:close-linear"
+            width={16}
+            sx={{ color: "text.secondary" }}
+          />
+        </IconButton>
+      )}
+    </Stack>
+  );
+}
+BuildBlockerNote.propTypes = {
+  agent: PropTypes.object.isRequired,
+  blockers: PropTypes.array.isRequired,
+  onDismiss: PropTypes.func,
+};
+
 /* Two rows of three before "Show all". */
 const FIRST_SHOWN = 6;
 
@@ -88,6 +173,8 @@ export function YourAgentsSection({ sectionRef }) {
   const [type, setType] = useState(null);
   const [showAll, setShowAll] = useState(false);
   const [buildFor, setBuildFor] = useState(null);
+  /* An agent picked while a blocker stops its build: shown, not built. */
+  const [blockedFor, setBlockedFor] = useState(null);
   const build = useBuildForAgent();
   const ofType = type ? agents.filter((a) => typeOf(a) === type) : agents;
   const shown = showAll ? ofType : ofType.slice(0, FIRST_SHOWN);
@@ -163,7 +250,18 @@ export function YourAgentsSection({ sectionRef }) {
             }}
           >
             {shown.map((a) => (
-              <AgentTile key={a.id} agent={a} onClick={() => setBuildFor(a)} />
+              <AgentTile
+                key={a.id}
+                agent={a}
+                blocked={hardBlockersOf(a).length > 0}
+                onClick={() => {
+                  if (hardBlockersOf(a).length) setBlockedFor(a);
+                  else {
+                    setBlockedFor(null);
+                    setBuildFor(a);
+                  }
+                }}
+              />
             ))}
           </Box>
         </Box>
@@ -182,6 +280,13 @@ export function YourAgentsSection({ sectionRef }) {
           No agents in Agents yet. Connect one above — its environment builds
           next.
         </Typography>
+      )}
+      {blockedFor && (
+        <BuildBlockerNote
+          agent={blockedFor}
+          blockers={buildBlockersOf(blockedFor)}
+          onDismiss={() => setBlockedFor(null)}
+        />
       )}
       {buildFor && (
         <BuildEnvironmentDialog
@@ -218,7 +323,7 @@ CountLabel.propTypes = { label: PropTypes.string, count: PropTypes.number };
 YourAgentsSection.propTypes = { sectionRef: PropTypes.object };
 
 /* One agent on the landing: the whole tile opens Build environment. */
-function AgentTile({ agent, onClick }) {
+function AgentTile({ agent, blocked = false, onClick }) {
   const src = agentSourceOf(agent);
   return (
     <ButtonBase
@@ -258,26 +363,45 @@ function AgentTile({ agent, onClick }) {
           {metaLine(agent)}
         </Typography>
       </Box>
-      <Iconify
-        className="agent-go"
-        icon="solar:arrow-right-linear"
-        width={14}
-        sx={{
-          color: "text.secondary",
-          flexShrink: 0,
-          opacity: 0,
-          transition: "opacity .12s ease",
-        }}
-      />
+      {blocked ? (
+        <Tooltip arrow title="Can't be built from yet — click to see why">
+          <Box component="span" sx={{ display: "flex", flexShrink: 0 }}>
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              width={14}
+              sx={{ color: "status.warning.fg" }}
+            />
+          </Box>
+        </Tooltip>
+      ) : (
+        <Iconify
+          className="agent-go"
+          icon="solar:arrow-right-linear"
+          width={14}
+          sx={{
+            color: "text.secondary",
+            flexShrink: 0,
+            opacity: 0,
+            transition: "opacity .12s ease",
+          }}
+        />
+      )}
     </ButtonBase>
   );
 }
 AgentTile.propTypes = {
+  blocked: PropTypes.bool,
   agent: PropTypes.object.isRequired,
   onClick: PropTypes.func,
 };
 
-function AgentRow({ agent, divider, selected = false, onClick }) {
+function AgentRow({
+  agent,
+  divider,
+  selected = false,
+  blocked = false,
+  onClick,
+}) {
   const src = agentSourceOf(agent);
   return (
     <ButtonBase
@@ -318,6 +442,13 @@ function AgentRow({ agent, divider, selected = false, onClick }) {
           {metaLine(agent)}
         </Typography>
       </Box>
+      {blocked && (
+        <Iconify
+          icon="solar:danger-triangle-linear"
+          width={14}
+          sx={{ color: "status.warning.fg", flexShrink: 0 }}
+        />
+      )}
       <Iconify
         icon={selected ? "solar:check-circle-bold" : "solar:circle-linear"}
         width={16}
@@ -333,6 +464,7 @@ AgentRow.propTypes = {
   agent: PropTypes.object.isRequired,
   divider: PropTypes.bool,
   selected: PropTypes.bool,
+  blocked: PropTypes.bool,
   onClick: PropTypes.func,
 };
 
@@ -349,6 +481,7 @@ export default function WorldAgentPicker({
   title = "Agent",
   subtitle = null,
   surface = null,
+  onBlockedChange,
 }) {
   const { agents: all, state } = useConnectedAgents();
   /* A world is for one type of agent: only agents of that type are offered. */
@@ -360,6 +493,13 @@ export default function WorldAgentPicker({
     [all, surface, state],
   );
   const typeWord = surface === "voice" ? "voice" : surface ? "chat" : null;
+  /* What stops the picked agent from being built from, said on this step. */
+  const picked = agents.find((a) => a.id === value) || null;
+  const pickedBlockers = useMemo(() => buildBlockersOf(picked), [picked]);
+  const pickedBlocked = pickedBlockers.some((b) => b.severity === "blocked");
+  useEffect(() => {
+    onBlockedChange?.(pickedBlocked);
+  }, [pickedBlocked]); // eslint-disable-line react-hooks/exhaustive-deps
   const saveAgent = useSaveConnectedAgent();
   const [connecting, setConnecting] = useState(false);
   const onConnected = (source) => {
@@ -412,6 +552,7 @@ export default function WorldAgentPicker({
               agent={a}
               divider={i > 0}
               selected={a.id === value}
+              blocked={hardBlockersOf(a).length > 0}
               onClick={() => onChange(a.id)}
             />
           ))}
@@ -432,6 +573,10 @@ export default function WorldAgentPicker({
             ? `No ${typeWord} agents in Agents yet — connect one to build its environment from this world.`
             : "No agents in Agents yet — connect one to build its environment from this world."}
         </Typography>
+      )}
+
+      {picked && pickedBlockers.length > 0 && (
+        <BuildBlockerNote agent={picked} blockers={pickedBlockers} />
       )}
 
       <SideDrawer
@@ -462,7 +607,7 @@ export default function WorldAgentPicker({
                 sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}
               >
                 {typeWord
-                  ? `This world is for ${typeWord} agents, so only ways to connect a ${typeWord} agent are shown. It joins Agents, and this environment is built for it.`
+                  ? `This world is for ${typeWord} agents, so only ${typeWord} connections are shown.`
                   : "It joins Agents, and this environment is built for it."}
               </Typography>
             </Box>
@@ -503,4 +648,6 @@ WorldAgentPicker.propTypes = {
   subtitle: PropTypes.string,
   /* The world's channel ("voice" or "chat") — limits the agents offered. */
   surface: PropTypes.string,
+  /* Told whether the picked agent has a blocker that stops its build. */
+  onBlockedChange: PropTypes.func,
 };

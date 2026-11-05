@@ -39,7 +39,7 @@ export default function ToolSafetyDialog({
       content={
         <Stack spacing={1.25}>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {`On a live run ${agentName}'s tools reach your real systems. The ones ticked here are always answered by the environment's world instead. Tools that change or send something are ticked to start.`}
+            {`On a live run ${agentName}'s tools reach real systems. Ticked tools are always answered by the world instead.`}
           </Typography>
           <Box
             sx={{

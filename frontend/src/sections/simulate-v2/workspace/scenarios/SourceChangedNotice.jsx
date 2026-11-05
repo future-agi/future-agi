@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -9,6 +10,8 @@ import {
   sourceChangeOf,
 } from "../../_mock/sourceChange";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { kbRefreshOf } from "../../_mock/kbCatalog";
+import ReviewRefreshDialog from "../data/ReviewRefreshDialog";
 
 /**
  * A case grounded in a file that has a newer version waiting (roadmap
@@ -16,10 +19,65 @@ import { nextSnapshotLabel } from "../../_mock/envSnapshot";
  * what changed in the file, then Re-ground — the environment moves to the
  * new version and the cases it touches are re-checked — or keep this case
  * on the version it was made from.
+ *
+ * A case grounded in a Knowledge base file gets the same notice when a newer
+ * revision is waiting: "New revision available", then Review refresh.
  */
 export default function SourceChangedNotice({ row, env, locked }) {
   const { envState, patch } = useEnvState(env.id);
+  const [reviewing, setReviewing] = useState(false);
   const change = sourceChangeOf(row, envState);
+  const cited = row?.citedSource
+    ? (envState.sources || []).find((s) => s.id === row.citedSource)
+    : null;
+  const kbNew = !change && cited ? kbRefreshOf(cited) : null;
+  if (kbNew)
+    return (
+      <Box
+        sx={{
+          px: 2.5,
+          py: 1.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" spacing={0.75} alignItems="center">
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={14}
+            sx={{ color: "warning.main" }}
+          />
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {`New revision available · ${cited.name} rev ${kbNew.latest}`}
+          </Typography>
+        </Stack>
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+        >
+          {`This case cites rev ${kbNew.from}. Runs still use rev ${kbNew.from} until you review the refresh and save it.`}
+        </Typography>
+        {!locked && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setReviewing(true)}
+            sx={{ mt: 1 }}
+          >
+            Review refresh
+          </Button>
+        )}
+        {reviewing && (
+          <ReviewRefreshDialog
+            open
+            onClose={() => setReviewing(false)}
+            env={env}
+            envState={envState}
+            patch={patch}
+            sourceId={cited.id}
+          />
+        )}
+      </Box>
+    );
   const kept =
     !change && row.sourcePinned
       ? (envState.sources || []).find((s) => s.id === row.sourcePinned.sourceId)
@@ -36,7 +94,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
           borderColor: "divider",
         }}
       >
-        {`Kept on ${kept.name} v${row.sourcePinned.v}. v${kept.pendingRefresh.v} is waiting; move it to the new version from Sources when this case should follow.`}
+        {`Kept on ${kept.name} v${row.sourcePinned.v}. v${kept.pendingRefresh.v} is waiting in Sources.`}
       </Typography>
     );
   if (!change) return null;
@@ -118,7 +176,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
       )}
       {!locked && plan.affected.length > 1 && (
         <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-          {`Moving to the new version changes the whole environment: ${plan.affected.length} cases that touch this file are re-checked.`}
+          {`Moving to the new version re-checks ${plan.affected.length} cases that touch this file.`}
         </Typography>
       )}
     </Box>

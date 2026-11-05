@@ -29,6 +29,7 @@ import { textTone } from "../components/textTone";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { envChangePatch } from "../_mock/versions";
+import { sideEffectOf } from "../_mock/toolEnv";
 import {
   ACTOR_LIBRARY,
   ENTRY_KINDS,
@@ -548,7 +549,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               ))}
             </TextField>
           }
-          subtitle="Who can reach whom in a run. Everyone acts on one shared world from the start; an activated actor only hears what the request carries, never the hidden scenario."
+          subtitle="Who can reach whom in a run. Everyone acts on one shared world; an activated actor never sees the hidden scenario."
           sx={{ mb: 2 }}
         >
           <Box>
@@ -591,7 +592,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
                   borderColor: "divider",
                 }}
               >
-                {`Trigger loop: ${relations.loops[0].join(" → ")} → ${relations.loops[0][0]}. A run would wait on it forever — change who activates one of them.`}
+                {`Trigger loop: ${relations.loops[0].join(" → ")} → ${relations.loops[0][0]}. Change who activates one of them.`}
               </Typography>
             )}
           </Box>
@@ -999,6 +1000,43 @@ const formOf = (actor) => ({
   approvalScope: actor?.approvalScope || "",
 });
 
+/*
+  What the world contract doesn't allow this actor (world.md): a write tool
+  changes the customer's records and is the agent's to run, so an actor can
+  approve it but not hold it; an outside company's agent can't authorise a
+  change here; and approving needs something that writes. Shown before
+  saving, with the way out; Save stays off until none is left.
+*/
+const permissionConflictsOf = (form, env) => {
+  const writes = (env?.tools || [])
+    .filter((t) => sideEffectOf(t) === "write")
+    .map((t) => t.name);
+  const who = form.name.trim() || "This actor";
+  const out = form.tools
+    .filter((t) => writes.includes(t))
+    .map((t) => ({
+      id: `tool-${t}`,
+      text: `${t} changes the customer's records, so only the agent can run it.${form.canApprove ? ` ${who} can approve it instead.` : ""}`,
+      fix: "Remove",
+      apply: (f) => ({ ...f, tools: f.tools.filter((x) => x !== t) }),
+    }));
+  if (form.canApprove && form.kind === "external-agent")
+    out.push({
+      id: "approve-external",
+      text: `${who} belongs to another company, so its "approved" can't authorise a change in this world.`,
+      fix: "Turn off",
+      apply: (f) => ({ ...f, canApprove: false }),
+    });
+  else if (form.canApprove && writes.length === 0)
+    out.push({
+      id: "approve-nothing",
+      text: "No tool in this world writes anything, so there is nothing to approve.",
+      fix: "Turn off",
+      apply: (f) => ({ ...f, canApprove: false }),
+    });
+  return out;
+};
+
 function ActorEditor({ actor, onClose, onSave, env, envState, cast }) {
   const existing = !!actor?.id;
   return (
@@ -1083,7 +1121,8 @@ function ActorForm({
   );
   const before = formOf(actor);
   const dirty = JSON.stringify(form) !== JSON.stringify(before);
-  const valid = !!fields.name;
+  const conflicts = permissionConflictsOf(form, env);
+  const valid = !!fields.name && conflicts.length === 0;
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -1345,6 +1384,7 @@ function ActorForm({
             >
               {tools.map((t) => {
                 const on = form.tools.includes(t);
+                const clash = on && conflicts.some((c) => c.id === `tool-${t}`);
                 return (
                   <Chip
                     key={t}
@@ -1355,7 +1395,11 @@ function ActorForm({
                       fontFamily: "ui-monospace, Menlo, monospace",
                       color: on ? "text.primary" : "text.tertiary",
                       border: "1px solid",
-                      borderColor: on ? "text.primary" : "divider",
+                      borderColor: clash
+                        ? "status.danger.border"
+                        : on
+                          ? "text.primary"
+                          : "divider",
                       bgcolor: "transparent",
                     }}
                   />
@@ -1389,6 +1433,50 @@ function ActorForm({
               sx={{ mt: 1 }}
               placeholder="Discounts up to 20%"
             />
+          )}
+          {conflicts.length > 0 && (
+            <Stack
+              spacing={0.75}
+              sx={{
+                mt: 1.25,
+                p: 1.25,
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "status.danger.border",
+                bgcolor: "status.danger.bg",
+              }}
+            >
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Permission conflict
+              </Typography>
+              {conflicts.map((c) => (
+                <Stack
+                  key={c.id}
+                  direction="row"
+                  alignItems="flex-start"
+                  spacing={1}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    {c.text}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setForm(c.apply)}
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {c.fix}
+                  </Button>
+                </Stack>
+              ))}
+            </Stack>
           )}
         </Box>
 
@@ -1463,9 +1551,11 @@ function ActorForm({
       >
         <CopyCommandButton command={actorCli.set(env, fields)} />
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {existing && dirty
-            ? "Recorded as an actors change on the next environment version"
-            : ""}
+          {conflicts.length > 0
+            ? "Resolve the permission conflict to save"
+            : existing && dirty
+              ? "Recorded as an actors change on the next environment version"
+              : ""}
         </Typography>
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel

@@ -353,6 +353,32 @@ export const ASK_SUGGESTIONS = [
 */
 export function answerAsk(report, question, tasks) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  const drafted = draftAnswer(report, question, tasks);
+  /* Too little to say: fewer than three trials in scope, or nothing that
+     failed to point at. Say so, and what to do about it — no findings. */
+  if (drafted.tooLittle) return drafted;
+  const inScope = drafted.scopeN;
+  const failedCited = (drafted.cites || []).some((id) => {
+    const t = byId.get(id);
+    return t && isMeasured(t) && !isPass(t);
+  });
+  if (inScope < 3 || !failedCited)
+    return {
+      question,
+      scope: drafted.scope,
+      observed: [],
+      hypothesis: null,
+      cites: [],
+      tooLittle:
+        inScope < 3
+          ? `Too little evidence: only ${inScope} ${inScope === 1 ? "trial is" : "trials are"} in scope. Ask a narrower question, or run more tests so there is more to read.`
+          : "Too little evidence: none of the trials this would cite failed, so there is no failure to explain. Ask a narrower question about the failing trials, or run more tests.",
+    };
+  return drafted;
+}
+
+function draftAnswer(report, question, tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
   const ids = report.categories.flatMap((c) => c.ids);
   const trials = [...new Set(ids)].map((id) => byId.get(id)).filter(Boolean);
   const scope = `${trials.length} trials in this report`;
@@ -379,6 +405,7 @@ export function answerAsk(report, question, tasks) {
         ? `${hostile} of these trials are pushy or hostile callers — the agent may give way under pressure.`
         : "No one temperament stands out, so the cause is more likely the scenario than the caller.",
       cites: top.flatMap(([, ts]) => ts.slice(0, 1).map((t) => t.id)),
+      scopeN: trials.length,
     };
   }
   if (/repeat|every|always|scenario/.test(q)) {
@@ -398,6 +425,7 @@ export function answerAsk(report, question, tasks) {
         hypothesis:
           "Failures here come and go between repeats, so look at what differs between a passing and a failing repeat.",
         cites: [],
+        scopeN: tasks.length,
       };
     return {
       question,
@@ -408,6 +436,7 @@ export function answerAsk(report, question, tasks) {
       hypothesis:
         "A scenario that fails every time is a steady gap in the agent, not bad luck — the best place to start a fix.",
       cites: always.slice(0, 4).map(([, ts]) => ts[0].id),
+      scopeN: tasks.length,
     };
   }
   if (/pass|differ|recover|work/.test(q)) {
@@ -425,7 +454,12 @@ export function answerAsk(report, question, tasks) {
       hypothesis: lead?.fix
         ? `The passing trials already do what the fix asks: ${lead.fix.charAt(0).toLowerCase()}${lead.fix.slice(1)}`
         : "The passing trials finish the task before the caller pushes back.",
-      cites: passing.slice(0, 2).map((t) => t.id),
+      /* The passing trials, and a failing one they differ from. */
+      cites: [
+        ...passing.slice(0, 2).map((t) => t.id),
+        ...(lead?.cites || []).slice(0, 1),
+      ],
+      scopeN: passing.length + trials.length,
     };
   }
   return {
@@ -434,8 +468,9 @@ export function answerAsk(report, question, tasks) {
     observed: [],
     hypothesis: null,
     tooLittle:
-      "There isn't enough in this report's trials to answer that. Try a narrower question about personas, scenarios or what passing trials do, or run more trials.",
+      "Too little evidence: there isn't enough in this report's trials to answer that. Ask a narrower question about personas, scenarios or what passing trials do, or run more tests.",
     cites: [],
+    scopeN: trials.length,
   };
 }
 

@@ -251,7 +251,7 @@ export default function MakeCopyDialog({
                 ? "A duplicate — same agent and channel."
                 : `A fork — tested with ${agentName || "another agent"}; its tools are checked against the world before it runs.`}
             </Line>
-            <Line k="Carries over">{`The world and data at environment ${from}, its rules, evaluations, actors and non-secret settings. Credential references carry only where you're allowed to use them.`}</Line>
+            <Line k="Carries over">{`The world and data at environment ${from}, with its rules, evaluations, actors and settings.`}</Line>
             <Line k="History">{plan.history}</Line>
             <Line k="Compares">{plan.comparability}</Line>
             {main && <Line k="Main">{main}</Line>}
@@ -273,7 +273,7 @@ export default function MakeCopyDialog({
                 <Line k="Tools">
                   {!binding.known
                     ? `${target.name}'s tools aren't known yet. Sync it or run its connection check; cases are checked against the world before it runs.`
-                    : `Calls ${binding.covers.length} of the world's ${binding.covers.length + binding.unused.length} tools${binding.unused.length ? `; ${binding.unused.length} it doesn't call stay in the world` : ""}.`}
+                    : `Calls ${binding.covers.length} of the world's ${binding.covers.length + binding.unused.length} tools${binding.unused.length ? `; ${binding.unused.length} unused stay in the world` : ""}.`}
                   {binding.unanswered.length > 0 && (
                     <Box component="span" sx={{ color: "status.warning.fg" }}>
                       {` Also calls ${binding.unanswered.join(", ")}, which the world can't answer yet. Add ${binding.unanswered.length === 1 ? "it" : "them"} on World & tools after copying.`}
@@ -300,10 +300,10 @@ export default function MakeCopyDialog({
                   )}
                 </Line>
                 <Line k="Stays">
-                  {`The world, its ${binding.rules} rule${binding.rules === 1 ? "" : "s"}, evaluations and actors. They grade ${target.name} the same way; only the agent changes.`}
+                  {`The world, its ${binding.rules} rule${binding.rules === 1 ? "" : "s"}, evaluations and actors. Only the agent changes.`}
                 </Line>
                 <Line k="Compares">
-                  {`With ${envState?.agent?.name || "the source agent"} on the ${binding.comparable} case${binding.comparable === 1 ? "" : "s"} both can run, on environment ${from}.`}
+                  {`Compared with ${envState?.agent?.name || "the source agent"} on the ${binding.comparable} case${binding.comparable === 1 ? "" : "s"} both can run.`}
                 </Line>
               </Box>
             </Box>

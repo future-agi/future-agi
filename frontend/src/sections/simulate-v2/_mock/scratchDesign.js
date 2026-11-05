@@ -104,9 +104,94 @@ export const applyScratchAnswer = (env, question, answer) => {
   return { rules, actors, reply };
 };
 
+/*
+  Systems the description names that a sealed world can't stand up (builder.md
+  step 3: "show which requested behavior cannot be built and offer a
+  contained simulation alternative"). Nothing is sent, charged or booked
+  outside the world, so each one gets a stand-in the world itself answers.
+*/
+const EXTERNAL = [
+  {
+    id: "sms",
+    re: /\bsms\b|\btext messages?\b|\bsend(?:s|ing)? (?:a |the |them a )?texts?\b|\btext (?:the |them|him|her)\b/,
+    request: "Send an SMS",
+    why: "Real texts leave the world, and a test must never message a person.",
+    alt: { name: "sms_outbox", desc: "Records the text the agent would send — nothing leaves the world" },
+  },
+  {
+    id: "email",
+    re: /\be-?mail(?:s|ed|ing)?\b/,
+    request: "Email the customer",
+    why: "A real email reaches a real inbox. The world has no mail server.",
+    alt: { name: "email_outbox", desc: "Keeps each email the agent would send, for the checks to read" },
+  },
+  {
+    id: "stripe",
+    re: /\bstripe\b|\bpaypal\b|\bcharge (?:the |their |a |his |her )?card\b/,
+    request: "Charge the card on Stripe",
+    why: "A real charge moves money. The world can't reach a payment provider.",
+    alt: { name: "charge_test_card", desc: "Charges a test card held in the world's records — nothing reaches Stripe" },
+  },
+  {
+    id: "calendar",
+    re: /\bgoogle calendar\b|\boutlook\b|\bcalendly\b/,
+    request: "Write to an outside calendar",
+    why: "An outside calendar belongs to someone's real account.",
+    alt: { name: "calendar_stub", desc: "A calendar kept inside the world, with the same events and conflicts" },
+  },
+  {
+    id: "crm",
+    re: /\bsalesforce\b|\bhubspot\b|\bzendesk\b/,
+    request: "Update the CRM",
+    why: "A real CRM holds live customer records the test must not touch.",
+    alt: { name: "crm_stub", desc: "A CRM kept inside the world, seeded with the customers above" },
+  },
+];
+
 /**
- * The proposed world for a description: { tables, tools, questions }.
- * Rules and scenarios come from the existing scratch derivations.
+ * The external behaviors the description asks for that can't be built:
+ * [{ id, request, why, alt: { name, desc } }].
+ */
+export const unsupportedOf = (flowText) => {
+  const t = String(flowText || "").toLowerCase();
+  return EXTERNAL.filter((x) => x.re.test(t)).map(
+    ({ id, request, why, alt }) => ({ id, request, why, alt }),
+  );
+};
+
+/** One click: add the contained stand-in to the world's tools. */
+export const simulateDepPatch = (env, dep) => ({
+  tools: (env.tools || []).some((t) => t.name === dep.alt.name)
+    ? env.tools
+    : [...(env.tools || []), { ...dep.alt }],
+  depChoices: { ...(env.depChoices || {}), [dep.id]: "simulate" },
+});
+
+/** Leave the behavior out of the build; it stays listed as not built. */
+export const leaveOutDepPatch = (env, dep) => ({
+  tools: (env.tools || []).filter((t) => t.name !== dep.alt.name),
+  depChoices: { ...(env.depChoices || {}), [dep.id]: "skip" },
+});
+
+/** The scenario coverage the plan shows: [{ label, n }] by kind of case. */
+export const scenarioGroupsOf = (env, draftCount = 0) => {
+  const rows = env?.starterScenarios?.length
+    ? env.starterScenarios
+    : specificScenarioSeeds(env?.tools || []);
+  const by = {};
+  rows.forEach((r) => {
+    const k = r.branch || "core";
+    by[k] = (by[k] || 0) + 1;
+  });
+  const groups = Object.entries(by).map(([label, n]) => ({ label, n }));
+  const rest = Math.max(0, draftCount - rows.length);
+  return rest ? [...groups, { label: "other situations", n: rest }] : groups;
+};
+
+/**
+ * The proposed world for a description: { tables, tools, questions,
+ * unsupported }. Rules and scenarios come from the existing scratch
+ * derivations.
  */
 export const scratchDesignOf = (flowText) => {
   const t = String(flowText || "").toLowerCase();
@@ -119,7 +204,12 @@ export const scratchDesignOf = (flowText) => {
     name,
     desc,
   }));
-  return { tables, tools, questions: scratchQuestionsOf(flowText) };
+  return {
+    tables,
+    tools,
+    questions: scratchQuestionsOf(flowText),
+    unsupported: unsupportedOf(flowText),
+  };
 };
 
 /*

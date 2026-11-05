@@ -26,14 +26,20 @@ import {
   OUTCOME_LABEL,
   aboutCredits,
   answerColorOf,
+  askScopeLabelOf,
   byScenario,
   countsOf,
   csvOf,
   outcomeOf,
   readsLabelOf,
-  scopeLabelOf,
   whenOf,
 } from "../../_mock/trialQuestions";
+import {
+  GRADING_ERROR,
+  denominatorLine,
+  trialLabelOf,
+} from "../../_mock/evalEvidence";
+import ResultIdentity from "./ResultIdentity";
 
 /*
   One ask's answers — Observe's Instant eval results, for trials: the
@@ -78,6 +84,7 @@ const headSx = {
 export default function TrialAnswersView({
   ask,
   tasks,
+  runId,
   runLabel,
   answering,
   onAskAgain,
@@ -94,6 +101,7 @@ export default function TrialAnswersView({
     return tasks.filter((t) => ids.has(t.id));
   }, [ask.taskIds, tasks]);
   const answeredIds = Object.keys(ask.answers[q.id] || {});
+  const isError = (id) => !!ask.answers[q.id]?.[id]?.error;
   const readTotal = answeredIds.length;
   const skippedN = Object.keys(ask.skipped).length;
   /* While answering, trials land in run order, a few at a time. */
@@ -102,6 +110,10 @@ export default function TrialAnswersView({
     () => new Set(answeredIds.slice(0, shown)),
     [answeredIds, shown],
   );
+  /* Grading errors are the judge's, kept apart from every answer. */
+  const errShown = answeredIds.filter(
+    (id) => shownIds.has(id) && isError(id),
+  ).length;
   const answerFor = (t) =>
     shownIds.has(t.id) ? ask.answers[q.id][t.id] : null;
 
@@ -109,7 +121,7 @@ export default function TrialAnswersView({
     const by = {};
     chosen.forEach((t) => {
       const a = shownIds.has(t.id) ? ask.answers[q.id][t.id] : null;
-      if (a) by[a.answer] = (by[a.answer] || 0) + 1;
+      if (a && !a.error) by[a.answer] = (by[a.answer] || 0) + 1;
     });
     return countsOf({ answers: { [q.id]: {} } }, q).map((c) => ({
       ...c,
@@ -119,7 +131,10 @@ export default function TrialAnswersView({
   const colorOf = (label) =>
     label === NOT_READ
       ? theme.palette.text.disabled
-      : answerColorOf(q, label, theme);
+      : label === GRADING_ERROR
+        ? theme.palette.text.secondary
+        : answerColorOf(q, label, theme);
+  const labelOfAnswer = (a) => (a.error ? GRADING_ERROR : a.answer);
 
   const groups = useMemo(() => byScenario(chosen), [chosen]);
   /* Answers against the run's task checks: both stay; neither rewrites the other. */
@@ -133,7 +148,9 @@ export default function TrialAnswersView({
   const rows = chosen.filter((t) => {
     if (!focus) return true;
     const a = answerFor(t);
-    return focus === NOT_READ ? !a && ask.skipped[t.id] : a?.answer === focus;
+    return focus === NOT_READ
+      ? !a && ask.skipped[t.id]
+      : a && labelOfAnswer(a) === focus;
   });
 
   const exportCsv = () => {
@@ -146,7 +163,9 @@ export default function TrialAnswersView({
     URL.revokeObjectURL(url);
   };
 
-  const pct = (n) => (shown ? `${Math.round((n / shown) * 100)}%` : "—");
+  const evaluated = shown - errShown;
+  const pct = (n) =>
+    evaluated ? `${Math.round((n / evaluated) * 100)}%` : "—";
   const strip = [
     ...counts.map((c) => ({
       key: c.label,
@@ -155,6 +174,18 @@ export default function TrialAnswersView({
       hint: pct(c.n),
       onClick: () => setFocus((f) => (f === c.label ? null : c.label)),
     })),
+    ...(errShown
+      ? [
+          {
+            key: GRADING_ERROR,
+            label: GRADING_ERROR,
+            value: errShown,
+            hint: "Judge didn't answer",
+            onClick: () =>
+              setFocus((f) => (f === GRADING_ERROR ? null : GRADING_ERROR)),
+          },
+        ]
+      : []),
     ...(skippedN
       ? [
           {
@@ -179,8 +210,8 @@ export default function TrialAnswersView({
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
           >
-            {runLabel} · {scopeLabelOf(ask.scope)} · {chosen.length} trials ·
-            reads {readsLabelOf(ask.reads).toLowerCase()} ·{" "}
+            {runLabel} · {askScopeLabelOf(ask)} · {chosen.length} trials · reads{" "}
+            {readsLabelOf(ask.reads).toLowerCase()} ·{" "}
             {q.type === ANSWER_TYPES.YES_NO
               ? "Yes / No"
               : `${q.labels.length} categories`}
@@ -196,6 +227,13 @@ export default function TrialAnswersView({
           Ask again
         </Button>
       </Stack>
+
+      <ResultIdentity
+        result={ask}
+        trials={chosen}
+        runId={runId}
+        runLabel={runLabel}
+      />
 
       {ask.questions.length > 1 && (
         <CustomTabs value={qi} onChange={(_, v) => setQi(v)} sx={{ mt: 1.5 }}>
@@ -230,7 +268,7 @@ export default function TrialAnswersView({
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {answering != null
             ? `Answering… ${shown} of ${readTotal} trials`
-            : `${readTotal} trials answered in ${ask.durationS} s`}
+            : `${readTotal} trials read in ${ask.durationS} s`}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           Started by {ask.by} · {whenOf(ask.at)} · {aboutCredits(ask.credits)}
@@ -241,16 +279,17 @@ export default function TrialAnswersView({
       <MetricStrip items={strip} sx={{ mt: 1.5 }} />
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
         {ask.questions.length > 1 ? `Question ${qi + 1}: ` : ""}
-        {shown} of {chosen.length} trials answered
-        {skippedN ? ` · ${skippedN} not read` : ""}. Click a count to focus it.
+        {denominatorLine({
+          evaluated,
+          requested: chosen.length,
+          skipped: skippedN,
+          errors: errShown,
+        })}
       </Typography>
 
       {/* ── one square per trial ── */}
       <Box sx={{ mt: 3 }}>
-        <SectionHead
-          title="Every trial"
-          sub="One square per trial · hover for its scenario · a red base means its task checks failed"
-        />
+        <SectionHead title="Every trial" sub="Red base = task checks failed" />
         <Stack
           direction="row"
           flexWrap="wrap"
@@ -263,7 +302,7 @@ export default function TrialAnswersView({
               {g.rows.map((t) => {
                 const a = answerFor(t);
                 const label = a
-                  ? a.answer
+                  ? labelOfAnswer(a)
                   : ask.skipped[t.id]
                     ? NOT_READ
                     : null;
@@ -320,6 +359,7 @@ export default function TrialAnswersView({
         >
           {[
             ...counts,
+            ...(errShown ? [{ label: GRADING_ERROR, n: errShown }] : []),
             ...(skippedN ? [{ label: NOT_READ, n: skippedN }] : []),
           ].map((c) => (
             <Stack
@@ -356,7 +396,9 @@ export default function TrialAnswersView({
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {c.label === NOT_READ ? c.n : `${pct(c.n)} · ${c.n}`}
+                {c.label === NOT_READ || c.label === GRADING_ERROR
+                  ? c.n
+                  : `${pct(c.n)} · ${c.n}`}
               </Typography>
             </Stack>
           ))}
@@ -365,10 +407,7 @@ export default function TrialAnswersView({
 
       {/* ── against the task checks ── */}
       <Box sx={{ mt: 3 }}>
-        <SectionHead
-          title="Against the run's task checks"
-          sub="Both results stay: this answer doesn't change whether a trial passed."
-        />
+        <SectionHead title="Against the run's task checks" />
         <Table size="small" sx={{ maxWidth: 640 }}>
           <TableHead>
             <TableRow>
@@ -450,7 +489,8 @@ export default function TrialAnswersView({
         <Table size="small" sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...headSx, width: "26%" }}>Scenario</TableCell>
+              <TableCell sx={{ ...headSx, width: 96 }}>Trial</TableCell>
+              <TableCell sx={{ ...headSx, width: "24%" }}>Scenario</TableCell>
               <TableCell sx={{ ...headSx, width: "16%" }}>Persona</TableCell>
               <TableCell sx={{ ...headSx, width: 120 }}>Task checks</TableCell>
               <TableCell sx={{ ...headSx, width: 150 }}>Answer</TableCell>
@@ -460,7 +500,11 @@ export default function TrialAnswersView({
           <TableBody>
             {rows.map((t) => {
               const a = answerFor(t);
-              const label = a ? a.answer : ask.skipped[t.id] ? NOT_READ : null;
+              const label = a
+                ? labelOfAnswer(a)
+                : ask.skipped[t.id]
+                  ? NOT_READ
+                  : null;
               const why = a ? a.reason : ask.skipped[t.id] || "";
               return (
                 <TableRow
@@ -469,6 +513,11 @@ export default function TrialAnswersView({
                   onClick={() => onOpenTask?.(t)}
                   sx={{ height: ROW_HEIGHT.default, cursor: "pointer" }}
                 >
+                  <TableCell sx={cellSx}>
+                    <Typography noWrap sx={{ typography: "s1" }}>
+                      {trialLabelOf(t, runId)}
+                    </Typography>
+                  </TableCell>
                   <TableCell
                     sx={{ ...cellSx, color: "text.primary", fontWeight: 500 }}
                   >
@@ -530,6 +579,7 @@ export default function TrialAnswersView({
 TrialAnswersView.propTypes = {
   ask: PropTypes.object.isRequired,
   tasks: PropTypes.array.isRequired,
+  runId: PropTypes.string.isRequired,
   runLabel: PropTypes.string.isRequired,
   answering: PropTypes.number,
   onAskAgain: PropTypes.func,

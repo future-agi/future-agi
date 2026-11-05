@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { CopyField } from "../components/primitives";
 import { HintLine } from "../agents/connect/replicationBits";
+import { QuietTag } from "../agents/AgentBits";
 
 /**
  * Numbered terminal steps — a step's title, one line on what it does and the
@@ -45,9 +46,12 @@ export default function LocalSteps({ steps }) {
           <Box
             sx={{ flex: 1, minWidth: 0, pb: i < steps.length - 1 ? 2.25 : 0 }}
           >
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {s.title}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                {s.title}
+              </Typography>
+              {s.planned && <QuietTag>Planned</QuietTag>}
+            </Stack>
             <Typography
               component="div"
               sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}
@@ -64,6 +68,6 @@ export default function LocalSteps({ steps }) {
   );
 }
 LocalSteps.propTypes = {
-  /* [{ title, body, hint?, cmd, extra?, after?, onCopy? }] — `extra` sits above the command (e.g. an OS picker), `after` below it (e.g. what it prints). */
+  /* [{ title, body, hint?, cmd, extra?, after?, onCopy?, planned? }] — `extra` sits above the command (e.g. an OS picker), `after` below it (e.g. what it prints). */
   steps: PropTypes.arrayOf(PropTypes.object).isRequired,
 };

@@ -142,11 +142,11 @@ export default function SkillTestResults({ test, summary }) {
         </Stack>
         <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>
           {verdict === "rejected"
-            ? `The skill's files contain ${contaminated.length} of the tested cases and what to answer, so passing them proves nothing. Remove those lines and test again.`
+            ? `The skill's files contain ${contaminated.length} tested cases and their answers. Remove them and test again.`
             : verdict === "tradeoff"
-              ? `Where it should help, passed ${help.cand}/${runsOf(help)} against ${help.base}/${runsOf(help)}. But ${regressions.length} case${regressions.length === 1 ? "" : "s"} it shouldn't touch got worse, so it isn't an unqualified win.`
+              ? `Passed ${help.cand}/${runsOf(help)} against ${help.base}/${runsOf(help)} where it should help, but ${regressions.length} case${regressions.length === 1 ? "" : "s"} it shouldn't touch got worse.`
               : verdict === "helps"
-                ? `Passed ${help.cand}/${runsOf(help)} where it should help, against ${help.base}/${runsOf(help)}, and nothing it shouldn't touch got worse.`
+                ? `Passed ${help.cand}/${runsOf(help)} against ${help.base}/${runsOf(help)}; nothing else got worse.`
                 : "The candidate didn't pass more of the cases it should help than the baseline did."}
           {!test.observed &&
             " Activation is unknown on this runtime, so the outcomes don't say whether the skill was used."}

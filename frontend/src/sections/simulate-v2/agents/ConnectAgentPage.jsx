@@ -265,7 +265,7 @@ export default function ConnectAgentPage() {
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {prefill.project
-                ? `We'll link ${project ? project.name : prefill.projectName || prefill.project} to it, so its Error Feed issues can be fixed.`
+                ? `We'll link ${project ? project.name : prefill.projectName || prefill.project} to it.`
                 : "Pick the Observe project its traces land in."}
             </Typography>
           </Box>

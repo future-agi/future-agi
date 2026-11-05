@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { createElement, useMemo, useState } from "react";
+import { createElement, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -17,8 +17,14 @@ import {
   acceptDataPatch,
   dataProposalOf,
   draftDataPatches,
+  readFile,
   sourceEditPatch,
+  sourceFromOrg,
 } from "../../_mock/orgData";
+import {
+  personalChoicePatch,
+  supplyRecordsPatch,
+} from "../../_mock/dataMapping";
 import { editsLandInPlace } from "../../_mock/versions";
 import { openReviewChanges } from "../reviewChangesBus";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
@@ -27,6 +33,8 @@ import { stampNewBatch } from "../../_mock/addScenarios";
 import { asProposal } from "../../_mock/scenarioSources";
 import { neutralCheckboxSx } from "../../components/primitives";
 import { castOf } from "../../_mock/actors";
+import AddSourceMenu from "./AddSourceMenu";
+import PersonalDataChoice from "./PersonalDataChoice";
 
 const KIND = {
   rule: { icon: "solar:document-text-linear", label: "Rule" },
@@ -39,6 +47,8 @@ const KIND = {
   actor: { icon: "solar:users-group-rounded-linear", label: "Actor" },
   tool: { icon: "solar:widget-4-linear", label: "Tool" },
   state: { icon: "solar:database-linear", label: "Starting state" },
+  reference: { icon: "solar:book-linear", label: "Reference" },
+  personal: { icon: "solar:shield-user-linear", label: "Personal data" },
 };
 
 /* Grouped by what each change touches — the same areas as Review changes. */
@@ -48,6 +58,8 @@ const GROUPS = [
   { label: "Tools", kinds: ["tool"] },
   { label: "Actors", kinds: ["actor"] },
   { label: "Scenarios", kinds: ["scenario"] },
+  { label: "Reference material", kinds: ["reference"] },
+  { label: "Personal data — your choice", kinds: ["personal"] },
   { label: "Who sees what, and problems", kinds: ["hidden", "unreadable"] },
 ];
 
@@ -65,6 +77,8 @@ export default function DataProposalCard({
   onSaved,
 }) {
   const { envState, patch } = useEnvState(env.id);
+  const latest = useRef(envState);
+  latest.current = envState;
   const gates = useRoleGates();
   const sources = useMemo(
     () => (envState.sources || []).filter((s) => sourceIds.includes(s.id)),
@@ -88,7 +102,7 @@ export default function DataProposalCard({
     (i.kind === "rule" ? i.rule : i.actor?.[i.editable?.field] || "");
   const [picked, setPicked] = useState(() =>
     proposal.items
-      .filter((i) => !i.blocking && i.kind !== "hidden")
+      .filter((i) => !i.blocking && !["hidden", "personal"].includes(i.kind))
       .map((i) => i.id),
   );
   const [conflictPick, setConflictPick] = useState(null);
@@ -96,7 +110,11 @@ export default function DataProposalCard({
   const [rejected, setRejected] = useState(false);
   const next = nextSnapshotLabel(env, envState);
   const pickable = (i) =>
-    !i.blocking && !["hidden", "unreadable"].includes(i.kind);
+    !i.blocking && !["hidden", "unreadable", "personal"].includes(i.kind);
+  /* Each source with personal data needs a choice before anything is accepted. */
+  const undecided = proposal.items.filter((i) => i.needsChoice);
+  const hasChoices = proposal.items.some((i) => i.kind === "personal");
+  const [supply, setSupply] = useState(null);
   const count =
     proposal.items.filter((i) => pickable(i) && picked.includes(i.id)).length +
     (conflictPick ? 1 : 0);
@@ -182,15 +200,69 @@ export default function DataProposalCard({
     else setSaved({ label: next, rules: ruleIds.length });
     return null;
   };
-  const omitRows = (item) =>
+  const omitRows = (item) => {
+    const joinsOf = (list) =>
+      list.find((s) => s.id === item.sourceId)?.joins || {};
     patch(
       sourceEditPatch(envState, item.sourceId, {
-        joins: {
-          ...(sources.find((s) => s.id === item.sourceId)?.joins || {}),
-          [item.field]: "omit",
-        },
+        joins: { ...joinsOf(sources), [item.field]: "omit" },
       }),
     );
+    enqueueSnackbar("Left those rows out.", {
+      variant: "info",
+      action: (key) =>
+        createElement(
+          Button,
+          {
+            size: "small",
+            color: "inherit",
+            onClick: () => {
+              closeSnackbar(key);
+              const now = latest.current;
+              patch(
+                sourceEditPatch(now, item.sourceId, {
+                  joins: {
+                    ...joinsOf(now.sources || []),
+                    [item.field]: null,
+                  },
+                }),
+              );
+            },
+          },
+          "Undo",
+        ),
+    });
+  };
+  const supplyFiles = (files) => {
+    const read = files.map(readFile);
+    const usable = read.filter((r) => r.status !== "unsupported");
+    if (usable.length)
+      patch(supplyRecordsPatch(envState, supply.sourceId, supply.join, usable));
+    enqueueSnackbar(
+      usable.length
+        ? `Added ${usable.map((r) => r.name).join(", ")} to the draft. Nothing reaches the world until you accept.`
+        : read[0]?.statusNote || "That file can't be read.",
+      { variant: usable.length ? "success" : "warning" },
+    );
+  };
+  const supplyOrg = (o) => {
+    if (!o.access) {
+      enqueueSnackbar(
+        `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+        { variant: "info" },
+      );
+      return;
+    }
+    patch(
+      supplyRecordsPatch(envState, supply.sourceId, supply.join, [
+        sourceFromOrg(o),
+      ]),
+    );
+    enqueueSnackbar(
+      `Copied ${o.name} rev ${o.revision} into the draft. Nothing reaches the world until you accept.`,
+      { variant: "success" },
+    );
+  };
 
   const renderItem = (i) => {
     const k = KIND[i.kind];
@@ -215,7 +287,12 @@ export default function DataProposalCard({
               on ? cur.filter((x) => x !== i.id) : [...cur, i.id],
             )
           }
-          sx={{ ...neutralCheckboxSx, p: 0.25, alignSelf: "flex-start" }}
+          sx={{
+            ...neutralCheckboxSx,
+            p: 0.25,
+            alignSelf: "flex-start",
+            ...(i.kind === "personal" && { visibility: "hidden" }),
+          }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={0.75} alignItems="center">
@@ -233,16 +310,14 @@ export default function DataProposalCard({
                 : i.title}
             </Typography>
             {(i.kind === "rule" || i.editable) && pickable(i) && (
-              <ButtonBase
+              <Button
+                size="small"
+                variant="outlined"
                 onClick={() => setEditing(editing === i.id ? null : i.id)}
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  "&:hover": { color: "text.primary" },
-                }}
+                sx={{ minWidth: 0, py: 0, px: 0.75, typography: "s3" }}
               >
                 {editing === i.id ? "Done" : "Edit"}
-              </ButtonBase>
+              </Button>
             )}
             {i.inferred && (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -262,7 +337,7 @@ export default function DataProposalCard({
               sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
             >
               {i.affects?.length
-                ? `Flagged, not dropped: ${i.affects.length} ${i.affects.length === 1 ? "scenario uses" : "scenarios use"} these rows (${i.affects.slice(0, 3).join(", ")}${i.affects.length > 3 ? ", …" : ""}). The draft stays open, and coverage won't read as complete until they're resolved.`
+                ? `Flagged: ${i.affects.length} ${i.affects.length === 1 ? "scenario uses" : "scenarios use"} these rows (${i.affects.slice(0, 3).join(", ")}${i.affects.length > 3 ? ", …" : ""}). Resolve them to complete coverage.`
                 : "Flagged, not dropped: the draft stays open, and coverage won't read as complete until these rows are resolved."}
             </Typography>
           )}
@@ -337,21 +412,55 @@ export default function DataProposalCard({
             </Stack>
           )}
           {i.kind === "missing" && (
-            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Attach the missing file in chat, or
-              </Typography>
-              <ButtonBase
-                onClick={() => omitRows(i)}
-                sx={{
-                  typography: "s3",
-                  fontWeight: 600,
-                  textDecoration: "underline",
-                }}
+            <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={(e) =>
+                  setSupply({
+                    anchor: e.currentTarget,
+                    sourceId: i.sourceId,
+                    join: {
+                      to: sources
+                        .find((s) => s.id === i.sourceId)
+                        ?.parsed?.columns?.find((c) => c.name === i.field)?.ref,
+                      field: i.field,
+                      present: i.present !== false,
+                    },
+                  })
+                }
               >
-                leave those rows out
-              </ButtonBase>
+                Supply the records
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => omitRows(i)}
+              >
+                Leave those rows out
+              </Button>
             </Stack>
+          )}
+          {i.kind === "personal" && (
+            <Box sx={{ mt: 0.75 }}>
+              <PersonalDataChoice
+                suggested={i.suggested}
+                choice={i.choice}
+                readOnly={!gates.canEdit}
+                onChoose={(c) =>
+                  patch(
+                    personalChoicePatch(
+                      latest.current,
+                      sources.find((s) => s.id === i.sourceId) ||
+                        (latest.current.sources || []).find(
+                          (s) => s.id === i.sourceId,
+                        ),
+                      c,
+                    ),
+                  )
+                }
+              />
+            </Box>
           )}
         </Box>
       </Stack>
@@ -370,20 +479,17 @@ export default function DataProposalCard({
       <Stack spacing={0.5}>
         <Typography sx={{ typography: "s2" }}>
           {saved.draft
-            ? "Added to your unsaved changes. Review them — each with this file as its source — and save them as the next version from N unsaved edits under the header."
+            ? "Added to your unsaved changes. Review and save them from the header."
             : `Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
         </Typography>
-        <ButtonBase
+        <Button
+          size="small"
+          variant="outlined"
           onClick={() => onOpenSource?.(null)}
-          sx={{
-            alignSelf: "flex-start",
-            typography: "s2",
-            fontWeight: 600,
-            textDecoration: "underline",
-          }}
+          sx={{ alignSelf: "flex-start" }}
         >
           Open Sources
-        </ButtonBase>
+        </Button>
       </Stack>
     );
 
@@ -438,9 +544,11 @@ export default function DataProposalCard({
         }}
       >
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {proposal.items.some((i) => i.blocking)
-            ? "Blocked items stay out until they're resolved; the rest can be saved now."
-            : `Saves environment ${next} with this data snapshot.`}
+          {undecided.length
+            ? `Choose how to handle personal data in ${undecided.map((i) => i.cite.ref).join(", ")} first.`
+            : proposal.items.some((i) => i.blocking)
+              ? "Blocked items stay out until they're resolved; the rest can be saved now."
+              : `Saves environment ${next} with this data snapshot.`}
         </Typography>
         <Button
           variant="outlined"
@@ -453,14 +561,28 @@ export default function DataProposalCard({
           size="small"
           variant="contained"
           color="primary"
-          disabled={!count}
-          onClick={accept}
+          disabled={undecided.length > 0 || (!count && !hasChoices)}
+          onClick={() =>
+            count ? accept() : onSaved ? onSaved() : setRejected(true)
+          }
         >
-          {editsLandInPlace(envState)
-            ? `Accept ${count} and save as ${next}`
-            : `Add ${count} to unsaved changes`}
+          {!count
+            ? "Done"
+            : editsLandInPlace(envState)
+              ? `Accept ${count} and save as ${next}`
+              : `Add ${count} to unsaved changes`}
         </Button>
       </Stack>
+      <AddSourceMenu
+        anchorEl={supply?.anchor}
+        onClose={() => setSupply((c) => c && { ...c, anchor: null })}
+        onAddFiles={supplyFiles}
+        onAddOrg={supplyOrg}
+        added={(envState.sources || [])
+          .filter((s) => s.kb && !s.archived)
+          .map((s) => s.name)}
+        title={`Add the file that holds ${supply?.join?.to?.split(".")[0] || "the missing records"}.`}
+      />
     </Box>
   );
 }

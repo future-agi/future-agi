@@ -158,7 +158,7 @@ export default function RunsOverview({
               {delta && (
                 <Tooltip
                   arrow
-                  title={`On the ${delta.shared} scenarios both runs scored. Two runs of that size differ by up to ±${delta.noise} pts by chance (95%).`}
+                  title={`On the ${delta.shared} scenarios both runs scored. Chance alone moves it up to ±${delta.noise} pts (95%).`}
                 >
                   <Box
                     component="span"

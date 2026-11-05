@@ -265,7 +265,7 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
             value={credRef}
             onChange={setCredRef}
             placeholder={CRED_SLOT}
-            helper="Test credentials only, never production secrets. Stored encrypted and used only by Future AGI — never sent to the improver."
+            helper="Test credentials only. Stored encrypted, never sent to the improver."
           />
         )}
       </DetailRow>

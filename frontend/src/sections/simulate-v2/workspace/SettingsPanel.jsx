@@ -218,7 +218,7 @@ export default function SettingsPanel({
                 title={
                   pending.length
                     ? ""
-                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first.`
+                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)}.`
                 }
               >
                 <span>
@@ -508,7 +508,7 @@ function EgressSection({ envState, patch, locked = false }) {
   return (
     <SectionCard
       title={`Egress · ${domains.length}`}
-      subtitle={`Public hostnames the agent may reach while it runs — hardcoded APIs or TURN endpoints. Everything else is firewalled at the sandbox. Up to ${MAX_EGRESS_DOMAINS}.`}
+      subtitle={`Public hostnames the agent may reach; everything else is firewalled. Up to ${MAX_EGRESS_DOMAINS}.`}
     >
       <Stack
         divider={
@@ -642,7 +642,7 @@ function ToolCredentialsSection({ env, envState }) {
   return (
     <SectionCard
       title="Tool credentials"
-      subtitle="What a Live call to an MCP tool source sends. References into your secret manager, or kept in your Gateway — change one from World → Tool sources."
+      subtitle="What a Live call to an MCP tool source sends. Change one from World → Tool sources."
     >
       <Stack
         divider={
@@ -1699,7 +1699,7 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", mb: 1.25 }}
               >
-                {`A conversation stops at whichever comes first${voice ? "; a scenario's Max turns wins" : "; a scenario's own limit wins"}.`}
+                {`A conversation stops at whichever limit comes first${voice ? "; a scenario's Max turns wins" : "; a scenario's own limit wins"}.`}
               </Typography>
               <Box
                 sx={{

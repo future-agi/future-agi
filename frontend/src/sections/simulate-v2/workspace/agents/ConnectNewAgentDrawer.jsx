@@ -117,7 +117,7 @@ export default function ConnectNewAgentDrawer({
               sx={{ typography: "s2", color: "text.tertiary", mt: 0.25 }}
             >
               {type
-                ? `This is a ${type} environment, so only ways to connect a ${type} agent are shown. It joins your connected agents, and this environment tests it.`
+                ? `This is a ${type} environment, so only ${type} connections are shown.`
                 : "It joins your connected agents, and this environment tests it. An agent it tested before keeps its runs."}
             </Typography>
           </Box>

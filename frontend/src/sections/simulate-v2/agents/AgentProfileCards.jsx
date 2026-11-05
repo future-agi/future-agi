@@ -227,7 +227,7 @@ export function SourceCard({ agent, source, onSave }) {
         label="Prompts it loads"
         hint={
           prompts.length
-            ? "Each one's version is pinned on every agent version saved while it's loaded, next to the commit, platform config and tools."
+            ? "Each one's version is pinned on every agent version saved while it's loaded."
             : "None — its prompts live in its own source. Add one it fetches from Prompts at run time."
         }
       >

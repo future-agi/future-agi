@@ -322,7 +322,7 @@ export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
             sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}
           >
             {standing === "failed"
-              ? `The Future AGI check failed on ${headOf(pr)} — a must-pass scenario broke since the ${review.short} opened. Push a fix to re-run it; merging is still your call.`
+              ? `The Future AGI check failed on ${headOf(pr)}: a must-pass scenario broke since the ${review.short} opened. Push a fix to re-run it.`
               : standing
                 ? `The Future AGI check is running on ${headOf(pr)}.`
                 : telemetry

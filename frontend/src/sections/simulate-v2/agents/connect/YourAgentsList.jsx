@@ -87,7 +87,7 @@ export default function YourAgentsList({
       <Typography
         sx={{ typography: "s3", color: "text.tertiary", px: 2.5, mb: 1.25 }}
       >
-        {`Pick the agent that sends ${projectName}'s traces. The link is saved on the agent, and every issue from ${projectName} can then be fixed.`}
+        {`Pick the agent that sends ${projectName}'s traces.`}
       </Typography>
       {ranked.length > SHOWN && (
         <Stack

@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { resolveEval } from "../_mock/evals";
+import { worldFactsOf } from "../_mock/catalogue";
 import { worldPacksOf } from "./worldSource";
 
 /* A spec-sheet section: a title, then rows or text. */
@@ -115,8 +116,18 @@ export default function WorldPreview({ world }) {
   const entry = world.entry || null;
   const packs = worldPacksOf(t);
   const checks = (t.evalPreset || []).map(resolveEval).filter(Boolean);
+  const facts = worldFactsOf(entry, t);
   return (
     <Stack spacing={2.5}>
+      <Section title="Source and support">
+        <Rows
+          rows={[
+            { k: "Source", v: facts.source },
+            { k: "Native scoring", v: facts.scoring },
+            { k: "Tested support", v: facts.tested },
+          ]}
+        />
+      </Section>
       <Section title="What the agent does">
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {t.description}

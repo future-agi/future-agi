@@ -303,11 +303,11 @@ export default function AgentSyncDialog({
                 `${upload ? `Read from ${result.bundle}. ` : ""}Saving creates agent ${result.label} only; ${result.basedOn} stays as it was. The environment and its scenarios stay as they are — we'll list anything that no longer fits.`}
               {phase === "saved" &&
                 (saved.switched
-                  ? `This environment's default is production, so it tests ${saved.version.label} from the next run. The environment and scenarios didn't change.`
+                  ? `This environment follows production, so it tests ${saved.version.label} from the next run.`
                   : inEnvironment
-                    ? `This environment's default stays ${runningLabel}; environments whose default is production test ${saved.version.label}. The environment and scenarios didn't change.`
+                    ? `This environment stays on ${runningLabel}; those following production test ${saved.version.label}.`
                     : usedInCount
-                      ? "Environments whose default is production test it on their next run; the others stay on theirs. Their worlds and scenarios didn't change."
+                      ? "Environments following production test it next run; the others stay put."
                       : "Nothing else changed.")}
             </Typography>
           </Box>
@@ -670,7 +670,7 @@ export default function AgentSyncDialog({
             ))}
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {saved.blocking?.length
-                ? "Everything else runs as before. An environment changes only when someone rebuilds it there — that makes its next version, and earlier runs keep their results."
+                ? "Everything else runs as before. Earlier runs keep their results."
                 : "None of this blocks a run. An environment changes only when someone rebuilds it there."}
             </Typography>
           </Stack>

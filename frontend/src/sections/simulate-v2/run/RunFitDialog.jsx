@@ -307,8 +307,8 @@ export default function RunFitDialog({
             : latestFits
               ? `Environment ${latestShown} already answers ${n === 1 ? "this tool" : "these tools"} — switch to it for a clean run.`
               : absent.length
-                ? `Rebuilding makes environment ${nextLabel}: the world learns ${absent.length === 1 ? "the new tool" : "the new tools"}, and scenarios to test ${absent.length === 1 ? "it" : "them"} are proposed in Needs input${fit.changed.length ? `; ${fit.changed.map((t) => t.name).join(", ")} is answered with ${fit.changed.length === 1 ? "its" : "their"} new arguments` : ""}. Older environment versions stay as they are.`
-                : `Rebuilding makes environment ${nextLabel}: the world answers ${fit.changed.map((t) => t.name).join(", ")} with ${fit.changed.length === 1 ? "its" : "their"} new arguments, and the blocked scenarios run again. Older environment versions and their runs stay as they are.`}
+                ? `Rebuilding makes environment ${nextLabel}: the world learns ${absent.length === 1 ? "the new tool" : "the new tools"}; scenarios are proposed in Needs input${fit.changed.length ? `; ${fit.changed.map((t) => t.name).join(", ")} is answered with ${fit.changed.length === 1 ? "its" : "their"} new arguments` : ""}.`
+                : `Rebuilding makes environment ${nextLabel}: the world answers ${fit.changed.map((t) => t.name).join(", ")} with ${fit.changed.length === 1 ? "its" : "their"} new arguments, and blocked scenarios run again.`}
         </Typography>
       </Box>
 

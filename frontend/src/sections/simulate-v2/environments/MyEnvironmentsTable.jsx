@@ -239,6 +239,7 @@ export default function MyEnvironmentsTable({
           runsTotal: runs.length,
           updatedAt: env.adoptedAt,
           managed: managedOf(env, envState),
+          copiedFromLocked: envState?.copiedFromLocked || null,
           /* The environment's version, beside its name — two rows of the same
            name read apart by it. */
           version: (() => {
@@ -343,6 +344,24 @@ export default function MyEnvironmentsTable({
                     }}
                   >
                     {row.original.version}
+                  </Typography>
+                </Tooltip>
+              )}
+              {row.original.copiedFromLocked && (
+                <Tooltip
+                  arrow
+                  title="Its scores don't line up with the locked release it was copied from"
+                >
+                  <Typography
+                    component="span"
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      minWidth: 0,
+                    }}
+                  >
+                    Copy of a locked release · not comparable
                   </Typography>
                 </Tooltip>
               )}

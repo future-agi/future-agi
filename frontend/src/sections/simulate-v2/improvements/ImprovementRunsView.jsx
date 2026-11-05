@@ -151,7 +151,7 @@ export default function ImprovementRunsView({
   };
   /* Flow 5's tabs once it has finished: the runs, what the kept change
      changes (each with its reason), and what it did to each scenario. */
-  const [tab, setTab] = useState("runs");
+  const [tab, setTab] = useState(null);
 
   const row = useMemo(
     () =>
@@ -222,7 +222,8 @@ export default function ImprovementRunsView({
      and what it cost, nothing to choose. */
   const stopped = outcome?.ending?.key === "stopped";
   const tabbed = !running && !!result;
-  const view = tabbed ? tab : "runs";
+  /* Opens on the first tab — Changes — unless it stopped and has none. */
+  const view = tabbed ? tab || (stopped ? "runs" : "changes") : "runs";
   /*
     Every pass rate here is on the target scenarios, so a run's change is
     read against what the agent scored on those same scenarios before
@@ -760,7 +761,7 @@ export default function ImprovementRunsView({
             <Typography
               sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
             >
-              {`The rebase keeps main's changes and puts this fix's lines after them. Accept it to re-check the rebased patch on ${behind.prod} — the proof on ${behind.base} doesn't carry over.`}
+              {`Accept to re-check the rebased patch on ${behind.prod}; the proof on ${behind.base} doesn't carry over.`}
             </Typography>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2.5 }}>
@@ -886,7 +887,7 @@ export default function ImprovementRunsView({
               candidates and their runs), plus measured cost. */}
           {!stopped && <Tab value="changes" label="Changes" />}
           {!stopped && <Tab value="scenarios" label="Scenarios" />}
-          <Tab value="runs" label={`Evidence · ${runs.length} candidates`} />
+          <Tab value="runs" label="Evidence" />
           <Tab value="cost" label="Cost" />
         </Tabs>
       )}
@@ -1002,7 +1003,7 @@ export default function ImprovementRunsView({
                   — rates in points, everything else in percent
                 </>
               ) : (
-                `Select two or more to compare them scenario by scenario · pass rates are on the target scenarios, against ${result?.base ?? "—"}% before the change${startRun ? `; other columns against ${env.name} Run ${startRun.ordinal}` : ""}`
+                `Select two or more to compare · pass rates are on the target scenarios, against ${result?.base ?? "—"}% before the change${startRun ? `; other columns against ${env.name} Run ${startRun.ordinal}` : ""}`
               )}
             </Typography>
             {selected.length > 0 && (
@@ -1513,7 +1514,7 @@ export default function ImprovementRunsView({
 */
 /* What a retry read from the run before it, and what it changed because of it. */
 const feedbackText = (f) =>
-  `Fed Candidate ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
+  `Fed Candidate ${f.from}'s results (${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}): ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
 const signedPct = (n) =>
   `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
 /*
@@ -1533,7 +1534,7 @@ function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
     },
     issueId && {
       title: "It needs a change in the code",
-      body: "Tools, orchestration or data aren't changed here. Hand it to your coding agent with the diagnosis — from the issue's Open in Claude Code.",
+      body: "Tools, orchestration and data aren't changed here. Hand it to your coding agent from the issue.",
       action: onOpenIssue && { label: `Open ${issueId}`, onClick: onOpenIssue },
     },
     issueId && {

@@ -38,15 +38,15 @@ const MODES = [
    data point, and still cheap enough that adding personas stays a quick step. */
 const countHint = (mode, per) => {
   if (mode === "spread") {
-    return `Each persona gets ${per} task${per === 1 ? "" : "s"} of its own, none shared — wider coverage of this environment, but results don't compare persona to persona. Use Same tasks for everyone to compare callers.`;
+    return `Each persona gets ${per} task${per === 1 ? "" : "s"} of its own — wider coverage, but personas can't be compared. Use Same tasks for everyone to compare callers.`;
   }
   if (per === 1) {
-    return "Every persona plays the same 1 task. Quick, but a single result can't tell a caller problem from a task problem — 2 or more can.";
+    return "Every persona plays the same 1 task. Quick, but can't separate caller from task problems.";
   }
   if (per === 2) {
-    return "Every persona plays the same 2 tasks — the ones least covered here — so you can see whether one caller struggles where the others don't, at a small cost per run. For a firmer pattern, pick 3 or Every task.";
+    return "Every persona plays the same 2 least-covered tasks. For a firmer pattern, pick 3 or Every task.";
   }
-  return `Every persona plays the same ${per} tasks — the ones least covered here. ${per} is enough to see a pattern: a caller who fails all ${per} where others pass points at the caller, not the task.`;
+  return `Every persona plays the same ${per} least-covered tasks, enough to tell a caller problem from a task problem.`;
 };
 
 /* The select's own text matches the footer copy beside it (s2), rather than

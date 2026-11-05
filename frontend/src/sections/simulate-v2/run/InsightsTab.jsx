@@ -229,7 +229,7 @@ export default function InsightsTab({
               caption: `±${delta.noise} · ${delta.within ? "within noise" : delta.pts > 0 ? "better" : "worse"}${delta.sameEnv ? "" : " · other env version"}`,
               tone:
                 !delta.within && delta.pts < 0 ? "status.danger.fg" : undefined,
-              tip: `Scenario pass rate ${Math.round((current.passed / current.measured) * 100)}% against ${Math.round((prev.passed / prev.measured) * 100)}% in Run ${prev.ordinal}. Two runs of this size differ by up to ±${delta.noise} pts on chance alone (95%), so a change inside that band isn't a regression or a fix.${delta.sameEnv ? "" : " Run " + prev.ordinal + " was on another environment version — the world moved too."}`,
+              tip: `Scenario pass rate ${Math.round((current.passed / current.measured) * 100)}% against ${Math.round((prev.passed / prev.measured) * 100)}% in Run ${prev.ordinal}. Chance alone moves it up to ±${delta.noise} pts (95%).${delta.sameEnv ? "" : " Run " + prev.ordinal + " was on another environment version."}`,
             }
           : {
               key: "delta",

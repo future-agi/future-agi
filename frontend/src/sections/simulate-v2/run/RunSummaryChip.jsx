@@ -562,7 +562,7 @@ export function RunSummaryBlock({
           ? `Median response ${fmtMs(summary.speed.responseMs)}`
           : "Response time unverified",
         {
-          tip: `Over ${summary.speed.conversations} scenarios that reached a verdict. Unverified means the agent's side didn't report it — it's left out, not counted as met.${summary.speed.costUnverified ? ` ${summary.speed.costUnverified} cost unverified.` : ""}`,
+          tip: `Over ${summary.speed.conversations} scenarios that reached a verdict. Unverified means the agent didn't report it; it's not counted as met.${summary.speed.costUnverified ? ` ${summary.speed.costUnverified} cost unverified.` : ""}`,
         },
       ),
     ...extraCells.map((c) =>

@@ -30,10 +30,18 @@ import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
 import { clickable, focusRing } from "../components/clickable";
 import HandoffTimeline from "./HandoffTimeline";
+import SharedState from "./SharedState";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
+import { runEnvVersion } from "../_mock/toolFit";
+import { sourceRevisionsLine } from "../_mock/sourceRevisions";
 import { membersOf } from "../_mock/improvementPolicy";
-import { trialArtifactsOf } from "../_mock/trialEvidence";
+import {
+  callOutcomeOf,
+  resetCheckOf,
+  trialArtifactsOf,
+  worldChangesOf,
+} from "../_mock/trialEvidence";
 import {
   CheckSource,
   DisputeNotes,
@@ -614,30 +622,27 @@ export default function CallDrawer({
             )}
 
             {pane === "twin" && (
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  px: 2,
-                  pt: 1.5,
-                }}
-              >
-                This trial started from the environment&apos;s seed data — a
-                fresh copy, never another trial&apos;s end state.
-              </Typography>
+              <SourcesUsed
+                env={env}
+                envState={envState}
+                task={task}
+                runId={runId}
+              />
             )}
+            {pane === "twin" && <ResetRow reset={resetCheckOf(task)} />}
             {pane === "twin" && envState?.twinBacking && (
               <TwinStateTimeline envState={envState} task={task} />
             )}
-            {/* Missing evidence is said, not hidden. */}
+            {/* Without a cloned service the diff is read off the write calls. */}
             {pane === "twin" && !envState?.twinBacking && (
-              <Typography
-                sx={{ p: 2, typography: "s2", color: "text.tertiary" }}
-              >
-                Not recorded — this environment isn&apos;t backed by a cloned
-                service, so state changes aren&apos;t captured. Tool calls in
-                Trace show what the agent sent and what came back.
-              </Typography>
+              <WorldChanges changes={worldChangesOf(task, env, envState)} />
+            )}
+            {pane === "twin" && (
+              <SharedState
+                agent={envState?.agent}
+                task={task}
+                sx={{ px: 2, pb: 2 }}
+              />
             )}
             {pane === "artifacts" && (
               <TrialArtifacts
@@ -932,52 +937,81 @@ export default function CallDrawer({
                   </Stack>
                 )}
 
-                {log.calls.map((c) => (
-                  <Stack
-                    key={c.id}
-                    direction="row"
-                    spacing={1.5}
-                    alignItems="flex-start"
-                    sx={{
-                      px: 2,
-                      py: 1.5,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                    }}
-                  >
-                    <Iconify
-                      icon={
-                        c.wrote
-                          ? "solar:pen-new-square-linear"
-                          : "solar:eye-linear"
-                      }
-                      width={16}
-                      sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
-                    />
-                    <Box flex={1} minWidth={0}>
-                      <Typography
+                {log.calls.map((c) => {
+                  const outcome = callOutcomeOf(c);
+                  return (
+                    <Stack
+                      key={c.id}
+                      direction="row"
+                      spacing={1.5}
+                      alignItems="flex-start"
+                      sx={{
+                        px: 2,
+                        py: 1.5,
+                        borderBottom: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      <Iconify
+                        icon={
+                          c.wrote
+                            ? "solar:pen-new-square-linear"
+                            : "solar:eye-linear"
+                        }
+                        width={16}
                         sx={{
-                          typography: "s2",
-                          fontWeight: 600,
-                          fontFamily: "ui-monospace, Menlo, monospace",
+                          color: "text.tertiary",
+                          flexShrink: 0,
+                          mt: "2px",
                         }}
-                      >
-                        {c.name}(
-                        {Object.entries(c.args)
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join(", ")}
-                        )
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        {c.wrote ? "wrote to the world" : "read only"} ·
-                        returned {c.rows} {c.rows === 1 ? "row" : "rows"} ·{" "}
-                        {c.ms}ms
-                      </Typography>
-                    </Box>
-                  </Stack>
-                ))}
+                      />
+                      <Box flex={1} minWidth={0}>
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={1}
+                        >
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              fontFamily: "ui-monospace, Menlo, monospace",
+                              minWidth: 0,
+                            }}
+                          >
+                            {c.name}(
+                            {Object.entries(c.args)
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(", ")}
+                            )
+                          </Typography>
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                              color:
+                                outcome.id === "denied" ||
+                                outcome.id === "attempted"
+                                  ? "status.danger.fg"
+                                  : "text.secondary",
+                            }}
+                          >
+                            {outcome.label}
+                          </Typography>
+                        </Stack>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          {outcome.note}
+                          {outcome.answered &&
+                            ` · returned ${c.rows} ${c.rows === 1 ? "row" : "rows"}`}{" "}
+                          · {c.ms}ms
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  );
+                })}
 
                 {/* A tool the scenario needed and the agent never reached for.
                     Absence is the point, so it is a row rather than a gap. */}
@@ -1156,7 +1190,7 @@ function VerdictCauseChip({ verdict, task }) {
       {retried && (
         <Tooltip
           arrow
-          title={`First try ended ${retried.kind === "error" ? "error" : "test invalid"} — ${String(retried.first || "").replace(/\.$/, "")}.`}
+          title={`First try ended ${retried.kind === "error" ? "error" : "test invalid"}: ${String(retried.first || "").replace(/\.$/, "")}.`}
         >
           <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
             {retried.recovered ? "Retried once" : "Retried once · same again"}
@@ -1517,6 +1551,129 @@ function Meta({ label, value }) {
 }
 Meta.propTypes = { label: PropTypes.string, value: PropTypes.any };
 
+/* Whether fresh state was restored for this trial; leftover state means the
+   result's repeatability is not claimed. */
+/* The sources and revisions the trial's environment version pinned. */
+function SourcesUsed({ env, envState, task, runId }) {
+  const run = (envState?.runs || []).find((r) => r.id === runId) || task;
+  const label = runEnvVersion(env, envState, run);
+  const line = sourceRevisionsLine(envState, label);
+  return (
+    <Typography
+      sx={{ typography: "s3", color: "text.tertiary", px: 2, pt: 1.5 }}
+    >
+      {line
+        ? `Sources · ${line} · environment ${label}`
+        : `Sources · none in environment ${label}`}
+    </Typography>
+  );
+}
+SourcesUsed.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  task: PropTypes.object,
+  runId: PropTypes.string,
+};
+
+function ResetRow({ reset }) {
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="flex-start"
+      sx={{ px: 2, pt: 1.5 }}
+    >
+      <Iconify
+        icon={
+          reset.clean ? "solar:check-circle-bold" : "solar:danger-triangle-bold"
+        }
+        width={14}
+        sx={{
+          color: reset.clean ? "status.success.fg" : "status.danger.fg",
+          flexShrink: 0,
+          mt: "2px",
+        }}
+      />
+      <Box minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {reset.line}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {reset.note}
+        </Typography>
+      </Box>
+    </Stack>
+  );
+}
+ResetRow.propTypes = { reset: PropTypes.object.isRequired };
+
+/* The records a trial changed, read off its write calls against the seeded
+   tables: record, field, before to after. Attempted and denied writes sit
+   apart — they changed nothing. */
+function WorldChanges({ changes }) {
+  if (!changes.evidence)
+    return (
+      <Typography sx={{ p: 2, typography: "s2", color: "text.tertiary" }}>
+        Not recorded — this trial made no tool calls, and this environment
+        isn&apos;t backed by a cloned service, so there is nothing to compare.
+      </Typography>
+    );
+  const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
+  return (
+    <Stack sx={{ p: 2 }} spacing={1.25}>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {changes.changes.length
+          ? "Before and after, read from this trial's committed writes"
+          : "The agent only read from the world — no record changed."}
+      </Typography>
+      {changes.changes.length > 0 && (
+        <Box
+          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+        >
+          {changes.changes.map((x) => (
+            <Box
+              key={x.id}
+              sx={{
+                px: 1.5,
+                py: 0.875,
+                "& + &": { borderTop: "1px solid", borderColor: "divider" },
+              }}
+            >
+              <Typography sx={{ typography: "s2", fontWeight: 600, ...mono }}>
+                {x.table} · {x.record}
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                <Box component="span" sx={mono}>
+                  {x.field}
+                </Box>
+                : {x.before} &rarr; {x.after}
+                {x.lost && (
+                  <Box component="span" sx={{ color: "text.tertiary" }}>
+                    {" "}
+                    · the agent never saw the response
+                  </Box>
+                )}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {changes.notCommitted.map((x) => (
+        <Typography
+          key={x.id}
+          sx={{ typography: "s3", color: "text.tertiary" }}
+        >
+          <Box component="span" sx={{ fontWeight: 600, ...mono }}>
+            {x.tool}
+          </Box>
+          {` · ${x.outcome.label} — ${x.outcome.note}`}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+WorldChanges.propTypes = { changes: PropTypes.object.isRequired };
+
 function Cell({ label, value }) {
   return (
     <Box
@@ -1604,7 +1761,7 @@ const SUBGOAL_STATUS = {
   inconclusive: {
     icon: "solar:question-circle-linear",
     color: "text.tertiary",
-    label: "Inconclusive",
+    label: "Unmeasured",
   },
   unmeasured: {
     icon: "solar:minus-circle-linear",

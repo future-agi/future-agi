@@ -11,18 +11,24 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
-import { enqueueSnackbar } from "notistack";
+import { closeSnackbar, enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
 import CopyCommandButton from "../../components/CopyCommandButton";
+import MappingEditor from "./MappingEditor";
+import AddSourceMenu from "./AddSourceMenu";
+import PersonalDataChoice from "./PersonalDataChoice";
 import {
   ROLES,
   VISIBILITY,
   PRIVACY,
+  SUPPORTED_ACCEPT,
   roleLabel,
   visibilityLabel,
-  joinsOf,
+  typeLabelOf,
+  readFile,
+  sourceFromOrg,
   participantViewsOf,
   usageOf,
   refreshPlanOf,
@@ -32,22 +38,20 @@ import {
   sourceEditPatch,
   dataCli,
 } from "../../_mock/orgData";
+import {
+  mappingToReview,
+  personalChoicePatch,
+  personalDataOf,
+  standInOf,
+  supplyRecordsPatch,
+} from "../../_mock/dataMapping";
+import { kbRefreshOf } from "../../_mock/kbCatalog";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 /* The sensitive-value preview: what a value becomes under each choice. */
-const shown = (value, mode, i = 0) => {
-  if (mode === "omit") return "—";
-  if (mode === "mask") return String(value).replace(/[^@.\s-]/g, "•");
-  if (mode === "replace")
-    return /@/.test(String(value))
-      ? `customer${i + 1}@sandbox.test`
-      : /^[A-Z][a-z]+ [A-Z]/.test(String(value))
-        ? `Customer ${i + 1}`
-        : `X-${100 + i}`;
-  return String(value);
-};
+const shown = standInOf;
 
 function KV({ label, children }) {
   return (
@@ -89,28 +93,103 @@ export default function SourceDrawer({
   patch,
   sourceId,
   focusAt = null,
+  focusTab = null,
   readOnly = false,
+  onReviewRefresh = null,
+  onReconnect = null,
 }) {
   const source = (envState.sources || []).find((s) => s.id === sourceId);
   const [tab, setTab] = useState("preview");
   const [plan, setPlan] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  /* Supplying missing records opens the same add-source menu, from the button. */
+  const [supply, setSupply] = useState(null);
   const fileRef = useRef(null);
+  /* Undo from a snackbar acts on the state as it is then, not as it was. */
+  const latest = useRef(envState);
+  latest.current = envState;
   /* Opened from a change in Review changes: show what was read, at the
      passage or row the change came from. */
   useEffect(() => {
     if (focusAt) setTab("preview");
   }, [sourceId, focusAt]);
+  useEffect(() => {
+    if (focusTab) setTab(focusTab);
+  }, [sourceId, focusTab]);
   if (!source) return <SideDrawer open={false} onClose={onClose} />;
   const p = source.parsed || {};
   const all = envState.sources || [];
   const edit = (fields, detail) =>
     patch(sourceEditPatch(envState, source.id, fields, detail));
+  /* Leaving rows out can be taken back: from the snackbar, or in Mapping. */
+  const omitRows = (j) => {
+    const table = j.to.split(".")[0];
+    edit(
+      { joins: { ...(source.joins || {}), [j.field]: "omit" } },
+      `${source.name}: rows without ${table} left out`,
+    );
+    enqueueSnackbar(`Left ${j.missing} rows of ${source.name} out.`, {
+      variant: "info",
+      action: (key) => (
+        <Button
+          size="small"
+          color="inherit"
+          onClick={() => {
+            closeSnackbar(key);
+            const now = latest.current;
+            const cur = (now.sources || []).find((x) => x.id === source.id);
+            patch(
+              sourceEditPatch(
+                now,
+                source.id,
+                { joins: { ...(cur?.joins || {}), [j.field]: null } },
+                `${source.name}: rows without ${table} put back`,
+              ),
+            );
+          }}
+        >
+          Undo
+        </Button>
+      ),
+    });
+  };
+  /* Records added to fill a gap are matched on the key straight away. */
+  const supplyFiles = (files, join) => {
+    const read = files.map(readFile);
+    const usable = read.filter((r) => r.status !== "unsupported");
+    if (usable.length)
+      patch(supplyRecordsPatch(envState, source.id, join, usable));
+    enqueueSnackbar(
+      usable.length
+        ? `Added ${usable.map((r) => r.name).join(", ")} to the draft. Nothing reaches the world until you accept it.`
+        : read[0]?.statusNote || "That file can't be read.",
+      { variant: usable.length ? "success" : "warning" },
+    );
+  };
+  const supplyOrg = (o) => {
+    if (!o.access) {
+      enqueueSnackbar(
+        `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+        { variant: "info" },
+      );
+      return;
+    }
+    patch(
+      supplyRecordsPatch(envState, source.id, supply.join, [sourceFromOrg(o)]),
+    );
+    enqueueSnackbar(
+      `Copied ${o.name} rev ${o.revision} into the draft. Nothing reaches the world until you accept it.`,
+      { variant: "success" },
+    );
+  };
   const usage = usageOf(source, envState);
   const views = participantViewsOf([source]);
-  const joins = joinsOf(source, all);
   const exp = exportPreviewOf(source);
+  const pd = personalDataOf(source);
+  const refresh = kbRefreshOf(source);
+  const toReview = mappingToReview(source);
   const nextLabel = nextSnapshotLabel(env, envState);
   /* The sample row is the one a change cited (its key value). */
   const focusRow =
@@ -121,11 +200,9 @@ export default function SourceDrawer({
   const TABS = [
     ["preview", "What was read"],
     ...(p.kind === "table"
-      ? [
-          ["mapping", "Mapping"],
-          ["privacy", "Sensitive values"],
-        ]
+      ? [["mapping", toReview ? `Mapping · ${toReview} to review` : "Mapping"]]
       : []),
+    ...(pd.has ? [["privacy", "Sensitive values"]] : []),
     ["access", "Who sees it"],
     ["usage", "Used by"],
     ["versions", "Versions"],
@@ -146,7 +223,8 @@ export default function SourceDrawer({
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {[
-                `v${source.version}`,
+                typeLabelOf(source),
+                source.kb ? `rev ${source.kb.revision}` : `v${source.version}`,
                 source.owner,
                 source.snapshot
                   ? `in snapshot ${source.snapshot}`
@@ -205,6 +283,36 @@ export default function SourceDrawer({
             ))}
           </Select>
         </Stack>
+        {source.role && (
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", px: 2.5, pb: 1 }}
+          >
+            {ROLES.find((r) => r.id === source.role)?.note}
+          </Typography>
+        )}
+        {source.revoked && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 2.5, pb: 1 }}
+          >
+            <Typography
+              sx={{ typography: "s3", color: "status.warning.fg", flex: 1 }}
+            >
+              {`Access revoked · keeping pinned rev ${source.kb?.revision} · refresh is blocked`}
+            </Typography>
+            {!readOnly && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => onReconnect?.(source)}
+              >
+                Reconnect
+              </Button>
+            )}
+          </Stack>
+        )}
 
         <Tabs
           value={tab}
@@ -262,7 +370,7 @@ export default function SourceDrawer({
                 {source.effectiveFrom && (
                   <Typography
                     sx={{ typography: "s3", color: "text.tertiary" }}
-                  >{`Effective from ${source.effectiveFrom}. Instructions inside a document are read as content, never as permission to change the workspace.`}</Typography>
+                  >{`Effective from ${source.effectiveFrom}. Instructions inside a document are read as content only.`}</Typography>
                 )}
               </Stack>
             ) : (
@@ -374,164 +482,112 @@ export default function SourceDrawer({
             ))}
 
           {tab === "mapping" && (
-            <Stack spacing={1.5}>
-              <Box>
-                <KV label="Becomes table">
-                  <Typography sx={{ typography: "s2", fontFamily: MONO }}>
-                    {p.table}
-                  </Typography>
-                </KV>
-                <KV label="Key">{p.columns.find((c) => c.key)?.name}</KV>
-                <KV label="Duplicates">
-                  Rejected — a later row with the same key is listed, not merged
-                </KV>
-                <KV label="Rows used">All permitted rows · no sample</KV>
-              </Box>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                Relationships
-              </Typography>
-              {joins.length === 0 && (
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  No references to other tables.
-                </Typography>
-              )}
-              {joins.map((j) => (
-                <Box
-                  key={j.field}
-                  sx={{
-                    p: 1.25,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                  }}
-                >
-                  <Typography sx={{ typography: "s2" }}>
-                    <Box
-                      component="span"
-                      sx={{ fontFamily: MONO }}
-                    >{`${p.table}.${j.field} → ${j.to}`}</Box>
-                  </Typography>
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: j.blocking ? "status.warning.fg" : "text.tertiary",
-                    }}
-                  >
-                    {j.resolution === "omit"
-                      ? `${j.missing} rows left out — the cases that need them stay blocked.`
-                      : !j.present
-                        ? `${j.to.split(".")[0]} isn't attached — all ${j.missing} rows refer to it.`
-                        : j.missing
-                          ? `${j.missing} rows point at records that aren't there.`
-                          : "Every row resolves."}
-                  </Typography>
-                  {j.blocking && !readOnly && (
-                    <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        sx={{ color: "text.primary", borderColor: "divider" }}
-                        onClick={() =>
-                          enqueueSnackbar(
-                            "Attach the missing file in builder chat — it's matched on the key automatically.",
-                            { variant: "info" },
-                          )
-                        }
-                      >
-                        Supply the records
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() =>
-                          edit(
-                            {
-                              joins: {
-                                ...(source.joins || {}),
-                                [j.field]: "omit",
-                              },
-                            },
-                            `${source.name}: rows without ${j.to.split(".")[0]} left out`,
-                          )
-                        }
-                      >
-                        Leave those rows out
-                      </Button>
-                    </Stack>
-                  )}
-                </Box>
-              ))}
-            </Stack>
+            <MappingEditor
+              source={source}
+              envState={envState}
+              patch={patch}
+              readOnly={readOnly}
+              onSupply={(anchor, join) => setSupply({ anchor, join })}
+              onOmit={omitRows}
+              onPutBack={(j) =>
+                edit(
+                  { joins: { ...(source.joins || {}), [j.field]: null } },
+                  `${source.name}: rows without ${j.to.split(".")[0]} put back`,
+                )
+              }
+            />
           )}
 
           {tab === "privacy" && (
-            <Stack spacing={1}>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Replace consistently keeps joins: the same customer gets the
-                same stand-in across orders, refunds and conversations.
-              </Typography>
-              {p.columns.map((c) => {
-                const mode = source.privacy?.[c.name] || "retain";
-                return (
-                  <Stack
-                    key={c.name}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1.5}
-                    sx={{ py: 0.5 }}
-                  >
-                    <Typography
-                      sx={{
-                        typography: "s2",
-                        fontFamily: MONO,
-                        width: 120,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {c.name}
-                    </Typography>
-                    <Select
-                      size="small"
-                      value={mode}
-                      disabled={readOnly}
-                      onChange={(e) =>
-                        edit(
-                          {
-                            privacy: {
-                              ...(source.privacy || {}),
-                              [c.name]: e.target.value,
-                            },
-                          },
-                          `${source.name}.${c.name}: ${PRIVACY.find((x) => x.id === e.target.value).label.toLowerCase()}`,
-                        )
-                      }
-                      sx={{ typography: "s3", width: 180 }}
-                    >
-                      {PRIVACY.map((x) => (
-                        <MenuItem
-                          key={x.id}
-                          value={x.id}
-                          sx={{ typography: "s3" }}
+            <Stack spacing={1.5}>
+              <Box>
+                <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
+                  {pd.choice
+                    ? "Personal data"
+                    : "Personal data — choose how to handle it"}
+                </Typography>
+                <PersonalDataChoice
+                  suggested={pd.suggested}
+                  choice={pd.choice}
+                  columns={pd.columns}
+                  readOnly={readOnly}
+                  onChoose={(c) =>
+                    patch(personalChoicePatch(envState, source, c))
+                  }
+                />
+              </Box>
+              {p.kind === "table" && (
+                <Stack spacing={1}>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Replace consistently keeps joins: the same customer gets the
+                    same stand-in across orders, refunds and conversations.
+                  </Typography>
+                  {p.columns
+                    .filter((c) => c.sensitive || c.stableId || c.key)
+                    .map((c) => {
+                      const mode = source.privacy?.[c.name] || "retain";
+                      return (
+                        <Stack
+                          key={c.name}
+                          direction="row"
+                          alignItems="center"
+                          spacing={1.5}
+                          sx={{ py: 0.5 }}
                         >
-                          {x.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s3",
-                        fontFamily: MONO,
-                        color: "text.secondary",
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      {`${String(p.sample?.[c.name] ?? "")} → ${shown(p.sample?.[c.name] ?? "", mode)}`}
-                    </Typography>
-                  </Stack>
-                );
-              })}
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontFamily: MONO,
+                              width: 120,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {c.name}
+                          </Typography>
+                          <Select
+                            size="small"
+                            value={mode}
+                            disabled={readOnly}
+                            onChange={(e) =>
+                              edit(
+                                {
+                                  privacy: {
+                                    ...(source.privacy || {}),
+                                    [c.name]: e.target.value,
+                                  },
+                                },
+                                `${source.name}.${c.name}: ${PRIVACY.find((x) => x.id === e.target.value).label.toLowerCase()}`,
+                              )
+                            }
+                            sx={{ typography: "s3", width: 180 }}
+                          >
+                            {PRIVACY.map((x) => (
+                              <MenuItem
+                                key={x.id}
+                                value={x.id}
+                                sx={{ typography: "s3" }}
+                              >
+                                {x.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              fontFamily: MONO,
+                              color: "text.secondary",
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {`${String(p.sample?.[c.name] ?? "")} → ${shown(p.sample?.[c.name] ?? "", mode)}`}
+                          </Typography>
+                        </Stack>
+                      );
+                    })}
+                </Stack>
+              )}
             </Stack>
           )}
 
@@ -596,14 +652,7 @@ export default function SourceDrawer({
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    patch({
-                      sources: (envState.sources || []).filter(
-                        (s) => s.id !== source.id,
-                      ),
-                    });
-                    onClose();
-                  }}
+                  onClick={() => setRemoving(true)}
                   sx={{ mt: 1.5 }}
                 >
                   Remove — it isn&apos;t in the world yet
@@ -614,10 +663,50 @@ export default function SourceDrawer({
 
           {tab === "versions" && (
             <Stack spacing={1.5}>
+              {source.kb && (
+                <Box>
+                  <KV label="Knowledge base">
+                    {`${source.kb.collection} · pinned rev ${source.kb.revision}${source.kb.leftOut?.length ? ` · ${source.kb.leftOut.length} ${source.kb.leftOut.length === 1 ? "change" : "changes"} left out` : ""}`}
+                  </KV>
+                  <KV label="Snapshot">
+                    A copy of that revision. It isn&apos;t linked live — edits
+                    in the Knowledge base don&apos;t change this environment.
+                  </KV>
+                  <KV label="Refresh">
+                    {source.revoked
+                      ? `Access revoked · keeping pinned rev ${source.kb.revision} · refresh is blocked`
+                      : refresh
+                        ? `New revision available · rev ${refresh.latest}${refresh.note ? ` — ${refresh.note}` : ""}`
+                        : "Up to date. A new revision waits for you to review it; it is never pulled in on its own."}
+                  </KV>
+                  {(refresh || source.revoked) && !readOnly && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      {refresh && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => onReviewRefresh?.(source)}
+                        >
+                          Review refresh
+                        </Button>
+                      )}
+                      {source.revoked && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => onReconnect?.(source)}
+                        >
+                          Reconnect
+                        </Button>
+                      )}
+                    </Stack>
+                  )}
+                </Box>
+              )}
               {[...source.versions].reverse().map((v) => (
                 <KV
                   key={v.v}
-                  label={`v${v.v}${v.v === source.version ? " · in use" : ""}`}
+                  label={`${v.rev ? `rev ${v.rev}` : `v${v.v}`}${v.v === source.version ? " · in use" : ""}`}
                 >
                   {`${v.note}${v.inVersion ? ` · environment ${v.inVersion}` : ""}`}
                 </KV>
@@ -735,32 +824,35 @@ export default function SourceDrawer({
           >
             Export
           </Button>
-          {!readOnly && source.inEnv && source.parsed?.kind === "text" && (
-            <>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => fileRef.current?.click()}
-                sx={{ color: "text.primary", borderColor: "divider" }}
-              >
-                Replace with a new version
-              </Button>
-              <input
-                ref={fileRef}
-                hidden
-                type="file"
-                accept=".pdf,.txt,.md"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    setPlan(refreshPlanOf(env, envState, source, f));
-                    setTab("versions");
-                  }
-                  e.target.value = "";
-                }}
-              />
-            </>
-          )}
+          {!readOnly &&
+            source.inEnv &&
+            !source.revoked &&
+            source.parsed?.kind === "text" && (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => fileRef.current?.click()}
+                  sx={{ color: "text.primary", borderColor: "divider" }}
+                >
+                  Replace with a new version
+                </Button>
+                <input
+                  ref={fileRef}
+                  hidden
+                  type="file"
+                  accept={SUPPORTED_ACCEPT}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setPlan(refreshPlanOf(env, envState, source, f));
+                      setTab("versions");
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </>
+            )}
         </Stack>
       </Stack>
 
@@ -804,6 +896,38 @@ export default function SourceDrawer({
         }
       />
       <ConfirmDialog
+        open={removing}
+        onClose={() => setRemoving(false)}
+        title={`Remove ${source.name}?`}
+        content="It isn't in the world yet. Its reading and mapping are discarded; add it again from Sources."
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={() => {
+              setRemoving(false);
+              patch({
+                sources: (envState.sources || []).filter(
+                  (s) => s.id !== source.id,
+                ),
+              });
+              onClose();
+            }}
+          >
+            Remove
+          </Button>
+        }
+      />
+      <AddSourceMenu
+        anchorEl={supply?.anchor}
+        onClose={() => setSupply((c) => c && { ...c, anchor: null })}
+        onAddFiles={(files) => supplyFiles(files, supply.join)}
+        onAddOrg={supplyOrg}
+        added={all.filter((x) => x.kb && !x.archived).map((x) => x.name)}
+        title={`Add the file that holds ${supply?.join?.to?.split(".")[0] || "the missing records"}.`}
+      />
+      <ConfirmDialog
         open={archiving}
         onClose={() => setArchiving(false)}
         title={`Archive ${source.name}?`}
@@ -835,5 +959,8 @@ SourceDrawer.propTypes = {
   patch: PropTypes.func,
   sourceId: PropTypes.string,
   focusAt: PropTypes.string,
+  focusTab: PropTypes.string,
   readOnly: PropTypes.bool,
+  onReviewRefresh: PropTypes.func,
+  onReconnect: PropTypes.func,
 };

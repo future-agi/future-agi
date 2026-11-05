@@ -178,7 +178,7 @@ export default function TemplateReviewLayout({
           {
             kind: "note",
             text: fromScratch
-              ? `Building ${env.name} from your description — ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"} and ${(env.rules || []).length} rule${(env.rules || []).length === 1 ? "" : "s"} to start. No agent yet: connect it when it's ready, and runs start once it is.`
+              ? `Building ${env.name} — ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"} and ${(env.rules || []).length} rule${(env.rules || []).length === 1 ? "" : "s"}. Connect an agent to run it.`
               : `Building ${env.name} — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
           },
         ],
@@ -661,7 +661,7 @@ function buildTemplateQuestions(env) {
     questions.push({
       id: "tool-side-effects",
       title: `Does ${lastTool.name} change data?`,
-      why: "It's called from your code but never described in the prompt. Your answer decides whether a scenario may trigger real side-effects.",
+      why: "Called from your code but not described in the prompt. Can scenarios trigger its real side-effects?",
       kind: "choice",
       options: [
         { id: "read", label: "Read-only" },
@@ -707,7 +707,7 @@ function answerFromEnvironment(text, env, envState) {
         : "No agent is attached to this environment.";
     }
     if (/scor|grad|pass|fail/.test(t)) {
-      return "Each scenario passes when every critical sub-goal holds; supporting ones are reported. Evaluations score each conversation, and one you mark required fails a conversation that misses it.";
+      return "A scenario passes when every critical sub-goal holds. A required evaluation fails any conversation that misses it.";
     }
     if (/tool|rule|contract/.test(t)) {
       return `${plural(tools.length, "tool")}: ${tools.map((x) => x.name).join(", ") || "none"}. ${plural(rules.length, "rule")}: ${rules.join(" · ") || "none"}.`;
@@ -725,5 +725,5 @@ function answerFromEnvironment(text, env, envState) {
         : /scenario|persona|case/.test(t)
           ? "the Scenarios tab"
           : "the tabs on the right";
-  return `I can't make that change from this chat. You can do it on ${where} — or ask me to write more scenarios, which I'll propose for review.`;
+  return `I can't make that change here. Do it on ${where}, or ask me for more scenarios.`;
 }

@@ -156,7 +156,7 @@ export default function CodingAgentsIntegrationPage() {
                       sx={{ typography: "s3", color: "text.subtitle" }}
                     >
                       {c
-                        ? `Connected for you via ${WAYS[c.via]?.short || c.via} · ${ago(c.connectedAt)}${nConnected > 1 && primary?.id === a.id ? " · used for Open in" : ""}`
+                        ? `Connected via ${WAYS[c.via]?.short || c.via} · ${ago(c.connectedAt)}${nConnected > 1 && primary?.id === a.id ? " · used for Open in" : ""}`
                         : `${a.vendor} · ${a.ways.map((w) => WAYS[w].short).join(" or ")}${a.ways.includes("plugin") ? "" : " + instructions file"}`}
                     </Typography>
                   </Box>
@@ -236,8 +236,8 @@ export default function CodingAgentsIntegrationPage() {
             title="Cloud agents"
             sub={
               clouds.length
-                ? `Copy for coding agent offers Dispatch to ${clouds.map((c) => c.short || c.label).join(" or ")} for everyone. Each change comes back as a candidate Future AGI checks.`
-                : "Connect once for the workspace. A dispatched issue is worked on in a sandbox and comes back as a candidate Future AGI checks."
+                ? `Copy for coding agent offers Dispatch to ${clouds.map((c) => c.short || c.label).join(" or ")} for everyone.`
+                : "Connect once for the workspace. Dispatched issues come back as candidates Future AGI checks."
             }
           />
           {CLOUD_CODING_AGENTS.map((a, i) => {
@@ -331,7 +331,7 @@ export default function CodingAgentsIntegrationPage() {
         <Section variant="panel">
           <SectionHead
             title="How its changes are tested"
-            sub="The coding agent changes what defines your agent and submits it as a candidate. Future AGI tests it against today's version — never the live agent."
+            sub="The coding agent submits changes as candidates. Future AGI tests them against today's version, never the live agent."
           />
           <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
             <Stack
@@ -442,7 +442,7 @@ export default function CodingAgentsIntegrationPage() {
         <Section variant="panel">
           <SectionHead
             title="Token scope"
-            sub="Each agent connects with its own improver token, not a workspace key. It reaches the loop and nothing else, and can't read held-back scenarios."
+            sub="Each agent connects with its own improver token. It can't read held-back scenarios."
           />
           <Box
             sx={{

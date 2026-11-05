@@ -123,6 +123,21 @@ export const humanize = (s = "") => s
   .replace(/\b\w/g, (c) => c.toUpperCase())
   .trim();
 
+/*
+  The rule a task was checking: rule-enforcement scenarios are titled
+  "Refuse a request that would break: <the rule>", and everything after the
+  colon is the rule text (or, for a scenario in the rule set, the title is the
+  rule). Tasks that aren't rule checks have none. Read by
+  the Rule broken grouping and the Rule filter.
+*/
+export const ruleOf = (t) => {
+  const title = String(t?.title || "");
+  const m = title.match(/^Refuse a request that would break:\s*(.+)$/);
+  if (m) return m[1].trim();
+  /* A rule scenario can be titled by the rule itself. */
+  return /-rule-/.test(String(t?.id || "")) && title ? title.trim() : null;
+};
+
 export function deriveUseCaseLabel(t) {
   if (t?.useCase) return goalLabel(t.useCase);
   const id = String(t?.id || "");

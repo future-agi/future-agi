@@ -438,7 +438,7 @@ export default function ImprovementSetup({
       : fromRun && base?.status === "running"
         ? "This run hasn't finished — start a fix once its results are in."
         : swapped
-          ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
+          ? `This run tested ${agent?.name || "an agent"}, no longer ${main?.name || "this environment"}'s agent. Improve it from Improvements.`
           : preset?.agentKey && !agent
             ? "This agent can't be found — it may have been deleted."
             : status && status.status !== "connected"
@@ -687,7 +687,7 @@ export default function ImprovementSetup({
             </ConfirmRow>
             <ConfirmRow k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
-                {`${train} failing to fix · ${held} held back to prove it · ${mustPassAll} must keep passing`}
+                {`Targets ${train} · Protected ${mustPassAll} · Held back ${held}`}
               </Typography>
               <HeldBackLine heldBack={heldBack} />
               {notCounted && (
@@ -808,7 +808,7 @@ export default function ImprovementSetup({
                       <Typography
                         sx={{ typography: "s3", color: "status.warning.fg" }}
                       >
-                        {`None of the ${preview.trainMeasuredTasks.length} case${preview.trainMeasuredTasks.length === 1 ? "" : "s"} to fix mention${preview.trainMeasuredTasks.length === 1 ? "s" : ""} what ${focusSkill.id} is for, so it has nothing to change. Pick another skill, choose other cases, or allow instructions too.`}
+                        {`None of the ${preview.trainMeasuredTasks.length} case${preview.trainMeasuredTasks.length === 1 ? "" : "s"} to fix mention${preview.trainMeasuredTasks.length === 1 ? "s" : ""} what ${focusSkill.id} is for. Pick another skill or other cases, or allow instructions.`}
                       </Typography>
                     )}
                 </Stack>
@@ -894,8 +894,8 @@ export default function ImprovementSetup({
             <ConfirmRow k="Cost">
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {overBudget
-                  ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)} with the best it found — the full plan would need about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
-                  : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
+                  ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)}. The full plan needs about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
+                  : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}
               </Typography>
             </ConfirmRow>
           </Box>
@@ -1262,7 +1262,7 @@ export default function ImprovementSetup({
                           <Typography
                             sx={{ typography: "s3", color: "text.tertiary" }}
                           >
-                            {`Also tries the changes ${versionName(lineageVersions[0].label)}–${versionName(lineageVersions[lineageVersions.length - 1].label)} made. Checked the same way as every other proposed change.`}
+                            {`Also tries the changes ${versionName(lineageVersions[0].label)}–${versionName(lineageVersions[lineageVersions.length - 1].label)} made.`}
                           </Typography>
                         </Box>
                         <Switch
@@ -1421,7 +1421,7 @@ export default function ImprovementSetup({
           {main && !searchTasks
             ? `${main.name} has no scenarios to run yet.`
             : today
-              ? "It runs the environment on today's version first. A winner comes back as a new version. You decide whether to make it the default."
+              ? "Runs the environment on today's version first. A winner comes back as a new version."
               : "A winner comes back as a new version. You decide whether to make it the default."}
         </Typography>
         {/* The same experiment from code — what Start improvement would make. */}
@@ -1515,7 +1515,7 @@ function HeldBackLine({ heldBack }) {
         }}
       >
         {heldBack.tooFew
-          ? `Too few held-back scenarios to tell a real fix from noise. The result can only be Limited validation, never Verified, and a GitHub pull request would open as a draft with that label. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
+          ? `Too few held-back scenarios: the result can only be Limited validation, never Verified. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
           : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
       </Typography>
     </Stack>

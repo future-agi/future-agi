@@ -261,11 +261,11 @@ export default function AgentSetupCard({
   const sendsCode = ["repo", "framework", "upload", "endpoint"].includes(kind);
   const tracesHow =
     kind === "platform"
-      ? `Enable observability: its ${provider} calls are pulled with the key it already has — nothing to install. Choose the Observe project they land in.`
+      ? `Calls are pulled with the key it already has. Choose the Observe project.`
       : kind === "builtin"
         ? "Choose the Observe project its production calls land in."
         : scan && !scan.project
-          ? `No traceAI in its code yet — we checked ${scan.entry || "its entry point"} and what it imports. Add it, or link a project it already sends to.`
+          ? `No traceAI in its code yet. Add it, or link a project it already sends to.`
           : "Add traceAI to its code, or link the project it already sends to.";
 
   /* What blocks a run — only what applies. */
@@ -278,7 +278,7 @@ export default function AgentSetupCard({
       title: "Check what we found",
       body: foundChecked
         ? "Entry point, prompts, tools, model, how to run it and its tests — confirmed."
-        : `What we read from ${readFrom || "the code"}: confirm or correct each item, say which tools must never run for real and which test credentials to use.`,
+        : `Read from ${readFrom || "the code"}. Confirm each item, mark tools that must never run for real, add test credentials.`,
       action: reviewing
         ? null
         : {
@@ -309,7 +309,7 @@ export default function AgentSetupCard({
           ? `Every check passed — ${connectionStateOf(agent)
               .line.replace(/^Tested /, "tested ")
               .replace(/\.$/, "")}.`
-          : "Confirm how we start it and talk to it, then check it starts, replies, keeps the conversation, reaches the test world's tools and cancels.",
+          : "Confirm how we start it, then check it starts, replies, reaches the test tools and cancels.",
       action: {
         label: connectionStateOf(agent).state === "ready" ? "Review" : "Test",
         onClick: () => onTab("connections"),
@@ -336,7 +336,7 @@ export default function AgentSetupCard({
       body:
         elevenlabsVersioningOn(agent) || v.versioningOnAt
           ? "On — improvements can ship their change as a branch."
-          : `In ${PROVIDER_LABELS[v.provider] || "the platform"}: Agent → Settings → Versioning. It can't be undone. Until then, tests run but a change can't ship as a branch.`,
+          : `In ${PROVIDER_LABELS[v.provider] || "the platform"}: Agent → Settings → Versioning. Can't be undone.`,
       action:
         elevenlabsVersioningOn(agent) || v.versioningOnAt
           ? null
@@ -398,7 +398,7 @@ export default function AgentSetupCard({
     if (pr?.id) updatePr(pr.id, { status: "merged", mergedAt: at });
     onSaveValues(
       { tracingPr: { ...pr, mergedAt: at } },
-      `PR #${pr?.number} merged — tracing only, so ${agent.name} stays at the same version. Deploy it and its first trace settles ${pending?.project}.`,
+      `PR #${pr?.number} merged — tracing only, no new version. Deploy it; its first trace settles ${pending?.project}.`,
     );
   };
   const frameworkId = frameworkIdOf(agent.definition?.framework || v.framework);
@@ -700,8 +700,8 @@ export default function AgentSetupCard({
                 />
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                   {kind === "endpoint"
-                    ? `Simulations call its endpoint, so they're traced too — they're tagged as simulated, and Error Feed leaves them out of ${nameOf(chosen.id)}.`
-                    : `Simulation runs of this code aren't sent here — our sandbox runs it without these keys, and each run keeps its own traces.`}
+                    ? `Simulated runs are traced too, tagged as simulated, and kept out of ${nameOf(chosen.id)}'s Error Feed.`
+                    : `Simulation runs aren't sent here; each keeps its own traces.`}
                 </Typography>
               </Stack>
               <SendTracesSetup

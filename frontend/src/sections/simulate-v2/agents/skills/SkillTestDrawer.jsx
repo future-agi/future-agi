@@ -197,7 +197,7 @@ export default function SkillTestDrawer({
                 <Typography
                   sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}
                 >
-                  {`Change when it's used (the description) or its instructions. It's tested next on the same ${test.cases.length} cases and evaluations as ${test.id}, so the results compare.`}
+                  {`Change its description or instructions. It's tested on the same ${test.cases.length} cases as ${test.id}.`}
                 </Typography>
                 <TextField
                   multiline
@@ -285,7 +285,7 @@ export default function SkillTestDrawer({
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
               >
-                {`Only the candidate changes. ${agent.production || agent.latest} keeps its skills, and the environment's evaluations score every configuration the same way.`}
+                {`Only the candidate changes. ${agent.production || agent.latest} keeps its skills.`}
               </Typography>
             </Box>
 

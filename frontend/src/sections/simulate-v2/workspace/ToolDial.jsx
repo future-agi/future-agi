@@ -39,9 +39,22 @@ const EFFECT_WORD = {
   real: "tool that needs real execution",
 };
 
+/*
+  A handling the world can't honour for a controlled test — Live asked of a
+  write, a Live tool the Gateway blocks, a tool the world has no handler for.
+  It reads "Unsupported for this test" with the reason; the run never swaps
+  in another tier on its own (world.md, If it fails).
+*/
+const NO_HANDLER =
+  "The world has no handler for this tool, so nothing can answer it.";
+const unsupportedReasonOf = (setting) =>
+  liveAdvisoryOf(setting)?.note ||
+  (setting.handler === false ? NO_HANDLER : null);
+
 export function TierDial({ setting, onChange, onAllowLive }) {
   const [allowAnchor, setAllowAnchor] = useState(null);
   const live = liveAllowedOf(setting);
+  const unsupported = unsupportedReasonOf(setting);
   const tip = (t) => {
     if (t.unavailable && setting.tier !== t.id)
       return `${t.label} — ${t.unavailable}`;
@@ -56,18 +69,18 @@ export function TierDial({ setting, onChange, onAllowLive }) {
   if (!onChange) {
     const t = tierOf(setting.tier);
     return (
-      <Tooltip arrow title={tip(t)}>
+      <Tooltip arrow title={unsupported || tip(t)}>
         <Typography
           sx={{
             typography: "s3",
             fontWeight: 600,
-            color: "text.secondary",
+            color: unsupported ? "status.danger.fg" : "text.secondary",
             flexShrink: 0,
             minWidth: 64,
             textAlign: "right",
           }}
         >
-          {t.word}
+          {unsupported ? "Unsupported for this test" : t.word}
         </Typography>
       </Tooltip>
     );
@@ -99,7 +112,15 @@ export function TierDial({ setting, onChange, onAllowLive }) {
             gated && !unavailable && live.needsAllow && !!onAllowLive;
           const disabled = unavailable || (gated && !canAllow);
           return (
-            <Tooltip key={t.id} arrow title={tip(t)}>
+            <Tooltip
+              key={t.id}
+              arrow
+              title={
+                on && unsupported
+                  ? `Unsupported for this test — ${unsupported}`
+                  : tip(t)
+              }
+            >
               <ButtonBase
                 type="button"
                 role="radio"
@@ -127,7 +148,9 @@ export function TierDial({ setting, onChange, onAllowLive }) {
                   fontWeight: on ? 600 : 500,
                   cursor: on || disabled ? "default" : "pointer",
                   color: on
-                    ? "text.primary"
+                    ? unsupported
+                      ? "status.danger.fg"
+                      : "text.primary"
                     : disabled
                       ? "text.disabled"
                       : "text.tertiary",
@@ -139,6 +162,13 @@ export function TierDial({ setting, onChange, onAllowLive }) {
                 {gated && (
                   <Iconify
                     icon="solar:lock-keyhole-minimalistic-linear"
+                    width={12}
+                    sx={{ flexShrink: 0 }}
+                  />
+                )}
+                {on && unsupported && (
+                  <Iconify
+                    icon="solar:danger-triangle-linear"
                     width={12}
                     sx={{ flexShrink: 0 }}
                   />
@@ -195,7 +225,7 @@ export function TierDial({ setting, onChange, onAllowLive }) {
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
           >
             {setting.liveTarget
-              ? `It only reads, so a run may call the real tool instead of the world — at ${setting.liveTarget}${setting.viaGateway ? ", with the Gateway's rate limits and checks" : ""}. Write tools never run live.`
+              ? `It only reads, so a run may call the real tool — at ${setting.liveTarget}${setting.viaGateway ? ", with the Gateway's limits" : ""}. Write tools never run live.`
               : "It only reads, so a run may call the real tool. Write tools never run live."}
           </Typography>
         </Box>
@@ -605,7 +635,8 @@ SafeTargetPrompt.propTypes = {
  */
 export function LiveAdvisory({ setting, onSwitch }) {
   const advice = liveAdvisoryOf(setting);
-  if (!advice) return null;
+  const reason = unsupportedReasonOf(setting);
+  if (!reason) return null;
   return (
     <Stack
       direction="row"
@@ -627,11 +658,11 @@ export function LiveAdvisory({ setting, onSwitch }) {
         sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }}
       >
         <Box component="span" sx={{ fontWeight: 600 }}>
-          {advice.label}.
+          Unsupported for this test.
         </Box>{" "}
-        {advice.note}
+        {reason} The run won&apos;t fall back to another tier on its own.
       </Typography>
-      {onSwitch && (
+      {onSwitch && advice && (
         <Button
           variant="outlined"
           size="small"

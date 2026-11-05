@@ -794,7 +794,7 @@ export default function RepoAgentFlow({
                         on={privateVia === "token"}
                         onClick={() => setPrivateVia("token")}
                         short="A personal access token or deploy key · read only"
-                        hint="For when the app can't be installed. We read the code with it and check the branch once a day; without the app, fixes come back as a patch."
+                        hint="For when the app can't be installed. Without the app, fixes come back as a patch."
                       />
                     </Box>
                     {privateVia === "app" ? (
@@ -837,7 +837,7 @@ export default function RepoAgentFlow({
                         placeholder="vault://acme/sim/github_repo_token"
                         value={accessRef}
                         onChange={setAccessRef}
-                        helper="A fine-grained personal access token with Contents: read on this repository, or a read-only deploy key. Stored as a reference — never shown again, never sent to the improver."
+                        helper="A fine-grained token with Contents: read on this repository, or a read-only deploy key. Never shown again."
                       />
                     )}
                   </Stack>

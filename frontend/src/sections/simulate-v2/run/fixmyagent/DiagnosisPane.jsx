@@ -1603,8 +1603,8 @@ export default function DiagnosisPane({
               <>
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   {voiceFix.mode === "suggest"
-                    ? `This agent is built in ${voiceFix.where}, so Future AGI can't change it. Copy the suggested changes into it, then run again to check.`
-                    : `We can't read this agent's prompt, so this is diagnosis only — what went wrong and where. Paste its prompt on the agent page to get suggested changes too.`}
+                    ? `This agent is built in ${voiceFix.where}, so Future AGI can't change it. Copy the changes in, then run again.`
+                    : `We can't read this agent's prompt, so this is diagnosis only. Paste its prompt on the agent page for suggested changes.`}
                 </Typography>
                 {voiceFix.mode === "suggest" ? (
                   <Button

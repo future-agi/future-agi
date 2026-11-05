@@ -24,6 +24,7 @@ export const skillRuntimeOf = (agent) => {
   if (!CODE_KINDS.has(kind))
     return {
       canAdd: false,
+      short: "Needs the agent's code",
       why: "Adding a skill needs the agent's code. Connect its repository or upload it to add one.",
     };
   const fw = agent?.values?.framework;

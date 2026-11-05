@@ -208,7 +208,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
                 <Tooltip
                   key={t.n}
                   arrow
-                  title={`Run ${t.n} — ${t.score}% · ${triedLabelOf(t, trials)}${t.cheats ? " · rejected" : t.brokeBlocker ? " · rejected, a must-pass failure repeated" : ""}`}
+                  title={`Run ${t.n} — ${t.score}% · ${triedLabelOf(t, trials)}${t.cheats ? " · rejected" : t.brokeBlocker ? " · rejected, must-pass failed" : ""}`}
                 >
                   <Box
                     sx={{

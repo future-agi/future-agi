@@ -74,7 +74,7 @@ export default function NotReproducedBody({
       key: "anyway",
       title: "You want a fix anyway",
       body: inconclusive
-        ? `Search with the inconclusive ${inconclusive === 1 ? "scenario" : "scenarios"} as the target. With nothing reproduced, a gain may be noise.`
+        ? `Search with the unmeasured ${inconclusive === 1 ? "scenario" : "scenarios"} as the target. A gain may be noise.`
         : "Search with nothing reproduced. Any gain may be noise.",
       action: onContinue && { label: "Continue anyway", onClick: onContinue },
     },

@@ -93,7 +93,7 @@ export default function FixRunNote({ envId, run, issue = null }) {
       <Iconify icon="fagi:fix" width={14} sx={{ color: "text.tertiary" }} />
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
         {kind === "fix"
-          ? `Step 1 of the fix for ${issueId} — checking the issue shows up on today's agent. If it does, the fix tries changes when this run ends.${progress}`
+          ? `Step 1 of the fix for ${issueId} — checking the issue shows up on today's agent.${progress}`
           : `${issueId}'s scenarios only — no fix is tried.${progress}`}
         {fix && (
           <>

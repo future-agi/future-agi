@@ -219,7 +219,7 @@ export default function WorldFitReport({
 
       {fit.mapped.length > 0 && (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          {`Review each mapping for identity and refusal as well as fields — e.g. ${fit.mapped[0].agent} must look up the same record and refuse the same requests as ${fit.mapped[0].world}.`}
+          {`Check each mapping for identity and refusals, not just fields: ${fit.mapped[0].agent} must behave like ${fit.mapped[0].world}.`}
         </Typography>
       )}
 
@@ -231,7 +231,7 @@ export default function WorldFitReport({
 
       {fit.unreachable?.length > 0 && (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          {`No tool bound above reads the seeded ${fit.unreachable.join(", ")} — cases that need ${fit.unreachable.length === 1 ? "it" : "them"} show as not measured.`}
+          {`No tool above reads the seeded ${fit.unreachable.join(", ")}; cases that need ${fit.unreachable.length === 1 ? "it" : "them"} show as not measured.`}
         </Typography>
       )}
       {fit.liveActions?.length > 0 && (
@@ -241,7 +241,7 @@ export default function WorldFitReport({
       )}
 
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {`The world's ${(template.rules || []).length} rules and checks stay as they are. ${fit.live ? "Live: only the starting state is checked." : "Sealed: the world resets for every case."}`}
+        {`${fit.live ? "Live: only the starting state is checked." : "Sealed: the world resets for every case."}`}
       </Typography>
 
       {/* Partial: what isn't measured, and how to repair it. */}
@@ -304,7 +304,7 @@ export default function WorldFitReport({
                   inputProps={{ "aria-label": "Run the measurable cases" }}
                 />
                 <Typography sx={{ typography: "s2" }}>
-                  {`Run the ${total - fit.unmeasured.length} measurable cases — the ${fit.unmeasured.length} stay in the report as not measured`}
+                  {`Run the ${total - fit.unmeasured.length} measurable cases; ${fit.unmeasured.length} stay not measured`}
                 </Typography>
               </Stack>
             )}

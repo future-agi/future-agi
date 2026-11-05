@@ -1323,7 +1323,19 @@ export const prNoun = (pr) =>
 */
 const prHash = (s) =>
   [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
-export const prFailureOf = ({ repo, base, rechecked }) => {
+export const prFailureOf = ({ repo, base, rechecked, networkTried }) => {
+  /* Demo: ?pr=network drops the first attempt. Nothing was created, so a retry opens it once. */
+  if (
+    repo &&
+    !networkTried &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("pr") === "network"
+  )
+    return {
+      kind: "network",
+      reason: "Couldn't reach GitHub — the connection dropped.",
+      fix: "No pull request was created. Retry to open it.",
+    };
   if (rechecked || !repo) return null;
   if (prHash(`${repo}@${base}`) % 3 !== 0) return null;
   return {

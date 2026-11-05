@@ -79,9 +79,9 @@ Row.propTypes = { k: PropTypes.string, children: PropTypes.node };
    the same fix on the same rules and scenarios would likely end the same way. */
 const LAST_NEXT = {
   "no-fix":
-    "Every change it tried fixed too little or broke something. Loosen one of the agent's rules or edit the scenarios first — or hand it to your coding agent.",
+    "Every change fixed too little or broke something. Loosen a rule, edit the scenarios, or hand it to your coding agent.",
   "not-reproduced":
-    "The issue didn't show up on the agent as it was — it may already be gone. Add scenarios from newer traces first, or keep watching it.",
+    "The issue didn't show up on the agent — it may be gone. Add scenarios from newer traces, or keep watching.",
   "over-budget":
     "It stopped at its budget before trying a change. Pick a bigger budget below.",
   reopened:
@@ -431,7 +431,7 @@ export default function FixStartDialog({
               </Row>
               <Row k="Budget">
                 <Typography sx={{ typography: "s2" }}>
-                  {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min, within ${creditsLabel(spend)}`}
+                  {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
                 </Typography>
                 {liveConsent && (
                   <Typography
@@ -531,14 +531,14 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
                   >
-                    {`A fix tests its changes in an environment. Build one from ${agent.name} — a few minutes — and you come back here to start.`}
+                    {`A fix tests its changes in an environment. Build one from ${agent.name} first.`}
                   </Typography>
                 )}
                 {main && !envFitsIssue(main, issue) && (
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
                   >
-                    {`This issue happened on ${issue?.modality === "voice" ? "voice calls" : "chat"}, and ${main.name} doesn't test that channel, so it may not show up there.`}
+                    {`This issue happened on ${issue?.modality === "voice" ? "voice calls" : "chat"}, which ${main.name} doesn't test.`}
                   </Typography>
                 )}
                 {main && others.length > 0 && (
@@ -576,7 +576,7 @@ export default function FixStartDialog({
                       sx={{ typography: "s3", color: "text.secondary" }}
                     >
                       {issueNeeds.length
-                        ? `The issue goes through ${issueNeeds.join(", ")}, which ${main.name} can't answer yet — so the fix couldn't prove anything. `
+                        ? `The issue goes through ${issueNeeds.join(", ")}, which ${main.name} can't answer yet. `
                         : `${toolGap.length} of the agent's tools aren't in ${main.name} (${toolGap.slice(0, 2).join(", ")}${toolGap.length > 2 ? "…" : ""}). The issue doesn't use them, but scenarios that do won't count in the check that nothing breaks. `}
                       <Link
                         component="button"
@@ -705,7 +705,7 @@ export default function FixStartDialog({
               {liveConsent && (
                 <Row k="Live tests">
                   <Typography sx={{ typography: "s2" }}>
-                    {`Consent given ${new Date(liveConsent.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${liveConsent.replayFlag ? "tools stubbed on the replay flag" : "tools safe to call"}`}
+                    {`Consent given ${new Date(liveConsent.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`}
                   </Typography>
                 </Row>
               )}
@@ -724,7 +724,7 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                   >
-                    {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
+                    {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}
                   </Typography>
                 </Row>
               )}
@@ -802,7 +802,7 @@ export default function FixStartDialog({
               plan.ready && (
                 <Tooltip
                   arrow
-                  title={`Runs the issue's ${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} now, ${runRepeats} times each — no fix is tried. They join ${main?.name || "the environment"} only if you add them from the run.`}
+                  title={`Runs the issue's ${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} ${runRepeats} times each; no fix is tried.`}
                 >
                   <Button
                     variant="outlined"

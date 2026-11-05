@@ -132,7 +132,7 @@ export default function SkillFacts({ meta, agentTools, runtime }) {
       {missing.length > 0 && (
         <FactRow k="Before it can work">
           <Box component="span" sx={{ color: "warning.dark" }}>
-            {`Add ${missing.join(", ")} to the agent, or the skill's steps that call ${missing.length === 1 ? "it" : "them"} will fail.`}
+            {`Add ${missing.join(", ")} to the agent, or steps that call ${missing.length === 1 ? "it" : "them"} will fail.`}
           </Box>
         </FactRow>
       )}

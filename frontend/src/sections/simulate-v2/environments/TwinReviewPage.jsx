@@ -103,7 +103,7 @@ export default function TwinReviewPage() {
                 steps: [
                   {
                     kind: "note",
-                    text: `The sandbox is up. Review ${env.name} on the right — ask here about it or for more scenarios — then Run simulation when ready.`,
+                    text: `The sandbox is up. Review ${env.name} on the right, then Run simulation.`,
                   },
                 ],
               },

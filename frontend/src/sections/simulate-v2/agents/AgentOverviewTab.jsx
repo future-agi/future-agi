@@ -573,7 +573,7 @@ export function PassRateCard({
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
             {heldBack
               ? /* Runs exist here, but none on every scenario of this version. */
-                `No run yet on every scenario of environment ${scopeEnvVersion || "the current version"}. Earlier runs here ${{ older: "were on an older version", subset: "ran only some scenarios", "older-or-subset": "were on an older version or ran only some scenarios" }[heldBack]}.`
+                `No run yet on every scenario of ${scopeEnvVersion || "the current version"}. Earlier runs ${{ older: "were on an older version", subset: "ran only some scenarios", "older-or-subset": "were older or partial" }[heldBack]}.`
               : "Each version's pass rate shows here once it runs every scenario."}
           </Typography>
         </Stack>

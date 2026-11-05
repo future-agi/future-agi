@@ -197,7 +197,7 @@ export function LiveConsentCard({
         : "Removed if the agent is archived. Nothing is published or merged.";
   const notReady = copies && !copiesOk ? NOT_READY_COPIES : NOT_READY_TOOLS;
   const replayHint =
-    "Every simulated call carries metadata.fagi_replay = true. Tools that write data or call outside services return a canned answer when it's set.";
+    "Simulated calls carry metadata.fagi_replay = true; tools that write data return a canned answer.";
 
   if (bare) {
     if (given?.at) {
@@ -633,7 +633,7 @@ export function RetellPinCard({ agent, onSave }) {
             <InfoTip
               text={
                 pins.pinned
-                  ? "Each test creates a draft version and calls it with that version pinned. Your numbers keep answering on the released version."
+                  ? "Each test calls a pinned draft version. Your numbers stay on the released version."
                   : retell.note
               }
             />

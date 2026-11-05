@@ -444,5 +444,5 @@ function seedPromptExample(services) {
   if (first.id === "gmail") {
     return "Inbox with 4 unread emails: two customer refund requests, one from legal, one meeting invite. Two labels: Support, Escalated.";
   }
-  return `Describe the state ${first.name} should start with — what pages, channels, records, or messages should already be there when a run begins.`;
+  return `Describe the state ${first.name} should start with.`;
 }

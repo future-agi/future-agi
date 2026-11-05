@@ -324,10 +324,10 @@ export default function ImprovementDecision({
             >
               {chosen
                 ? unverified
-                  ? `Candidate ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
+                  ? `Candidate ${shipped.n} was chosen over the search's pick. It can't ship until verified on the full suite${projected ? " — its held-back result is projected" : ""}.`
                   : `Candidate ${shipped.n} was chosen over the search's pick and verified on the full suite.`
                 : confirm
-                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Candidate ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
+                  ? `Candidate ${shipped.n} was re-run on the held-back set — ${confirm.held ? "it held" : "it didn't hold"}.`
                   : "Finalists are scored once on held-back scenarios; of those that pass, the highest target score is kept."}
             </Typography>
           </Box>

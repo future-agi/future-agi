@@ -377,7 +377,7 @@ export function FrozenInputs({
               borderColor: "divider",
             }}
           >
-            {`Frozen ${new Date(record.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} — every verdict below is computed against these, and they don't change afterwards.`}
+            {`Frozen ${new Date(record.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} — every verdict below is computed against these.`}
           </Typography>
           {rows.map(([k, v], i) => (
             <Stack

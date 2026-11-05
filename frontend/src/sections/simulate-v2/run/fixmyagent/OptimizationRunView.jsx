@@ -96,6 +96,7 @@ import { paths } from "src/routes/paths";
 import { changeFileFor } from "../../_mock/optimize";
 import WinnerChanges from "./WinnerChanges";
 import ScenarioOutcomes from "./ScenarioOutcomes";
+import ClarifyBody from "./ClarifyBody";
 import OmegaHandoff from "../OmegaHandoff";
 import TaskLinks from "./TaskLinks";
 import CopyBriefButton from "../../components/CopyBriefButton";
@@ -200,6 +201,8 @@ export default function OptimizationRunView({
   const failedToRun = status === OPT_STATUS.FAILED || timedOut;
   /* A new goal improvement where nothing fell short of the goal. */
   const nothing = status === OPT_STATUS.NOTHING;
+  /* The goal is ambiguous or conflicts with a rule: a question, nothing to ship. */
+  const clarify = status === OPT_STATUS.CLARIFY;
   /* Today's agent couldn't be measured inside the budget: no baseline. */
   const overBudget = status === OPT_STATUS.OVER_BUDGET;
   const [editingScenarios, setEditingScenarios] = useState(false);
@@ -436,6 +439,24 @@ export default function OptimizationRunView({
               ...(notReproduced && {
                 reproduce: { ...o.reproduce, overridden: true },
               }),
+            }
+          : o,
+      ),
+    });
+
+  /* The question answered: the same improvement starts again. */
+  const answerAndRestart = (answer) =>
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id
+          ? {
+              ...o,
+              status: OPT_STATUS.RUNNING,
+              startedAt: new Date().toISOString(),
+              result: o.result || o.pendingResult,
+              pendingResult: undefined,
+              pendingEnding: undefined,
+              clarify: { ...o.clarify, answer },
             }
           : o,
       ),
@@ -799,6 +820,10 @@ export default function OptimizationRunView({
         </Box>
       )}
 
+      {clarify && (
+        <ClarifyBody outcome={outcome} onRestart={answerAndRestart} />
+      )}
+
       {overBudget && (
         <OverBudgetBody
           record={record}
@@ -1089,7 +1114,7 @@ export default function OptimizationRunView({
                   {sessionNow.key === "accepted"
                     ? shippable
                       ? `${sessionNow.attempt.label} was also accepted by Future AGI — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
-                      : `Our own search found no safe change, but ${sessionNow.attempt.label} passed every check — ${decisionOnly ? "its proof is under the runs" : "see Runs for its proof"}.`
+                      : `Our search found no safe change, but ${sessionNow.attempt.label} passed every check — ${decisionOnly ? "proof is under the runs" : "see Runs for proof"}.`
                     : sessionNow.key === "budget"
                       ? `${improverLabel} stopped without an accepted run — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
                       : decisionOnly
@@ -1464,9 +1489,9 @@ export default function OptimizationRunView({
                           : !verified
                             ? `You chose Run ${shipped?.n} over the search's pick. It runs on the full suite before it can be handed over.`
                             : ending === "budget"
-                              ? `Best of ${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs (budget reached); passed every check. Ships as a draft to approve.`
+                              ? `Best of ${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs (budget reached); passed every check.`
                               : ending === "stopped-early"
-                                ? `Best run, verified — stopped after ${result.stoppedEarly.after} of ${result.stoppedEarly.of} runs with no further gain. Ships as a draft to approve.`
+                                ? `Best run, verified — stopped after ${result.stoppedEarly.after} of ${result.stoppedEarly.of} runs with no further gain.`
                                 : "Nothing has been applied yet — it ships as a draft for someone to approve."}
                 </Typography>
                 {!verified && !lifecycle ? (
@@ -2332,6 +2357,7 @@ function ImprovementSteps({
     failed: "solar:close-circle-linear",
     suggestion: "solar:lightbulb-linear",
     nothing: "solar:check-circle-linear",
+    clarify: "solar:info-circle-linear",
   }[ending];
   /* While it runs, each step reads done, now or to do from the phase the
      trace has reached. Queued sits in Reproducing's place; a stop in

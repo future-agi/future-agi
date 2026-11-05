@@ -46,7 +46,7 @@ export default function LiveKitAgentFlow({ title, onSave, initial = null, note =
     factCheck({ id: "server", label: "LiveKit server", ok: urlOk, okText: `${url.trim()} answered.`, failText: "Not a LiveKit URL." }),
     credentialCheck({ id: "key", label: "API key", ref: keyRef.trim() ? savedKey : "", provider: "LiveKit" }),
     credentialCheck({ id: "secret", label: "API secret", ref: secretRef.trim() ? savedSecret : "", provider: "LiveKit" }),
-    factCheck({ id: "worker", label: "Agent worker", ok: !!agentName.trim() && !/\s/.test(agentName.trim()), okText: `${agentName.trim()} is registered and accepts test rooms.`, failText: "The server answered, but no worker is registered under that name. Check it matches agent_name exactly, and that the worker is running." }),
+    factCheck({ id: "worker", label: "Agent worker", ok: !!agentName.trim() && !/\s/.test(agentName.trim()), okText: `${agentName.trim()} is registered and accepts test rooms.`, failText: "No worker is registered under that name. Check agent_name and that the worker is running." }),
   ], [url, keyRef, secretRef, agentName]);
 
   const source = {
@@ -84,7 +84,7 @@ export default function LiveKitAgentFlow({ title, onSave, initial = null, note =
   return (
     <ConnectSteps
       title={title}
-      subtitle="A LiveKit agent, by its project. Add the project's URL and key, and the name the agent's worker registers with — we join its rooms as the caller."
+      subtitle="A LiveKit agent. Add the project's URL and key, and the worker's agent name."
       steps={STEPS}
       active={0}
       next={next}
@@ -126,7 +126,7 @@ export default function LiveKitAgentFlow({ title, onSave, initial = null, note =
           label="System prompt" required multiline minRows={4}
           placeholder="You are a friendly returns agent for Acme…"
           value={systemPrompt} onChange={setSystemPrompt}
-          helper="LiveKit doesn't expose your agent's prompt, so paste it here. It seeds scenarios and the judge — it never changes the live agent."
+          helper="LiveKit doesn't expose your agent's prompt, so paste it here. It never changes the live agent."
         />
 
         <Box>

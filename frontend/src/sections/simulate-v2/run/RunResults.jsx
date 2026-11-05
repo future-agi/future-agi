@@ -37,6 +37,17 @@ import { subTasksFor } from "../_mock/contract";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { getEval } from "../_mock/evals";
+import {
+  columnResultsOf,
+  denominatorLine,
+  evaluationCountsOf,
+  evaluationVersionOf,
+  evidenceOfSource,
+  runEvaluation,
+  wrapTrials,
+} from "../_mock/evalEvidence";
+import { actorsInRun, trialActorOf } from "../_mock/trialFilters";
+import { scenarioTitle } from "../_mock/scenarios";
 import { SectionCard, StatusChip, EmptyState } from "../components/primitives";
 import RunAnalytics from "./RunAnalyticsV2";
 import CallDrawer from "./CallDrawer";
@@ -64,14 +75,18 @@ import TraceTable, {
   TraceGroupByPicker,
   TraceColumnsPicker,
 } from "./TraceTable";
-import { defaultTraceColumns, deriveUseCaseLabel } from "./traceTableHelpers";
+import {
+  defaultTraceColumns,
+  deriveUseCaseLabel,
+  ruleOf,
+} from "./traceTableHelpers";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import {
   improvementOf,
   isCandidateRun,
   runIdentityOf,
 } from "../_mock/runIdentity";
-import { runPinsOf } from "../_mock/envModel";
+import { isConnectOnly, runPinsOf } from "../_mock/envModel";
 import { REPLAY_HEADER, stubbedToolNames } from "../_mock/replay";
 import FromImprovement from "./FromImprovement";
 import { improvementPath } from "../improvements/improvementNav";
@@ -107,12 +122,14 @@ import {
 import { repeatActionsOf } from "../_mock/repeatActions";
 import { RepeatGroup, RepeatRow } from "./RepeatChooser";
 import { agentVersions } from "../_mock/versions";
+import { runSkillsLineOf } from "../_mock/skillLibrary";
 import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
+import SharedState from "./SharedState";
 import { trialArtifactsOf } from "../_mock/trialEvidence";
 import {
   CheckSource,
@@ -164,6 +181,9 @@ function rescoreTaskEvals(t, rescore) {
 }
 
 export default function RunResults({ env, runId, tasks, stats, evals }) {
+  const { envId } = useParams();
+  const { envState, patch, addAgentVersion } = useEnvState(envId);
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   /* Per-eval-column actions (from the column menu): a set of columns the user
      deleted, and a re-score version bump per column that regenerates just that
      column's cell values (no full simulation). */
@@ -177,12 +197,31 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     only the scenarios that were selected at the time carry a score, and
     the rest show "—" with a tooltip explaining why.
 
-    Kept as component state — this is a scratchpad on the run view rather
-    than a permanent change to the environment. Same reason the "adhoc"
-    marker travels on the eval descriptor: it changes how the column reads
-    (only these N were scored) but nothing outside this screen.
+    Each one is saved with the run as an evaluation result (its own id, the
+    evaluator and version, the evidence it read) beside its Instant eval
+    answers, so it is still here after a reload — and read back on the
+    Evaluate tab.
   */
-  const [adhocEvals, setAdhocEvals] = useState([]);
+  const savedResults = envState.trialEvals?.[runId];
+  const adhocEvals = useMemo(
+    () =>
+      [...columnResultsOf(savedResults)].reverse().map((r) => ({
+        id: r.evaluator.id,
+        resultId: r.id,
+        name: r.evaluator.name,
+        version: r.evaluator.version,
+        icon: r.evaluator.icon,
+        ranAt: r.at,
+        /* Every row the result read, graded or not; a grading error has
+           no score to put in the table. */
+        taskIds: Object.keys(r.results),
+        errorIds: Object.keys(r.results).filter((k) => r.results[k].error),
+        results: Object.fromEntries(
+          Object.entries(r.results).filter(([, v]) => !v.error),
+        ),
+      })),
+    [savedResults],
+  );
   /* Which scenarios the user had selected when they picked "Run evals on
      these" — captured then, not read from `selected` later, so opening the
      drawer doesn't strand the answer to "on which scenarios?". */
@@ -229,8 +268,19 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           ...(existing?.includedIds || []),
           ...ae.taskIds,
         ]);
+        /* A later result for the same row replaces an earlier one: a
+           score, or a grading error, is the row's latest word. */
         const results = new Map(existing?.results || []);
-        Object.entries(ae.results).forEach(([tid, r]) => results.set(tid, r));
+        const errorIds = new Set(existing?.errorIds || []);
+        ae.taskIds.forEach((tid) => {
+          if (ae.errorIds.includes(tid)) {
+            errorIds.add(tid);
+            results.delete(tid);
+          } else {
+            errorIds.delete(tid);
+            results.set(tid, ae.results[tid]);
+          }
+        });
         const kn = getEval(ae.id);
         byAdhocId.set(ae.id, {
           id: ae.id,
@@ -238,7 +288,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           icon: ae.icon || kn?.icon || "solar:shield-check-linear",
           adhoc: true,
           adhocRanAt: ae.ranAt,
+          resultId: ae.resultId,
+          version: ae.version,
           includedIds,
+          errorIds,
           results,
         });
       });
@@ -254,11 +307,34 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       setRescoringEval(null);
     }, 900);
   };
-  const deleteEvalColumn = (e) => {
+  /* Only hides the column in this view — the evaluation, its results and
+     the environment are untouched, and it comes back on a reload. Undo puts
+     it back now. */
+  const hideEvalColumn = (e) => {
     setDeletedEvals((prev) => new Set(prev).add(e.id));
+    enqueueSnackbar(`${e.name} column hidden`, {
+      variant: "default",
+      autoHideDuration: 8000,
+      action: (key) => (
+        <Button
+          variant="outlined"
+          size="small"
+          color="inherit"
+          onClick={() => {
+            closeSnackbar(key);
+            setDeletedEvals((prev) => {
+              const next = new Set(prev);
+              next.delete(e.id);
+              return next;
+            });
+          }}
+        >
+          Undo
+        </Button>
+      ),
+    });
   };
   const navigate = useNavigate();
-  const { envId } = useParams();
   const [params, setParams] = useSearchParams();
   /* Opened from an Error Feed issue's fix (View fix, the status chip): back
      goes to that issue, named — on a reload too, while the entry lasts. */
@@ -388,7 +464,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   );
   const [addingEvals, setAddingEvals] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
-  const { envState, patch, addAgentVersion } = useEnvState(envId);
   /* Calls in a voice environment open the voice drawer, whatever agent is
      under test. */
   const isVoiceRun =
@@ -407,7 +482,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     add: addAppliedEvals,
     slotsLeft: evalSlotsLeft,
   } = useAppliedEvals(envState, patch);
-  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [editingEvalId, setEditingEvalId] = useState(null);
   const editingEval = editingEvalId
     ? appliedEvals.find((x) => x.id === editingEvalId)
@@ -691,6 +765,17 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      diagnosis and the improvement — the rest of the run's failures are left
      out, its passing scenarios stay as what must keep passing. */
   const [debugIds, setDebugIds] = useState(null);
+  /* Improve agent from a finding on Insights: the same drawer, on the
+     finding's scenarios, straight to the improvement's setup — the step
+     Debug failures → Improve reaches. Nothing is read first, so nothing
+     is charged here. */
+  const [fixSetup, setFixSetup] = useState(false);
+  const openImprove = (ids) => {
+    setDebugIds(ids);
+    setFixOptId(null);
+    setFixSetup(true);
+    setFixOpen(true);
+  };
   const isFailingTask = (t) => t.status === "failed" || t.status === "flaky";
   const selectedFailingIds = [
     ...new Set(
@@ -814,7 +899,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   const STATUS_LABELS = [
     "Passed",
     "Failed",
-    "Inconclusive",
+    "Unmeasured",
     "Test invalid",
     "Error",
   ];
@@ -848,6 +933,22 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     "Other failure",
   ];
   const CRITICAL_LABELS = ["Critical", "Not critical"];
+  /* Rule, Scenario and Actor — the same readings as the Rule broken and
+     Task groupings, and the live run's actor filter. */
+  const ruleOptions = useMemo(
+    () => [...new Set(tasks.map(ruleOf).filter(Boolean))].sort(),
+    [tasks],
+  );
+  const scenarioOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          tasks.map((t) => scenarioTitle(t.title || t.name)).filter(Boolean),
+        ),
+      ].sort(),
+    [tasks],
+  );
+  const actorOptions = useMemo(() => actorsInRun(tasks), [tasks]);
 
   const filterFields = useMemo(
     () => [
@@ -882,9 +983,43 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         type: "enum",
         choices: CRITICAL_LABELS,
       },
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      ...(ruleOptions.length
+        ? [
+            {
+              value: "rule",
+              label: "Rule",
+              type: "enum",
+              choices: ruleOptions,
+            },
+          ]
+        : []),
+      {
+        value: "scenario",
+        label: "Scenario",
+        type: "enum",
+        choices: scenarioOptions,
+      },
+      ...(actorOptions.length
+        ? [
+            {
+              value: "actor",
+              label: "Actor",
+              type: "enum",
+              choices: actorOptions,
+            },
+          ]
+        : []),
     ],
-    [goalOptions, subGoalOptions, CAUSE_LABELS.join("|")],
+    /* eslint-disable react-hooks/exhaustive-deps */
+    [
+      goalOptions,
+      subGoalOptions,
+      ruleOptions,
+      scenarioOptions,
+      actorOptions,
+      CAUSE_LABELS.join("|"),
+    ],
+    /* eslint-enable react-hooks/exhaustive-deps */
   );
 
   /* Per-task derivations, cached so the filter predicate doesn't
@@ -897,7 +1032,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           ? "Passed"
           : t.status === "unmeasured"
             ? STATUS_CHIPS.find((c) => c.id === statusBucket(t))?.label ||
-              "Inconclusive"
+              "Unmeasured"
             : t.status === "error"
               ? "Error"
               : "Failed";
@@ -917,6 +1052,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         causeLabel: causeOfTask(t),
         patternLabel,
         criticalLabel: t.critical ? "Critical" : "Not critical",
+        ruleLabel: ruleOf(t),
+        scenarioLabel: scenarioTitle(t.title || t.name),
+        actorLabel: trialActorOf(t),
       });
     });
     return out;
@@ -943,6 +1081,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       return false;
     if (filters.cause?.length && !filters.cause.includes(d.causeLabel))
       return false;
+    if (filters.rule?.length && !filters.rule.includes(d.ruleLabel))
+      return false;
+    if (filters.scenario?.length && !filters.scenario.includes(d.scenarioLabel))
+      return false;
+    if (filters.actor?.length && !filters.actor.includes(d.actorLabel))
+      return false;
     if (
       filters.subGoal?.length &&
       !filters.subGoal.some((g) => d.subGoalLabels.has(g))
@@ -950,6 +1094,46 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       return false;
     return true;
   });
+
+  /*
+    The results filters, as a named snapshot — "Failing · Goal: refund" —
+    for the Evaluate tab's "Current filter". Taken when an evaluation is
+    started, so it keeps naming the trials it read after the filters change.
+  */
+  const currentFilter = useMemo(() => {
+    const parts = [];
+    if (statusChip !== "all")
+      parts.push(STATUS_CHIPS.find((c) => c.id === statusChip)?.label);
+    Object.entries(filters).forEach(([key, values]) => {
+      if (!values?.length) return;
+      const label = filterFields.find((f) => f.value === key)?.label || key;
+      parts.push(`${label}: ${values.join(", ")}`);
+    });
+    if (bucketFilter?.label) parts.push(bucketFilter.label);
+    const named = parts.filter(Boolean);
+    return named.length
+      ? { name: named.join(" · "), taskIds: shown.map((t) => t.id) }
+      : null;
+  }, [statusChip, filters, bucketFilter, filterFields, shown]);
+  /* Other finished runs of this environment — what a result can also read. */
+  const otherRuns = useMemo(
+    () =>
+      summaries
+        .filter((r) => r.id !== runId && r.finishedAt && r.tasks?.length)
+        .map((r) => ({
+          id: r.id,
+          label: `Run ${r.ordinal}`,
+          tasks: r.tasks,
+          meta: `${new Date(r.finishedAt).toLocaleDateString(undefined, {
+            day: "numeric",
+            month: "short",
+          })} · ${r.tasks.length} trials`,
+        })),
+    // Runs are rebuilt from their ids; the ids say when they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [summaries.map((r) => r.id).join("|"), runId],
+  );
+  const selectedIds = useMemo(() => [...selected], [selected]);
 
   /* Table view of the shown rows with any re-run eval columns re-scored to
      fresh values. Only the re-run column's cells change; everything else is
@@ -964,23 +1148,28 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
        this eval run" tooltip. */
     if (adhocEvals.length) {
       const byTask = new Map(); // taskId -> extra evalResults[]
-      adhocEvals.forEach((ae) => {
+      /* The latest word on each (evaluation, row): oldest first, so a later
+         result — a score or a grading error — replaces an earlier one. */
+      const latest = new Map();
+      adhocEvals.forEach((ae) =>
+        ae.taskIds.forEach((tid) =>
+          latest.set(`${ae.id}|${tid}`, { ae, tid, cell: ae.results?.[tid] }),
+        ),
+      );
+      latest.forEach(({ ae, tid, cell }) => {
+        if (!cell) return;
         const kn = getEval(ae.id);
-        ae.taskIds.forEach((tid) => {
-          const cell = ae.results?.[tid];
-          if (!cell) return;
-          const arr = byTask.get(tid) || [];
-          arr.push({
-            id: ae.id,
-            name: ae.name || kn?.name || ae.id,
-            color: kn?.color,
-            score: cell.score,
-            passed: cell.passed,
-            reason: cell.reason,
-            threshold: cell.threshold,
-          });
-          byTask.set(tid, arr);
+        const arr = byTask.get(tid) || [];
+        arr.push({
+          id: ae.id,
+          name: ae.name || kn?.name || ae.id,
+          color: kn?.color,
+          score: cell.score,
+          passed: cell.passed,
+          reason: cell.reason,
+          threshold: cell.threshold,
         });
+        byTask.set(tid, arr);
       });
       if (byTask.size) {
         out = out.map((t) => {
@@ -1297,7 +1486,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {issueResult && (
               <Tooltip
                 arrow
-                title="The issue's scenarios ran with this run but count toward neither its pass rate nor the environment's history. Reproduced: still failing on today's agent."
+                title="The issue's scenarios ran with this run but don't count toward its pass rate. Reproduced: still failing."
               >
                 <Typography
                   noWrap
@@ -1368,7 +1557,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 return (
                   <Tooltip
                     arrow
-                    title={`The check needed ${Math.round(ci.failUnder * 100)}% of scenarios to pass (--fail-under ${ci.failUnder}); this run passed ${Math.round(rate * 100)}%.`}
+                    title={`Needed ${Math.round(ci.failUnder * 100)}% to pass (--fail-under ${ci.failUnder}); this run passed ${Math.round(rate * 100)}%.`}
                   >
                     <Box sx={{ display: "flex", flexShrink: 0 }}>
                       <StatusBadge
@@ -1415,7 +1604,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {snapshotNote && (
               <Tooltip
                 arrow
-                title="These scenarios were edited after the source run. The snapshot replayed the versions it pinned; Run as configured now plays today's text."
+                title="These scenarios were edited after the source run. The snapshot replays the pinned versions; Run as configured now plays today's text."
               >
                 <Typography
                   noWrap
@@ -1436,6 +1625,13 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 result on this page compares within. */}
             {env.name}
             {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
+            {(() => {
+              const line = runSkillsLineOf(
+                simState?.workspaceSettings,
+                envState.agent,
+              );
+              return line ? ` · ${line}` : "";
+            })()}
             {named?.improvement && (
               <>
                 {" · "}
@@ -1571,7 +1767,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     placement="bottom-start"
                     title={
                       sourceRun?.status === "interrupted"
-                        ? `Interrupted: ${sourceRun.interruption?.reason || "an infrastructure failure, not the agent."} Retry restarts only these${retriedIds.length ? " (the ones already retried are left out)" : ""}; the ones that finished aren't run or charged again.`
+                        ? `Interrupted: ${sourceRun.interruption?.reason || "an infrastructure failure, not the agent."} Retry restarts only these; finished ones aren't charged again.`
                         : "Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
                     }
                   >
@@ -1837,7 +2033,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
              Debug failures here would start a competing fix for the issue. */
           <Tooltip
             arrow
-            title={`The fix for ${fixOfRun?.trigger?.issueId || "this issue"} is working on these failures — its diagnosis, the changes it tries and the result are on its page.`}
+            title={`The fix for ${fixOfRun?.trigger?.issueId || "this issue"} is working on these failures.`}
           >
             <span>
               <Button
@@ -1914,7 +2110,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               analysisCharge
                 ? `Already analysed (${analysisCharge.credits.toLocaleString()} credits) — opening it again isn't charged.`
                 : failingScenarioIds.length
-                  ? `About ${analysisCredits.toLocaleString()} credits for ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"} — you confirm before anything is charged.`
+                  ? `About ${analysisCredits.toLocaleString()} credits for ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"}. You confirm first.`
                   : "Nothing failed — nothing to analyse or charge."
             }
           >
@@ -2006,9 +2202,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {`Step 1 of the fix for ${fixIssueId}. `}
           </Box>
           {issueResult.reproduced > 0
-            ? `The issue showed up (${issueResult.reproduced} of ${issueResult.total}), so the fix is now working on it — nothing in the agent has changed yet.`
+            ? `The issue showed up (${issueResult.reproduced} of ${issueResult.total}); the fix is now working on it.`
             : issueResult.inconclusive
-              ? `The issue didn't fail reliably (${issueResult.inconclusive} of ${issueResult.total} failed only once), so the fix stopped before trying changes — its page says what to try.`
+              ? `The issue didn't fail reliably (${issueResult.inconclusive} of ${issueResult.total} failed only once), so the fix stopped.`
               : "The issue didn't show up on today's agent, so there was nothing to fix."}
           {failingScenarioIds.length > 0 && (
             <Box component="span" sx={{ display: "block" }}>
@@ -2078,10 +2274,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 const caught = tasks.filter(
                   (t) => t.regraded?.toolCalls,
                 ).length;
-                return `Re-evaluated · previous result kept. Re-graded with tool call evaluation · ${caught} ${caught === 1 ? "scenario's" : "scenarios'"} claims had no tool call behind them and now fail${regradedChanged ? ` · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} turned from pass to fail` : ""}. The recorded calls were read again — no new run.`;
+                return `Re-evaluated · previous result kept. ${caught} ${caught === 1 ? "scenario" : "scenarios"} claimed a tool call that never happened and now fail${regradedChanged ? ` · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} turned from pass to fail` : ""}.`;
               })()
             ) : (
-              `Re-evaluated · previous result kept. Re-graded with ${latestRegrade.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test — the test's change, not the agent's.${latestRegrade.conversationOnly ? " End state wasn't saved — only the conversation checks were re-graded." : ""}`
+              `Re-evaluated · previous result kept. Re-graded with ${latestRegrade.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test.${latestRegrade.conversationOnly ? " Only conversation checks were re-graded." : ""}`
             )}
             {showEarlier && (
               <Box component="span" sx={{ display: "block", mt: 0.5 }}>
@@ -2466,7 +2662,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       {selectedFailingIds.length > 0 && (
                         <Tooltip
                           arrow
-                          title={`Diagnoses only the ${selectedFailingIds.length} failing ${selectedFailingIds.length === 1 ? "scenario" : "scenarios"} you picked, and an improvement from there aims at them alone. ${RATE_PLAN.rates.analysis_calls.credits} credits each, once.`}
+                          title={`Diagnoses only the ${selectedFailingIds.length} failing ${selectedFailingIds.length === 1 ? "scenario" : "scenarios"} you picked. ${RATE_PLAN.rates.analysis_calls.credits} credits each, once.`}
                         >
                           <Button
                             variant="contained"
@@ -2512,8 +2708,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     }}
                   >
                     {delegationEvidenceOf(envState?.agent).observed
-                      ? `From delegation events: ${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations. Each one counts for the member it ended with.`
-                      : `Declared, not observed — ${envState?.agent?.name || "this agent"} sends no delegation events, so these groups follow its declared members and aren't per-member results. Only the overall result counts.`}
+                      ? `${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations.`
+                      : `Declared, not observed — ${envState?.agent?.name || "this agent"} sends no delegation events. Only the overall result counts.`}
                   </Typography>
                 )}
                 {groupableShown.length === 0 ? (
@@ -2544,6 +2740,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     selected={selected}
                     groupBy={groupBy}
                     members={memberList}
+                    attributionObserved={
+                      delegationEvidenceOf(envState?.agent).observed
+                    }
                     columns={visibleColumns}
                     env={env}
                     onToggle={toggle}
@@ -2564,7 +2763,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       setOpenTask(t);
                     }}
                     onRerunEval={rerunEvalColumn}
-                    onDeleteEval={deleteEvalColumn}
+                    onHideEval={hideEvalColumn}
                     onEditEval={editEvalColumn}
                     rescoringEvalId={rescoringEval}
                     expandCommand={expandCommand}
@@ -2662,6 +2861,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                             (id) => !(analysisCharge?.ids || []).includes(id),
                           ).length * RATE_PLAN.rates.analysis_calls.credits,
                         open: (scenarioIds) => openDebug(scenarioIds),
+                        improve: (scenarioIds) => openImprove(scenarioIds),
                       }
                 }
                 onOpenTask={(t) => {
@@ -2675,6 +2875,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
 
             {tab === "evaluate" && (
               <EvaluateTab
+                env={env}
                 envState={envState}
                 patch={patch}
                 runId={runId}
@@ -2682,6 +2883,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   identity?.ordinal ? `Run ${identity.ordinal}` : "This run"
                 }
                 tasks={tasks}
+                others={otherRuns}
+                voice={isVoiceRun}
+                worldHeld={!isConnectOnly(env)}
+                filter={currentFilter}
+                selectedIds={selectedIds}
                 onOpenTask={(t) => {
                   if (isVoiceRun) {
                     setEvalFocus(null);
@@ -2804,40 +3010,63 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         envState={envState}
         existingIds={shownEvals.map((e) => e.id)}
         onAdd={(added) => {
-          const now = new Date().toISOString();
-          const additions = added.map((ev) => {
+          /* Read from what the run saved, like every evaluation: each one is
+             kept with this run under its own id, its version and the trials
+             it read; the ones it couldn't read, and the ones the judge
+             didn't answer, are counted apart. */
+          const runLabel = identity?.ordinal
+            ? `Run ${identity.ordinal}`
+            : "This run";
+          const ctx = {
+            runId,
+            runLabel,
+            tasks,
+            others: [],
+            voice: isVoiceRun,
+            worldHeld: !isConnectOnly(env),
+          };
+          const ids = new Set(adhocIds);
+          const trials = wrapTrials(runId, runLabel, tasks, runId).filter((t) =>
+            ids.has(t.id),
+          );
+          const records = added.map((ev) => {
             const known = getEval(ev.id);
-            const results = {};
-            adhocIds.forEach((tid) => {
-              /* Deterministic per (task, eval, run) so the numbers don't
-                 shuffle on every re-render but do refresh across separate
-                 adhoc runs of the same eval. */
-              let h = 0;
-              const key = `${tid}:${ev.id}:${now}`;
-              for (let i = 0; i < key.length; i += 1)
-                h = (h * 31 + key.charCodeAt(i)) >>> 0;
-              const score = Math.round((0.55 + (h % 45) / 100) * 100) / 100;
-              const threshold = 0.8;
-              results[tid] = {
-                score,
-                passed: score >= threshold,
-                reason:
-                  score >= threshold
-                    ? "Met the configured threshold."
-                    : `Scored ${Math.round(score * 100)} against a threshold of ${Math.round(threshold * 100)}.`,
-                threshold,
-              };
+            const mapping = Object.fromEntries(
+              Object.entries(ev.mapping || {}).map(([k, v]) => [
+                k,
+                evidenceOfSource(v) || "env",
+              ]),
+            );
+            return runEvaluation({
+              evaluation: {
+                id: ev.id,
+                name: ev.instanceName || ev.name || known?.name || ev.id,
+                version: evaluationVersionOf(ev, envState),
+                threshold: known?.threshold ?? ev.threshold ?? 0.8,
+                icon: ev.icon || known?.icon,
+              },
+              mapping: Object.keys(mapping).length
+                ? mapping
+                : { output: "transcript" },
+              trials,
+              ctx,
+              scope: "selected",
+              scopeLabel: `Selected trials (${trials.length})`,
+              source: "scenarios",
             });
-            return {
-              id: ev.id,
-              name: ev.name || known?.name || ev.id,
-              icon: ev.icon || known?.icon,
-              ranAt: now,
-              taskIds: adhocIds.slice(),
-              results,
-            };
           });
-          setAdhocEvals((prev) => [...prev, ...additions]);
+          patch({
+            trialEvals: {
+              ...(envState.trialEvals || {}),
+              [runId]: [...[...records].reverse(), ...(savedResults || [])],
+            },
+          });
+          records.forEach((r) =>
+            enqueueSnackbar(
+              `${r.evaluator.name} ${r.evaluator.version} · ${r.id} · ${denominatorLine(evaluationCountsOf(r))}`,
+              { variant: "info", autoHideDuration: 8000 },
+            ),
+          );
           setAddingAdhocEvals(false);
           setSelected(new Set());
           setAdhocIds([]);
@@ -2867,7 +3096,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             proposes the change to try.
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
-            {`About ${analysisCredits.toLocaleString()} credits · ${RATE_PLAN.rates.analysis_calls.credits} per scenario, charged once on this run's Cost tab. Opening it again is free.`}
+            {`About ${analysisCredits.toLocaleString()} credits · ${RATE_PLAN.rates.analysis_calls.credits} per scenario, charged once.`}
           </Typography>
           <Stack
             direction="row"
@@ -2949,7 +3178,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           </ListItemIcon>
           <ListItemText
             primary="Run evals on these scenarios"
-            secondary="No calls are made — pick graders and score just these rows. Adds columns to this table."
+            secondary="No calls are made — pick evaluations to score these rows. Results are saved with this run."
             primaryTypographyProps={{ typography: "s2", fontWeight: 600 }}
             secondaryTypographyProps={{
               typography: "s3",
@@ -3123,7 +3352,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   <Typography
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
-                    {`These restart from their seed under this run's saved setup. The ${(sourceRun?.scenarioIds || []).filter((id) => !ids.includes(id)).length} that finished aren't repeated or charged again.`}
+                    {`These restart from their seed. The ${(sourceRun?.scenarioIds || []).filter((id) => !ids.includes(id)).length} that finished aren't charged again.`}
                   </Typography>
                   <Box
                     component="ul"
@@ -3192,10 +3421,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       {/* ── fix my agent ── */}
       <FixMyAgentDrawer
         open={fixOpen}
+        openSetup={fixSetup}
         onClose={() => {
           setFixOpen(false);
           setFixOptId(null);
           setDebugIds(null);
+          setFixSetup(false);
           /* Drop ?improve so "From Improvement run N" opens it again, and Back
              doesn't stop on the same run with the drawer shut. */
           if (params.get("improve")) {
@@ -3349,6 +3580,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                             <DuplicateWriteNote
                               task={openTask}
                               sx={{ mx: 2, mt: 1.5 }}
+                            />
+                            <SharedState
+                              agent={envState?.agent}
+                              task={openTask}
+                              sx={{ mx: 2 }}
                             />
                             <TrialArtifacts
                               items={trialArtifactsOf({
@@ -3596,7 +3832,7 @@ function RerunModes({ run, canSnapshot, envLabel, agents = [], onRun }) {
         </ListItemIcon>
         <ListItemText
           primary="Run as configured now"
-          secondary="Picks up every edit since — the current agent, scenarios, environment and evals, and a new seed. Compares only on the pairs that still match."
+          secondary="Picks up every edit since, with a new seed. Compares only the pairs that still match."
           {...textProps}
         />
       </MenuItem>
@@ -3653,7 +3889,7 @@ const STATUS_CHIPS = [
   },
   {
     id: "inconclusive",
-    label: "Inconclusive",
+    label: "Unmeasured",
     role: null,
     about:
       "Not enough evidence to grade. Never counted as a pass; left out of pass rates.",
@@ -3662,8 +3898,7 @@ const STATUS_CHIPS = [
     id: "invalid",
     label: "Test invalid",
     role: null,
-    about:
-      "The test broke, not the agent — the simulated user left its goal, the starting state didn't load, or a judge failed. Counts neither for nor against the agent.",
+    about: "The test broke, not the agent. Counts neither for nor against it.",
   },
   {
     id: "error",

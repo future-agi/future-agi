@@ -4,6 +4,7 @@ import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PanelCard, QuietTag } from "./AgentBits";
 import { MONO } from "./agentViewUtils";
+import { workerToolsOf } from "../_mock/handoffs";
 import { clickable, focusRing } from "../components/clickable";
 
 const LABEL = {
@@ -63,6 +64,11 @@ export default function AgentMembersCard({
             them — not simulated people (those are the environment&apos;s
             Actors). Hidden grading material is kept from all of them.
           </Typography>
+          {evidence.source !== "instrumented" && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              Not a controlled run — a worker could bypass a block
+            </Typography>
+          )}
         </Stack>
       )}
       {members.map((m, i) => {
@@ -152,6 +158,41 @@ export default function AgentMembersCard({
             </Stack>
             {on && (
               <Box sx={{ px: 2, pb: 1.5, pl: 5.25 }}>
+                {evidence && (
+                  <Box sx={{ mb: 1.25 }}>
+                    <Typography sx={LABEL}>Tool boundary</Typography>
+                    {(evidence.source === "instrumented"
+                      ? [
+                          ["Allowed", workerToolsOf(m).join(", ") || "none"],
+                          [
+                            "Blocked",
+                            members
+                              .filter((x) => x.id !== m.id)
+                              .flatMap((x) => workerToolsOf(x))
+                              .filter((n) => !workerToolsOf(m).includes(n))
+                              .join(", ") || "none",
+                          ],
+                        ]
+                      : [["Declared", workerToolsOf(m).join(", ") || "none"]]
+                    ).map(([state, list]) => (
+                      <Stack key={state} direction="row" spacing={1.5}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.subtitle",
+                            width: 64,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {state}
+                        </Typography>
+                        <Typography sx={{ typography: "s3", fontFamily: MONO }}>
+                          {list}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Box>
+                )}
                 <Typography sx={LABEL}>Instructions</Typography>
                 <Typography
                   sx={{ typography: "s2", mt: 0.25, whiteSpace: "pre-line" }}

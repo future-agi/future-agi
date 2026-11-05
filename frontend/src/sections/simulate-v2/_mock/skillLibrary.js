@@ -12,6 +12,8 @@
   With nothing saved, the library starts from a small seed.
 */
 import { currentUser } from "./scenarioProvenance";
+import { agentKeyOf } from "./agentRegistry";
+import { skillRuntimeOf } from "./skills";
 
 const daysAgo = (d) => new Date(Date.now() - d * 864e5).toISOString();
 const md = (name, when, body) =>
@@ -123,6 +125,23 @@ export const usedByOf = (skillId, settings) =>
       .filter((a) => a.skillId === skillId)
       .map((a) => ({ agentKey, ref: a.ref })),
   );
+
+/** What a run's agent loaded: "Skills · refund-policy v3 · Observed" (or Unknown). */
+export const runSkillsLineOf = (settings, agent) => {
+  const list = attachmentsOf(settings)[agentKeyOf(agent)] || [];
+  const library = libraryOf(settings);
+  const named = list
+    .map((a) => {
+      const sk = library.find((x) => x.id === a.skillId);
+      return sk ? `${sk.name} v${resolveRef(sk, a.ref)}` : null;
+    })
+    .filter(Boolean);
+  if (!named.length) return null;
+  const shown = named.slice(0, 2).join(", ");
+  const more = named.length > 2 ? ` +${named.length - 2}` : "";
+  const state = skillRuntimeOf(agent).observed ? "Observed" : "Unknown";
+  return `Skills · ${shown}${more} · ${state}`;
+};
 
 const withSkill = (settings, id, fn) =>
   libraryOf(settings).map((s) => (s.id === id ? fn(s) : s));

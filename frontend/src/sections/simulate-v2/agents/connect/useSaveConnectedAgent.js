@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useConnectedAgents } from "../../store";
 import { agentIdOf, agentRecordFromSource } from "../../_mock/agentRegistry";
+import { identityAtConnect } from "../sourceIdentity";
 
 /**
  * Saves what a connect flow finished with as an agent in Agents — the New
@@ -24,7 +25,7 @@ export const useSaveConnectedAgent = () => {
       ...record,
       /* Connected in one step — the agent's page walks through the rest. */
       values: { ...(record.values || {}), setupStartedAt: now },
-      versions: [{ id: "agent-v1", label: "v1", note: source.versionNote || "First version connected.", createdAt: now, connectedAt: now, origin: "connect" }],
+      versions: [{ id: "agent-v1", label: "v1", note: source.versionNote || "First version connected.", createdAt: now, connectedAt: now, origin: "connect", ...identityAtConnect(source) }],
     });
     return { id: agentIdOf(record.key), name: record.name, exists };
   }, [agents, connectAgent]);

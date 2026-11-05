@@ -21,7 +21,7 @@ export const DOMAIN_FILTERS = [
   { id: "agent", label: "Agent failed" },
   { id: "connection", label: "Connection or runtime error" },
   { id: "world", label: "World or reset failed" },
-  { id: "grader", label: "Grader failed" },
+  { id: "grader", label: "Grading error" },
   { id: "simulator", label: "Simulated caller left its goal" },
   { id: "evidence", label: "Not enough evidence" },
 ];

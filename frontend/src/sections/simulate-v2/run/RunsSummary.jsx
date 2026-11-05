@@ -553,8 +553,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {verified.passRate >= expectation.projected
-                  ? `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run met the projection. The projection is only ever a claim until a run answers it.`
-                  : `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run fell ${expectation.projected - verified.passRate} points short. Worth reading which of them still fail before proposing the next fix.`}
+                  ? `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run met the projection.`
+                  : `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run fell ${expectation.projected - verified.passRate} points short.`}
               </Typography>
             </Box>
             <Button
@@ -780,7 +780,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               <Head>Status</Head>
               <Head
                 right
-                title="Scenarios that passed a majority of their repeats. The change beside it is on the scenarios both runs measured — grey when it's within noise."
+                title="Scenarios that passed a majority of repeats. The change beside it is grey when within noise."
               >
                 Scenario pass
               </Head>
@@ -1097,7 +1097,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.toolGap?.length > 0 && (
                             <Tooltip
                               arrow
-                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that called ${r.toolGap.length === 1 ? "it" : "them"} got no answer and are not measured.`}
+                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
                             >
                               <Box
                                 sx={{
@@ -1380,7 +1380,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.toolGap?.length > 0 && (
                             <Tooltip
                               arrow
-                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that called ${r.toolGap.length === 1 ? "it" : "them"} got no answer and are not measured.`}
+                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
                             >
                               <Box
                                 sx={{
@@ -1590,7 +1590,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             ? `${selectedManualOnly.length} run${selectedManualOnly.length === 1 ? "" : "s"} will be deleted. ${selected.length - selectedManualOnly.length} improvement run${selected.length - selectedManualOnly.length === 1 ? "" : "s"} will be left alone — they belong to their improvement and go when it does.`
             : selectedQueued && selectedFinished.length === 0
               ? "It hasn't started, so it comes off the queue and there are no results to lose."
-              : `Their results go with them, and anything measured against them — a baseline, a winner — is cleared. The scenarios and the environment are untouched.${selectedQueued ? " The queued run comes off the queue before it starts." : ""}`
+              : `Their results go with them, and any baseline or winner measured against them is cleared.${selectedQueued ? " The queued run comes off the queue." : ""}`
         }
         action={
           <Button

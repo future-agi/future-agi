@@ -734,7 +734,7 @@ export default function ReviewChangesDrawer({
                 title={
                   canDiscard
                     ? ""
-                    : `Environment ${label} didn't keep its settings, so these can't be discarded in one step. Reject them one by one, or save them.`
+                    : `Environment ${label} didn't keep its settings. Reject them one by one, or save them.`
                 }
               >
                 <span>

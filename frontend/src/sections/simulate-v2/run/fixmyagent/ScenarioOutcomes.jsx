@@ -9,8 +9,8 @@ const OUTCOME = {
   broke: "Broke",
   "still-failing": "Still failing",
   flaky: "Flaky",
-  inconclusive: "Inconclusive",
-  "off-script": "Couldn't measure",
+  inconclusive: "Unmeasured",
+  "off-script": "Unmeasured",
   same: "Unchanged",
 };
 const OUTCOME_ORDER = [
@@ -24,6 +24,29 @@ const OUTCOME_ORDER = [
 ];
 /* The chip says why, since "not counted" alone doesn't. */
 const CHIP = { "off-script": "Caller went off script" };
+/* The plan's three lists — a case is in only one. */
+/* The plan's three lists — a case is in only one. Each is a heading, so a
+   row carries one result, not a second label beside it. */
+const SETS = [
+  { id: "Target", title: "Targets", note: "the failing cases it was tuned on" },
+  {
+    id: "Held back",
+    title: "Held back",
+    note: "never seen — they check the fix holds",
+  },
+  {
+    id: "Protected",
+    title: "Protected",
+    note: "passing cases it must not break",
+  },
+];
+
+const chipSx = (on) => ({
+  border: "1px solid",
+  color: "text.primary",
+  borderColor: on ? "text.primary" : "divider",
+  bgcolor: on ? "action.selected" : "transparent",
+});
 
 /*
   What the winner did to each scenario — fixed, broke, still failing,
@@ -45,10 +68,23 @@ export default function ScenarioOutcomes({ result, winner }) {
       outcome: winner?.perScenario?.[t.id] || "same",
     })),
   ];
-  const counts = Object.fromEntries(
-    OUTCOME_ORDER.map((k) => [k, rows.filter((x) => x.outcome === k).length]),
+  const taken = new Set(rows.map((x) => x.id));
+  rows.push(
+    ...(result.mustPassTasks || [])
+      .filter((t) => !taken.has(t.id))
+      .map((t) => ({
+        ...t,
+        split: "Protected",
+        outcome: winner?.perScenario?.[t.id] || "same",
+      })),
   );
-  const shown = rows
+  const inSet = rows;
+  /* must-pass only says something when some rows aren't. */
+  const markCritical = rows.some((x) => !x.critical);
+  const counts = Object.fromEntries(
+    OUTCOME_ORDER.map((k) => [k, inSet.filter((x) => x.outcome === k).length]),
+  );
+  const shown = inSet
     .filter((x) => !only || x.outcome === only)
     .sort(
       (a, b) =>
@@ -69,23 +105,16 @@ export default function ScenarioOutcomes({ result, winner }) {
         flexWrap="wrap"
         rowGap={0.75}
       >
-        {OUTCOME_ORDER.filter((k) => k !== "off-script" || counts[k]).map(
-          (k) => (
-            <Chip
-              key={k}
-              size="small"
-              clickable
-              onClick={() => setOnly(only === k ? null : k)}
-              label={`${CHIP[k] || OUTCOME[k]} ${counts[k]}`}
-              sx={{
-                border: "1px solid",
-                color: "text.primary",
-                borderColor: only === k ? "text.primary" : "divider",
-                bgcolor: only === k ? "action.selected" : "transparent",
-              }}
-            />
-          ),
-        )}
+        {OUTCOME_ORDER.filter((k) => counts[k] || only === k).map((k) => (
+          <Chip
+            key={k}
+            size="small"
+            clickable
+            onClick={() => setOnly(only === k ? null : k)}
+            label={`${k === "same" && inSet.filter((x) => x.outcome === "same").every((x) => x.split === "Protected") ? "Still passing" : CHIP[k] || OUTCOME[k]} ${counts[k]}`}
+            sx={chipSx(only === k)}
+          />
+        ))}
         <Box flex={1} />
         <Button
           variant="outlined"
@@ -106,94 +135,106 @@ export default function ScenarioOutcomes({ result, winner }) {
           divider={
             <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
           }
-          sx={{ maxHeight: 420, overflowY: "auto" }}
         >
-          {shown.map((x) => (
-            <Stack
-              key={`${x.split}-${x.id}`}
-              direction="row"
-              alignItems="center"
-              spacing={1.5}
-              sx={{ px: 2, py: 0.875 }}
-            >
-              <Typography
-                noWrap
-                sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+          {SETS.map((g) => {
+            const list = shown.filter((x) => x.split === g.id);
+            if (!list.length) return null;
+            return [
+              <Stack
+                key={`head-${g.id}`}
+                direction="row"
+                alignItems="baseline"
+                spacing={1}
+                sx={{ px: 2, pt: 1.5, pb: 0.75, bgcolor: "background.neutral" }}
               >
-                {scenarioTitle(x.title)}
-              </Typography>
-              {x.fromIssue && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                  }}
-                >
-                  {`${x.fromIssue}${x.before === "flaky" ? " · inconclusive" : x.before === "passed" ? " · didn't reproduce" : ""}`}
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {`${g.title} · ${list.length}`}
                 </Typography>
-              )}
-              {x.outcome === "off-script" && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                  }}
-                >
-                  caller went off script
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {g.note}
                 </Typography>
-              )}
-              {x.fresh && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                  }}
+              </Stack>,
+              ...list.map((x) => (
+                <Stack
+                  key={`${x.split}-${x.id}`}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1.5}
+                  sx={{ px: 2, py: 0.875 }}
                 >
-                  fresh variation
-                </Typography>
-              )}
-              {x.critical && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                  }}
-                >
-                  must-pass
-                </Typography>
-              )}
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  width: 70,
-                  flexShrink: 0,
-                }}
-              >
-                {x.split}
-              </Typography>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  fontWeight: 600,
-                  width: 84,
-                  flexShrink: 0,
-                  color:
-                    x.outcome === "fixed"
-                      ? "status.success.fg"
-                      : x.outcome === "broke"
-                        ? "status.danger.fg"
-                        : "text.secondary",
-                }}
-              >
-                {OUTCOME[x.outcome]}
-              </Typography>
-            </Stack>
-          ))}
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+                  >
+                    {scenarioTitle(x.title)}
+                  </Typography>
+                  {x.fromIssue && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {`${x.fromIssue}${x.before === "flaky" ? " · inconclusive" : x.before === "passed" ? " · didn't reproduce" : ""}`}
+                    </Typography>
+                  )}
+                  {x.outcome === "off-script" && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        flexShrink: 0,
+                      }}
+                    >
+                      caller went off script
+                    </Typography>
+                  )}
+                  {x.fresh &&
+                    !/^Fresh variation/.test(scenarioTitle(x.title)) && (
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          flexShrink: 0,
+                        }}
+                      >
+                        fresh variation
+                      </Typography>
+                    )}
+                  {x.critical && markCritical && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        flexShrink: 0,
+                      }}
+                    >
+                      must-pass
+                    </Typography>
+                  )}
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      width: 84,
+                      flexShrink: 0,
+                      color:
+                        x.outcome === "fixed"
+                          ? "status.success.fg"
+                          : x.outcome === "broke"
+                            ? "status.danger.fg"
+                            : "text.secondary",
+                    }}
+                  >
+                    {x.split === "Protected" && x.outcome === "same"
+                      ? "Still passing"
+                      : OUTCOME[x.outcome]}
+                  </Typography>
+                </Stack>
+              )),
+            ];
+          })}
         </Stack>
       )}
     </Box>

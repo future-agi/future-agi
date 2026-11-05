@@ -49,6 +49,7 @@ import {
   GROUPINGS,
   humanize,
   deriveUseCaseLabel,
+  ruleOf,
 } from "./traceTableHelpers";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
@@ -76,7 +77,7 @@ import { memberPathOf } from "../_mock/memberAttribution";
 /* An unmeasured row's outcome — Inconclusive, Test invalid or Error. */
 const notCountedLabel = (t) =>
   OUTCOMES[t?.verdictCause?.outcome || outcomeOfCause(causeOf(t))]?.label ||
-  "Inconclusive";
+  "Unmeasured";
 
 /*
   Only truly bad values get called out — a single-tier red signal reads
@@ -378,12 +379,14 @@ TraceGroupByPicker.propTypes = {
   failure pattern, so they drop out of the grouped list entirely.
 */
 const NO_MEMBERS = [];
-const groupOfTask = (t, mode, env, members = NO_MEMBERS) => {
+const groupOfTask = (t, mode, env, members = NO_MEMBERS, observed = true) => {
   if (mode === "member") {
     /* The member the conversation ended with — who held it when it passed
-       or failed. */
+       or failed. Without observed attribution the name is only declared. */
     const path = memberPathOf(t, members);
-    return path[path.length - 1]?.name || "Unknown member";
+    const name = path[path.length - 1]?.name;
+    if (!name) return "Unknown member";
+    return observed ? name : `${name} · Declared`;
   }
   if (mode === "useCase") {
     return deriveUseCaseLabel(t);
@@ -439,10 +442,7 @@ const groupOfTask = (t, mode, env, members = NO_MEMBERS) => {
        "Refuse a request that would break: <the rule>" — everything after the
        colon is the rule text. Tasks that aren't rule-checks (a happy-path
        call, an edge-case trap) have no rule to break here and drop out. */
-    const title = t.title || "";
-    const m = title.match(/^Refuse a request that would break:\s*(.+)$/);
-    if (m) return m[1].trim();
-    return null;
+    return ruleOf(t);
   }
   if (mode === "accent") {
     /* Accent lives inside the persona's voice string ("US male",
@@ -505,7 +505,7 @@ const GROUP_SORT_ORDER = {
     "Error",
     "Other failure",
   ],
-  status: ["Failed", "Inconclusive", "Test invalid", "Error", "Passed"],
+  status: ["Failed", "Unmeasured", "Test invalid", "Error", "Passed"],
   cause: [
     VERDICT_CAUSES["fail-required"].label,
     VERDICT_CAUSES["fail-agent"].label,
@@ -534,7 +534,7 @@ export default function TraceTable({
   columns,
   env,
   onRerunEval,
-  onDeleteEval,
+  onHideEval,
   onEditEval,
   rescoringEvalId,
   /* The toolbar's Expand all switch: `expandCommand` ({ open, at }) opens or
@@ -549,6 +549,8 @@ export default function TraceTable({
   gradingBasis = null,
   /* The agent's members, entry first (membersOf) — for Group by Member. */
   members = NO_MEMBERS,
+  /* Whether runs observe which member held each call (MA-2); else declared. */
+  attributionObserved = true,
 }) {
   /* Groups start collapsed. Lazy-primed with the group list once it resolves. */
   const [collapsed, setCollapsed] = useState(null);
@@ -569,7 +571,7 @@ export default function TraceTable({
   const groups = useMemo(() => {
     const byKey = new Map();
     tasks.forEach((t) => {
-      const label = groupOfTask(t, groupBy, env, members);
+      const label = groupOfTask(t, groupBy, env, members, attributionObserved);
       /* null = this task has no bucket in the current mode (e.g. a
          passed task under "Failure pattern"). Drop it entirely so the
          view stays a clean partition of what the mode is about. */
@@ -678,7 +680,7 @@ export default function TraceTable({
       );
     }
     return arr;
-  }, [tasks, groupBy, env, members]);
+  }, [tasks, groupBy, env, members, attributionObserved]);
 
   /* Sticky at the top of the scroll area, without MUI's `stickyHeader`
      prop — that prop switches `borderCollapse` to `separate`, which makes
@@ -988,7 +990,7 @@ export default function TraceTable({
               {t.critical && (
                 <Tooltip
                   arrow
-                  title={`Critical scenario — ${(t.blockerReason || "marked critical: a failure here is worth reading first.").replace(/^./, (c) => c.toLowerCase())}`}
+                  title={`Critical scenario — ${(t.blockerReason || "marked critical: read a failure here first.").replace(/^./, (c) => c.toLowerCase())}`}
                 >
                   <Box sx={{ display: "flex", mt: "2px" }}>
                     <Iconify
@@ -1109,6 +1111,25 @@ export default function TraceTable({
               </Tooltip>
             ) : r ? (
               <Score result={r} />
+            ) : e.adhoc && e.errorIds?.has(t.id) ? (
+              /* The judge didn't answer: not a score, not zero, not a pass
+                 or a fail. */
+              <Tooltip
+                arrow
+                title={`Grading error · judge didn't answer${e.resultId ? ` · ${e.resultId}` : ""}. Not scored; left out of this column's counts.`}
+              >
+                <Box
+                  sx={{
+                    p: 2,
+                    typography: "s2",
+                    color: "text.tertiary",
+                    cursor: "help",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Grading error
+                </Box>
+              </Tooltip>
             ) : /* Missing on an adhoc column means this row wasn't in that
                  eval's re-run. Say so on hover; on the original run's
                  columns "—" is just "no result" and doesn't need a note. */
@@ -1320,7 +1341,9 @@ export default function TraceTable({
               {shownEvals.map((e) => (
                 <TableCell key={e.id} sx={{ ...headCell, width: 150 }}>
                   <EvalHeadCell
-                    name={e.name}
+                    name={
+                      e.adhoc && e.version ? `${e.name} ${e.version}` : e.name
+                    }
                     /* A column scoped to only the N scenarios the user
                        picked. Marked in the header so a row of "—"s reads
                        as "not part of this eval run" rather than "this
@@ -1329,7 +1352,7 @@ export default function TraceTable({
                     rescoring={rescoringEvalId === e.id}
                     onEdit={onEditEval ? () => onEditEval(e) : null}
                     onRerun={onRerunEval ? () => onRerunEval(e) : null}
-                    onDelete={onDeleteEval ? () => onDeleteEval(e) : null}
+                    onHide={onHideEval ? () => onHideEval(e) : null}
                   />
                 </TableCell>
               ))}
@@ -1395,10 +1418,11 @@ TraceTable.propTypes = {
   onOpenEval: PropTypes.func,
   groupBy: PropTypes.string,
   members: PropTypes.array,
+  attributionObserved: PropTypes.bool,
   columns: PropTypes.instanceOf(Set),
   env: PropTypes.object,
   onRerunEval: PropTypes.func,
-  onDeleteEval: PropTypes.func,
+  onHideEval: PropTypes.func,
   onEditEval: PropTypes.func,
   rescoringEvalId: PropTypes.string,
 };
@@ -1848,9 +1872,9 @@ GroupHeaderRow.propTypes = {
    column only: re-run just this eval (re-score its cells, no full simulation)
    or delete the whole column. The trigger appears on hover so the header stays
    clean. */
-function EvalHeadCell({ name, partial, onEdit, onRerun, onDelete, rescoring }) {
+function EvalHeadCell({ name, partial, onEdit, onRerun, onHide, rescoring }) {
   const [anchor, setAnchor] = useState(null);
-  const hasActions = !!(onEdit || onRerun || onDelete);
+  const hasActions = !!(onEdit || onRerun || onHide);
   return (
     <Stack
       direction="row"
@@ -1976,25 +2000,21 @@ function EvalHeadCell({ name, partial, onEdit, onRerun, onDelete, rescoring }) {
                 </Box>
               </MenuItem>
             )}
-            {onDelete && (
+            {onHide && (
               <MenuItem
                 onClick={() => {
                   setAnchor(null);
-                  onDelete();
+                  onHide();
                 }}
-                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-                sx={{ typography: "s2", gap: 1, color: "status.danger.fg" }}
+                sx={{ typography: "s2", gap: 1 }}
               >
                 <Iconify
-                  icon="solar:trash-bin-trash-linear"
+                  icon="solar:eye-closed-linear"
                   width={16}
-                  sx={{ flexShrink: 0, color: "status.danger.fg" }}
+                  sx={{ flexShrink: 0 }}
                 />
-                <Box
-                  component="span"
-                  sx={{ typography: "s2", color: "status.danger.fg" }}
-                >
-                  Delete column
+                <Box component="span" sx={{ typography: "s2" }}>
+                  Hide column
                 </Box>
               </MenuItem>
             )}
@@ -2009,7 +2029,7 @@ EvalHeadCell.propTypes = {
   partial: PropTypes.number,
   onEdit: PropTypes.func,
   onRerun: PropTypes.func,
-  onDelete: PropTypes.func,
+  onHide: PropTypes.func,
   rescoring: PropTypes.bool,
 };
 
@@ -2143,7 +2163,12 @@ function VerdictLabel({ task, outcome }) {
     tip = `${v.reason} Left out of every count. Click to review it.`;
   } else if (v?.cause && v.cause !== "pass") {
     const inc = v.cause.startsWith("inc-");
-    label = `${inc ? OUTCOMES[v.outcome || outcomeOfCause(v.cause)].label : outcome.label} · ${causeShort(v.cause)}`;
+    /* An unmeasured or test-invalid cause carries its own full name
+       ("Unmeasured · evidence", "Grading error · judge"). */
+    label =
+      inc && VERDICT_CAUSES[v.cause]?.label
+        ? VERDICT_CAUSES[v.cause].label
+        : `${inc ? OUTCOMES[v.outcome || outcomeOfCause(v.cause)].label : outcome.label} · ${causeShort(v.cause)}`;
     tip =
       v.cause === "fail-required"
         ? `${verdictLineOf(v)}. ${VERDICT_CAUSES[v.cause].note}`
@@ -2192,7 +2217,7 @@ function VerdictLabel({ task, outcome }) {
           return (
             <Tooltip
               arrow
-              title={`First try ended ${r.kind === "error" ? "error" : "test invalid"} — ${String(r.first || "").replace(/\.$/, "")}. Retried once${r.recovered ? "; this is the second try." : " and it happened again."}`}
+              title={`First try ended ${r.kind === "error" ? "error" : "test invalid"}: ${String(r.first || "").replace(/\.$/, "")}. ${r.recovered ? "This is the second try." : "Retried once; it happened again."}`}
             >
               <Typography
                 noWrap
@@ -2254,7 +2279,7 @@ function runOutcome(status, task) {
     /* Inconclusive, test invalid or error — none counts for or against the agent. */
     default:
       return {
-        label: task ? notCountedLabel(task) : "Inconclusive",
+        label: task ? notCountedLabel(task) : "Unmeasured",
         color: "text.tertiary",
       };
   }
@@ -2470,7 +2495,7 @@ function SubGoalsSummary({ task, env, basis = null }) {
             />
           )}
           {r.status === "inconclusive" && (
-            <Tooltip arrow title="Inconclusive — the grader couldn't tell">
+            <Tooltip arrow title="Unmeasured — the grader couldn't tell">
               <Iconify
                 icon="solar:question-circle-linear"
                 width={12}

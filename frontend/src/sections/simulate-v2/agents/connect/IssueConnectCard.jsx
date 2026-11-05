@@ -52,7 +52,7 @@ export default function IssueConnectCard({
           [traced.agentName ? "ID" : "Assistant", traced.agentId, true],
           ["Channel", traced.agentType === "chat" ? "Chat" : "Voice"],
         ];
-  const why = `Its ${traced.via === "traceai" ? "traces" : "call logs"} reach ${project.name}, but no agent in Agents is linked to it — fixing it needs the agent itself to run simulations and ship a draft. Connect it once: ${project.name} comes with it, and Fix works for every issue from it.`;
+  const why = `Its ${traced.via === "traceai" ? "traces" : "call logs"} reach ${project.name}, but no agent is linked to it. Connect it once to fix its issues.`;
 
   return (
     <Box
@@ -204,7 +204,7 @@ export default function IssueConnectCard({
         >
           {traced.via === "traceai"
             ? `We read the code, find the ${fw?.label || ""} agent and confirm it with you. Fixes ship as draft pull requests.`
-            : `Uses the key your ${traced.integration} already holds — by reference, never copied. Fixes ship as a ${traced.provider === "retell" ? "Retell draft version" : `${providerLabel} copy`}.`}
+            : `Uses the key your ${traced.integration} already holds. Fixes ship as a ${traced.provider === "retell" ? "Retell draft version" : `${providerLabel} copy`}.`}
         </Typography>
       </Stack>
       <Stack

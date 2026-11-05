@@ -620,7 +620,7 @@ RuleQuestion.propTypes = {
                   the fix is taking it back out of the agent
 */
 const NEW_RULE_BODY = (n, next, E) => ({
-  policy: `It's how the agent should behave now. The rule is added to this environment's contract as environment ${next}, so scenarios written from here on test it — add some from Scenarios.`,
+  policy: `The rule is added to this environment's contract as environment ${next}. Add scenarios that test it from Scenarios.`,
   "not-intended": `${n.agentVersion} wasn't meant to do this. The environment stays ${E}. Nothing tests this rule yet, so no run will catch it — take it out of the agent's prompt and save a new version.`,
 });
 
@@ -746,7 +746,7 @@ function NewRuleQuestion({ nudge, env, envState, patch }) {
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {nudge.answer === "policy"
             ? `Policy change — ${nudge.addedAs || "the rule was added to the contract"}. Scenarios written from here on test it.`
-            : `Not intended — the environment didn't change. Nothing tests this rule, so take it out of agent ${nudge.agentVersion}'s prompt.`}
+            : `Not intended — the environment didn't change. Take this rule out of agent ${nudge.agentVersion}'s prompt.`}
         </Typography>
       )}
     </Stack>
@@ -1114,7 +1114,7 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
         ],
         [
           "Price",
-          `Free. A first run in the new environment is offered after (${runPrice({ surface: nudge.channel?.to }, nudge.scenarioIds.length, 1).line} at 1 repeat)`,
+          `Free. A first run is offered after (${runPrice({ surface: nudge.channel?.to }, nudge.scenarioIds.length, 1).line} at 1 repeat)`,
         ],
         ["This environment", `stays ${E}`],
       ],
@@ -1250,13 +1250,13 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {nudge.status === "dismissed" &&
               (nudge.kind === "remove"
-                ? `The ${plural(rows.length, "scenario")} ${rows.length === 1 ? "is" : "are"} stale without ${nudge.capability} — they run but don't count.`
+                ? `The ${plural(rows.length, "scenario")} ${rows.length === 1 ? "is" : "are"} stale without ${nudge.capability}; they run but don't count.`
                 : "Dismissed earlier — the environment stays as it is.")}
             {nudge.status === "approved" &&
               nudge.kind === "add" &&
               (nudge.rebuilt
-                ? `Rebuilt · environment ${envLabelOf(env, envState, nudge.envVersion)} answers ${nudge.capability}${(nudge.addedIds || []).length ? ` · ${plural(nudge.addedIds.length, "new scenario")} added` : " · its scenarios are the scenario step"}.`
-                : `Approved · environment ${envLabelOf(env, envState, nudge.envVersion)} has the handler · ${plural((nudge.addedIds || []).length, "new scenario")} added, in the New band until backfilled.`)}
+                ? `Rebuilt · environment ${envLabelOf(env, envState, nudge.envVersion)} answers ${nudge.capability}${(nudge.addedIds || []).length ? ` · ${plural(nudge.addedIds.length, "new scenario")} added` : " · see the scenario step"}.`
+                : `Approved · environment ${envLabelOf(env, envState, nudge.envVersion)} has the handler · ${plural((nudge.addedIds || []).length, "new scenario")} added.`)}
             {nudge.status === "approved" &&
               nudge.kind === "remove" &&
               `Stale without ${nudge.capability} — they run but don't count until updated or archived.`}

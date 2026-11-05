@@ -90,7 +90,7 @@ export default function GithubRepoPicker({
                 component="div"
                 sx={{ typography: "s3", color: "text.subtitle" }}
               >
-                <HintLine hint="We scan the repositories you choose and find the agents in them. We ask for write access at your first draft pull request.">
+                <HintLine hint="We scan the repositories you choose for agents. Write access is asked at your first draft pull request.">
                   Read only — we find the agents in your repos.
                 </HintLine>
               </Typography>

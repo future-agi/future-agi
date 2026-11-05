@@ -53,7 +53,7 @@ export default function TradeoffView({ record, chosen, onChoose }) {
       <Typography
         sx={{ px: 2, pt: 1.5, typography: "s2", color: "text.secondary" }}
       >
-        {`Every run by score and cost; the line joins the best trade-offs.${costMeasured ? " Past the dashed line breaks the cost limit." : " This agent reports no cost."}`}
+        {`Every run by score and cost.${costMeasured ? " Past the dashed line breaks the cost limit." : " This agent reports no cost."}`}
       </Typography>
       <Box sx={{ px: 2, pt: 1 }}>
         <svg

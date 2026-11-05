@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -158,7 +158,7 @@ export default function OpenPrDialog({
               `**${validation.label}** — ${validation.note}.`,
               ...(limited
                 ? [
-                    "Not Verified: too few untouched held-back scenarios, or no re-run after the pick, to call it proven. Review it as a suggestion.",
+                    "Not Verified: too few untouched held-back scenarios, or no re-run after the pick. Review it as a suggestion.",
                   ]
                 : []),
               "",
@@ -222,10 +222,18 @@ export default function OpenPrDialog({
   const [failure, setFailure] = useState(null);
   const [rechecked, setRechecked] = useState(false);
   const [rechecking, setRechecking] = useState(false);
+  /* A dropped connection is retried as is; the pull request is opened once. */
+  const networkTried = useRef(false);
   const send = () => {
     const agentKey = theAgent?.key || envAgentKey(theAgent, env?.id);
-    const failureNow = prFailureOf({ repo, base, rechecked });
+    const failureNow = prFailureOf({
+      repo,
+      base,
+      rechecked,
+      networkTried: networkTried.current,
+    });
     if (failureNow) {
+      if (failureNow.kind === "network") networkTried.current = true;
       setFailure(failureNow);
       setStep("failed");
       return;
@@ -457,8 +465,8 @@ export default function OpenPrDialog({
               [
                 "solar:users-group-rounded-linear",
                 other
-                  ? `The token's scopes belong to the ${hostLabel} connection, so this covers every repository it sees in ${account || "this account"}.`
-                  : `GitHub permissions belong to the installation, so this covers every repository the app sees on ${account || "this account"}.`,
+                  ? `Covers every repository the ${hostLabel} token sees in ${account || "this account"}.`
+                  : `Covers every repository the app sees on ${account || "this account"}.`,
               ],
               [
                 "solar:copy-linear",
@@ -501,7 +509,7 @@ export default function OpenPrDialog({
                 sx={{ color: "text.secondary", flexShrink: 0 }}
               />
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {`Patch copied · ${files.length} file${files.length === 1 ? "" : "s"}. Nothing was written to ${repo}; access stays read only.`}
+                {`Patch copied · ${files.length} file${files.length === 1 ? "" : "s"}. Nothing was written to ${repo}.`}
               </Typography>
             </Stack>
           )}
@@ -780,16 +788,18 @@ export default function OpenPrDialog({
           >
             Close
           </Button>
-          {rechecked ? (
+          {rechecked || failure?.kind === "network" ? (
             <Button
               size="small"
               variant="contained"
               color="primary"
               onClick={send}
             >
-              {limited
-                ? `Retry · open draft ${review.long}`
-                : `Retry · open ${review.long}`}
+              {failure?.kind === "network"
+                ? "Retry"
+                : limited
+                  ? `Retry · open draft ${review.long}`
+                  : `Retry · open ${review.long}`}
             </Button>
           ) : (
             <Button

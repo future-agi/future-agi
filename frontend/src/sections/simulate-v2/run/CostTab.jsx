@@ -252,6 +252,10 @@ export default function CostTab({ run, env, envState, tasks, onOpenTask }) {
     ? RATE_PLAN.rates.voice_sim_minutes
     : RATE_PLAN.rates.text_sim_tokens;
   const external = voice ? platformUsdOf(envState, qty) : null;
+  /* Provisional until the provider reports; final a day after the run ended. */
+  const endedMs = Date.parse(record?.finishedAt || "");
+  const finalized =
+    !external || (endedMs && Date.now() - endedMs > 24 * 60 * 60 * 1000);
   const callWord = voice ? "call" : "conversation";
   const plural = (n, w) => `${fmt(n)} ${w}${n === 1 ? "" : "s"}`;
 
@@ -488,6 +492,11 @@ export default function CostTab({ run, env, envState, tasks, onOpenTask }) {
             {`${against} · ${plural(callsCharged, `${callWord}`)} charged${free ? ` · ${fmt(used)} used, ${fmt(free.credits)} from your free tier` : ""}`}
           </Typography>
         </Stack>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
+          {finalized
+            ? `Final · ${fmt(billed)} credits`
+            : `Provisional · ${fmt(billed)} credits — final when the provider reports`}
+        </Typography>
         {est && <RangeBar low={est.low} high={est.high} actual={actual} />}
         {/* Why it differs, and what's outside the total — one line. */}
         <Typography

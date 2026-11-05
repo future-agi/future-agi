@@ -198,7 +198,7 @@ export default function AgentCallSettings({
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             Each channel gets its own
             <InfoTip
-              text={`A ${ch === "chat" ? "chat window" : "phone line"} environment — simulated tools and data, scenarios and evaluations for the same agent.`}
+              text={`A ${ch === "chat" ? "chat window" : "phone line"} environment for the same agent.`}
             />
           </Typography>
         </Box>

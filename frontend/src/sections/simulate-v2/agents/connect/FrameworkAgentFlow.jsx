@@ -196,7 +196,7 @@ export default function FrameworkAgentFlow({
   return (
     <ConnectSteps
       title={title}
-      subtitle="Wrap your graph, pipeline, agents or crew with our adapter. It serves the agent for simulations; you confirm what it found."
+      subtitle="Wrap your graph, pipeline or crew with our adapter, then confirm what it found."
       steps={STEPS}
       active={0}
       next={next}

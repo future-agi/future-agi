@@ -54,6 +54,7 @@ const VERSION_ACTION = {
 };
 import { versionChecksLine, versionChecksOf } from "../_mock/versionChecks";
 import ClosableDialog from "../components/ClosableDialog";
+import { sourceIdentityOf } from "./sourceIdentity";
 
 const TONE = {
   added: "status.success.fg",
@@ -145,7 +146,7 @@ export default function AgentVersionsTab({
     setRollbackTo(null);
     enqueueSnackbar(
       git
-        ? `Revert of ${shortOf(label)} opened on ${versionNameOf({ ...agent, versions: [...agent.versions, v] }, v.label).ref?.branch} — a draft. Production stays on ${nameOf(agent.production)} until it's merged.`
+        ? `Revert of ${shortOf(label)} opened on ${versionNameOf({ ...agent, versions: [...agent.versions, v] }, v.label).ref?.branch} as a draft. Production stays on ${nameOf(agent.production)} until merged.`
         : `Saved as ${v.label}, rolled back to ${label} — a draft. Production stays on ${agent.production} until it's released.`,
       { variant: "success" },
     );
@@ -306,6 +307,23 @@ export default function AgentVersionsTab({
                       >
                         {nameOf(v.label)}
                       </Typography>
+                      {source.kind === "upload" && (
+                        <Tooltip
+                          arrow
+                          title={sourceIdentityOf(agent, v)?.full || ""}
+                        >
+                          <Typography
+                            component="span"
+                            sx={{
+                              typography: "s3",
+                              fontFamily: MONO,
+                              color: "text.subtitle",
+                            }}
+                          >
+                            {sourceIdentityOf(agent, v)?.text}
+                          </Typography>
+                        </Tooltip>
+                      )}
                       {isLatest && <Chip label="Latest" tone="primary" />}
                       {/* The version that's live — the newest one that isn't a pending draft. */}
                       {v.label === agent.production &&
@@ -368,7 +386,7 @@ export default function AgentVersionsTab({
                           arrow
                           title={
                             isAdmin
-                              ? "Release this version — it becomes the one the agent runs, and environments following production test it next. Pinned ones stay put."
+                              ? "Release this version. Environments following production test it next; pinned ones stay put."
                               : MAKE_ACTIVE_ADMIN_ONLY
                           }
                         >
@@ -395,7 +413,7 @@ export default function AgentVersionsTab({
                             !release[v.label]?.released)) && (
                           <Tooltip
                             arrow
-                            title={`Mark it released ${RELEASE_WHEN[v.draftOf?.source] || "once it's live"}. It becomes the new baseline every improvement is measured against.`}
+                            title={`Mark it released ${RELEASE_WHEN[v.draftOf?.source] || "once it's live"}. It becomes the new baseline.`}
                           >
                             <Button
                               size="small"
@@ -561,8 +579,8 @@ export default function AgentVersionsTab({
         <Stack spacing={1} sx={{ px: 3, pb: 2 }}>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {git
-              ? `This opens a revert commit as a draft pull request — the code, prompts and tools as they were at ${shortOf(rollbackTo)}. History stays as it is.`
-              : `This saves a new version, ${nextMajorLabel(labels)}, with ${rollbackTo}'s ${source.kind === "upload" ? "bundle" : "configuration"}, prompts and tools. History stays as it is.`}
+              ? `Opens a draft pull request reverting to ${shortOf(rollbackTo)}. History stays.`
+              : `Saves ${nextMajorLabel(labels)} with ${rollbackTo}'s ${source.kind === "upload" ? "bundle" : "configuration"}. History stays.`}
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {git
@@ -631,7 +649,7 @@ export default function AgentVersionsTab({
               noWrap
               sx={{ typography: "s3", color: "text.subtitle" }}
             >
-              {`Tests ${u.running ? versionNameOf(agent, u.running).main : "production"} now · ${u.pinned ? "pinned to it" : "following production"}`}
+              {`Tests ${u.running ? versionNameOf(agent, u.running).main : "production"} · ${u.pinned ? "pinned" : "following production"}`}
             </Typography>
           </MenuItem>
         ))}
@@ -1235,7 +1253,7 @@ function CommitLog({
               {draft && onMerge && (
                 <Tooltip
                   arrow
-                  title="Mark it merged once the pull request is merged on GitHub. Its newest commit becomes the new baseline every improvement is measured against."
+                  title="Mark it merged once the pull request is merged. Its newest commit becomes the baseline."
                 >
                   <Button
                     size="small"
@@ -1524,7 +1542,7 @@ function TracingCommitRow({ commit, production }) {
         </Typography>
         <Tooltip
           arrow
-          title={`It only adds tracing — what the agent does is unchanged, so it isn't a new agent version: nothing re-tests it, and tests keep using ${production || "the production version"}.`}
+          title={`Tracing only — not a new version. Tests keep using ${production || "the production version"}.`}
         >
           <Box component="span" sx={{ display: "inline-flex" }}>
             <Chip label="Tracing only · not a new version" tone="neutral" />

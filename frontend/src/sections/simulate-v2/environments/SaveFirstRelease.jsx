@@ -6,9 +6,17 @@ import Iconify from "src/components/iconify";
   Build from scratch → Save and use (builder.md §5). The approved design is
   built and checked; the person reviews what it made and saves it as a
   private release in this workspace. Only then is an agent connected — saving
-  never starts a run, and no sample agent stands in for theirs.
+  never starts a run, and no sample agent stands in for theirs. Then the
+  person chooses: "Save and connect my agent" saves and opens the Connect
+  agent flow; "Save" alone leaves it for Overview (builder.md step 5).
 */
-export default function SaveFirstRelease({ env, envState, label, onSave }) {
+export default function SaveFirstRelease({
+  env,
+  envState,
+  label,
+  onSave,
+  onSaveAndConnect,
+}) {
   const tables = env?.seed?.tables || [];
   const rows = tables.reduce((n, t) => n + (t.rows || 0), 0);
   const scenarios = (envState?.scenarios || []).filter(
@@ -93,8 +101,22 @@ export default function SaveFirstRelease({ env, envState, label, onSave }) {
               minWidth: 0,
             }}
           >
-            {`Saving makes environment ${label} — private to this workspace. Your agent isn't part of it, and nothing runs until you connect one and start a run.`}
+            {`Saving makes environment ${label}, private to this workspace. Connect your agent from Overview to run it.`}
           </Typography>
+          {onSaveAndConnect && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onSaveAndConnect}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
+            >
+              Save and connect my agent
+            </Button>
+          )}
           <Button
             size="small"
             variant="contained"
@@ -114,4 +136,6 @@ SaveFirstRelease.propTypes = {
   envState: PropTypes.object,
   label: PropTypes.string,
   onSave: PropTypes.func.isRequired,
+  /* Saves, then opens the Connect agent flow. */
+  onSaveAndConnect: PropTypes.func,
 };

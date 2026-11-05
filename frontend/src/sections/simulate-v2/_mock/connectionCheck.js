@@ -411,3 +411,47 @@ const fmt = (iso) =>
         minute: "2-digit",
       })
     : "";
+
+/**
+ * The last probe, as it can be shown: the request and reply with secrets as
+ * ••••, personal data masked, and the tool spans seen while it ran.
+ *   { request, response, spans: [{ name, ok, ms }] }
+ */
+export const probeOf = (agent, spec, tools = [], results = []) => {
+  const state = (id) => results.find((r) => r.id === id)?.state;
+  const sent = {
+    [spec.messageField || "message"]: "Where is my order?",
+    ...(spec.sessionField && { [spec.sessionField]: "test-1" }),
+    customer: {
+      name: "M•••• K••••",
+      email: "m••••@••••.com",
+      phone: "+•• •••• ••34",
+    },
+  };
+  const replied =
+    state("replies") === "failed"
+      ? {}
+      : { [spec.replyField || "reply"]: "What is your order number?" };
+  const prod = productionToolOf(agent, tools);
+  const spans = [
+    { name: "agent.turn", ok: true, ms: 2100 },
+    { name: tools[0] || "lookup_order", ok: true, ms: 180 },
+    ...(state("tools") === "failed" && prod
+      ? [{ name: prod, ok: false, ms: 95 }]
+      : []),
+  ];
+  return {
+    request: {
+      method: "POST",
+      url: spec.path || "/chat",
+      headers: { authorization: "Bearer ••••", "x-api-key": "••••" },
+      body: sent,
+    },
+    response: {
+      status: state("starts") === "failed" ? 0 : 200,
+      ms: 340,
+      body: replied,
+    },
+    spans,
+  };
+};

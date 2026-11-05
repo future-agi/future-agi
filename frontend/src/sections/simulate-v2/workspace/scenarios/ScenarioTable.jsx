@@ -737,7 +737,7 @@ export default function ScenarioTable({
                             arrow
                             title={
                               laterThanPinned(row, envVersion)
-                                ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. It isn't part of environment ${vl(envVersion)}, so runs on ${vl(envVersion)} leave it out.`
+                                ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. Runs on ${vl(envVersion)} leave it out.`
                                 : `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}`
                             }
                           >

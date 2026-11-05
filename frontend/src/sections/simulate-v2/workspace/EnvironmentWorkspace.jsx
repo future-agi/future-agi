@@ -165,7 +165,12 @@ import { privateUpdateOf } from "../_mock/envCopy";
 import DesignReview from "../environments/DesignReview";
 import { checksStateOf, runChecksPatch } from "../_mock/release";
 import SaveFirstRelease from "../environments/SaveFirstRelease";
-import { applyScratchAnswer } from "../_mock/scratchDesign";
+import {
+  applyScratchAnswer,
+  specificScenarioSeeds,
+} from "../_mock/scratchDesign";
+import { affectedScenarios, validateWorld } from "../_mock/buildPipeline";
+import NeedsRepairStrip from "../environments/NeedsRepairStrip";
 import { DESIGN_PARK_MS } from "../_mock/builder";
 import { getBuilderMode } from "../_mock/builderModeBus";
 import { envLabelOf } from "../_mock/envVersionKinds";
@@ -251,20 +256,20 @@ const tabHintOf = (id, env) =>
   ({
     world: isConnectOnly(env)
       ? "What a run of this environment stands on. The environment version is the contract alone."
-      : "What your agent talks to during a run — the data, and the tool handlers that answer every call. It learns a new tool whenever a later agent version brings one.",
+      : "What your agent talks to during a run: the data and the tools that answer its calls.",
     contract:
-      "The rules the agent holds to and what it's for, then how a conversation runs — when it ends, who else is in it, and how it's scored. Editing it makes a new environment version; the scenarios that depend on the change are marked Re-check.",
+      "The agent's rules and purpose, and how a conversation runs and is scored. Editing makes a new environment version; affected scenarios are marked Re-check.",
     scenarios:
-      "Each scenario is one task your agent has to complete, with its own caller. Every agent version runs the same suite; comparisons run over the scenarios both runs share.",
+      "Each scenario is one task for your agent, with its own caller. Every agent version runs the same suite.",
     evals:
       "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
     runs: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
     actors:
-      "The other people in a conversation — a manager, a colleague — each with their own goal. They aren't the agent's own workers, and they aren't the caller.",
+      "The other people in a conversation, such as a manager or colleague, each with their own goal.",
     analytics:
       "Trends across this environment's runs — by agent version, scenario source and outcome.",
     history:
-      "Every environment version and agent version, newest first. Roll back makes the next version from an older one; nothing is deleted.",
+      "Every environment and agent version, newest first. Roll back makes a new version from an older one.",
     settings: "How this environment is built and how runs behave inside it.",
   })[id] || "";
 
@@ -491,7 +496,64 @@ export default function EnvironmentWorkspace() {
   const [clashReq, setClashReq] = useState(null);
   /* ?price=missing shows the held state a missing rate puts a run in. */
   const [searchParams, setSearchParams] = useSearchParams();
+  /* Bumped to reopen Overview's Connect agent picker (it reads ?connect=agent
+     when it mounts) — "Save and connect my agent" after a scratch build. */
+  const [connectKey, setConnectKey] = useState(0);
   const missingRate = searchParams.get("price") === "missing";
+  /* `?build=fk` shows a failed foreign-key check once (builder.md example). */
+  const fkDemoUsed = useRef(false);
+  /* Approve the design: validate the world first (builder.md: a failed
+     foreign-key check keeps the design in Needs repair, never a fake
+     runnable release), then finish the build. `next` carries a repair. */
+  const approveDesign = (next) => {
+    const invalid = validateWorld(
+      next,
+      fkDemoUsed.current ? null : searchParams.get("build"),
+    );
+    if (invalid) {
+      if (invalid.demo) fkDemoUsed.current = true;
+      const rows = next.starterScenarios?.length
+        ? next.starterScenarios
+        : specificScenarioSeeds(next.tools || []);
+      dispatch({
+        type: "patchEnvironment",
+        envId: next.id,
+        patch: {
+          seed: next.seed,
+          repairCheck: {
+            ...invalid,
+            affected: affectedScenarios(invalid, rows),
+            message: `${invalid.orphanRows.toLocaleString()} ${invalid.table} rows point at ${invalid.missing}, which the world doesn't have. The design is kept.`,
+          },
+        },
+      });
+      return;
+    }
+    const fin = finishBuildPatch(
+      { ...next, buildStatus: "building" },
+      envState,
+    );
+    if (!fin) return;
+    dispatch({
+      type: "patchEnvState",
+      envId: next.id,
+      /* Files added to the design join this first version. */
+      patch: {
+        ...fin.statePatch,
+        ...(designSourcesPatch(next, envState) || {}),
+      },
+    });
+    dispatch({
+      type: "patchEnvironment",
+      envId: next.id,
+      patch: {
+        ...fin.envPatch,
+        seed: next.seed,
+        repairCheck: null,
+        designPendingAt: null,
+      },
+    });
+  };
   /* A Run or Re-run elsewhere links here with the plan prefilled. */
   useEffect(() => {
     const req = runPlanRequestOf(searchParams);
@@ -697,6 +759,28 @@ export default function EnvironmentWorkspace() {
           ],
     );
   }, [env?.id, state.hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Approving finishes the build here, so the greeting that said the design
+     was waiting moves on with it instead of going stale. */
+  useEffect(() => {
+    if (!env || env.buildStatus !== "ready") return;
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === "ws-greet" &&
+        /waiting for your approval/.test(t.steps?.[0]?.text || "")
+          ? {
+              ...t,
+              steps: [
+                {
+                  ...t.steps[0],
+                  text: `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                },
+                ...t.steps.slice(1),
+              ],
+            }
+          : t,
+      ),
+    );
+  }, [env?.buildStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* The chat is kept with the environment, so a reload still has it and
      Open in chat (Review changes) finds the message an edit came from. */
@@ -1117,7 +1201,7 @@ export default function EnvironmentWorkspace() {
     if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
     if (versionBuilding)
-      return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start once it's ready`;
+      return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start when ready`;
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
     if (runnable === 0) {
@@ -1409,6 +1493,8 @@ export default function EnvironmentWorkspace() {
       releaseChecks,
       rlKeys,
       rlSessions,
+      rlReward,
+      rlToolFormat,
       ...carried
     } = envState;
     const twin = envState.twinBacking;
@@ -1590,7 +1676,7 @@ export default function EnvironmentWorkspace() {
           steps: [
             {
               kind: "note",
-              text: `Added ${names} to the design — Review design above shows what ${files.length === 1 ? "it adds" : "they add"}. Nothing is built until you approve.`,
+              text: `Added ${names} to the design. Nothing is built until you approve.`,
             },
           ],
         },
@@ -1705,7 +1791,7 @@ export default function EnvironmentWorkspace() {
                   const n = again.affected.length;
                   if (again.draft) {
                     say(
-                      `Added to your unsaved changes — ${again.detail}. Review changes lists it with this message as its source; save there to make environment ${again.next}.`,
+                      `Added to your unsaved changes — ${again.detail}. Save in Review changes to make environment ${again.next}.`,
                     );
                     return;
                   }
@@ -1750,7 +1836,7 @@ export default function EnvironmentWorkspace() {
             .slice(0, intent.count);
       if (fresh.length === 0) {
         say(
-          "Every scenario this environment would derive is already in. Tell me what's missing — e.g. “callers disputing a double charge” — and I'll write those.",
+          "Every scenario I can derive is already in. Tell me what's missing and I'll write it.",
         );
         return;
       }
@@ -1775,7 +1861,7 @@ export default function EnvironmentWorkspace() {
       const review = `${added} proposed — review and add them on the Scenarios tab.`;
       say(
         (described
-          ? `Wrote ${added} scenario${added === 1 ? "" : "s"} for “${described}” — ${stamped.map((sc) => sc.summary.toLowerCase()).join("; ")}. ${review}${shortfall ? ` That's every distinct way I could see it playing out; describe another angle for more.` : ""}`
+          ? `Wrote ${added} scenario${added === 1 ? "" : "s"} for “${described}” — ${stamped.map((sc) => sc.summary.toLowerCase()).join("; ")}. ${review}${shortfall ? ` That's every angle I can see; describe another for more.` : ""}`
           : shortfall
             ? `${review} (The derivation pool only had ${added} unused rows left.)`
             : review) + (warn ? ` ${warn}` : ""),
@@ -2049,18 +2135,18 @@ export default function EnvironmentWorkspace() {
                       pk.kind === "prompt-only"
                         ? "Prompt only — checked by running the prompt without your tools."
                         : pk.kind === "live"
-                          ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
+                          ? "Live — the agent runs in your account and its tools reach real systems. Only the starting state is checked."
                           : sandboxed
-                            ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
+                            ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs."
                             : modeSwitch
-                              ? "Sealed — your agent runs where serve() runs, and its tool calls are routed to this environment's world; sub-goals are checked against the world's end state."
+                              ? "Sealed — your agent runs where serve() runs; its tool calls are routed to this environment's world."
                               : env?.runsOn === "local" ||
                                   env?.builtFrom?.worldSource?.runsOn ===
                                     "local"
-                                ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
-                                : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                                ? "Sealed — tool calls are answered by this environment's world, running on your machine through the CLI."
+                                : "Sealed — tool calls are answered by this environment's world in our sandbox.",
                     ...(modeSwitch && {
-                      tipAction: `Click to ${modeSwitch.to === "live" ? "run live — its real tools are called" : "run sealed — tools answered by the world"}.`,
+                      tipAction: `Click to ${modeSwitch.to === "live" ? "run live — real tools are called" : "run sealed — the world answers tools"}.`,
                     }),
                   });
               }
@@ -3045,7 +3131,7 @@ export default function EnvironmentWorkspace() {
                   <Typography
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
-                    {`Runs use a saved version. You have ${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} since environment ${savedLabel}:`}
+                    {`Runs use a saved version. ${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} since environment ${savedLabel}:`}
                   </Typography>
                   <Box
                     sx={{
@@ -3292,10 +3378,10 @@ export default function EnvironmentWorkspace() {
                   const src = (envState.runs || []).find(
                     (r) => r.id === runPlanReq.continues,
                   );
-                  return `Attempt ${(src?.attempts || []).length + 2} of run ${src?.ordinal ?? ""} — only the scenarios ${src?.status === "interrupted" ? "that were interrupted" : "its limit stopped from starting"}. The ones that finished aren't run or charged again.`;
+                  return `Attempt ${(src?.attempts || []).length + 2} of run ${src?.ordinal ?? ""} — only the scenarios ${src?.status === "interrupted" ? "that were interrupted" : "its limit stopped from starting"}. Finished ones aren't charged again.`;
                 })()
               : runPlanReq?.toolReplay
-                ? `Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === runPlanReq.toolReplay)?.ordinal ?? ""} — the agent runs again, and every tool answers what it returned then. It can't show how the agent does against a world that changes.`
+                ? `Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === runPlanReq.toolReplay)?.ordinal ?? ""} — the agent runs again and every tool answers what it returned then.`
                 : runPlanReq?.snapshot
                   ? "Re-runs the exact snapshot — a new run, charged as its own."
                   : null
@@ -3421,7 +3507,42 @@ export default function EnvironmentWorkspace() {
       */}
       {/* Left at Review design: the same proposal waits here. Approving
           finishes the build; nothing was built before. */}
-      {env.buildStatus === "awaiting_approval" && (
+      {env.buildStatus === "awaiting_approval" && env.repairCheck && (
+        <NeedsRepairStrip
+          invalid={env.repairCheck}
+          affected={env.repairCheck.affected || []}
+          message={env.repairCheck.message}
+          onRepair={() => {
+            const { missing, orphanRows } = env.repairCheck;
+            approveDesign({
+              ...env,
+              seed: {
+                ...env.seed,
+                tables: [
+                  ...(env.seed?.tables || []),
+                  {
+                    name: missing,
+                    rows: Math.max(20, orphanRows * 4),
+                    note: `added so ${env.repairCheck.table} resolves`,
+                  },
+                ],
+              },
+            });
+          }}
+          onRemove={() =>
+            approveDesign({
+              ...env,
+              seed: {
+                ...env.seed,
+                tables: (env.seed?.tables || []).filter(
+                  (t) => t.name !== env.repairCheck.table,
+                ),
+              },
+            })
+          }
+        />
+      )}
+      {env.buildStatus === "awaiting_approval" && !env.repairCheck && (
         <DesignReview
           framed
           env={env}
@@ -3439,6 +3560,13 @@ export default function EnvironmentWorkspace() {
               );
           }}
           draftCount={env.builtFrom?.scenarioCount || 10}
+          /* Edits to the proposal (remove a tool, rule or person, reword a
+             rule, simulate an unsupported behavior) land on the environment
+             before anything is built. */
+          onChange={(p) => {
+            dispatch({ type: "patchEnvironment", envId: env.id, patch: p });
+            if (p.actors) patch({ actors: p.actors });
+          }}
           question={
             (envState.designQuestions || []).find((q) => !q.answer)?.prompt ||
             null
@@ -3449,27 +3577,7 @@ export default function EnvironmentWorkspace() {
           }
           since={env.designPendingAt || Date.now()}
           autoMode={getBuilderMode() === "auto"}
-          onApprove={() => {
-            const fin = finishBuildPatch(
-              { ...env, buildStatus: "building" },
-              envState,
-            );
-            if (!fin) return;
-            dispatch({
-              type: "patchEnvState",
-              envId: env.id,
-              /* Files added to the design join this first version. */
-              patch: {
-                ...fin.statePatch,
-                ...(designSourcesPatch(env, envState) || {}),
-              },
-            });
-            dispatch({
-              type: "patchEnvironment",
-              envId: env.id,
-              patch: { ...fin.envPatch, designPendingAt: null },
-            });
-          }}
+          onApprove={() => approveDesign(env)}
           onContinue={() =>
             dispatch({
               type: "patchEnvironment",
@@ -3495,9 +3603,25 @@ export default function EnvironmentWorkspace() {
                 patch: { releaseSavedAt: new Date().toISOString() },
               });
               enqueueSnackbar(
-                `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent from Overview to run it.`,
+                `Saved environment ${envState.activeEnvVersion || "v1"}. Connect your agent from Overview to run it.`,
                 { variant: "success" },
               );
+            }}
+            /* Save, then the same Connect agent picker Overview's button opens. */
+            onSaveAndConnect={() => {
+              dispatch({
+                type: "patchEnvironment",
+                envId: env.id,
+                patch: { releaseSavedAt: new Date().toISOString() },
+              });
+              enqueueSnackbar(
+                `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent to run it.`,
+                { variant: "success" },
+              );
+              navigate(
+                `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
+              );
+              setConnectKey((k) => k + 1);
             }}
           />
         )}
@@ -3546,7 +3670,7 @@ export default function EnvironmentWorkspace() {
                 sx={{ typography: "s3", color: "text.tertiary" }}
               >
                 {lockedRelease
-                  ? "Tasks, splits and the scorer are frozen so scores stay comparable. Run it as-is, or copy it to edit — the copy isn't comparable."
+                  ? "Tasks, splits and the scorer are frozen. Run it as-is, or copy it to edit (the copy isn't comparable)."
                   : "Scenarios, evaluations, contract and agent are read-only. Run as-is, or fork to make changes."}
               </Typography>
             </Box>
@@ -3876,6 +4000,7 @@ export default function EnvironmentWorkspace() {
               />
             ) : (
               <OverviewPanel
+                key={connectKey}
                 env={worldEnv}
                 envState={envState}
                 patch={patch}
@@ -4008,18 +4133,18 @@ TabHint.propTypes = { hint: PropTypes.string, gaps: PropTypes.array };
 function workspaceReply(userText) {
   const t = userText.toLowerCase();
   if (/\b(drop|remove|cut|archive|delete)\b/.test(t) && /scenario/.test(t)) {
-    return "I can't remove scenarios from chat by description yet. Select them on the Scenarios tab, then ask me to archive them — or use Archive there. Archived scenarios stay listed and the set moves to its next version.";
+    return "I can't remove scenarios by description yet. Select them on the Scenarios tab, then ask me to archive them or use Archive there.";
   }
   if (/\b(rule|refund|escalat|policy)\b/.test(t)) {
-    return "To change a rule, say which one and how — “Change R2 to …”, “Add a rule: …” or “Remove rule R3”. I'll show what it costs and ask before saving it as the next environment version. You can also edit rules on the Contract tab.";
+    return "To change a rule, say which and how — “Change R2 to …”, “Add a rule: …” or “Remove rule R3”. I'll confirm before saving.";
   }
   if (/\b(eval|evals|evaluation|grader|grade|judge)\b/.test(t)) {
-    return "I can add a catalogue evaluation by name — e.g. “Add a compliance judge”. For anything else (a custom evaluation, thresholds, mappings), use the Evaluations tab.";
+    return "I can add a catalogue evaluation by name, e.g. “Add a compliance judge”. For anything else, use the Evaluations tab.";
   }
   if (/\b(run|fail|failed|failing|last)\b/.test(t)) {
-    return "Ask “Why did <scenario> fail?” or “Show the trace for <scenario>” and I'll answer from the latest run — or open the Runs tab for the full list.";
+    return "Ask “Why did <scenario> fail?” or “Show the trace for <scenario>” and I'll answer from the latest run.";
   }
-  return "I can't make that change from chat yet. From here I can add scenarios, correct the contract (rules, use cases, a tool argument's allowed values), add a catalogue evaluation, set a tool's tier or faults, point a secret at a new reference, and answer what's missing or why a scenario failed. Everything else is on the tabs.";
+  return "I can't make that change from chat yet. I can add scenarios, edit the contract, add a catalogue evaluation, set a tool's tier or faults, and explain failures. Everything else is on the tabs.";
 }
 
 /**

@@ -297,7 +297,7 @@ export default function BuildEnvironmentDialog({
             }}
           >
             {countOk
-              ? `Any number from ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()} · writing ${count} ≈ ${(credits?.need || 0).toLocaleString()} credits, once`
+              ? `${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()} · writing ${count} ≈ ${(credits?.need || 0).toLocaleString()} credits`
               : `Pick ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
           </Typography>
         </Stack>

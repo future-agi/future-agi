@@ -37,7 +37,11 @@ import { CATALOGUE_CLI, READINESS } from "../_mock/catalogue";
   `bare` drops the page heading — the Build environment drawer's own header
   says "Prebuilt worlds" and carries the way back.
 */
-export default function PrebuiltWorldsView({ onBack, bare = false }) {
+export default function PrebuiltWorldsView({
+  onBack,
+  onBuildFromScratch,
+  bare = false,
+}) {
   const worlds = useMemo(() => prebuiltWorlds(), []);
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
@@ -305,20 +309,45 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
         <EmptyContent
           title="No world matches"
           sx={{ height: "auto", flexGrow: 0 }}
+          description="Build the world from scratch, or customize a compatible template."
           action={
-            <Button
-              variant="outlined"
-              color="inherit"
-              size="small"
-              onClick={() => {
-                setQuery("");
-                setType("all");
-                setDomain("all");
-                setReadiness("all");
-              }}
-            >
-              Clear filters
-            </Button>
+            <Stack direction="row" spacing={1} justifyContent="center">
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setQuery("");
+                  setType("all");
+                  setDomain("all");
+                  setReadiness("all");
+                }}
+              >
+                Clear filters
+              </Button>
+              {/* The way back to the landing, where Build from scratch lives. */}
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={onBuildFromScratch || onBack}
+              >
+                Build from scratch
+              </Button>
+              {/* Ready worlds of the chosen type: each is a template to copy and edit. */}
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setQuery("");
+                  setDomain("all");
+                  setReadiness("ready");
+                }}
+              >
+                Customize a compatible template
+              </Button>
+            </Stack>
           }
         />
       )}
@@ -335,5 +364,7 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
 }
 PrebuiltWorldsView.propTypes = {
   onBack: PropTypes.func.isRequired,
+  /* Opens Build from scratch; without it, back to the landing that has it. */
+  onBuildFromScratch: PropTypes.func,
   bare: PropTypes.bool,
 };

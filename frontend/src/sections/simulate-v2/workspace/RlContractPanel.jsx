@@ -157,7 +157,7 @@ export default function RlContractPanel({
           title={`Rules (${shownRules.length})`}
           subtitle={
             env?.builtFrom?.kind === "scratch"
-              ? "From your description and the answers you gave the builder. Edit one here or ask the builder; a change is saved as the next environment version."
+              ? "From your description and answers. Edit here or ask the builder; a change makes the next environment version."
               : "From the agent's prompt. When a new agent version changes one, it's either a fix — the suite stays — " +
                 "or a spec change — the rule, its sub-goals and their scenarios change. Someone confirms which."
           }
@@ -227,7 +227,7 @@ export default function RlContractPanel({
       {limits.length > 0 && (
         <SectionCard
           title={`Argument limits (${limits.length})`}
-          subtitle="Values a tool call has to stay inside — a call outside them is the agent's mistake, not the world's. Every tool's arguments are on World → Tools."
+          subtitle="Values a tool call must stay inside; a call outside them is the agent's mistake. Arguments are on World → Tools."
           action={
             onGo &&
             !inBuild && (

@@ -85,7 +85,7 @@ const SEEN_LIVE_AFTER_MS = 20000;
 const CANARY_PLATFORMS = ["vapi", "retell"];
 const CANARY_SHARE = 10;
 const CANARY_NOTE =
-  "Sends a small share of real calls to the draft and reads them against everyone else, on the same evaluations. You promote it or roll it back — nothing goes further on its own.";
+  "Sends a small share of real calls to the draft and compares them on the same evaluations. You promote or roll back.";
 
 /* Platforms a candidate can ship to without going live: Vapi and Retell in
    Phase 1, ElevenLabs and Bland branches in Phase 2. */
@@ -275,19 +275,19 @@ export default function OmegaHandoff({
   const promptOnly = included.every((p) => p.kind === "System prompt");
   const intro = {
     pr: promptPart
-      ? `Opens a draft pull request on ${repo || "the agent's repository"} for the code, and saves the prompt changes as a draft prompt version in Future AGI — one change. Merging the PR releases both; nothing changes before that.`
-      : `Opens a draft pull request on ${repo || "the agent's repository"}${included.some((p) => p.kind === "Architecture") ? ", with a written rationale for the structural change" : ""}. Merging it saves the next agent version — nothing changes before that.`,
+      ? `Opens a draft pull request on ${repo || "the agent's repository"} and saves the prompt changes as a draft version. Merging releases both.`
+      : `Opens a draft pull request on ${repo || "the agent's repository"}${included.some((p) => p.kind === "Architecture") ? ", with a rationale for the structural change" : ""}. Merging saves the next agent version.`,
     draft: platform
       ? `${platform.ships} on ${source.label}. ${platform.note} ${platform.released}`
-      : `Creates an unpublished version on ${source.label}. It isn't live until someone makes it live there — then mark it released here.`,
+      : `Creates an unpublished version on ${source.label}. Once it's live there, mark it released here.`,
     builtin: `Saves the change as a new ${promptOnly ? "prompt" : "agent"} version here. It isn't live until you mark it released.`,
     recommend: suggestion
-      ? "A suggested fix, not a proven one — we can only call this agent, so you apply it. Once it's live, mark the new version released, then re-run on the same environment version to prove it."
+      ? "A suggested fix, not a proven one — you apply it. Once live, mark the new version released and re-run to prove it."
       : source.kind === "platform"
         ? `${source.label} doesn't support draft versions yet, so the change goes out as a patch. Apply it in ${source.label}, then mark it released here.`
         : uploaded
           ? "Apply this patch to your upload, then upload it again to release it."
-          : `We don't hold this agent (${source.label.toLowerCase()}), so the change goes out as a patch. Once it's deployed, mark it released here.`,
+          : `The change goes out as a patch (${source.label.toLowerCase()}). Once deployed, mark it released here.`,
   }[route];
 
   /*
@@ -768,7 +768,7 @@ export default function OmegaHandoff({
               sx={{ typography: "s2", color: "text.secondary", flex: 1 }}
             >
               {draftKind === "copy"
-                ? `Copy created on ${draft.where} — not live yet. Swap it in for the live assistant when you're ready; ${platform?.released ? platform.released.charAt(0).toLowerCase() + platform.released.slice(1) : "then mark it released."}`
+                ? `Copy created on ${draft.where} — not live yet. Swap it in when ready; ${platform?.released ? platform.released.charAt(0).toLowerCase() + platform.released.slice(1) : "then mark it released."}`
                 : `${draftKind === "branch" ? "Branch" : "Draft version"} created on ${draft.where} — not live yet. ${platform?.released ? `${platform.released} Mark it released then.` : "Mark it released once it's live there."}`}
               {draft.watch &&
                 !demo &&
@@ -1007,7 +1007,7 @@ export default function OmegaHandoff({
             <Typography
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
             >
-              {`From now on, runs in ${env?.name || "this environment"} use the verified candidate. Your own copy of the code isn't changed.`}
+              {`Runs in ${env?.name || "this environment"} now use the verified candidate.`}
             </Typography>
           </Box>
         ) : (
@@ -1116,8 +1116,8 @@ export default function OmegaHandoff({
               }}
             >
               {issueFix
-                ? `Not kept as must-pass — ${memory.mustPass.length} ${memory.mustPass.length === 1 ? "scenario" : "scenarios"} from this fix could still guard against it coming back.`
-                : `Not kept as must-pass — ${memory.mustPass.length} ${memory.mustPass.length === 1 ? "scenario" : "scenarios"} from this improvement could still keep it from being undone.`}
+                ? `Not kept as must-pass — ${memory.mustPass.length} ${memory.mustPass.length === 1 ? "scenario" : "scenarios"} could still guard against it coming back.`
+                : `Not kept as must-pass — ${memory.mustPass.length} ${memory.mustPass.length === 1 ? "scenario" : "scenarios"} could still keep it from being undone.`}
             </Typography>
             <Button
               size="small"
@@ -1168,7 +1168,7 @@ export default function OmegaHandoff({
             <Typography
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
             >
-              {`From a confirmation run of the fix's targets on ${memory.confirmation?.version || landedVersion}, ${memory.confirmation?.of || 3} repeats each. A later change that fails one again is rejected, so ${issueFix ? "the issue can't quietly come back" : "this change can't quietly be undone"}.${memory.targets.length ? ` ${memory.targets.length} still ${memory.targets.length === 1 ? "fails" : "fail"} sometimes and ${memory.targets.length === 1 ? "stays a target" : "stay targets"}.` : ""}`}
+              {`Confirmed on ${memory.confirmation?.version || landedVersion}, ${memory.confirmation?.of || 3} repeats each. A later change that fails one is rejected.${memory.targets.length ? ` ${memory.targets.length} still ${memory.targets.length === 1 ? "fails" : "fail"} sometimes and ${memory.targets.length === 1 ? "stays a target" : "stay targets"}.` : ""}`}
             </Typography>
           </Box>
           <Button
@@ -1633,7 +1633,7 @@ function CanaryPanel({
         sx={{ px: 1.5, pb: 1.25 }}
       >
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {`Make it active or roll back in ${where} — that's your call. Tell us which, so results and regressions are read against what's live.`}
+          {`Make it active or roll back in ${where}, then tell us which.`}
         </Typography>
         <Button
           variant="outlined"

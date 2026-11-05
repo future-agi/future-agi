@@ -209,7 +209,7 @@ export default function TemplateBuildPanel({
               },
               {
                 icon: "solar:play-circle-linear",
-                text: `The world's ${scenarioCount} proven scenarios come over unchanged — the same tests every agent in this world runs — then you run them once to see where your agent stands.`,
+                text: `The world's ${scenarioCount} proven scenarios come over unchanged. Run them once to see where your agent stands.`,
               },
             ].map((row) => (
               <Stack
@@ -235,6 +235,29 @@ export default function TemplateBuildPanel({
                 </Typography>
               </Stack>
             ))}
+          </Stack>
+          {/* The copy, read before it's made. */}
+          <Stack
+            spacing={0.75}
+            sx={{ pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}
+          >
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              Review before you adopt
+            </Typography>
+            <Line
+              label="Copied"
+              value={`${rows.toLocaleString()} seeded rows · ${scenarioCount} scenarios`}
+            />
+            <Line
+              label="Source"
+              value={
+                entry
+                  ? `${entry.id} · release ${entry.release.version}`
+                  : env.name
+              }
+            />
+            <Line label="Visibility" value="Private to this workspace" />
+            <Line label="Catalogue" value="The release stays unchanged" />
           </Stack>
         </Stack>
         <Stack

@@ -1330,7 +1330,7 @@ function LiveRun() {
         <EmptyState
           icon="solar:layers-minimalistic-linear"
           title="Nothing selected is in this version"
-          body={`None of the selected scenarios are part of environment ${runEnvShown} — they were added on a later version. Pick others, or switch environment version.`}
+          body={`None of the selected scenarios are in environment ${runEnvShown}. Pick others, or switch version.`}
           action={
             <Button
               variant="contained"
@@ -1614,7 +1614,7 @@ function LiveRun() {
                 outcomeLines(stats).join(" · "),
                 `${formatMs(elapsed)} elapsed${size.voice ? ` · expected ${voiceLine}` : ""}`,
                 spend?.cap
-                  ? `Credits · ${spend.used.toLocaleString()} used · ~${spend.running.toLocaleString()} held by running scenarios · limit ${spend.cap.toLocaleString()}${groupCap ? ` (share of the group's ${groupCap.toLocaleString()})` : ""} · ${Math.max(0, spend.cap - spend.used - spend.running).toLocaleString()} left`
+                  ? `Credits · ${spend.used.toLocaleString()} used · ~${spend.running.toLocaleString()} held · limit ${spend.cap.toLocaleString()}${groupCap ? ` (share of the group's ${groupCap.toLocaleString()})` : ""} · ${Math.max(0, spend.cap - spend.used - spend.running).toLocaleString()} left`
                   : null,
                 overCap
                   ? `${parallel} at once · you can leave this page; the run is saved in Runs`
@@ -1775,7 +1775,7 @@ function LiveRun() {
           {/* A candidate being watched: what it is, and the way back. */}
           {watchTrial && (
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {`Watching Candidate ${watchTrial.trial.n} of ${watchTrial.opt.name || "this improvement"} — the change it tried, replayed on the scenarios it was tested on. Nothing here is saved. · `}
+              {`Watching Candidate ${watchTrial.trial.n} of ${watchTrial.opt.name || "this improvement"} — replayed, nothing saved. · `}
               <Link
                 component="button"
                 type="button"
@@ -1816,7 +1816,7 @@ function LiveRun() {
               arrow
               title={
                 blockersFailed.length
-                  ? `Failed: ${blockersFailed.map((t) => scenarioTitle(t.title) || t.name).join(", ")}. Counted in the run summary — what to do about it is your call.`
+                  ? `Failed: ${blockersFailed.map((t) => scenarioTitle(t.title) || t.name).join(", ")}.`
                   : "Scenarios marked critical, counted as they settle. They inform the report; nothing is blocked."
               }
             >
@@ -1864,7 +1864,7 @@ function LiveRun() {
           {stats.retried > 0 && (
             <Tooltip
               arrow
-              title="A conversation that ends test invalid or error runs once more before it's read. Neither counts for or against the agent."
+              title="A conversation that ends test invalid or error runs once more. Neither counts against the agent."
             >
               <Stack direction="row" alignItems="center" spacing={0.625}>
                 <Iconify
@@ -1977,7 +1977,7 @@ function LiveRun() {
               sx={{ color: "text.secondary", flexShrink: 0 }}
             />
             <Typography sx={{ typography: "s2", flex: 1 }}>
-              {`Waiting for approval · ${waiting.length} conversation${waiting.length === 1 ? "" : "s"} — ${first.approver.name} answers within ${first.approver.timeoutMin || 3} min, or decide as them from the conversation.`}
+              {`Waiting for approval · ${waiting.length} conversation${waiting.length === 1 ? "" : "s"} — ${first.approver.name} answers within ${first.approver.timeoutMin || 3} min.`}
             </Typography>
             <Button
               size="small"
@@ -2003,7 +2003,7 @@ function LiveRun() {
           cancelState === "cancelling"
             ? P
               ? `Stop requested — waiting for ${P} to confirm the calls in progress ended. No new calls start.`
-              : `Stop requested — the ${size.voice ? "calls" : "trials"} in progress are resetting their world and saving their evidence. No new ones start.`
+              : `Stop requested — ${size.voice ? "calls" : "trials"} in progress are finishing up. No new ones start.`
             : cancelState === "confirmed"
               ? P
                 ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
@@ -2053,7 +2053,7 @@ function LiveRun() {
             color: "text.secondary",
           }}
         >
-          {`Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === params.get("tools"))?.ordinal ?? ""} — every tool answers what it returned then. It can't show how the agent does against a world that changes.`}
+          {`Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === params.get("tools"))?.ordinal ?? ""} — every tool answers what it returned then.`}
         </Typography>
       )}
 
@@ -2348,7 +2348,7 @@ const resultText = (task) => {
   /* Inconclusive, test invalid or error — none counts for or against the agent. */
   if (task.status === "unmeasured")
     return {
-      text: OUTCOMES[outcomeOfCause(causeOf(task))]?.label || "Inconclusive",
+      text: OUTCOMES[outcomeOfCause(causeOf(task))]?.label || "Unmeasured",
       color: UNMEASURED,
     };
   if (!["passed", "failed", "flaky"].includes(task.status)) return null;

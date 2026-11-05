@@ -470,7 +470,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                       key={s.id}
                       value={s.id}
                       sx={{ typography: "s2" }}
-                    >{`${s.name} · v${s.version}`}</MenuItem>
+                    >{`${s.name} · ${s.kb ? `rev ${s.kb.revision}` : `v${s.version}`}`}</MenuItem>
                   ))}
                   <MenuItem
                     value="__add"
@@ -741,7 +741,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                   : `Blocked — ${shownValidation.checks.filter((c) => !c.pass).length} of ${shownValidation.checks.length} checks failed`}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {`Checked on environment ${shownValidation.envVersion}. A broken test makes a good agent look bad, or lets every agent pass.`}
+                {`Checked on environment ${shownValidation.envVersion}.`}
               </Typography>
             </Box>
             {shownValidation.checks.map((c) => (

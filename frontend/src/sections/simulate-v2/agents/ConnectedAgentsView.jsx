@@ -488,7 +488,7 @@ export default function ConnectedAgentsView({ onConnect }) {
       <EmptyContent
         icon="solar:link-circle-linear"
         title="No agents yet"
-        description="Bring one from code — GitHub or an upload — or a platform it runs on, or build it in Future AGI. Then build an environment to test it in."
+        description="Bring one from code or a platform, or build it in Future AGI."
         sx={{ height: "auto", flexGrow: 0 }}
         action={
           <Button
@@ -541,7 +541,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {justConnected.usedIn.length
-                ? `Used in ${justConnected.usedIn.length} environment${justConnected.usedIn.length === 1 ? "" : "s"}. Build another to test it under different conditions.`
+                ? `Used in ${justConnected.usedIn.length} environment${justConnected.usedIn.length === 1 ? "" : "s"}.`
                 : "Next, build an environment for it — the simulated tools and data, scenarios and evaluations it will be tested against."}
             </Typography>
           </Box>
@@ -717,7 +717,7 @@ export default function ConnectedAgentsView({ onConnect }) {
           </DialogContentText>
           {skipped.length > 0 && (
             <DialogContentText sx={{ typography: "s2", mt: 1.5 }}>
-              {`Skipped: ${skipped.map((a) => a.name).join(", ")}. An agent can be deleted only once it has no environments left — delete ${skipped.length === 1 ? "its environments" : "theirs"} first, or archive ${skipped.length === 1 ? "it" : "them"}.`}
+              {`Skipped: ${skipped.map((a) => a.name).join(", ")}. Delete ${skipped.length === 1 ? "its environments" : "theirs"} first, or archive ${skipped.length === 1 ? "it" : "them"}.`}
             </DialogContentText>
           )}
         </DialogContent>

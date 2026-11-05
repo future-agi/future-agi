@@ -589,9 +589,18 @@ function reducer(state, action) {
       const idx = runs.findIndex((r) => r.id === action.run.id);
       /* A run records which agent it tested, not just the version label —
          after the environment changes agent, "v3" means a different thing. */
-      const keyed = action.run.agentKey
+      const withKey = action.run.agentKey
         ? action.run
         : { ...action.run, agentKey: envAgentKey(prev.agent, action.envId) };
+      /* Every new run gets the next number, so two runs never both read
+         "Run 18" in the list. */
+      const keyed =
+        idx < 0 && withKey.ordinal == null && withKey.kind !== "trial"
+          ? {
+              ...withKey,
+              ordinal: Math.max(0, ...runs.map((r) => r.ordinal || 0)) + 1,
+            }
+          : withKey;
       /* And which credential set it used — once, when it's first recorded;
          the set is written down so its label never moves. */
       const needsSet =

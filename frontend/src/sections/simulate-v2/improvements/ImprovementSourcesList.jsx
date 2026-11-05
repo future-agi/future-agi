@@ -389,7 +389,7 @@ export default function ImprovementSourcesList({ agent, run }) {
       renderHeader: () => (
         <HeaderTip
           label="Hand-off"
-          tip="What the improvement handed over — a pull request, a draft or test copy on the platform, a patch — and where it is now: in review, released, watching for 30 days."
+          tip="What the improvement handed over and where it is now."
         />
       ),
       size: 170,
@@ -625,7 +625,7 @@ export default function ImprovementSourcesList({ agent, run }) {
                 ? `Nothing has been improved from ${run.label} yet. Debug failures starts one from its failing scenarios.`
                 : agent
                   ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
-                  : "No improvements yet. Start one with New improvement, from Debug failures on a finished run, or with Fix on an Error Feed issue."
+                  : "No improvements yet. Start one with New improvement."
           }
         />
       </Box>

@@ -228,7 +228,7 @@ export default function TestedVersionsMatrix({ highlight = null }) {
             ? running
               ? `Qualifying ${TESTED_VERSIONS.length} families at once · ${done.length} done`
               : `Qualified ${when(ranAt.toISOString())} · ${passedN} passed${failedN ? ` · ${failedN} failed, each on its own row` : ""}${notRunN ? ` · ${notRunN} not run` : ""}`
-            : `Qualification runs the same ${QUAL_CHECKS.length} checks for every family, all at once. A family that fails is reported on its own row and doesn't stop the others.`}
+            : `Every family runs the same ${QUAL_CHECKS.length} checks. A failure shows on its own row.`}
         </Typography>
         <Button
           size="small"

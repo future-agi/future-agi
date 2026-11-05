@@ -301,7 +301,7 @@ export default function SandboxPreviewDrawer({
               bgcolor: "background.neutral",
             }}
           >
-            {`Uses the world as it is now, including ${unsaved} unsaved edit${unsaved === 1 ? "" : "s"}. Runs still use the saved version.`}
+            {`Uses the world as it is now, including ${unsaved} unsaved edit${unsaved === 1 ? "" : "s"}.`}
           </Typography>
         )}
 
@@ -780,7 +780,7 @@ export default function SandboxPreviewDrawer({
         open={!!resetting}
         onClose={() => setResetting(null)}
         title="Reset the preview?"
-        content={`This discards ${p.changed.length} change${p.changed.length === 1 ? "" : "s"} to the state and the conversation, and restores ${points.find((x) => x.id === resetting?.pointId)?.label?.toLowerCase() || "the starting state"}. Completed runs aren't touched.`}
+        content={`This discards ${p.changed.length} change${p.changed.length === 1 ? "" : "s"} and restores ${points.find((x) => x.id === resetting?.pointId)?.label?.toLowerCase() || "the starting state"}.`}
         action={
           <Button
             size="small"

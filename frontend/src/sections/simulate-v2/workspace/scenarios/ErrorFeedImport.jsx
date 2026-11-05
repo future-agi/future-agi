@@ -868,7 +868,7 @@ function IssueTableRow({ issue, pickedMap, isAdded, onToggle, onToggleCase }) {
                 <Typography
                   sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
                 >
-                  {`Each keeps the issue's goal, with the failing step as a critical sub-goal: “${c.step}”. The caller's persona is inferred from the conversation.`}
+                  {`Each keeps the issue's goal, with the failing step as a critical sub-goal: “${c.step}”.`}
                 </Typography>
               </Box>
               {/* The way back to the issue itself — the traces, trends and analysis. */}

@@ -79,7 +79,7 @@ export default function SendTracesSetup({
     },
     {
       title: "Load API keys",
-      body: "Add them where the agent is deployed — its secrets or environment variables. traceAI reads them from the environment, so they never go in the code.",
+      body: "Add them where the agent is deployed, as secrets or environment variables.",
       extra: (
         <TextLink onClick={() => navigate(paths.dashboard.keys)} sx={{ mb: 1 }}>
           Copy them from Keys
@@ -182,6 +182,23 @@ export default function SendTracesSetup({
         )}
         <LocalSteps steps={steps} />
       </Box>
+      <Box>
+        <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
+          We can&apos;t capture
+        </Typography>
+        {[
+          "A custom worker handoff your code makes itself",
+          "Child processes started after the app",
+          "Calls the instrumentor doesn't wrap",
+        ].map((line) => (
+          <Typography
+            key={line}
+            sx={{ typography: "s3", color: "text.subtitle" }}
+          >
+            {line}
+          </Typography>
+        ))}
+      </Box>
     </Stack>
   );
 }
@@ -237,7 +254,7 @@ function PullRequestRow({ repo, draft, onOpen }) {
             Add it with a pull request
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`We open a draft PR on ${repo} with steps 1, 3 and 4 below — ${draft.files.length} files. You add the keys (step 2) where it's deployed, and review and merge it; we never merge. `}
+            {`We open a draft PR on ${repo} with steps 1, 3 and 4 (${draft.files.length} files). You add the keys and merge it. `}
             <TextLink
               onClick={() => setPreview((v) => !v)}
               sx={{ display: "inline", typography: "s3" }}

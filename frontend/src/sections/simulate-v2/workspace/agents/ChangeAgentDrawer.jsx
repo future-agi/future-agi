@@ -118,7 +118,7 @@ export default function ChangeAgentDrawer({
             <Typography
               sx={{ typography: "s2", color: "text.tertiary", mt: 0.25 }}
             >
-              {`Pick the ${channel} agent this environment tests, and the version — the world, scenarios and evaluations apply as they are.`}
+              {`Pick the ${channel} agent and version this environment tests.`}
             </Typography>
           </Box>
           <IconButton size="small" onClick={onClose}>
@@ -447,7 +447,7 @@ function SwitchPreview({ plan, name }) {
         )}
       </Box>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-        {`Agent ${plan.version.label} · these wait in Needs input as one agent-change card — nothing moves until you rebuild or answer them.`}
+        {`Agent ${plan.version.label} · these wait in Needs input as one card until you rebuild or answer.`}
       </Typography>
     </Box>
   );

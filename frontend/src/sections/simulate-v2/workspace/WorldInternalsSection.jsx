@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import React, { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
@@ -34,6 +34,7 @@ import {
   LiveAdvisory,
 } from "./ToolDial";
 import { toolArgsOf } from "../_mock/rlContract";
+import { toolOutputOf, toolTablesOf } from "../_mock/toolArgSpec";
 import ToolArgsGrid from "./ToolArgsGrid";
 import AddMcpToolsDrawer from "./AddMcpToolsDrawer";
 import { listMcpTools, mcpServersOfAgent } from "../_mock/mcpServers";
@@ -529,7 +530,7 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                       arrow
                       title={
                         tool.via.gateway
-                          ? `From ${tool.via.label} in your Gateway (${tool.via.host}). The world answers it during runs; on Live it's called through the Gateway, with its rate limits and checks.`
+                          ? `From ${tool.via.label} in your Gateway (${tool.via.host}). The world answers it in runs; Live calls go through the Gateway.`
                           : `From the MCP server ${tool.via.host}. The world answers it during runs; the server is only called if the tool is Live.`
                       }
                     >
@@ -632,7 +633,12 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                 </Box>
               )}
               <Collapse in={open} unmountOnExit>
-                <ToolArgs tool={tool} envState={envState} />
+                <ToolArgs
+                  tool={tool}
+                  env={env}
+                  envState={envState}
+                  setting={setting}
+                />
                 <ToolTryPanel tool={tool} env={env} envState={envState} />
                 <CodeBlock file={impl.file} code={impl.code} />
                 {tool.via?.kind === "mcp" && onRemove && (
@@ -970,7 +976,7 @@ function ToolSourcesCard({
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
                 >
-                  {`Take its ${src.tools.length} tool${src.tools.length === 1 ? "" : "s"} out of the world? Scenarios that call them can't run as proved.`}
+                  {`Take its ${src.tools.length} tool${src.tools.length === 1 ? "" : "s"} out of the world? Scenarios that call them can't run.`}
                 </Typography>
                 <Button
                   variant="outlined"
@@ -1094,7 +1100,7 @@ function AgentMcpNotice({ agent, server, missing, onAdd }) {
           {`${agent?.name || "The agent"} gets ${missing.length} tool${missing.length === 1 ? "" : "s"} from ${server.label} the world doesn't answer yet`}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          {`Its MCP server ${server.host} lists ${missing.map((t) => t.name).join(", ")}. Add them so runs answer them instead of failing.`}
+          {`Its MCP server ${server.host} lists ${missing.map((t) => t.name).join(", ")}. Add them so runs can answer.`}
         </Typography>
       </Box>
       {onAdd && (
@@ -1117,9 +1123,37 @@ AgentMcpNotice.propTypes = {
   onAdd: PropTypes.func,
 };
 
-/* A tool's arguments, read-only — the limits among them are edited on the Contract tab. */
-function ToolArgs({ tool, envState }) {
+/* A tool's contract, read-only: arguments, what it returns, the tables it
+   reads or changes, and how it resets. The limits among the arguments are
+   edited on the Contract tab. */
+function ToolArgs({ tool, env, envState, setting }) {
   const args = toolArgsOf(tool, envState);
+  const tables = (env?.seed?.tables || []).map((t) => t.name);
+  const { reads, changes } = toolTablesOf(tool.name, setting.effect, tables);
+  const live = setting.tier === "live";
+  const rows = [
+    [
+      "Returns",
+      toolOutputOf(tool, setting.effect)
+        .map((f) => `${f.name} (${f.type})`)
+        .join(", "),
+      true,
+    ],
+    changes.length
+      ? ["Changes", changes.join(", "), true]
+      : reads.length
+        ? ["Reads", reads.join(", "), true]
+        : ["Reads", "None of the world's tables", false],
+    [
+      "Reset",
+      live
+        ? "Nothing to restore — a Live call reaches the real tool"
+        : setting.effect === "real"
+          ? "Its sandbox is recreated before every trial"
+          : "Restored to the seed before every trial",
+      false,
+    ],
+  ];
   return (
     <Box
       sx={{
@@ -1147,12 +1181,43 @@ function ToolArgs({ tool, envState }) {
       ) : (
         <ToolArgsGrid args={args} />
       )}
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "72px 1fr",
+          columnGap: 1.5,
+          rowGap: 0.25,
+          mt: 1.25,
+          alignItems: "baseline",
+        }}
+      >
+        {rows.map(([label, value, mono]) => (
+          <React.Fragment key={label}>
+            <Typography
+              sx={{ typography: "s3", fontWeight: 600, color: "text.tertiary" }}
+            >
+              {label}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.secondary",
+                ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
+              }}
+            >
+              {value}
+            </Typography>
+          </React.Fragment>
+        ))}
+      </Box>
     </Box>
   );
 }
 ToolArgs.propTypes = {
   tool: PropTypes.object.isRequired,
+  env: PropTypes.object,
   envState: PropTypes.object,
+  setting: PropTypes.object.isRequired,
 };
 
 /* ── scenario checks ──────────────────────────────────────────────────── */

@@ -67,7 +67,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
   const mcp = mcpConfigFor(agent.id);
   const signIn = (
     <Step n={via === "plugin" ? 2 : 3} title="Sign in when it asks">
-      {`The first time ${agent.label} calls Future AGI, it opens your browser to link this workspace. This dialog updates when it does.`}
+      {`The first time ${agent.label} calls Future AGI, it opens your browser to link this workspace.`}
     </Step>
   );
 
@@ -225,7 +225,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mb: 0.75 }}
                   >
-                    {`Without the plugin's skills, ${agent.label} learns the loop from your repo — get the brief, change the agent, submit, read the verdict.`}
+                    {`Without the plugin's skills, ${agent.label} learns the loop from your repo.`}
                   </Typography>
                   <Code
                     text={INSTRUCTIONS}
@@ -296,7 +296,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
               </Stack>
             )}
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`Open in ${agent.label} now shows on Error Feed issues, diagnoses and improvements — for you. Teammates connect their own.`}
+              {`Open in ${agent.label} now shows on issues, diagnoses and improvements, for you.`}
             </Typography>
           </Stack>
         )}

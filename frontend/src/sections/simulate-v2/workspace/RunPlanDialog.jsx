@@ -486,7 +486,7 @@ export default function RunPlanDialog({
                         {
                           id: "eligible",
                           label: `Run the ${compat.scope.runnable} reviewed eligible cases`,
-                          note: `Left out and recorded as not run — ${leftOut}. The result reads ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`,
+                          note: `Left out, recorded as not run — ${leftOut}. ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`,
                           disabled: !compat.scope.runnable,
                         },
                         {
@@ -1210,7 +1210,7 @@ export default function RunPlanDialog({
                     </Typography>
                     <Tooltip
                       arrow
-                      title={`At the limit no new ${unit}s start; ${unit}s already running finish — up to ~${overrun.toLocaleString()} credits more. You're warned at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
+                      title={`At the limit no new ${unit}s start; running ones finish (up to ~${overrun.toLocaleString()} credits more). Warning at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
                     >
                       <Iconify
                         icon="solar:info-circle-linear"
@@ -1372,8 +1372,8 @@ export default function RunPlanDialog({
         >
           <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
             {submit === "rejected"
-              ? "No run created — the platform turned the request down (the world service is unavailable). Nothing was charged and your choices are kept, so you can try again."
-              : "We couldn't confirm the run started. It may have been created, so Start stays off to avoid running it twice — find it first."}
+              ? "No run created — the world service is unavailable. Nothing was charged; your choices are kept."
+              : "We couldn't confirm the run started. It may exist, so Start stays off — find it first."}
           </Typography>
           {submit === "timeout" && env?.id && (
             <Button

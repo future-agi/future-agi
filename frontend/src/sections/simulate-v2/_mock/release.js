@@ -72,7 +72,9 @@ export const lockPatch = (env, envState) => {
       id: `rl-${id}`,
       task: titleOf(id),
       split: "train",
-      status: "Finished",
+      status: i === 2 ? "Failed" : "Finished",
+      release: versionOf(env, envState),
+      rewardVersion: "v1",
       reward: [1, 0, 0.5][i],
       credits: 12 + i * 3,
     })),
@@ -81,6 +83,8 @@ export const lockPatch = (env, envState) => {
       task: titleOf(id),
       split: "test",
       status: "Grading error",
+      release: versionOf(env, envState),
+      rewardVersion: "v1",
       reward: null,
       rewardNote: "Not scored",
       credits: 9,
@@ -93,7 +97,67 @@ export const lockPatch = (env, envState) => {
       splits: { train, test },
       rewardVersion: "reward r1",
     },
-    rlSessions,
+    rlSessions: [
+      ...rlSessions,
+      {
+        id: `rl-${train[0] || "x"}-live`,
+        task: titleOf(train[0]),
+        split: "train",
+        status: "Running",
+        release: versionOf(env, envState),
+        rewardVersion: "v1",
+        reward: null,
+        rewardNote: "Not finished",
+        credits: 4,
+      },
+    ],
+  };
+};
+
+/** Reward versions a trainer can pick; "reward r1" in older saves is v1. */
+export const REWARD_VERSIONS = ["v1", "v2"];
+export const rewardLabelOf = (v) => String(v || "v1").replace(/^reward r/, "v");
+
+/** Tool formats the session prompt can be returned in. */
+export const TOOL_FORMATS = [
+  { id: "openai", label: "OpenAI tools" },
+  { id: "anthropic", label: "Anthropic tools" },
+  { id: "mcp", label: "MCP" },
+];
+export const isToolFormat = (id) => TOOL_FORMATS.some((f) => f.id === id);
+
+/** Why a session is refused: "capacity" | "credits" (demo: ?rl=...). */
+export const RL_REFUSALS = {
+  capacity: {
+    title: "No capacity right now — the session was refused, not queued.",
+    todo: "Try again in a few minutes, or ask us for more capacity.",
+  },
+  credits: {
+    title: "Out of credits — the session was refused, not queued.",
+    todo: "Raise your credit limit or wait for it to reset, then try again.",
+  },
+};
+
+/** A trainer opens a session: it keeps the release and reward version it ran with. */
+export const openSessionPatch = (envState, split, rewardVersion) => {
+  const ids = (envState?.lockedRelease?.splits || {})[split] || [];
+  const sessions = envState?.rlSessions || [];
+  const id = ids[sessions.length % Math.max(1, ids.length)];
+  const task = (envState?.scenarios || []).find((s) => s.id === id)?.title || id || "Task";
+  return {
+    rlSessions: [
+      {
+        id: `rl-${Date.now().toString(36)}`,
+        task,
+        split,
+        status: "Finished",
+        release: envState?.lockedRelease?.version || "v1",
+        rewardVersion,
+        reward: rewardVersion === "v2" ? 0.75 : 1,
+        credits: 12,
+      },
+      ...sessions,
+    ],
   };
 };
 
@@ -109,18 +173,19 @@ export const rlKeyPatch = (envState, split) => {
 };
 
 /** The trainer's calls, on the futureagi SDK: tasks, a session, a tool call with its reward. */
-export const rlCodeOf = (env, envState, split) => {
+export const rlCodeOf = (env, envState, split, toolFormat = "openai") => {
   const r = envState?.lockedRelease;
   const tool = (env?.tools || [])[0]?.name || "lookup_order";
   return `from futureagi import Client
 
 client = Client()  # FI_API_KEY: your RL access key
 envr = client.rl.environment("${env?.id || "<environment-id>"}", release="${r?.version || "v1"}", split="${split}")
+envr.tool_format = "${toolFormat}"
 
 for task in envr.tasks():
     session = envr.open_session(task.id)      # a fresh, isolated world
     prompt = session.prompt()                 # instructions and tools
     result = session.call_tool("${tool}", {...})
     print(result.output, result.reward, result.finished)
-    session.close()                           # final reward, reward ${r?.rewardVersion?.replace("reward ", "") || "r1"}`;
+    session.close()                           # final reward, reward ${envState?.rlReward || rewardLabelOf(r?.rewardVersion)}`;
 };

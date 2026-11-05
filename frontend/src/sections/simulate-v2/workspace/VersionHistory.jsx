@@ -245,7 +245,7 @@ export default function VersionHistoryMenu({
                         title={
                           useLatest
                             ? "Runs use the latest world again."
-                            : `Make the next version with everything as in ${v.label} — world, scenarios, sub-goals, evaluations and caller. Nothing is deleted.`
+                            : `Make the next version with everything as in ${v.label}. Nothing is deleted.`
                         }
                       >
                         <Button

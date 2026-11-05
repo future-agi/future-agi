@@ -15,6 +15,7 @@ import Iconify from "src/components/iconify";
 import CodeBlock from "src/components/code-block";
 import { INSTALL_CMD } from "../environments/fromCode";
 import SideDrawer from "../components/SideDrawer";
+import { QuietTag } from "../agents/AgentBits";
 import LocalSteps from "../environments/LocalSteps";
 import { CopyField } from "../components/primitives";
 import {
@@ -24,8 +25,29 @@ import {
   fmtCredits,
 } from "../_mock/pricing";
 
-/* What `--dry-run` prints: the run plan's scope, estimate and limit, in the
-   same units and rates — nothing runs. */
+/* What `--dry-run` prints: the cases, versions and repeats that would run —
+   nothing runs, and no cost estimate. */
+/* Only `fi doctor` and `fi version` exist today; every other fi command is
+   planned and says so. */
+const isPlanned = (cmd) => /\bfi (?!doctor\b|version\b)/.test(String(cmd));
+const BUILD_STEPS = [
+  ["Start a build from your repo", "fi sim env create --repo ."],
+  ["Answer its questions", "fi sim env chat --job <job-id>"],
+  ["See what it changed", "fi sim env diff --job <job-id>"],
+  ["Keep it", "fi sim env save --job <job-id>"],
+  ["Or drop it", "fi sim env discard --job <job-id>"],
+];
+const NEEDS_INPUT = [
+  "status: needs_input · job J-4821",
+  "question: Who approves discounts over 10%?",
+  "resume: fi sim env chat --job J-4821",
+].join("\n");
+const STALE_DRAFT = [
+  "error: draft is stale",
+  "current revision r7 (you had r5) · nothing was saved",
+  "fi sim env diff --job J-4821 to see the changes",
+].join("\n");
+const mark = (steps) => steps.map((s) => ({ ...s, planned: isPlanned(s.cmd) }));
 /*
   Run from code — the same run the Run simulation button starts, from the
   terminal, Python, CI or the developer's own agent (MCP). Every snippet
@@ -37,17 +59,105 @@ import {
   come from `fi sim env save`; console edits become a draft to merge).
 */
 
-function Label({ children }) {
+function Label({ children, planned = false }) {
   return (
-    <Typography
-      sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500, mb: 0.75 }}
-    >
-      {children}
-    </Typography>
+    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.75 }}>
+      <Typography sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500 }}>
+        {children}
+      </Typography>
+      {planned && <QuietTag>Planned</QuietTag>}
+    </Stack>
   );
 }
 
-Label.propTypes = { children: PropTypes.node };
+Label.propTypes = { children: PropTypes.node, planned: PropTypes.bool };
+
+const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
+
+/* The builder's terminal steps — a job you answer, review, then save or drop. */
+function BuildFromTerminal() {
+  return (
+    <Box>
+      <Label>Build it from the terminal</Label>
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+          "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
+        }}
+      >
+        {BUILD_STEPS.map(([what, cmd]) => (
+          <Stack
+            key={cmd}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ px: 1.5, py: 0.625 }}
+          >
+            <Typography
+              sx={{
+                fontSize: 12,
+                lineHeight: "18px",
+                width: 150,
+                flexShrink: 0,
+              }}
+            >
+              {what}
+            </Typography>
+            <Typography
+              sx={{
+                fontSize: 12,
+                lineHeight: "18px",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+                ...mono,
+              }}
+            >
+              {cmd}
+            </Typography>
+            <QuietTag>Planned</QuietTag>
+          </Stack>
+        ))}
+      </Box>
+      <Typography
+        sx={{
+          fontSize: 12,
+          lineHeight: "16px",
+          color: "text.tertiary",
+          mt: 1,
+          mb: 0.5,
+        }}
+      >
+        Needs input
+      </Typography>
+      <CodeBlock code={NEEDS_INPUT} />
+      <Typography
+        sx={{
+          fontSize: 12,
+          lineHeight: "16px",
+          color: "text.tertiary",
+          mt: 1,
+          mb: 0.5,
+        }}
+      >
+        Stale draft
+      </Typography>
+      <CodeBlock code={STALE_DRAFT} />
+      <Typography
+        sx={{
+          fontSize: 12,
+          lineHeight: "16px",
+          color: "text.tertiary",
+          mt: 1,
+        }}
+      >
+        Opening the job in the app shows the same question and draft.
+      </Typography>
+    </Box>
+  );
+}
 
 const TABS = [
   { id: "cli", label: "CLI" },
@@ -110,7 +220,7 @@ export default function RunFromCodeDrawer({
     },
     {
       title: "Preview what runs",
-      body: "The exact cases, versions and repeats the run would use — nothing runs.",
+      body: "Prints what would run — nothing runs.",
       cmd: `fi sim run --env ${id} ${flags} --dry-run`,
     },
     {
@@ -133,7 +243,7 @@ export default function RunFromCodeDrawer({
     },
     {
       title: "Check what it cost",
-      body: "The run's itemized credits, free-tier adjustment and what's pending on your own accounts — the same lines as its Cost tab.",
+      body: "The run's itemized credits, free-tier adjustment and pending items, as on its Cost tab.",
       hint: `usage show --group-by agent compares versions; admins set limits with usage budget set. A --budget over your admin's ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)} per run is refused here too.`,
       cmd: "fi api usage show --run <run-id>",
     },
@@ -265,7 +375,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
     },
     {
       title: "Check it",
-      body: "Starts, resets, a reference run passes, deliberate mistakes fail, and episodes stay apart. Publishing needs every check.",
+      body: "Starts, resets, a reference run passes, mistakes fail, episodes stay apart. Publishing needs every check.",
       cmd: "fi sim env validate ./my-world --budget 100",
       after: (
         <Box sx={{ mt: 1 }}>
@@ -397,6 +507,9 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                 </Typography>
                 {managedIn !== "code" && (
                   <Box sx={{ mt: 1 }}>
+                    <Box sx={{ mb: 0.5 }}>
+                      <QuietTag>Planned</QuietTag>
+                    </Box>
                     <CopyField
                       value={`fi sim env pull ${id}`}
                       onCopy={onPulled}
@@ -422,11 +535,11 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
 
             {tab === "cli" && (
               <Stack spacing={2.5}>
-                <LocalSteps steps={cli} />
+                <LocalSteps steps={mark(cli)} />
                 {/* For scripts and CI: never prompt, read the output, react
                     to the right exit code. */}
                 <Box>
-                  <Label>For scripts and CI</Label>
+                  <Label planned>For scripts and CI</Label>
                   <CodeBlock
                     code={`fi sim run --env ${id} ${flags} --non-interactive --yes --output json`}
                   />
@@ -486,6 +599,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                     ))}
                   </Box>
                 </Box>
+                <BuildFromTerminal />
               </Stack>
             )}
 
@@ -502,7 +616,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                   and publish it privately so your team can build environments
                   from it. Public publishing isn&apos;t available.
                 </Typography>
-                <LocalSteps steps={packageSteps} />
+                <LocalSteps steps={mark(packageSteps)} />
               </Stack>
             )}
 
@@ -544,13 +658,13 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                   The same experiment as on the Improvements page — copy its ID
                   there to read or promote it from here.
                 </Typography>
-                <LocalSteps steps={improveSteps} />
+                <LocalSteps steps={mark(improveSteps)} />
               </Stack>
             )}
 
             {tab === "ci" && (
               <Box>
-                <Label>Block a pull request on a regression</Label>
+                <Label planned>Block a pull request on a regression</Label>
                 <CodeBlock code={ci} />
                 <Typography
                   sx={{

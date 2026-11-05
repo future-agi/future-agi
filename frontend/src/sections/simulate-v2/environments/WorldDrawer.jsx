@@ -17,6 +17,8 @@ import { READINESS, adoptBlockOf, catalogueById } from "../_mock/catalogue";
 */
 export default function WorldDrawer({ world, onClose, onOpenWorld }) {
   const [tab, setTab] = useState("world");
+  /* Access asked for, by world — the request goes to the owner named on it. */
+  const [asked, setAsked] = useState({});
   useEffect(() => setTab("world"), [world?.id]);
   const entry = world?.entry || null;
   const blocked = adoptBlockOf(entry);
@@ -122,6 +124,21 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
                   </>
                 )}
               </Typography>
+              {entry?.release?.status === "access" && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!!asked[entry.id]}
+                  onClick={() => setAsked((a) => ({ ...a, [entry.id]: true }))}
+                  sx={{
+                    flexShrink: 0,
+                    color: "text.primary",
+                    borderColor: "divider",
+                  }}
+                >
+                  {asked[entry.id] ? "Requested" : "Request access"}
+                </Button>
+              )}
             </Stack>
           )}
 
@@ -171,6 +188,7 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
                 size="small"
                 variant="contained"
                 color="primary"
+                disabled={entry?.release?.status === "access"}
                 onClick={() => setTab("start")}
                 endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
               >

@@ -496,7 +496,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     : building
       ? "Its environment is still building — start the fix when it's done."
       : overBalance
-        ? `Up to ${creditsLabel(spend)}, but ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month — lower the budget or ask an admin.`
+        ? `Up to ${creditsLabel(spend)}, but only ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month.`
         : "A winner comes back as a new version. You decide whether to make it the default.";
   const startButton = needsEnv ? (
     <Button
@@ -584,7 +584,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
           <Notice
             icon="solar:link-broken-linear"
             title={`No agent is linked to ${projectName || "this issue's project"}`}
-            body="Fix proves a change on the agent that produced these traces. Connect it once — this project comes with it, and Fix works for every issue from it."
+            body="Fix tests changes on the agent behind these traces. Connect it once."
             action={
               <Button
                 variant="contained"
@@ -611,7 +611,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
           <Notice
             icon="solar:magic-stick-3-linear"
             title={`This issue already has a fix · ${status.label}`}
-            body="An issue has one fix at a time. If it doesn't fix the issue, or the issue comes back after release, Fix again starts a new one."
+            body="An issue has one fix at a time. If it comes back, Fix again starts a new one."
             action={
               <Button
                 variant="contained"
@@ -935,7 +935,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   >
                     {[
                       drafts[0]?.subGoals?.[1] &&
-                        `Each checks the step that failed: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
+                        `Each checks: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
                       ready
                         ? "Failing ones become targets; some are held back to prove the fix."
                         : "You can edit them once its environment is ready.",
@@ -1091,8 +1091,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       title="Target member"
                       body={
                         target
-                          ? `Changes stay inside ${target}; parts every member shares are changed only when the fix needs them, and the proposal says so.`
-                          : `Every proposal names the members it changes.${targetable.length < members.length ? " Protected members are never changed." : ""}`
+                          ? `Changes stay inside ${target}; shared parts change only when needed.`
+                          : `Each proposal names the members it changes.${targetable.length < members.length ? " Protected members are never changed." : ""}`
                       }
                     >
                       <Select
@@ -1129,7 +1129,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       title="Search in text, confirm finalists as real calls"
                       body={
                         estimate.allCalls
-                          ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls. Only the finalists are called.`
+                          ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls.`
                           : "Every run is a real call — slower and dearer, and closest to production."
                       }
                     >
@@ -1143,7 +1143,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   {lineageVersions.length > 0 && (
                     <SettingRow
                       title="Search across earlier versions"
-                      body={`Also tries the changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label} made, on ${production.label}. Checked the same way as every other proposed change.`}
+                      body={`Also tries the changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label} made, on ${production.label}.`}
                     >
                       <Switch
                         size="small"
@@ -1319,7 +1319,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           }}
                         >
                           {overBudget || overTime
-                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials — you'll get the best it found. ${stopEarlyNote(estimate.runs)}`
+                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials; you'll get the best it found.`
                             : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}
@@ -1328,7 +1328,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             parts={estimate.parts}
                             totalLabel="Up to"
                             totalUsd={estimate.likely}
-                            note={`At ${RATE_PLAN.name} · ${RATE_PLAN.version} rates. Stops at your budget; what it found by then is kept, and its spend is itemized on the improvement's page.`}
+                            note={`At ${RATE_PLAN.name} · ${RATE_PLAN.version} rates. Stops at your budget and keeps the best found.`}
                           />
                         </Box>
                       </>

@@ -344,7 +344,7 @@ export function ArchiveDialog({
         >
           {archived
             ? "Runs and improvements can start again. Its versions, environments, runs and proofs are as they were."
-            : `New runs and improvements stop. Its ${[plural(agent.versions.length, "version"), agent.usedIn.length ? plural(agent.usedIn.length, "environment") : null, "runs and proofs"].filter(Boolean).join(", ")} stay. Restore it any time.`}
+            : `New runs and improvements stop. Its history stays. Restore it any time.`}
         </Typography>
         {!archived && copies.length > 0 && (
           <Box

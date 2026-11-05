@@ -68,7 +68,7 @@ export default function OutcomeChip({ pair }) {
       {(pair.criteria || []).length > 0 && (
         <Tooltip
           arrow
-          title={`Changed as policy: ${pair.criteria.map((c) => c.name).join(", ")}. Out of the delta — the scenario still pairs on its other sub-goals.`}
+          title={`Changed as policy: ${pair.criteria.map((c) => c.name).join(", ")}. Out of the delta.`}
         >
           <Typography
             component="span"

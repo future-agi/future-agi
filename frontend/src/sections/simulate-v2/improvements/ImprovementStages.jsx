@@ -142,7 +142,7 @@ export default function ImprovementStages({
           : fromRun?.measuredFor
             ? stateOf("reproduce") === "now"
               ? `Running the environment's ${plural(envCount, "scenario")} on ${version}, ${reps} times each`
-              : `The environment's Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every repeat`
+              : `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every repeat`
             : fromRun
               ? `Starts from Run ${fromRun.ordinal} on ${version}`
               : stateOf("reproduce") === "now"
@@ -154,11 +154,11 @@ export default function ImprovementStages({
           : null,
         /* What measuring today found in the environment — once it has. */
         feed && fromRun && stateOf("reproduce") === "done"
-          ? `The environment's Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} of its scenarios pass every repeat.`
+          ? `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every repeat.`
           : null,
         /* What else that run found — never this fix's to work on. */
         feed && stateOf("reproduce") === "done" && (r.otherFailing || []).length
-          ? `Also found ${plural(r.otherFailing.length, "other failure")}, not part of this issue — the fix leaves ${r.otherFailing.length === 1 ? "it" : "them"} alone.`
+          ? `Also found ${plural(r.otherFailing.length, "other failure")}, left alone.`
           : null,
         stateOf("reproduce") === "done" && rep.inconclusive
           ? `${plural(rep.inconclusive, "scenario")} failed only once, so ${rep.inconclusive === 1 ? "it isn't a target" : "they aren't targets"}.`
@@ -208,13 +208,13 @@ export default function ImprovementStages({
       text: suggestion
         ? "No change is tried — this agent can only be called. You get a suggested change to apply yourself."
         : stateOf("search") === "todo"
-          ? "Tries changes one at a time, each as a candidate on this environment — it stops early once candidates stop beating the best"
+          ? "Tries changes one at a time; stops early once candidates stop beating the best"
           : count.stopped
             ? `${plural(count.done, "candidate")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
             : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "candidate")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
       /* Voice runs in real time, so the search keeps a slice — said, not hidden. */
       sub: r.voiceCap
-        ? `Voice calls run in real time, so it searches on ${r.voiceCap.scenarios} of the ${r.voiceCap.of} scenarios: the issue's, what fails today, then the rest. Must-pass still covers all of them.`
+        ? `Voice calls run in real time, so it searches on ${r.voiceCap.scenarios} of ${r.voiceCap.of} scenarios. Must-pass still covers all.`
         : null,
     },
     {

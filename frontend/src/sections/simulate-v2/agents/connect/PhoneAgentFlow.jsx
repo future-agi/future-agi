@@ -148,7 +148,7 @@ export default function PhoneAgentFlow({ title, onSave, initial = null }) {
   return (
     <ConnectSteps
       title={title}
-      subtitle="Any voice agent you can reach by phone. We call it, or it calls our test number — nothing in its account is read or changed."
+      subtitle="Any voice agent you can reach by phone. Nothing in its account is read or changed."
       steps={STEPS}
       active={0}
       next={next}

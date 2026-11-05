@@ -511,7 +511,7 @@ export default function AddMcpToolsDrawer({
                     <Typography
                       sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}
                     >
-                      {`Each tool starts Simulated; change it per tool on the World tab${viaGateway ? " — Live calls go through your Gateway." : "."}`}
+                      {`Each tool starts Simulated; change it on the World tab${viaGateway ? " — Live calls go through your Gateway." : "."}`}
                     </Typography>
                   </Box>
                 )}

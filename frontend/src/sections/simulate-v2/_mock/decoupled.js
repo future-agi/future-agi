@@ -177,7 +177,7 @@ export const playedVersionOf = (run, row) => run?.scenarioVersions?.[row?.id] ||
 export const OUTCOMES = {
   passed: { label: "Passed", counted: true, note: "Every grader cleared its bar." },
   failed: { label: "Failed", counted: true, note: "The agent had what it needed and didn't do it. Counted against it." },
-  inconclusive: { label: "Inconclusive", counted: false, note: "Not enough evidence to grade. Never counted as a pass." },
+  inconclusive: { label: "Unmeasured", counted: false, note: "Not enough evidence to grade. Never counted as a pass." },
   "test-invalid": { label: "Test invalid", counted: false, note: "The test broke, not the agent — the simulated user left its goal, the starting state didn't load, or a judge failed. Counts neither for nor against the agent." },
   error: { label: "Error", counted: false, note: "Our infrastructure or the connection failed. Counts neither for nor against the agent." },
 };
@@ -187,10 +187,10 @@ export const VERDICT_CAUSES = {
   pass: { label: "Passed", outcome: "passed", scored: true },
   "fail-agent": { label: "Failed · agent", outcome: "failed", scored: true, note: "The agent had the capability and failed." },
   "fail-required": { label: "Failed · required evaluation", outcome: "failed", scored: true, note: "An evaluation marked required failed, so the conversation failed whatever the others scored." },
-  "inc-evidence": { label: "Inconclusive · evidence", outcome: "inconclusive", scored: false, note: "Not enough evidence to grade — opaque tools, no ground truth, or coverage skipped. Never counted as a pass." },
+  "inc-evidence": { label: "Unmeasured · evidence", outcome: "inconclusive", scored: false, note: "Not enough evidence to grade — opaque tools, no ground truth, or coverage skipped. Never counted as a pass." },
   "inc-simulator": { label: "Test invalid · simulator", outcome: "test-invalid", scored: false, note: "The simulated user left its goal. Counts neither for nor against the agent — above 10% of a run the result is flagged unreliable." },
   "inc-setup": { label: "Test invalid · setup", outcome: "test-invalid", scored: false, note: "The starting state didn't load, so the conversation tested nothing. Counts neither for nor against the agent." },
-  "inc-judge": { label: "Test invalid · judge", outcome: "test-invalid", scored: false, note: "The judge failed to return a verdict. Counts neither for nor against the agent; flagged for a person." },
+  "inc-judge": { label: "Grading error · judge", outcome: "test-invalid", scored: false, note: "The judge failed to return a verdict. Counts neither for nor against the agent; flagged for a person." },
   "inc-infra": { label: "Error · infrastructure", outcome: "error", scored: false, note: "Our sandbox, a provider or tool infrastructure broke. Counts neither for nor against the agent." },
   "inc-transport": { label: "Error · connection", outcome: "error", scored: false, note: "The connection to the agent dropped before it finished. Counts neither for nor against the agent." },
 };

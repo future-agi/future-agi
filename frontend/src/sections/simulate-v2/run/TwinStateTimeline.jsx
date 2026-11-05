@@ -96,7 +96,7 @@ export default function TwinStateTimeline({ envState, task }) {
               key={`${list[0].service}-${list[0].kind}-${list[0].target}`}
               sx={{ typography: "s2", color: "status.danger.fg" }}
             >
-              {`Duplicate write — "${list[0].summary}" was committed ${list.length} times (turns ${list.map((e) => e.turn + 1).join(", ")}). A retry has to check whether the first one landed before committing again.`}
+              {`Duplicate write — "${list[0].summary}" was committed ${list.length} times (turns ${list.map((e) => e.turn + 1).join(", ")}).`}
             </Typography>
           ))}
         </Box>

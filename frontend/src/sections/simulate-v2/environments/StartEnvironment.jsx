@@ -84,7 +84,6 @@ import {
   EndpointConsent,
   HintLine,
   HowWeCopyIt,
-  RunLocationChoice,
 } from "../agents/connect/replicationBits";
 import {
   canCloneProvider,
@@ -286,7 +285,13 @@ export default function StartEnvironment({ entry = false }) {
   const chooser = (inDrawer) => (
     <>
       {view === "worlds" && (
-        <PrebuiltWorldsView onBack={() => setView("landing")} bare={inDrawer} />
+        <PrebuiltWorldsView
+          onBack={() => setView("landing")}
+          onBuildFromScratch={() =>
+            pickFromLanding("scratch", null, "header", null, SCRATCH_META)
+          }
+          bare={inDrawer}
+        />
       )}
       {view === "landing" && (
         <EnvironmentsLanding
@@ -341,7 +346,7 @@ export default function StartEnvironment({ entry = false }) {
             ? tab === "personas"
               ? "Reusable callers for voice and chat agents. Use writes an environment's tasks in a persona's voice."
               : "Build a simulated world for your agent, then run callers against it and read the failures."
-            : "Every environment needs a world to simulate in. Start by telling us where the agent lives — or start blank if you don't have one yet."
+            : "Tell us where the agent lives, or start blank."
         }
         back={
           !entry ? (
@@ -896,7 +901,7 @@ function TemplateHeroCard({ option, selected, onClick }) {
       title={option.title}
       tag="Fastest"
       description={
-        "Prebuilt worlds with seeded state, tools, and rules. Pick one, then wire your agent — you'll be running scenarios in under a minute."
+        "Prebuilt worlds with seeded state, tools and rules. Pick one, then wire your agent."
       }
       chips={HERO_TEMPLATES}
       moreLabel="+ 10 more"
@@ -918,7 +923,7 @@ function ClonesHeroCard({ onClick }) {
       title="Web Environments"
       tag="Live SaaS sandboxes"
       description={
-        "Your agent calls the real SDKs — Slack, Notion, Salesforce — but the calls land in a sandbox we own, seeded to your prompt and torn down between runs."
+        "Your agent calls the real SDKs; calls land in a sandbox we reset between runs."
       }
       chips={HERO_CLONES}
       moreLabel="+ 8 more"
@@ -1078,14 +1083,11 @@ LinkedRepoField.propTypes = {
 };
 
 /* How an agent read from code is copied and where it runs (Story 6): built
-   from the code in our hosted sandbox, or run locally through the SDK — then
-   the address serve() answers on, optional until the first run. */
-function WhereItRuns({ choice, runtime, setRuntime }) {
-  /* The hosted sandbox by default — running locally through the SDK is Coming soon. */
-  const location = runtime.location || "hosted";
+   from the code in our hosted sandbox. */
+function WhereItRuns({ choice }) {
   const agent = {
     sourceKind: choice === "source" ? "repo" : "upload",
-    values: { runLocation: location },
+    values: { runLocation: "hosted" },
   };
   return (
     <Stack spacing={1.25}>
@@ -1102,42 +1104,14 @@ function WhereItRuns({ choice, runtime, setRuntime }) {
         <Typography sx={{ typography: "s2", fontWeight: 600, mb: 1 }}>
           Where it runs
         </Typography>
-        <RunLocationChoice
-          agent={agent}
-          value={location}
-          onChange={(loc) => setRuntime((r) => ({ ...r, location: loc }))}
-          dense
-        />
-        {location === "sdk" ? (
-          <Stack spacing={1.25} sx={{ mt: 1.5 }}>
-            <Field
-              label="Where the SDK serves it (optional for now)"
-              mono
-              placeholder="https://api.yourapp.com/agent/step"
-              value={runtime.endpoint}
-              onChange={(v) => setRuntime((r) => ({ ...r, endpoint: v }))}
-              helper={
-                <HintLine hint="Local works — it dials out. Leave it empty and add it before the first run.">
-                  The address serve() answers on.
-                </HintLine>
-              }
-            />
-            <SecretRefField
-              label="Auth token (optional)"
-              placeholder="vault://acme/sim/agent_endpoint_token"
-              value={runtime.tokenRef || ""}
-              onChange={(v) => setRuntime((r) => ({ ...r, tokenRef: v }))}
-            />
-          </Stack>
-        ) : (
-          <Typography
-            sx={{ typography: "s3", color: "text.subtitle", mt: 1.25 }}
-          >
-            {choice === "source"
-              ? "Built from the branch above each run · nothing to deploy"
-              : "Built from the uploaded bundle each run · nothing to deploy"}
-          </Typography>
-        )}
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {choice === "source"
+            ? "Built from the branch above each run · nothing to deploy"
+            : "Built from the uploaded bundle each run · nothing to deploy"}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
+          Running locally is coming soon with ALK, our open-source toolkit.
+        </Typography>
       </Box>
     </Stack>
   );
@@ -3006,7 +2980,7 @@ function PanelScratch() {
         component="div"
         sx={{ typography: "s2", color: "text.subtitle" }}
       >
-        <HintLine hint="We set up the world, personas and evals from your description. Connect the agent from Overview when it's ready — runs start once it is.">
+        <HintLine hint="We set up the world, personas and evals from your description. Connect the agent from Overview later.">
           No agent yet? Fine — connect it later.
         </HintLine>
       </Typography>
@@ -3886,8 +3860,7 @@ const OPTIONS = [
     group: "bring",
     title: "Connected agent",
     icon: "solar:link-circle-linear",
-    blurb:
-      "Reuse an agent you've already connected — from the Agents page or another environment. Same agent, same version history; nothing to re-enter.",
+    blurb: "Reuse an agent you've already connected.",
     setupSubtitle:
       "Pick an agent and the version this environment should test.",
   },
@@ -3897,7 +3870,7 @@ const OPTIONS = [
     title: "Source repository",
     icon: "solar:code-linear",
     blurb:
-      "Read the code straight from a git host. Scenarios and tools stay in sync with the real code as it changes — no manual updates when your agent evolves.",
+      "Read the code straight from a git host. Stays in sync as it changes.",
     preview: ["GitHub", "GitLab", "Bitbucket"],
     setupSubtitle:
       "We read the code so scenarios stay in sync with your actual tools.",
@@ -3927,8 +3900,7 @@ const OPTIONS = [
     group: "bring",
     title: "Code upload",
     icon: "solar:cloud-upload-linear",
-    blurb:
-      "Drop a folder or zip when you can't push to a git host. Good for prototypes, private research code, or one-off experiments you want to spin up fast.",
+    blurb: "Drop a folder or zip when you can't push to a git host.",
     preview: [".py", ".ts", ".js", ".zip"],
     setupSubtitle: "Upload your agent code and we'll analyze it in place.",
   },
@@ -3963,7 +3935,7 @@ const OPTIONS = [
     title: "Phone number",
     icon: "solar:phone-linear",
     blurb:
-      "Only a number to call? Paste its instructions and we test it by phone. We can't change it ourselves, so improvements end in a suggested fix you apply.",
+      "Only a number to call? Paste its instructions and we test it by phone. Fixes are suggestions you apply.",
     preview: ["Test only", "Sierra", "Decagon", "Zendesk"],
     setupSubtitle: "The number we dial, and the instructions it follows.",
   },
