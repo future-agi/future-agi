@@ -30,6 +30,7 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -614,6 +615,34 @@ class CallCallActorSerializer(serializers.Serializer):
     )
 
 
+class TrialStateChangeSerializer(serializers.Serializer):
+    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
+
+    who = serializers.CharField()
+    name = serializers.CharField()
+    attempted = serializers.IntegerField()
+    committed = serializers.IntegerField()
+    refused = serializers.IntegerField()
+    faulted = serializers.IntegerField()
+    duplicate = serializers.IntegerField()
+    committed_actions = serializers.ListField(child=serializers.CharField())
+
+
+class ActorDecisionSerializer(serializers.Serializer):
+    """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history)."""
+
+    actor = serializers.CharField()
+    play = serializers.ChoiceField(choices=("mocked", "live", "history"))
+    action = serializers.CharField(required=False, allow_null=True)
+    why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    status = serializers.IntegerField(required=False, allow_null=True)
+
+
+class TrialStateSerializer(serializers.Serializer):
+    state_changes = TrialStateChangeSerializer(many=True, required=False)
+    decisions = ActorDecisionSerializer(many=True, required=False)
+
+
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -628,6 +657,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
     call_actors = CallCallActorSerializer(many=True)
+    trial_state = TrialStateSerializer(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -648,6 +678,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "evaluations",
             "function_calls",
             "call_actors",
+            "trial_state",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -937,6 +968,10 @@ def build_call_execution_detail(
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
             "call_actors": _call_call_actors(call.call_metadata),
+            # Attempted, refused and committed per participant, and what each actor chose: kept apart.
+            "trial_state": (call.call_metadata or {}).get(TRIAL_STATE_KEY)
+            if isinstance(call.call_metadata, dict)
+            else None,
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

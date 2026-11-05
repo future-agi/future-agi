@@ -1319,3 +1319,76 @@ def test_a_call_actor_follows_the_sealed_persona_role_and_channel_rules(
         ).status_code
         == 200
     )
+
+
+def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_them(
+    organization, workspace
+):
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+    from simulate.tests.test_harness_call_actors import _ingest
+    from simulate.views.run_results_v3 import TrialStateSerializer
+
+    changes = [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "attempted": 2,
+            "committed": 1,
+            "refused": 1,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["deals.request_approval"],
+        },
+        {
+            "who": "manager",
+            "name": "Mia",
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["deals.approve"],
+        },
+    ]
+    decisions = [
+        {
+            "actor": "manager",
+            "play": "live",
+            "action": "deals.approve",
+            "why": "12% is within my limit",
+            "status": 200,
+        }
+    ]
+    metadata = {TRIAL_STATE_KEY: {"stale": True}}
+    _ingest(
+        organization,
+        workspace,
+        "actors-trial-state",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [],
+            "world_actors": {
+                "actions": [],
+                "state_changes": changes,
+                "decisions": [*decisions, "x"],
+            },
+        },
+        metadata,
+    )
+    assert metadata[TRIAL_STATE_KEY] == {
+        "state_changes": changes,
+        "decisions": decisions,
+    }
+    assert TrialStateSerializer(data=metadata[TRIAL_STATE_KEY]).is_valid()
+
+    cleared = {TRIAL_STATE_KEY: {"stale": True}}
+    _ingest(
+        organization,
+        workspace,
+        "actors-trial-state-none",
+        CallExecution.SimulationCallType.VOICE,
+        {"messages": []},
+        cleared,
+    )
+    assert TRIAL_STATE_KEY not in cleared

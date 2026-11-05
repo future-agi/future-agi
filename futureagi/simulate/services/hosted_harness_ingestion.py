@@ -1352,6 +1352,8 @@ def _epoch_seconds(value: Any) -> float | None:
 
 # Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
+# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
+TRIAL_STATE_KEY = "harness_trial_state"
 
 
 def _call_actor_record(raw: object) -> CallCallActors | None:
@@ -1414,6 +1416,15 @@ def _ingest_hosted_transcript(
                 metadata[WORLD_ACTIONS_KEY] = actions
             else:
                 metadata.pop(WORLD_ACTIONS_KEY, None)
+            trial = {
+                key: [one for one in world.get(key) or [] if isinstance(one, dict)]
+                for key in ("state_changes", "decisions")
+                if isinstance(world, dict) and isinstance(world.get(key), list)
+            }
+            if any(trial.values()):
+                metadata[TRIAL_STATE_KEY] = trial
+            else:
+                metadata.pop(TRIAL_STATE_KEY, None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
