@@ -5,6 +5,8 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { DELETE_TONE } from "../myEnvironments.constants";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import ViewerLock from "../components/ViewerLock";
 
 // The header overflow menu. A regular environment keeps Fork tucked inside the
 // overflow; a template-seeded env surfaces Fork inside the Overview card
@@ -14,6 +16,7 @@ import { DELETE_TONE } from "../myEnvironments.constants";
 // `onFork` is temporarily unused while the Fork action is commented out below.
 export default function ForkMenu({ onDelete }) {
   const [anchor, setAnchor] = useState(null);
+  const { canEdit } = useSimulationAccess();
   const close = () => setAnchor(null);
   // Fork temporarily disabled — re-enable with the MenuItem below.
   // const fork = () => {
@@ -69,24 +72,27 @@ export default function ForkMenu({ onDelete }) {
         {onDelete && <Divider sx={{ my: 0.5 }} />}
         */}
         {onDelete && (
-          <MenuItem
-            onClick={del}
-            sx={{ alignItems: "flex-start", gap: 1.25, py: 1, color: DELETE_TONE.main }}
-          >
-            <Iconify
-              icon="solar:trash-bin-trash-linear"
-              width={16}
-              sx={{ mt: "2px", flexShrink: 0 }}
-            />
-            <Box minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
-                {WORKSPACE_COPY.deleteEnv}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
-                {WORKSPACE_COPY.deleteEnvHint}
-              </Typography>
-            </Box>
-          </MenuItem>
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.delete}>
+            <MenuItem
+              onClick={del}
+              disabled={!canEdit}
+              sx={{ alignItems: "flex-start", gap: 1.25, py: 1, color: DELETE_TONE.main }}
+            >
+              <Iconify
+                icon="solar:trash-bin-trash-linear"
+                width={16}
+                sx={{ mt: "2px", flexShrink: 0 }}
+              />
+              <Box minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+                  {WORKSPACE_COPY.deleteEnv}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                  {WORKSPACE_COPY.deleteEnvHint}
+                </Typography>
+              </Box>
+            </MenuItem>
+          </ViewerLock>
         )}
       </Menu>
     </>

@@ -36,6 +36,7 @@ from accounts.saml_credential import SamlCredentialInvalid, validate_saml_creden
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
+from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
     build_error_envelope,
     error_details,
@@ -93,6 +94,64 @@ def workspace_read_only(view_cls):
     """
     view_cls.workspace_write_exempt = True
     return view_cls
+
+
+class ViewerReadOnly(PermissionDenied):
+    default_code = VIEWER_READ_ONLY_CODE
+
+    def __init__(self, action=None):
+        self.action = action
+        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+
+
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
+_VIEWER_REASON_PREFIX = "/simulate/"
+
+
+def viewer_denied(action):
+    def mark(handler):
+        handler._viewer_denied_action = action
+        schema = getattr(handler, "_swagger_auto_schema", None)
+        if isinstance(schema, dict) and "responses" in schema:
+            from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+            handler._swagger_auto_schema = {
+                **schema,
+                "responses": {
+                    403: ViewerReadOnlyErrorSerializer,
+                    **schema["responses"],
+                },
+            }
+        return handler
+
+    return mark
+
+
+def workspace_write_denied(request) -> PermissionDenied:
+    """The refusal of a write the user's role doesn't allow: simulation routes say
+    what a Viewer tried; every other route keeps its original response."""
+    if request.path.startswith(_VIEWER_REASON_PREFIX):
+        return ViewerReadOnly(_viewer_denied_action(request))
+    return PermissionDenied(WORKSPACE_WRITE_DENIED)
+
+
+def _viewer_denied_action(request):
+    view_cls = _resolve_view_class(request)
+    if view_cls is None:
+        return None
+    callback = request.resolver_match.func
+    method = (getattr(request, "method", "") or "").lower()
+    if hasattr(callback, "actions"):
+        actions = callback.actions if isinstance(callback.actions, dict) else {}
+        handler_name = actions.get(method)
+    else:
+        handler_name = method
+    if not isinstance(handler_name, str):
+        return None
+    action = getattr(
+        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
+    )
+    return action if isinstance(action, str) else None
 
 
 def _resolve_view_class(request):
@@ -301,7 +360,7 @@ class APIKeyAuthentication(BaseAuthentication):
             and not should_skip_write_check
         ):
             if not self._can_write_to_workspace(user, workspace):
-                raise PermissionDenied("Write access denied to this workspace")
+                raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
         request.workspace = workspace
@@ -1217,6 +1276,11 @@ def custom_exception_handler(exc, context):
             status_code=response.status_code,
             code=exception_code(exc),
             details=error_details(response.data),
+            extra=(
+                {"action": exc.action}
+                if isinstance(exc, ViewerReadOnly) and exc.action
+                else None
+            ),
         )
 
     return response

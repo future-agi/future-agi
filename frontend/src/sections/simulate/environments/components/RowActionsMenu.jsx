@@ -8,6 +8,9 @@ import {
   BUILDING_TOOLTIP,
   DELETE_TONE,
 } from "../myEnvironments.constants";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import ViewerLock from "./ViewerLock";
 
 // Icon sits tight against the label — a bare icon width plus one step of margin,
 // not MUI's default 56px list-icon gutter.
@@ -15,6 +18,7 @@ const ICON_SX = { minWidth: 0, mr: 1 };
 
 export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDeleteRequest }) {
   const active = menuFor?.row;
+  const { canEdit, canRun } = useSimulationAccess();
   const buildingActive = [
     ENV_STATUS.BUILDING,
     ENV_STATUS.FINALIZING,
@@ -27,7 +31,7 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
 
   const runItem = (
     <MenuItem
-      disabled={buildingActive}
+      disabled={buildingActive || !canRun}
       onClick={() => {
         onRun?.(active);
         onClose?.();
@@ -68,30 +72,39 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
           primaryTypographyProps={{ sx: { typography: "s2" } }}
         />
       </MenuItem>
-      {buildingActive ? (
-        <CustomTooltip show arrow placement="left" size="small" title={BUILDING_TOOLTIP}>
+      {buildingActive || !canRun ? (
+        <CustomTooltip
+          show
+          arrow
+          placement="left"
+          size="small"
+          title={buildingActive ? BUILDING_TOOLTIP : WORKSPACE_COPY.viewer.run}
+        >
           <span>{runItem}</span>
         </CustomTooltip>
       ) : (
         runItem
       )}
-      <MenuItem
-        onClick={() => {
-          onDeleteRequest?.(active);
-          onClose?.();
-        }}
-        sx={{ typography: "s2", color: DELETE_TONE.main }}
-      >
-        <ListItemIcon sx={{ ...ICON_SX, color: DELETE_TONE.main }}>
-          <Iconify icon="solar:trash-bin-trash-linear" width={16} />
-        </ListItemIcon>
-        <ListItemText
-          primary={ROW_ACTION_LABEL.delete}
-          primaryTypographyProps={{
-            sx: { typography: "s2", color: DELETE_TONE.main },
+      <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.delete}>
+        <MenuItem
+          disabled={!canEdit}
+          onClick={() => {
+            onDeleteRequest?.(active);
+            onClose?.();
           }}
-        />
-      </MenuItem>
+          sx={{ typography: "s2", color: DELETE_TONE.main }}
+        >
+          <ListItemIcon sx={{ ...ICON_SX, color: DELETE_TONE.main }}>
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText
+            primary={ROW_ACTION_LABEL.delete}
+            primaryTypographyProps={{
+              sx: { typography: "s2", color: DELETE_TONE.main },
+            }}
+          />
+        </MenuItem>
+      </ViewerLock>
     </Menu>
   );
 }

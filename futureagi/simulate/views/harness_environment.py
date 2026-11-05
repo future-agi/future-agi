@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
@@ -196,6 +197,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         against = request.validated_query_data.get("against")
         return Response(version_reads.version_diff(job, piece, identifier, against))
 
+    @viewer_denied("change an environment's default version")
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
         responses={200: HarnessVersionsSerializer},
@@ -244,6 +246,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise version_reads.version_not_found()
         return found[0]
 
+    @viewer_denied("discard an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessVersionsSerializer},
@@ -269,6 +272,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         discard_agent_version(version, by_environment=job.id)
         return Response(version_reads.list_versions(job))
 
+    @viewer_denied("retry an agent version check")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={202: HarnessVersionsSerializer},
@@ -296,6 +300,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             version_reads.list_versions(job), status=status.HTTP_202_ACCEPTED
         )
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=HarnessAgentVersionCreateSerializer,
         responses={202: HarnessAgentCredentialsResponseSerializer},
@@ -347,6 +352,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         return Response(list_drafts(job))
 
+    @viewer_denied("save environment drafts")
     @validated_request(
         request_serializer=HarnessDraftSaveSerializer,
         responses={200: HarnessDraftSaveResponseSerializer},
@@ -378,6 +384,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("discard environment drafts")
     @swagger_auto_schema(
         responses={204: "Discarded"},
         operation_id="simulate_api_harness-environments_discard_draft",
@@ -415,6 +422,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         states = request.validated_query_data.get("state")
         return Response(list_nudges(job, states=states))
 
+    @viewer_denied("answer a rebuild prompt")
     @validated_request(
         request_serializer=HarnessNudgeAnswerSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -448,6 +456,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("dismiss a rebuild prompt")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -615,6 +624,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         return Response(environment_detail(job))
 
+    @viewer_denied("edit an environment")
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},
@@ -641,6 +651,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job.save(update_fields=["name", "content_updated_at", "updated_at"])
         return Response(environment_detail(job))
 
+    @viewer_denied("delete an environment")
     @swagger_auto_schema(responses={204: "Deleted"})
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.
@@ -662,6 +673,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},
@@ -712,6 +724,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             {"evaluations": addable_evals(job.run_test, eval_modality(job))}
         )
 
+    @viewer_denied("add evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={201: HarnessEnvironmentDetailSerializer},
@@ -747,6 +760,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
 
+    @viewer_denied("add evaluations to a run")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={202: HarnessEnvironmentRunEvaluationQueuedSerializer},
@@ -895,6 +909,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             _touch_content(job)
         return Response(counts, status=status.HTTP_202_ACCEPTED)
 
+    @viewer_denied("run evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentRunEvaluationsSerializer,
         responses={202: HarnessEnvironmentRunEvaluationsQueuedSerializer},
@@ -1041,6 +1056,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     # Pinned: the PATCH below shares this action's path, and DRF names the
     # operations of a two-method action after the path and the method.
+    @viewer_denied("remove evaluations")
     @swagger_auto_schema(
         responses={204: "Removed"},
         operation_id="simulate_api_harness-environments_remove_evaluation",
@@ -1084,6 +1100,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("edit evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentEvalEditSerializer,
         responses={200: SimulateEvalConfigResponseSerializer},
@@ -1177,6 +1194,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         return Response(SimulateEvalConfigSimpleSerializer(config).data)
 
+    @viewer_denied("change the tool call evaluation")
     @validated_request(
         request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},

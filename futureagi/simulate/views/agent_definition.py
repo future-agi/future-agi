@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
@@ -206,6 +207,7 @@ class AgentDefinitionView(APIView):
                 f"Failed to retrieve agent definitions: {str(e)}"
             )
 
+    @viewer_denied("delete agents")
     @validated_request(
         request_serializer=AgentDefinitionBulkDeleteRequestSerializer,
         responses={
@@ -258,6 +260,7 @@ class CreateAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("create an agent")
     @validated_request(
         request_serializer=AgentDefinitionCreateRequestSerializer,
         responses={
@@ -707,6 +710,7 @@ class EditAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("edit an agent")
     @validated_request(
         request_serializer=AgentDefinitionEditRequestSerializer,
         responses={
@@ -853,6 +857,7 @@ class DeleteAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("delete an agent")
     @swagger_auto_schema(
         responses={
             200: AgentDefinitionDeleteResponseSerializer,

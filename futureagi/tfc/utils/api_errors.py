@@ -46,6 +46,7 @@ class ApiErrorCode(StrEnum):
     SCORE_PROJECT_MISMATCH = "score_project_mismatch"
     DATASET_LIMIT_CHECK_FAILED = "dataset_limit_check_failed"
     FILTER_VALUE_INVENTORY_TOO_BROAD = "filter_value_inventory_too_broad"
+    VIEWER_READ_ONLY = "viewer_read_only"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]
