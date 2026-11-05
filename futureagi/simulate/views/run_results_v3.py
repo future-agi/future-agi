@@ -296,9 +296,14 @@ class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
     result = serializers.ChoiceField(
-        choices=["not_applicable", "inconclusive"], required=False
+        choices=["not_applicable", "inconclusive", "unmeasured"], required=False
     )
     reason = serializers.CharField(required=False, allow_blank=True)
+    evidence = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -626,6 +631,10 @@ class TrialStateChangeSerializer(serializers.Serializer):
     faulted = serializers.IntegerField()
     duplicate = serializers.IntegerField()
     committed_actions = serializers.ListField(child=serializers.CharField())
+    no_change = serializers.BooleanField(
+        required=False,
+        help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",
+    )
 
 
 class ActorDecisionSerializer(serializers.Serializer):
@@ -634,24 +643,69 @@ class ActorDecisionSerializer(serializers.Serializer):
 
     actor = serializers.CharField()
     play = serializers.ChoiceField(
-        choices=("mocked", "live", "history", "waiting", "timeout")
+        choices=("mocked", "live", "history", "waiting", "timeout", "problem")
     )
     action = serializers.CharField(required=False, allow_null=True)
+    arguments = serializers.DictField(
+        required=False,
+        help_text="What it sent: for a pre-run message (`history`), the message itself.",
+    )
+    channel = serializers.CharField(
+        required=False,
+        help_text="`voice` when decided on the call by a speaking actor.",
+    )
+    problem = serializers.CharField(
+        required=False,
+        help_text="For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+    )
     why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     status = serializers.IntegerField(required=False, allow_null=True)
     timeout_seconds = serializers.FloatField(required=False)
     fallback = serializers.CharField(
         required=False,
-        help_text="silent, decline, or the id of the actor who answers instead",
+        help_text="silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
     )
-    outcome = serializers.ChoiceField(
-        choices=("timed_out", "declined", "answered_by"), required=False
+    outcome = serializers.CharField(
+        required=False,
+        help_text=(
+            "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: "
+            "what the world made of it (committed, refused, faulted, duplicate)."
+        ),
     )
+
+
+class ApprovalWriteSerializer(serializers.Serializer):
+    action = serializers.CharField(allow_null=True)
+    outcome = serializers.CharField(allow_null=True)
+
+
+class ApprovalLineSerializer(serializers.Serializer):
+    """One approval, read from the action log: the agent's request, the decision, and the agent's writes around it."""
+
+    request = serializers.DictField()
+    decision = serializers.DictField()
+    before_decision = ApprovalWriteSerializer(many=True)
+    after_decision = ApprovalWriteSerializer(many=True)
+    acted_before_decision = serializers.BooleanField()
+
+
+class ActorUsageSerializer(serializers.Serializer):
+    actor = serializers.CharField()
+    model = serializers.CharField(allow_blank=True)
+    tokens_in = serializers.IntegerField()
+    tokens_out = serializers.IntegerField()
+    cost_usd = serializers.FloatField()
 
 
 class TrialStateSerializer(serializers.Serializer):
     state_changes = TrialStateChangeSerializer(many=True, required=False)
     decisions = ActorDecisionSerializer(many=True, required=False)
+    approvals = ApprovalLineSerializer(many=True, required=False)
+    usage = ActorUsageSerializer(many=True, required=False)
+    limits = serializers.DictField(
+        required=False,
+        help_text="The actor limits this trial ran with; null is no limit.",
+    )
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):

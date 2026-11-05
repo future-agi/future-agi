@@ -1220,7 +1220,7 @@ SUB_GOAL_PASSED = {"pass": True, "fail": False}
 
 
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
-    """pass, fail, not_applicable or inconclusive; a receipt from before verdicts reads from `held`."""
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
     if goal.get("verdict"):
         return str(goal["verdict"])
     if not isinstance(goal.get("held"), bool):
@@ -1261,14 +1261,17 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
         item for item in body.get("evaluations") or [] if isinstance(item, dict)
     ]
     expected = len(sub_goals) + len(evaluations)
-    executed = sum(sub_goal_result(item) is not None for item in sub_goals) + sum(
-        not bool(item.get("grading_error")) for item in evaluations
-    )
+    # An unmeasured sub-goal stays among those requested and is never counted as evaluated, passed or failed.
+    unmeasured = sum(sub_goal_result(item) == "unmeasured" for item in sub_goals)
+    executed = sum(
+        sub_goal_result(item) not in (None, "unmeasured") for item in sub_goals
+    ) + sum(not bool(item.get("grading_error")) for item in evaluations)
     return {
         "expected": expected,
         "executed": executed,
-        "failed": max(0, expected - executed),
-        "complete": executed == expected,
+        "failed": max(0, expected - executed - unmeasured),
+        "unmeasured": unmeasured,
+        "complete": executed + unmeasured == expected,
     }
 
 
@@ -1418,9 +1421,12 @@ def _ingest_hosted_transcript(
                 metadata.pop(WORLD_ACTIONS_KEY, None)
             trial = {
                 key: [one for one in world.get(key) or [] if isinstance(one, dict)]
-                for key in ("state_changes", "decisions")
+                for key in ("state_changes", "decisions", "approvals", "usage")
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
+            # The limits the trial ran with, so the record says which applied.
+            if isinstance(world, dict) and isinstance(world.get("limits"), dict):
+                trial["limits"] = world["limits"]
             if any(trial.values()):
                 metadata[TRIAL_STATE_KEY] = trial
             else:
