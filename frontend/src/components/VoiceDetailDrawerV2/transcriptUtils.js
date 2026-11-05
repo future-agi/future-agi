@@ -80,8 +80,8 @@ const SLOW_RESPONSE_SECONDS = 2;
  *   duration   → seconds
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
- *   slowResponse  → true when an agent turn replied to the caller after a
- *                   gap longer than SLOW_RESPONSE_SECONDS
+ *   slowResponse  → true when an agent turn starts after a silent gap longer
+ *                   than SLOW_RESPONSE_SECONDS (whoever spoke before)
  */
 export const enrichTurns = (
   transcript,
@@ -228,11 +228,7 @@ export const enrichTurns = (
         cur.overlapsPrev = true;
       } else if (gap > 0.3) {
         cur.silenceBefore = gap;
-        if (
-          cur.role === "assistant" &&
-          prev.role === "user" &&
-          gap > SLOW_RESPONSE_SECONDS
-        ) {
+        if (cur.role === "assistant" && gap > SLOW_RESPONSE_SECONDS) {
           cur.slowResponse = true;
         }
       }
@@ -305,12 +301,20 @@ export const computeCallMetrics = (turns) => {
   let silenceTotal = 0;
   let silenceCount = 0;
   let interruptionCount = 0;
+  let worstAgentLatency = 0;
   turns.forEach((t) => {
     if (t.silenceBefore != null && t.silenceBefore > 0) {
       silenceTotal += t.silenceBefore;
       silenceCount += 1;
     }
     if (t.overlapsPrev) interruptionCount += 1;
+    if (
+      t.role === "assistant" &&
+      t.silenceBefore != null &&
+      t.silenceBefore > worstAgentLatency
+    ) {
+      worstAgentLatency = t.silenceBefore;
+    }
   });
 
   // Time to first word: earliest start among non-system turns. For voice
@@ -336,5 +340,6 @@ export const computeCallMetrics = (turns) => {
     silenceTotal,
     silenceCount,
     timeToFirstWord: ttfw,
+    worstAgentLatency,
   };
 };

@@ -412,7 +412,7 @@ const TurnRow = React.forwardRef(
 
           {showTemporalMetadata && turn.slowResponse && (
             <Tooltip
-              title={`Slow response: agent took ${turn.silenceBefore.toFixed(1)}s to reply`}
+              title={`Slow response: ${turn.silenceBefore.toFixed(1)}s of silence before the agent spoke`}
               arrow
             >
               <Box

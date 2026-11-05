@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enrichTurns } from "../transcriptUtils";
+import { computeCallMetrics, enrichTurns } from "../transcriptUtils";
 
 describe("enrichTurns", () => {
   it("preserves structured function calls through normalization", () => {
@@ -47,5 +47,30 @@ describe("enrichTurns", () => {
     ]);
 
     expect(turns[1].overlapsPrev).toBe(true);
+  });
+
+  it("flags a long wait after the agent's own filler line", () => {
+    const turns = enrichTurns([
+      { role: "user", content: "question", start: 0, duration: 2 },
+      { role: "assistant", content: "Let me check.", start: 4, duration: 1 },
+      { role: "assistant", content: "Thanks for waiting", start: 10, duration: 1 },
+      { role: "assistant", content: "Just to recap", start: 21.6, duration: 1 },
+    ]);
+
+    expect(turns.map((t) => t.slowResponse)).toEqual([false, false, true, true]);
+  });
+});
+
+describe("computeCallMetrics worstAgentLatency", () => {
+  it("is the longest silence before an agent turn, ignoring longer caller gaps", () => {
+    const turns = enrichTurns([
+      { role: "user", content: "question", start: 0, duration: 2 },
+      { role: "assistant", content: "Let me check.", start: 4, duration: 1 },
+      { role: "assistant", content: "Thanks for waiting", start: 10, duration: 1 },
+      { role: "assistant", content: "Just to recap", start: 21.6, duration: 1 },
+      { role: "user", content: "ok", start: 40, duration: 1 },
+    ]);
+
+    expect(computeCallMetrics(turns).worstAgentLatency).toBeCloseTo(10.6, 5);
   });
 });

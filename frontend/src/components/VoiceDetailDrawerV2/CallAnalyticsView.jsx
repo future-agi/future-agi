@@ -134,6 +134,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     assistantTalkPct,
     silenceTotal,
     timeToFirstWord,
+    worstAgentLatency: worstLatency,
   } = m;
 
   const turnCount = api.turnCount ?? m.turnCount;
@@ -174,6 +175,11 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
       label: "Latency",
       value: avgLatency != null ? fmtMs(avgLatency, { forceMs: true }) : "—",
       hint: "Avg agent response latency",
+    },
+    {
+      label: "Worst latency",
+      value: fmtMs(worstLatency * 1000, { forceMs: true }),
+      hint: "Longest silence before an agent turn",
     },
     { label: "User / AI", value: talkRatioValue, hint: "Talk time split (%)" },
     {
