@@ -37255,6 +37255,187 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
+ * The run readiness of an agent, environment and suite pairing, computed now;
+an absent id is the environment's default. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
+  {
+    agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
+  },
+);
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
+  pairing: zod.object({
+    agent_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    environment_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    suite_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    evidence: zod
+      .enum(["pair_certificate", "build_certificate", "none"])
+      .describe(
+        "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+      ),
+  }),
+  validation: zod.object({
+    state: zod
+      .enum([
+        "not_run",
+        "validating",
+        "ready",
+        "failed",
+        "retry",
+        "unavailable",
+      ])
+      .describe(
+        "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
+      ),
+    job_id: zod.string().uuid(),
+    purpose: zod.enum(["agent_move", "recheck"]),
+    finished_at: zod.string().datetime({ offset: true }),
+    error: zod.record(zod.string(), zod.string()),
+  }),
+  answer: zod.object({
+    kind: zod.enum(["ready", "blocked", "stale", "unchecked", "validating"]),
+    worst: zod
+      .enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ])
+      .describe("The worst measured row."),
+    reason_code: zod
+      .string()
+      .min(1)
+      .describe("pair_failed: a check failed without naming an action."),
+  }),
+  areas: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      status: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      rows: zod.array(zod.string().min(1)),
+    }),
+  ),
+  rows: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      label: zod.string().min(1),
+      area: zod.string().min(1),
+      status: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      measured: zod.boolean(),
+      finding: zod.enum([
+        "passed",
+        "failed",
+        "limited",
+        "not_applicable",
+        "not_run",
+      ]),
+      reason_code: zod.string().min(1),
+      reason: zod.string().min(1),
+      targets: zod.array(
+        zod.object({
+          kind: zod.enum(["tool", "action", "check"]),
+          name: zod.string().min(1),
+          result: zod.string().min(1),
+        }),
+      ),
+      blocked_by: zod.string().min(1),
+      stale_because: zod.string().min(1),
+      was: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      evidence: zod.array(
+        zod.object({
+          check: zod.string().min(1),
+          result: zod
+            .string()
+            .min(1)
+            .describe("A check status, or a ratio such as 3/4."),
+        }),
+      ),
+      checked_at: zod.string().min(1),
+      fix: zod.object({
+        type: zod.string().min(1),
+        target: zod.string().min(1),
+        action: zod.string().min(1),
+        would: zod.string().min(1),
+        recheck: zod
+          .object({
+            scope: zod.enum(["agent", "pair"]),
+            method: zod.enum(["POST"]),
+            path: zod.string().min(1),
+          })
+          .describe(
+            "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+          ),
+      }),
+    }),
+  ),
+  counts: zod.object({
+    supported: zod.number(),
+    partial: zod.number(),
+    blocked: zod.number(),
+    unavailable: zod.number(),
+    untested: zod.number(),
+    stale: zod.number(),
+  }),
+  catalog_version: zod.string().min(1),
+  rules_version: zod.string().min(1),
+  computed_at: zod.string().min(1),
+});
+
+/**
+ * Validate a pairing again with a run-less check; moves no default. An absent
+id is the environment's default.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesBody =
+  zod.object({
+    agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
+  });
+
+/**
  * Two runs of this environment, scenario by scenario; against defaults to
 the previous completed run. Not gated on versioning: a run from before
 versioning compares too, with null versions.
@@ -39835,7 +40016,7 @@ export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultParams =
   zod.object({
@@ -52104,6 +52285,7 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
+
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -52151,6 +52333,162 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .default(
         simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault,
       ),
+    capability_snapshot: zod
+      .object({
+        pairing: zod.object({
+          agent_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          environment_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          suite_version: zod.object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+          }),
+          evidence: zod
+            .enum(["pair_certificate", "build_certificate", "none"])
+            .describe(
+              "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+            ),
+        }),
+        validation: zod.object({
+          state: zod
+            .enum([
+              "not_run",
+              "validating",
+              "ready",
+              "failed",
+              "retry",
+              "unavailable",
+            ])
+            .describe(
+              "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
+            ),
+          job_id: zod.string().uuid(),
+          purpose: zod.enum(["agent_move", "recheck"]),
+          finished_at: zod.string().datetime({ offset: true }),
+          error: zod.record(zod.string(), zod.string()),
+        }),
+        answer: zod.object({
+          kind: zod.enum([
+            "ready",
+            "blocked",
+            "stale",
+            "unchecked",
+            "validating",
+          ]),
+          worst: zod
+            .enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ])
+            .describe("The worst measured row."),
+          reason_code: zod
+            .string()
+            .min(1)
+            .describe("pair_failed: a check failed without naming an action."),
+        }),
+        areas: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            status: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            rows: zod.array(zod.string().min(1)),
+          }),
+        ),
+        rows: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            label: zod.string().min(1),
+            area: zod.string().min(1),
+            status: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            measured: zod.boolean(),
+            finding: zod.enum([
+              "passed",
+              "failed",
+              "limited",
+              "not_applicable",
+              "not_run",
+            ]),
+            reason_code: zod.string().min(1),
+            reason: zod.string().min(1),
+            targets: zod.array(
+              zod.object({
+                kind: zod.enum(["tool", "action", "check"]),
+                name: zod.string().min(1),
+                result: zod.string().min(1),
+              }),
+            ),
+            blocked_by: zod.string().min(1),
+            stale_because: zod.string().min(1),
+            was: zod.enum([
+              "supported",
+              "partial",
+              "blocked",
+              "unavailable",
+              "untested",
+              "stale",
+            ]),
+            evidence: zod.array(
+              zod.object({
+                check: zod.string().min(1),
+                result: zod
+                  .string()
+                  .min(1)
+                  .describe("A check status, or a ratio such as 3/4."),
+              }),
+            ),
+            checked_at: zod.string().min(1),
+            fix: zod.object({
+              type: zod.string().min(1),
+              target: zod.string().min(1),
+              action: zod.string().min(1),
+              would: zod.string().min(1),
+              recheck: zod
+                .object({
+                  scope: zod.enum(["agent", "pair"]),
+                  method: zod.enum(["POST"]),
+                  path: zod.string().min(1),
+                })
+                .describe(
+                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                ),
+            }),
+          }),
+        ),
+        counts: zod.object({
+          supported: zod.number(),
+          partial: zod.number(),
+          blocked: zod.number(),
+          unavailable: zod.number(),
+          untested: zod.number(),
+          stale: zod.number(),
+        }),
+        catalog_version: zod.string().min(1),
+        rules_version: zod.string().min(1),
+        computed_at: zod.string().min(1),
+      })
+      .optional(),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
       .default(

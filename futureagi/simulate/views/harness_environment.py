@@ -12,9 +12,14 @@ from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
+    HarnessCapabilityQuerySerializer,
+    HarnessCapabilityRecheckResponseSerializer,
+    HarnessCapabilityRecheckSerializer,
+    HarnessCapabilityReportSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
+    HarnessDefaultMoveValidatingSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
@@ -180,9 +185,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -198,7 +201,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            202: HarnessDefaultMoveValidatingSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(
@@ -210,9 +216,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     def move_default(self, request, pk=None, piece=None, version_id=None):
         """Make an agent, environment or suite version the default; returns every
-        version."""
+        version. An agent move that waits for its pairing to validate is a 202."""
         from simulate.services.harness_versioning.versions import (
             MOVABLE_PIECES,
+            move_agent_default,
             move_default,
         )
 
@@ -223,14 +230,28 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if piece not in MOVABLE_PIECES or identifier is None:
             raise version_reads.version_not_found()
-        moved = move_default(
-            job,
-            piece,
-            identifier,
-            expected_default_id=request.validated_data["expected_default_id"],
-            user=request.user,
+        expected_default_id = request.validated_data["expected_default_id"]
+        if piece != "agent":
+            moved = move_default(
+                job,
+                piece,
+                identifier,
+                expected_default_id=expected_default_id,
+                user=request.user,
+            )
+            return Response(version_reads.list_versions(moved))
+        moved, validation = move_agent_default(
+            job, identifier, expected_default_id=expected_default_id, user=request.user
         )
-        return Response(version_reads.list_versions(moved))
+        if validation is None or validation.ready:
+            return Response(version_reads.list_versions(moved))
+        return Response(
+            {
+                "versions": version_reads.list_versions(moved),
+                "validation": validation.as_view(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     def _agent_version(self, job, version_id):
         """One agent version of this environment's agent, or a 404."""
@@ -476,6 +497,45 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise nudge_not_found()
         nudge = stop_rebuild(job, identifier, user=request.user)
         return Response(nudge_item(_nudges(job).get(id=nudge.id)))
+
+    @validated_request(
+        query_serializer=HarnessCapabilityQuerySerializer,
+        responses={200: HarnessCapabilityReportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities")
+    def capabilities(self, request, pk=None):
+        """The run readiness of an agent, environment and suite pairing, computed now;
+        an absent id is the environment's default. No writes."""
+        from simulate.services.harness_readiness import (
+            readiness_report,
+            resolve_pairing,
+        )
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        pairing = resolve_pairing(job, **request.validated_query_data)
+        return Response(readiness_report(pairing))
+
+    @validated_request(
+        request_serializer=HarnessCapabilityRecheckSerializer,
+        responses={202: HarnessCapabilityRecheckResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="capabilities/recheck")
+    def recheck_capabilities(self, request, pk=None):
+        """Validate a pairing again with a run-less check; moves no default. An absent
+        id is the environment's default."""
+        from simulate.services.harness_readiness import recheck, resolve_pairing
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        pairing = resolve_pairing(job, **request.validated_data)
+        return Response(
+            {"validation": recheck(pairing)}, status=status.HTTP_202_ACCEPTED
+        )
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

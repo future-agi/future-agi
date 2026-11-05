@@ -18582,6 +18582,281 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export interface RunVersionLabelApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly label?: string | null;
+}
+
+/**
+ * pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.
+ */
+export type HarnessCapabilityPairingApiEvidence =
+  (typeof HarnessCapabilityPairingApiEvidence)[keyof typeof HarnessCapabilityPairingApiEvidence];
+
+export const HarnessCapabilityPairingApiEvidence = {
+  pair_certificate: "pair_certificate",
+  build_certificate: "build_certificate",
+  none: "none",
+} as const;
+
+export interface HarnessCapabilityPairingApi {
+  agent_version: RunVersionLabelApi;
+  environment_version: RunVersionLabelApi;
+  suite_version: RunVersionLabelApi;
+  /** pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with. */
+  evidence: HarnessCapabilityPairingApiEvidence;
+}
+
+/**
+ * ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.
+ */
+export type HarnessPairValidationApiState =
+  (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
+
+export const HarnessPairValidationApiState = {
+  not_run: "not_run",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  retry: "retry",
+  unavailable: "unavailable",
+} as const;
+
+export type HarnessPairValidationApiPurpose =
+  (typeof HarnessPairValidationApiPurpose)[keyof typeof HarnessPairValidationApiPurpose];
+
+export const HarnessPairValidationApiPurpose = {
+  agent_move: "agent_move",
+  recheck: "recheck",
+} as const;
+
+export type HarnessPairValidationApiError = { [key: string]: string };
+
+export interface HarnessPairValidationApi {
+  /** ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing. */
+  state: HarnessPairValidationApiState;
+  job_id: string;
+  purpose: HarnessPairValidationApiPurpose;
+  finished_at: string;
+  error: HarnessPairValidationApiError;
+}
+
+export type HarnessCapabilityAnswerApiKind =
+  (typeof HarnessCapabilityAnswerApiKind)[keyof typeof HarnessCapabilityAnswerApiKind];
+
+export const HarnessCapabilityAnswerApiKind = {
+  ready: "ready",
+  blocked: "blocked",
+  stale: "stale",
+  unchecked: "unchecked",
+  validating: "validating",
+} as const;
+
+/**
+ * The worst measured row.
+ */
+export type HarnessCapabilityAnswerApiWorst =
+  (typeof HarnessCapabilityAnswerApiWorst)[keyof typeof HarnessCapabilityAnswerApiWorst];
+
+export const HarnessCapabilityAnswerApiWorst = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export interface HarnessCapabilityAnswerApi {
+  kind: HarnessCapabilityAnswerApiKind;
+  /** The worst measured row. */
+  worst: HarnessCapabilityAnswerApiWorst;
+  /**
+   * pair_failed: a check failed without naming an action.
+   * @minLength 1
+   */
+  reason_code: string;
+}
+
+export type HarnessCapabilityAreaApiStatus =
+  (typeof HarnessCapabilityAreaApiStatus)[keyof typeof HarnessCapabilityAreaApiStatus];
+
+export const HarnessCapabilityAreaApiStatus = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export interface HarnessCapabilityAreaApi {
+  /** @minLength 1 */
+  id: string;
+  status: HarnessCapabilityAreaApiStatus;
+  rows: string[];
+}
+
+export type HarnessCapabilityRowApiStatus =
+  (typeof HarnessCapabilityRowApiStatus)[keyof typeof HarnessCapabilityRowApiStatus];
+
+export const HarnessCapabilityRowApiStatus = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export type HarnessCapabilityRowApiFinding =
+  (typeof HarnessCapabilityRowApiFinding)[keyof typeof HarnessCapabilityRowApiFinding];
+
+export const HarnessCapabilityRowApiFinding = {
+  passed: "passed",
+  failed: "failed",
+  limited: "limited",
+  not_applicable: "not_applicable",
+  not_run: "not_run",
+} as const;
+
+export type HarnessCapabilityTargetApiKind =
+  (typeof HarnessCapabilityTargetApiKind)[keyof typeof HarnessCapabilityTargetApiKind];
+
+export const HarnessCapabilityTargetApiKind = {
+  tool: "tool",
+  action: "action",
+  check: "check",
+} as const;
+
+export interface HarnessCapabilityTargetApi {
+  kind: HarnessCapabilityTargetApiKind;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type HarnessCapabilityRowApiWas =
+  (typeof HarnessCapabilityRowApiWas)[keyof typeof HarnessCapabilityRowApiWas];
+
+export const HarnessCapabilityRowApiWas = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export interface HarnessCapabilityEvidenceApi {
+  /** @minLength 1 */
+  check: string;
+  /**
+   * A check status, or a ratio such as 3/4.
+   * @minLength 1
+   */
+  result: string;
+}
+
+export type HarnessCapabilityFixRecheckApiScope =
+  (typeof HarnessCapabilityFixRecheckApiScope)[keyof typeof HarnessCapabilityFixRecheckApiScope];
+
+export const HarnessCapabilityFixRecheckApiScope = {
+  agent: "agent",
+  pair: "pair",
+} as const;
+
+export type HarnessCapabilityFixRecheckApiMethod =
+  (typeof HarnessCapabilityFixRecheckApiMethod)[keyof typeof HarnessCapabilityFixRecheckApiMethod];
+
+export const HarnessCapabilityFixRecheckApiMethod = {
+  POST: "POST",
+} as const;
+
+/**
+ * How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.
+ */
+export interface HarnessCapabilityFixRecheckApi {
+  scope: HarnessCapabilityFixRecheckApiScope;
+  method: HarnessCapabilityFixRecheckApiMethod;
+  /** @minLength 1 */
+  path: string;
+}
+
+export interface HarnessCapabilityFixApi {
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  target: string;
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  would: string;
+  recheck: HarnessCapabilityFixRecheckApi;
+}
+
+export interface HarnessCapabilityRowApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  area: string;
+  status: HarnessCapabilityRowApiStatus;
+  measured: boolean;
+  finding: HarnessCapabilityRowApiFinding;
+  /** @minLength 1 */
+  reason_code: string;
+  /** @minLength 1 */
+  reason: string;
+  targets: HarnessCapabilityTargetApi[];
+  /** @minLength 1 */
+  blocked_by: string;
+  /** @minLength 1 */
+  stale_because: string;
+  was: HarnessCapabilityRowApiWas;
+  evidence: HarnessCapabilityEvidenceApi[];
+  /** @minLength 1 */
+  checked_at: string;
+  fix: HarnessCapabilityFixApi;
+}
+
+export interface HarnessCapabilityCountsApi {
+  supported: number;
+  partial: number;
+  blocked: number;
+  unavailable: number;
+  untested: number;
+  stale: number;
+}
+
+export interface HarnessCapabilityReportApi {
+  pairing: HarnessCapabilityPairingApi;
+  validation: HarnessPairValidationApi;
+  answer: HarnessCapabilityAnswerApi;
+  areas: HarnessCapabilityAreaApi[];
+  rows: HarnessCapabilityRowApi[];
+  counts: HarnessCapabilityCountsApi;
+  /** @minLength 1 */
+  catalog_version: string;
+  /** @minLength 1 */
+  rules_version: string;
+  /** @minLength 1 */
+  computed_at: string;
+}
+
+export interface HarnessCapabilityRecheckApi {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
+}
+
+export interface HarnessCapabilityRecheckResponseApi {
+  validation: HarnessPairValidationApi;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -18619,12 +18894,6 @@ export interface HarnessCompareSideApi {
   pass_rate: number | null;
   /** Context only; never decides the verdict. */
   eval_pass_rate: number | null;
-}
-
-export interface RunVersionLabelApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly label?: string | null;
 }
 
 export interface HarnessComparePairApi {
@@ -19343,6 +19612,11 @@ export interface HarnessSuiteMemberApi {
 export interface HarnessDefaultMoveApi {
   /** The default the caller saw; a newer default refuses the move. */
   expected_default_id: string | null;
+}
+
+export interface HarnessDefaultMoveValidatingApi {
+  versions: HarnessVersionsApi;
+  validation: HarnessPairValidationApi;
 }
 
 export type HarnessVersionDiffApiDiff = { [key: string]: unknown };
@@ -24912,6 +25186,7 @@ export interface RunExecutionApi {
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
   agent_differs?: boolean;
+  capability_snapshot?: HarnessCapabilityReportApi;
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
@@ -38211,6 +38486,12 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsCapabilitiesParams = {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
 };
 
 export type SimulateApiHarnessEnvironmentsCompareParams = {

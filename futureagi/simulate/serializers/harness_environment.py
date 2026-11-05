@@ -702,6 +702,32 @@ class HarnessVersionsSerializer(serializers.Serializer):
     suite = HarnessVersionSerializer(many=True)
 
 
+class HarnessPairValidationSerializer(serializers.Serializer):
+    """An agent, environment and suite pairing's validation."""
+
+    state = serializers.ChoiceField(
+        choices=["not_run", "validating", "ready", "failed", "retry", "unavailable"],
+        help_text=(
+            "ready: certified together; failed: a validation's check failed, so runs"
+            " are refused; retry: the last validation ended before its check did, or"
+            " a run failed the pairing."
+        ),
+    )
+    job_id = serializers.UUIDField(allow_null=True)
+    purpose = serializers.ChoiceField(
+        choices=["agent_move", "recheck"], allow_null=True
+    )
+    finished_at = serializers.DateTimeField(allow_null=True)
+    error = serializers.DictField(allow_null=True)
+
+
+class HarnessDefaultMoveValidatingSerializer(serializers.Serializer):
+    """A move of the default agent that waits for its pairing to validate."""
+
+    versions = HarnessVersionsSerializer()
+    validation = HarnessPairValidationSerializer()
+
+
 class HarnessDraftItemSerializer(HarnessVersionSerializer):
     """An unsaved draft of the environment or the suite, as the Save bar shows it."""
 
@@ -792,6 +818,141 @@ class HarnessVersionDiffSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Those unsaved edits, against the default they started from.",
     )
+
+
+_READINESS_STATUSES = (
+    "supported",
+    "partial",
+    "blocked",
+    "unavailable",
+    "untested",
+    "stale",
+)
+
+
+class HarnessCapabilityQuerySerializer(StrictInputSerializer):
+    """The pairing to read; an absent id is the environment's default."""
+
+    agent_version_id = serializers.UUIDField(required=False)
+    environment_version_id = serializers.UUIDField(required=False)
+    suite_version_id = serializers.UUIDField(required=False)
+
+
+class HarnessCapabilityRecheckSerializer(HarnessCapabilityQuerySerializer):
+    """The pairing to validate again; an absent id is the environment's default."""
+
+
+class HarnessCapabilityRecheckResponseSerializer(serializers.Serializer):
+    validation = HarnessPairValidationSerializer()
+
+
+class HarnessCapabilityPairingSerializer(serializers.Serializer):
+    agent_version = RunVersionLabelSerializer(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True)
+    suite_version = RunVersionLabelSerializer(allow_null=True)
+    evidence = serializers.ChoiceField(
+        choices=("pair_certificate", "build_certificate", "none"),
+        help_text=(
+            "pair_certificate: this pairing was certified together; build_certificate:"
+            " the environment version's build, measured with the agent it was built"
+            " with."
+        ),
+    )
+
+
+class HarnessCapabilityAnswerSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(
+        choices=("ready", "blocked", "stale", "unchecked", "validating")
+    )
+    worst = serializers.ChoiceField(
+        choices=_READINESS_STATUSES, help_text="The worst measured row."
+    )
+    reason_code = serializers.CharField(
+        allow_null=True,
+        help_text="pair_failed: a check failed without naming an action.",
+    )
+
+
+class HarnessCapabilityAreaSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    status = serializers.ChoiceField(choices=_READINESS_STATUSES)
+    rows = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessCapabilityTargetSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("tool", "action", "check"))
+    name = serializers.CharField()
+    result = serializers.CharField()
+
+
+class HarnessCapabilityEvidenceSerializer(serializers.Serializer):
+    check = serializers.CharField()
+    result = serializers.CharField(help_text="A check status, or a ratio such as 3/4.")
+
+
+class HarnessCapabilityFixRecheckSerializer(serializers.Serializer):
+    scope = serializers.ChoiceField(choices=("agent", "pair"))
+    method = serializers.ChoiceField(choices=("POST",))
+    path = serializers.CharField()
+
+
+class HarnessCapabilityFixSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    target = serializers.CharField(allow_null=True)
+    action = serializers.CharField()
+    would = serializers.CharField()
+    recheck = HarnessCapabilityFixRecheckSerializer(
+        allow_null=True,
+        help_text=(
+            "How to read the row again once fixed; null when this pairing is"
+            " certified already, so only a new agent or environment version"
+            " (checked on its own) can change it."
+        ),
+    )
+
+
+class HarnessCapabilityRowSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    area = serializers.CharField(allow_null=True)
+    status = serializers.ChoiceField(choices=_READINESS_STATUSES)
+    measured = serializers.BooleanField()
+    finding = serializers.ChoiceField(
+        choices=("passed", "failed", "limited", "not_applicable", "not_run"),
+        allow_null=True,
+    )
+    reason_code = serializers.CharField(allow_null=True)
+    reason = serializers.CharField(allow_null=True)
+    targets = HarnessCapabilityTargetSerializer(many=True)
+    blocked_by = serializers.CharField(allow_null=True)
+    stale_because = serializers.CharField(allow_null=True)
+    was = serializers.ChoiceField(choices=_READINESS_STATUSES, allow_null=True)
+    evidence = HarnessCapabilityEvidenceSerializer(many=True)
+    checked_at = serializers.CharField(allow_null=True)
+    fix = HarnessCapabilityFixSerializer(allow_null=True)
+
+
+class HarnessCapabilityCountsSerializer(serializers.Serializer):
+    supported = serializers.IntegerField()
+    partial = serializers.IntegerField()
+    blocked = serializers.IntegerField()
+    unavailable = serializers.IntegerField()
+    untested = serializers.IntegerField()
+    stale = serializers.IntegerField()
+
+
+class HarnessCapabilityReportSerializer(serializers.Serializer):
+    """A pairing's run readiness, computed when read."""
+
+    pairing = HarnessCapabilityPairingSerializer()
+    validation = HarnessPairValidationSerializer()
+    answer = HarnessCapabilityAnswerSerializer()
+    areas = HarnessCapabilityAreaSerializer(many=True)
+    rows = HarnessCapabilityRowSerializer(many=True)
+    counts = HarnessCapabilityCountsSerializer()
+    catalog_version = serializers.CharField()
+    rules_version = serializers.CharField()
+    computed_at = serializers.CharField()
 
 
 class HarnessRunPlanQuerySerializer(serializers.Serializer):
