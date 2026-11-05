@@ -72,4 +72,65 @@ describe("TrialChangesPanel", () => {
       screen.getByText("Nothing changed in the world in this trial."),
     ).toBeInTheDocument();
   });
+  it("shows the world waiting on an actor and the configured outcome when it does not answer", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "deputy",
+              name: "Dev",
+              attempted: 1,
+              committed: 1,
+              committed_actions: ["deals.approve"],
+            },
+          ],
+          decisions: [
+            {
+              actor: "manager",
+              play: "waiting",
+              timeout_seconds: 30,
+              fallback: "decline",
+            },
+            {
+              actor: "manager",
+              play: "timeout",
+              fallback: "decline",
+              outcome: "declined",
+            },
+            {
+              actor: "lead",
+              play: "waiting",
+              timeout_seconds: 20,
+              fallback: "deputy",
+            },
+            {
+              actor: "lead",
+              play: "timeout",
+              fallback: "deputy",
+              outcome: "answered_by",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "manager · Waiting for a response · up to 30 s, then the request is declined",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "manager · Timed out · No answer: the request was declined",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "lead · Waiting for a response · up to 20 s, then Dev answers instead",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("lead · Timed out · No answer: Dev answered instead"),
+    ).toBeInTheDocument();
+  });
 });

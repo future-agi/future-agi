@@ -16,6 +16,13 @@ export default function TrialChangesPanel({ trialState }) {
   if (!changes.length && !decisions.length)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.empty}</Typography>;
   const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
+  const name = (id) => names[id] || id;
+  const timing = (one) => {
+    if (one.play === "waiting") return C.waited(one, name);
+    if (one.play !== "timeout") return null;
+    const said = C.outcomes[one.outcome];
+    return typeof said === "function" ? said(name(one.fallback)) : said;
+  };
   return (
     <Stack spacing={1.5} sx={{ p: 2 }}>
       <Box>
@@ -47,7 +54,7 @@ export default function TrialChangesPanel({ trialState }) {
               {[
                 names[one.actor] || one.actor,
                 C.plays[one.play] || one.play,
-                one.action || C.nothing,
+                timing(one) || one.action || C.nothing,
                 one.why,
               ]
                 .filter(Boolean)

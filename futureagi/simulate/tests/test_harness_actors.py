@@ -1358,7 +1358,21 @@ def test_a_call_keeps_its_trial_s_state_changes_and_actor_decisions_and_serves_t
             "action": "deals.approve",
             "why": "12% is within my limit",
             "status": 200,
-        }
+        },
+        {
+            "actor": "lead",
+            "play": "waiting",
+            "timeout_seconds": 30.0,
+            "fallback": "decline",
+            "parent": "a1",
+        },
+        {
+            "actor": "lead",
+            "play": "timeout",
+            "fallback": "decline",
+            "outcome": "declined",
+            "timeout_seconds": 30.0,
+        },
     ]
     metadata = {TRIAL_STATE_KEY: {"stale": True}}
     _ingest(

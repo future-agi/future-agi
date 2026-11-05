@@ -629,13 +629,24 @@ class TrialStateChangeSerializer(serializers.Serializer):
 
 
 class ActorDecisionSerializer(serializers.Serializer):
-    """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history)."""
+    """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history);
+    or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout)."""
 
     actor = serializers.CharField()
-    play = serializers.ChoiceField(choices=("mocked", "live", "history"))
+    play = serializers.ChoiceField(
+        choices=("mocked", "live", "history", "waiting", "timeout")
+    )
     action = serializers.CharField(required=False, allow_null=True)
     why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     status = serializers.IntegerField(required=False, allow_null=True)
+    timeout_seconds = serializers.FloatField(required=False)
+    fallback = serializers.CharField(
+        required=False,
+        help_text="silent, decline, or the id of the actor who answers instead",
+    )
+    outcome = serializers.ChoiceField(
+        choices=("timed_out", "declined", "answered_by"), required=False
+    )
 
 
 class TrialStateSerializer(serializers.Serializer):
