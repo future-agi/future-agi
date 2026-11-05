@@ -54,6 +54,7 @@ def stratum_parts_select(
     rollup: str = "overall",
     scope_column: str | None = "sampling_scope",
     bucket_column: str | None = None,
+    sketch_value: str | None = None,
 ) -> str:
     """One uncorrected part per [bucket,] group, scope and stratum.
 
@@ -68,6 +69,21 @@ def stratum_parts_select(
         raise ValueError("Unsupported sampling scope column.")
     if bucket_column not in {"bucket_start", None}:
         raise ValueError("Unsupported bucket column.")
+    if sketch_value not in {None, "value_number", "value_text", "value_bool"}:
+        raise ValueError("Unsupported sketch value column.")
+    # Bucket writers need scalar moments AND opaque sketches from the same
+    # winners. A second aggregation joined to this one duplicates every IN set
+    # in the revision-complete field compiler; CTEs do not materialize it in CH.
+    sketch_output = ""
+    sketch_aggregates = ""
+    if sketch_value is not None:
+        sketch_output = (
+            ", uniq_state_h AS uniq_state, quantile_state_h AS quantile_state"
+        )
+        sketch_aggregates = (
+            f", uniqCombined64StateIf(ifNull(toString({sketch_value}), ''), status = 'ok') AS uniq_state_h"
+            ", quantileTDigestStateIf(ifNull(value_number, 0), status = 'ok' AND isNotNull(value_number)) AS quantile_state_h"
+        )
     group, _ = rollup_group_sql(rollup)
     scope = scope_column or "''"
     bucket_output = f"{bucket_column} AS bucket_start, " if bucket_column else ""
@@ -92,7 +108,7 @@ def stratum_parts_select(
         for name, kind in BUCKET_STAT_SCHEMA
         if name in SCALAR_PART_COLUMNS
     )
-    return f"""SELECT {bucket_key}group_key, scope_key, stratum_key, {columns} FROM (
+    return f"""SELECT {bucket_key}group_key, scope_key, stratum_key, {columns}{sketch_output} FROM (
                         SELECT {bucket_output}{group} AS group_key, {scope} AS scope_key, sampling_stratum AS stratum_key,
                             count() AS unit_count_h, countIf(ok) AS valid_count_h,
                             countIf(NOT complete) AS missing_count_h,
@@ -122,6 +138,7 @@ def stratum_parts_select(
                             countIf(notEmpty(scope_key)) AS nonempty_scope_count_h,
                             minIf(scope_key, notEmpty(scope_key)) AS scope_min_h,
                             maxIf(scope_key, notEmpty(scope_key)) AS scope_max_h
+                            {sketch_aggregates}
                         FROM (
                             SELECT *, {formula.numerator} AS n, {formula.denominator} AS d,
                                 ifNull({valid}, 0) AS complete,

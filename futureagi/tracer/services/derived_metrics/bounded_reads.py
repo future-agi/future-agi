@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from clickhouse_driver.util.escape import escape_param
@@ -21,7 +22,12 @@ from tracer.services.derived_metrics.storage import (
     FIELD_CHECKPOINT_BUCKETS,
     FIELD_VALUES,
     TABLES,
+    MetricTable,
 )
+
+if TYPE_CHECKING:
+    from tracer.models.derived_metric import MetricReadManifest
+    from tracer.services.derived_metrics.publication import ClickHousePublicationStore
 
 MAX_KEY_IN_ITEMS = 1000
 MAX_KEY_IN_BYTES = 64 * 1024
@@ -213,6 +219,32 @@ class KeyRelation:
 
 
 @dataclass(frozen=True)
+class KeyBucket:
+    """Disjoint immutable-key subdivision; a collision never removes a revision.
+
+    This is pruning, not a key/byte budget: skew still fails the hard query caps.
+    """
+
+    column: str
+    bucket: int
+
+    def predicate(self, table: MetricTable | str) -> str:
+        _columns(_table(table), (self.column,))
+        if (
+            type(self.bucket) is not int
+            or not 0 <= self.bucket < FIELD_CHECKPOINT_BUCKETS
+        ):
+            raise ValueError("invalid metric key bucket")
+        return (
+            f"cityHash64({self.column}) %% {FIELD_CHECKPOINT_BUCKETS} = {self.bucket}"
+        )
+
+    @property
+    def params(self) -> dict[str, object]:
+        return {}
+
+
+@dataclass(frozen=True)
 class KeyRange:
     """Inclusive upper / exclusive lower bounds in native immutable key order."""
 
@@ -257,6 +289,7 @@ def windowed_rows_select(
     key_in=None,
     candidate_columns=None,
     frozen_overlay=None,
+    key_relation=None,
     param_prefix="window",
 ):
     """Nominate from RAW history, collapse complete keys, then apply the window.
@@ -274,6 +307,7 @@ def windowed_rows_select(
         org_id=org_id,
         project_id=project_id,
         key_in=key_in,
+        key_relation=key_relation,
         param_prefix=param_prefix,
     )
     bound = merge_bindings(bound, params)
@@ -286,6 +320,8 @@ def windowed_rows_select(
         # Render private RowBinary bindings only once, not once per occurrence
         # of C in each branch (which could exceed max_query_size for a legal page).
         ctes.append(f"{param_prefix}_frozen AS ({overlay})")
+        if key_relation is not None:
+            fixed += f" AND ({key_relation.predicate(table)})"
         branches.append(f"SELECT * FROM {param_prefix}_frozen WHERE {fixed}")
         bound = merge_bindings(bound, overlay_params, fixed_params)
     if not branches:
@@ -316,6 +352,210 @@ def windowed_rows_select(
         f"LIMIT 1 BY {', '.join(table.logical_key)}) WHERE {predicate}",
         bound,
     )
+
+
+def field_window_requires_subdivision(
+    store: "ClickHousePublicationStore",
+    manifest: "MetricReadManifest | None",
+    *,
+    org_id: UUID,
+    project_id: UUID,
+    field_id: UUID,
+    field_version: int,
+    bucket_start: str,
+    overlay: tuple[str, dict],
+) -> bool:
+    """Probe at most C+1 distinct nominees, never collapse the full payload.
+
+    Raw old/moved/tombstone and overlay-only keys all nominate. The result selects
+    an execution shape, not a subset of contributions. LIMIT bounds DISTINCT's
+    key set; no ORDER BY forces exhaustion before that limit. Small windows avoid
+    eight expensive anonymous reductions (and unnecessary idle-lease exposure).
+    """
+    from tracer.services.derived_metrics.publication import MAX_COMPACTION_ROWS
+
+    fixed = {"field_id": (field_id,), "field_version": (field_version,)}
+    branches, params = committed_branches(
+        FIELD_VALUES,
+        manifest,
+        org_id=org_id,
+        project_id=project_id,
+        key_in=fixed,
+        columns=("level", "unit_id", "bucket_start"),
+        param_prefix="bucket_probe",
+    )
+    frozen, bound = overlay
+    predicate, fixed_params = key_membership_sql(
+        FIELD_VALUES, fixed, param_prefix="bucket_probe"
+    )
+    branches.append(
+        f"SELECT level, unit_id, bucket_start FROM ({frozen}) WHERE {predicate}"
+    )
+    count = store.execute(
+        "SELECT count() FROM (SELECT DISTINCT level, unit_id FROM ("
+        + " UNION ALL ".join(branches)
+        + ") WHERE bucket_start = parseDateTimeBestEffort(%(bucket_probe_start)s, 'UTC') "
+        + f"LIMIT {MAX_COMPACTION_ROWS + 1})",
+        merge_bindings(
+            params, bound, fixed_params, {"bucket_probe_start": bucket_start}
+        ),
+    )[0][0]
+    return count > MAX_COMPACTION_ROWS
+
+
+# A routing bucket is not an input budget. These limits cover PHYSICAL revisions
+# (including losers and tombstones), before any winner or anonymous aggregation.
+BUCKET_INPUT_ROWS = 50_000
+BUCKET_INPUT_BYTES = 32 * 1024 * 1024
+
+
+class BucketRangeOverflow(ValueError):
+    """Discard the scratch namespace; avoid retrying the same oversized range."""
+
+    def __init__(self, count, size, *, indivisible=False):
+        self.indivisible = indivisible
+        # Count includes physical revisions. A smaller raw prefix may still end
+        # in the same indivisible key; target=1 is the terminal fail-closed case.
+        self.target_rows = max(
+            1, min(count // 2, int(count * BUCKET_INPUT_BYTES / max(size, 1) / 2))
+        )
+        super().__init__("bucket physical revision/byte budget exceeded")
+
+
+@dataclass(frozen=True)
+class BucketFieldPlan:
+    """Immutable source for exhaustive native-key ranges, not hash-sized jobs.
+
+    Enumerate all keys of the fixed field/version. This is intentionally a
+    superset of the mutable bucket window: moved winners, deleted winners and
+    empty transformed children cannot terminate enumeration or lose history.
+    Hashing only routes; every route is further divided and measured. No broad
+    DISTINCT/IN candidate set or repeated field compiler is needed in a child.
+    """
+
+    manifest: object
+    org_id: UUID
+    project_id: UUID
+    field_id: UUID
+    field_version: int
+    predicate: str
+    params: dict
+    overlay: tuple[str, dict]
+    subdivide: bool
+    complete_fields: bool = False
+
+    def scan(self, store, *, target_rows=BUCKET_INPUT_ROWS):
+        return BucketFieldScan(self, store, target_rows)
+
+
+class BucketFieldScan:
+    """Single-use coverage witness. Complete only after every route exhausts."""
+
+    def __init__(self, plan, store, target_rows):
+        if type(target_rows) is not int or not 1 <= target_rows <= BUCKET_INPUT_ROWS:
+            raise ValueError("invalid bucket input range size")
+        self.plan, self.store, self.target_rows = plan, store, target_rows
+        self.ranges = []
+        self.exhausted_routes = []
+        self.complete = False
+        self.started = False
+
+    def _raw(self, route, *, after=None, key_range=None, columns=None):
+        from tracer.services.derived_metrics.changes import keyset_after
+
+        p = self.plan
+        keys = ("level", "unit_id")
+        fixed = {"field_id": (p.field_id,), "field_version": (p.field_version,)}
+        branches, params = committed_branches(
+            FIELD_VALUES,
+            None if p.complete_fields else p.manifest,
+            org_id=p.org_id,
+            project_id=p.project_id,
+            key_in=fixed,
+            key_after=dict(zip(keys, after, strict=True))
+            if after is not None
+            else None,
+            key_relation=key_range,
+            columns=columns,
+            param_prefix="bucket_range",
+        )
+        overlay, overlay_params = p.overlay
+        scope, bound = key_membership_sql(
+            FIELD_VALUES, fixed, param_prefix="bucket_range"
+        )
+        params = merge_bindings(params, bound, overlay_params, p.params)
+        if after is not None:
+            clause, bound = keyset_after(keys, after, "bucket_range_overlay_after")
+            scope += f" AND ({clause})"
+            params = merge_bindings(params, bound)
+        if key_range is not None:
+            scope += f" AND ({key_range.predicate(FIELD_VALUES)})"
+            params = merge_bindings(params, key_range.params)
+        projection = ", ".join(columns or FIELD_VALUES.columns)
+        branches.append(f"SELECT {projection} FROM ({overlay}) WHERE {scope}")
+        if route is not None:
+            routing = KeyBucket("unit_id", route).predicate(FIELD_VALUES)
+            branches = [f"SELECT * FROM ({b}) WHERE {routing}" for b in branches]
+        return branches, params
+
+    def __iter__(self):
+        if self.started:
+            raise ValueError("bucket range scan is single-use")
+        self.started = True
+        keys = ("level", "unit_id")
+        names = ", ".join(keys)
+        routes = range(FIELD_CHECKPOINT_BUCKETS) if self.plan.subdivide else (None,)
+        for route in routes:
+            lower = None
+            while True:
+                branches, params = self._raw(route, after=lower, columns=keys)
+                # Bound each physical prefix before merging it. Duplicates may
+                # shorten a child, but never remove any revision from its read.
+                prefixes = " UNION ALL ".join(
+                    f"SELECT * FROM ({b} ORDER BY {names} LIMIT {self.target_rows})"
+                    for b in branches
+                )
+                nominated, first, last = self.store.execute(
+                    f"SELECT count(), min(tuple({names})), max(tuple({names})) "
+                    f"FROM (SELECT {names} FROM ({prefixes}) "
+                    f"ORDER BY {names} LIMIT {self.target_rows})",
+                    params,
+                )[0]
+                if not nominated:
+                    self.exhausted_routes.append(route)
+                    break
+                upper = tuple(last)
+                if upper == lower:
+                    raise ValueError("bucket range did not advance")
+                key_range = KeyRange(keys, lower, upper, prefix="bucket_child")
+                raw, bound = self._raw(route, key_range=key_range)
+                union = " UNION ALL ".join(raw)
+                # This is streaming count/bytes of at most R+1 physical rows,
+                # NOT a winner count. An oversized same-key history cannot be
+                # divided: at target_rows=1 it fails closed, never truncates.
+                count, size = self.store.execute(
+                    "SELECT count(), sum(length(encoded)) FROM ("
+                    f"SELECT formatRow('RowBinary', {', '.join(FIELD_VALUES.columns)}) AS encoded "
+                    f"FROM ({union}) LIMIT {BUCKET_INPUT_ROWS + 1})",
+                    bound,
+                )[0]
+                if count > BUCKET_INPUT_ROWS or size > BUCKET_INPUT_BYTES:
+                    raise BucketRangeOverflow(
+                        count, size, indivisible=tuple(first) == upper
+                    )
+                if self.plan.complete_fields:
+                    current = union  # complete-empty must never fall back to parent
+                else:
+                    current = (
+                        f"SELECT * FROM ({union}) ORDER BY generation DESC, "
+                        f"{FIELD_VALUES.version_column} DESC LIMIT 1 BY "
+                        + ", ".join(FIELD_VALUES.logical_key)
+                    )
+                descriptor = (route, lower, upper, count, size)
+                self.ranges.append(descriptor)
+                yield f"SELECT * FROM ({current}) WHERE {self.plan.predicate}", bound
+                lower = upper
+        self.complete = True
 
 
 def iter_key_membership_batches(
@@ -671,7 +911,7 @@ def committed_branches(
         scope += f" AND ({predicate})"
     params.update(bound)
     if key_relation is not None:
-        if not isinstance(key_relation, KeyRelation | KeyRange):
+        if not isinstance(key_relation, KeyRelation | KeyRange | KeyBucket):
             raise ValueError("metric membership requires a compiler-owned relation")
         scope += f" AND ({key_relation.predicate(table)})"
     branches = []

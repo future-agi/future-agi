@@ -11,6 +11,7 @@ M2/T16 still require representative scale measurements before deployment.
 """
 
 import json
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -31,17 +32,19 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 from tracer.services.derived_metrics.bounded_reads import (
+    BUCKET_INPUT_ROWS,
+    BucketFieldPlan,
+    BucketRangeOverflow,
     KeyRelation,
     capture_source_output,
     committed_key_pages,
     committed_key_ranges,
+    field_window_requires_subdivision,
     iter_key_membership_batches,
     merge_bindings,
-    windowed_rows_select,
 )
 from tracer.services.derived_metrics.buckets import (
     KEYS,
-    rebuilt_parts_select,
     replacement_select,
 )
 from tracer.services.derived_metrics.deletion_protocol import (
@@ -53,6 +56,7 @@ from tracer.services.derived_metrics.publication import (
     MAX_COMPACTION_ROWS,
     FrozenRows,
     MetricCheckpointLayoutPending,
+    MetricVisibilityError,
     committed_rows_select,
     physical_table,
 )
@@ -215,16 +219,20 @@ class RefreshWriter:
     ):
         """Freeze SELECT output while PREPARED, with bounded sequence allocation.
 
-        SQL/identifiers are compiler-owned, never client SQL. Discovery pages are
-        at most 500 rows; checkpoint pages are also byte bounded. All output pages are
-        durable before seal() permits staging. Empty tables need no INSERT.
+        SQL/identifiers are compiler-owned, never client SQL. Non-transient
+        discovery pages are at most 500 rows. Checkpoint and anonymous pages have
+        separate row/byte bounds. Only non-transient output is durable and
+        stageable; anonymous pages are never staged. Empty tables need no INSERT.
         """
-        if row_limit != MAX_BATCH_ROWS and (
-            row_limit != MAX_COMPACTION_ROWS or attempt.purpose != "compaction"
-        ):
-            raise ValueError("large metric pages require a checkpoint attempt")
         if transient and table != RETIRED_PARTS:
             raise ValueError("only anonymous bucket parts may be transient")
+        if row_limit != MAX_BATCH_ROWS and (
+            row_limit != MAX_COMPACTION_ROWS
+            or (not transient and attempt.purpose != "compaction")
+        ):
+            raise ValueError(
+                "large metric pages require a checkpoint or transient attempt"
+            )
         physical = physical_table(table, checkpoint=attempt.purpose == "compaction")
         after, result = None, []
         kind = TABLE_KIND[table.name]
@@ -1934,49 +1942,117 @@ class RefreshWriter:
             predicate = "metric_id = toUUID(%(span_metric)s) AND metric_version = %(span_version)s AND bucket_start = toDateTime(%(span_bucket)s, 'UTC')"
             previous = f"SELECT * FROM ({old}) WHERE {predicate}"
             anonymous = f"SELECT * FROM ({retired}) WHERE {predicate}"
-            parts = self._anonymous_bucket_parts(
+            with self._anonymous_bucket_parts(
                 attempt, definition, fields, anonymous, params
-            )
-            self.freeze(
-                attempt,
-                BUCKET_TOTALS,
-                replacement_select(parts, previous),
-                params,
-                extra={
-                    "metric_id": "toUUID(%(span_metric)s)",
-                    "metric_version": "toUInt32(%(span_version)s)",
-                },
-            )
+            ) as parts:
+                self.freeze(
+                    attempt,
+                    BUCKET_TOTALS,
+                    replacement_select(parts, previous),
+                    params,
+                    collect_payloads=False,
+                    extra={
+                        "metric_id": "toUUID(%(span_metric)s)",
+                        "metric_version": "toUInt32(%(span_version)s)",
+                    },
+                )
 
+    @contextmanager
     def _anonymous_bucket_parts(self, attempt, definition, fields, retired, params):
-        """Freeze pre-fold parts once, before ranking and vanished-key expansion.
+        """Capture anonymous children and the final global fold exactly once.
 
-        Only anonymous opaque parts cross this boundary. In particular spans
-        never acquire persisted field rows, and folding cannot duplicate the
-        full private field/source compiler tree in every replacement branch.
-        The final whole-bucket bytes, not this transient intermediate, are the
-        durable replay plan prepared before the first INSERT.
+        Only final replacement batches enter the sealed replay ledger. Scratch
+        handles are connection-owned, independently checked and nonstageable;
+        every use (including vanished keys and output pagination) stays inside
+        their lifetime. No carried RowBinary accumulator is composed into SQL.
         """
-        from tracer.services.derived_metrics.buckets import fold_parts_select
+        from clickhouse_driver.errors import ServerException
 
-        params.update(
-            parts_metric=str(definition.metric_id), parts_version=definition.version
-        )
-        raw = rebuilt_parts_select(definition, fields, retired, fold_groups=False)
-        payloads = self.freeze(
-            attempt,
-            RETIRED_PARTS,
-            f"SELECT *, toUInt8(0) AS is_deleted FROM ({raw})",
-            params,
-            transient=True,
-            extra={
-                "metric_id": "toUUID(%(parts_metric)s)",
-                "metric_version": "toUInt32(%(parts_version)s)",
-            },
-        )
-        sql, bound = payload_select(RETIRED_PARTS, payloads, prefix="anonymous_parts")
-        params.update(bound)
-        return fold_parts_select(sql)
+        from tracer.services.derived_metrics.buckets import live_parts_select
+        from tracer.services.derived_metrics.frozen_relations import FrozenRelations
+
+        target_rows = BUCKET_INPUT_ROWS
+        deadline = getattr(self, "_compaction_deadline", None) or monotonic() + 600
+        with self.store.compaction_budget(deadline):
+            while True:
+                scan = (
+                    fields.scan(self.store, target_rows=target_rows)
+                    if isinstance(fields, BucketFieldPlan)
+                    else None
+                )
+                pages = (
+                    scan
+                    if scan is not None
+                    else ((fields,) if isinstance(fields, str) else fields)
+                )
+                retry = False
+                next_target = max(1, target_rows // 2)
+                with FrozenRelations(
+                    self.store,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    attempt_id=attempt.id,
+                    source=[
+                        attempt.parent_manifest_sha256,
+                        str(definition.metric_id),
+                        definition.version,
+                    ],
+                ) as relations:
+                    relations.materialize(
+                        f"SELECT * FROM ({retired}) WHERE is_deleted = 0",
+                        params,
+                        role="retired",
+                    )
+                    children = 0
+                    try:
+                        for page in pages:
+                            self.lease.keepalive()
+                            sql, bound = (
+                                (page, params) if isinstance(page, str) else page
+                            )
+                            relations.materialize(
+                                live_parts_select(definition, sql),
+                                bound,
+                                role="child",
+                            )
+                            children += 1
+                    except (BucketRangeOverflow, ServerException) as exc:
+                        # Only replan the causal INPUT path, never a failed final
+                        # consumer/fold. The previous context must drop every
+                        # scratch table before a fresh namespace is allocated.
+                        if (
+                            scan is None
+                            or target_rows == 1
+                            or (
+                                isinstance(exc, BucketRangeOverflow) and exc.indivisible
+                            )
+                            or (
+                                isinstance(exc, ServerException)
+                                and exc.code not in {159, 241}
+                            )
+                        ):
+                            raise
+                        if isinstance(exc, BucketRangeOverflow):
+                            next_target = min(next_target, exc.target_rows)
+                        retry = True
+                    if not retry:
+                        if scan is not None and not scan.complete:
+                            raise MetricVisibilityError(
+                                "bucket field coverage is incomplete"
+                            )
+                        coverage = (
+                            (scan.ranges, scan.exhausted_routes)
+                            if scan is not None
+                            else None
+                        )
+                        handle = relations.finish(
+                            expected_children=children, coverage=coverage
+                        )
+                        # Outside the retry exception handler: a consumer failure
+                        # cannot replay or duplicate already-frozen ledger rows.
+                        yield relations.select(handle, role="complete-folded")
+                        return
+                target_rows = next_target
 
     def freeze_dependencies(self, attempt, dependencies, *, cutoff=None):
         """Bound the INPUT relation before ClickHouse parses the SELECT.
@@ -2009,7 +2085,6 @@ class RefreshWriter:
         # Complete fields are already frozen final rows, not a SQL relation with
         # a hidden broad collapse. Proposal callers supply the raw overlay plus
         # head instead, so every physical branch can receive candidate membership.
-        filter_sql = "field_id = toUUID(%(bucket_metric)s) AND field_version = %(bucket_metric_version)s"
         params = dict(overlay_params)
         params.update(
             bucket_metric=str(definition.metric_id),
@@ -2028,24 +2103,29 @@ class RefreshWriter:
         for start in sorted(dirty):
             p = {**params, "dirty_start": start}
             predicate = "bucket_start = parseDateTimeBestEffort(%(dirty_start)s, 'UTC')"
-            if complete_fields:
-                fields = f"SELECT * FROM ({overlay}) WHERE {filter_sql} AND {predicate}"
-            else:
-                fields, p = windowed_rows_select(
-                    FIELD_VALUES,
-                    head,
-                    org_id=self.org_id,
-                    project_id=self.lease.project_id,
-                    key_in={
-                        "field_id": (definition.metric_id,),
-                        "field_version": (definition.version,),
-                    },
-                    candidate_columns=("level", "unit_id"),
-                    predicate=predicate,
-                    params=p,
-                    frozen_overlay=(overlay, overlay_params),
-                    param_prefix="bucket_fields",
-                )
+            self.lease.keepalive()
+            subdivide = not complete_fields and field_window_requires_subdivision(
+                self.store,
+                head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                field_id=definition.metric_id,
+                field_version=definition.version,
+                bucket_start=str(start),
+                overlay=(overlay, overlay_params),
+            )
+            fields = BucketFieldPlan(
+                manifest=head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                field_id=definition.metric_id,
+                field_version=definition.version,
+                predicate=predicate,
+                params=p,
+                overlay=(overlay, overlay_params),
+                subdivide=subdivide,
+                complete_fields=complete_fields,
+            )
             at = datetime.fromisoformat(str(start))
             membership = {
                 "metric_id": (definition.metric_id,),
@@ -2077,29 +2157,30 @@ class RefreshWriter:
                     f"SELECT * FROM ({retired}) WHERE {metric_where} AND {predicate}"
                 )
             p = merge_bindings(p, rp, op)
-            parts = self._anonymous_bucket_parts(
+            with self._anonymous_bucket_parts(
                 attempt, definition, fields, retired, p
-            )
-            replacement = replacement_select(parts, old)
-            vanished = self.store.execute(
-                f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
-                p,
-            )
-            self.append(
-                attempt,
-                "vanished",
-                [dict(zip(KEYS, row, strict=True)) for row in vanished],
-            )
-            self.freeze(
-                attempt,
-                BUCKET_TOTALS,
-                replacement,
-                p,
-                extra={
-                    "metric_id": "toUUID(%(bucket_metric)s)",
-                    "metric_version": "toUInt32(%(bucket_metric_version)s)",
-                },
-            )
+            ) as parts:
+                replacement = replacement_select(parts, old)
+                vanished = self.store.execute(
+                    f"SELECT {', '.join(KEYS)} FROM ({old}) WHERE ({', '.join(KEYS)}) NOT IN (SELECT {', '.join(KEYS)} FROM ({parts}))",
+                    p,
+                )
+                self.append(
+                    attempt,
+                    "vanished",
+                    [dict(zip(KEYS, row, strict=True)) for row in vanished],
+                )
+                self.freeze(
+                    attempt,
+                    BUCKET_TOTALS,
+                    replacement,
+                    p,
+                    collect_payloads=False,
+                    extra={
+                        "metric_id": "toUUID(%(bucket_metric)s)",
+                        "metric_version": "toUInt32(%(bucket_metric_version)s)",
+                    },
+                )
 
 
 def dependency_select(dependencies):
