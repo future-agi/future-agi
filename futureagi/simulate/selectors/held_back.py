@@ -120,14 +120,26 @@ _RUN_METADATA_FIELDS = (
     "rerun_execution_keys",
     "version_pins",
 )
+# A failure's details hold the guest's logs, and a certify on a cache miss runs every
+# case of the suite there, held-back ones included; only these fields stay.
+_RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
     """A run read as a coding agent may see it: only the fields listed above."""
     job = read.get("job") or {}
     metadata = job.get("metadata") or {}
+    shown = {name: read[name] for name in _RUN_FIELDS if name in read}
+    failure = (shown.get("status") or {}).get("failure")
+    if isinstance(failure, Mapping):
+        shown["status"] = {
+            **shown["status"],
+            "failure": {
+                name: failure[name] for name in _RUN_FAILURE_FIELDS if name in failure
+            },
+        }
     return {
-        **{name: read[name] for name in _RUN_FIELDS if name in read},
+        **shown,
         "job": {
             **{name: job.get(name) for name in _RUN_JOB_FIELDS},
             "metadata": {

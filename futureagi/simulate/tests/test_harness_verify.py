@@ -914,6 +914,50 @@ class TestWhatACodingAgentReads:
         for secret in (hidden, member.content["instruction"], member.content["name"]):
             assert secret not in text
 
+    def test_a_failed_run_reads_without_the_guest_logs(
+        self, api_client, environment, keys
+    ):
+        chosen = ensure_held_back(environment)
+        hidden = chosen.scenario_keys[0]
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        created = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="coder-failed",
+        )
+        assert created.status_code == 202, created.content
+        # A cache-miss certify runs every case of the suite; its logs name them.
+        failure = {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": "Generated environment failed real-runtime validation",
+            "details": {
+                "guest_log_tail": f"chat timed out in {hidden}: caller said hello",
+                "process_logs": f"{hidden} transcript",
+            },
+        }
+        HostedHarnessJob.no_workspace_objects.filter(
+            id=created.json()["job_id"]
+        ).update(state=HostedHarnessJob.State.FAILED, failure=failure)
+        path = f"/simulate/api/harness-jobs/{created.json()['job_id']}/"
+
+        coder = _as(api_client, keys.coder, "get", path)
+        person = _as(api_client, keys.user, "get", path)
+
+        assert coder.status_code == person.status_code == 200, coder.content
+        assert person.json()["status"]["failure"] == failure
+        assert coder.json()["status"]["failure"] == {
+            name: failure[name] for name in ("domain", "stage", "code", "message")
+        }
+        assert coder.json()["status"]["state"] == HostedHarnessJob.State.FAILED
+        assert hidden not in json.dumps(coder.json())
+
     def test_a_person_s_read_chooses_nothing(self, api_client, environment, keys):
         _as(api_client, keys.user, "get", f"{BASE}/{environment.id}/")
 
