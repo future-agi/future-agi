@@ -60,9 +60,9 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
-// "Rowan (5; 1 dropped, 1 not triggered)": the calls a sub-actor was planned for, then
+// "Rowan (5; 1 dropped, 1 not triggered)": the calls an actor was planned for, then
 // any where none of its lines reached the agent.
-const subActorChoiceLabel = (item) => {
+const callActorChoiceLabel = (item) => {
   if (item.count == null) return item.label;
   const missed = [
     item.dropped && `${item.dropped} dropped`,
@@ -147,8 +147,8 @@ export default function RunTraceTable({
     if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
-    if (filters.subActor?.length) next.sub_actor = filters.subActor;
-    if (filters.subActor_not?.length) next.sub_actor_not = filters.subActor_not;
+    if (filters.callActor?.length) next.actor = filters.callActor;
+    if (filters.callActor_not?.length) next.actor_not = filters.callActor_not;
     if (filters.status?.length) next.status = filters.status;
     if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -396,38 +396,37 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
-  // Only a run where some call had a sub-actor planned offers this filter. Facets
+  // Only a run where some call had an actor planned offers this filter. Facets
   // are empty while loading or failed, so the row keeps the last ones it had.
-  const lastSubActorFacetRef = useRef(facets.sub_actor);
+  const lastCallActorFacetRef = useRef(facets.actor);
   useEffect(() => {
-    if (facets.sub_actor?.length)
-      lastSubActorFacetRef.current = facets.sub_actor;
-  }, [facets.sub_actor]);
-  const subActorFacet =
-    (isLoading || error) && !facets.sub_actor?.length
-      ? lastSubActorFacetRef.current
-      : facets.sub_actor;
-  const subActorField = useMemo(
+    if (facets.actor?.length) lastCallActorFacetRef.current = facets.actor;
+  }, [facets.actor]);
+  const callActorFacet =
+    (isLoading || error) && !facets.actor?.length
+      ? lastCallActorFacetRef.current
+      : facets.actor;
+  const callActorField = useMemo(
     () =>
-      subActorFacet?.length
+      callActorFacet?.length
         ? [
             {
-              value: "subActor",
-              label: "Sub-actor",
+              value: "callActor",
+              label: "Actor",
               type: "enum",
-              choices: subActorFacet.map((item) => item.value),
+              choices: callActorFacet.map((item) => item.value),
               // Each choice says how many of the run's calls it was planned for,
               // and how many of those it never reached the agent in.
               choiceLabels: Object.fromEntries(
-                subActorFacet.map((item) => [
+                callActorFacet.map((item) => [
                   item.value,
-                  subActorChoiceLabel(item),
+                  callActorChoiceLabel(item),
                 ]),
               ),
             },
           ]
         : [],
-    [subActorFacet],
+    [callActorFacet],
   );
   const filterFields = useMemo(
     () => [
@@ -443,7 +442,7 @@ export default function RunTraceTable({
         type: "enum",
         choices: subGoalOptions,
       },
-      ...subActorField,
+      ...callActorField,
       {
         value: "status",
         label: "Status",
@@ -452,7 +451,7 @@ export default function RunTraceTable({
         choiceLabels: OUTCOME_LABELS,
       },
     ],
-    [goalOptions, subGoalOptions, subActorField],
+    [goalOptions, subGoalOptions, callActorField],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.

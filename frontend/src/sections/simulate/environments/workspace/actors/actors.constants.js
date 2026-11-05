@@ -1,12 +1,12 @@
-import { SUB_ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+import { ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 
 // Every copy string on the Actors tab, so nothing is inlined in the JSX.
 export const ACTORS_COPY = {
-  subActors: {
-    title: (n) => `Sub-actors (${n})`,
+  callActors: {
+    title: (n) => `Actors (${n})`,
     subtitle:
       "People on the person's side who are not the person. Change them in the builder chat.",
-    channels: SUB_ACTOR_CHANNEL_LABELS,
+    channels: ACTOR_CHANNEL_LABELS,
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },
 
@@ -24,23 +24,16 @@ export const ACTORS_COPY = {
     viewFailedTitle: "Couldn't load what they see",
     saveFailed: "Couldn't save the change. Try again in a moment.",
     subtitle:
-      "Everyone the agent deals with who is not the agent: people beside the caller on the call, and people and systems in the world. Edits wait in the draft until you save.",
+      "Everyone the agent deals with who is not the agent. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
-    callerSide: "On the caller's side",
-    callerSideAbout:
-      "People with the caller who speak on the call. They know the caller's situation, never the caller's own details.",
-    callerSideEmpty:
-      "No one with the caller yet. Add one, or ask the builder chat.",
-    addCallerSide: "Add someone on the caller's side",
-    worldSide: "In the world",
-    worldSideAbout:
-      "People and systems who act through the world's own actions, such as a manager approving in the CRM. They never speak to the agent.",
-    add: "Add someone in the world",
+    everyoneAbout:
+      "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
+    add: "Add an actor",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
-    empty: "No one in the world yet. Add one, or ask the builder chat.",
+    empty: "No actors yet. Add one, or ask the builder chat.",
     wants: "Wants",
     mayDo: "May do",
     nothing: "Nothing in the world",
@@ -103,7 +96,6 @@ export const ACTORS_COPY = {
       lessDetails: "Hide more details",
       moreDetailsHelp:
         "Saved with the actor, but a run plays them from each scenario's actions, so these do not change what happens yet.",
-      createCallerTitle: "Add someone on the caller's side",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       // The rule's words are the schema's own, when it sends them.
@@ -158,7 +150,18 @@ export const ACTORS_COPY = {
       answeredBy: (name) => `${name} answers instead`,
       fallbackLabel: (id) =>
         ACTORS_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
-      channel: "How they join the call",
+      channel: "How they join the conversation",
+      noChannel: "Doesn't speak in the conversation",
+      play: "How they act in the world",
+      plays: {
+        mocked: "Only the actions each scenario gives them",
+        live: "Decide their own actions when reached",
+        both: "Both",
+      },
+      playHelp:
+        "Deciding their own actions, they read what they see below and choose within what they may do; the world still refuses anything they may not.",
+      noChannelHelp:
+        "They act only through the world's actions. Pick how they join to have them speak too.",
       loudness: "How loud, next to the caller (optional)",
       loudnessAutomatic: (low, high) =>
         `Automatic: each call picks between ${low} and ${high} of the caller's voice`,

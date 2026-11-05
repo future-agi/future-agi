@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { subActorWhen } from "../subActorLabels";
+import { callActorWhen } from "../callActorLabels";
 
-describe("subActorWhen", () => {
+describe("callActorWhen", () => {
   it.each([
     [{ kind: "always" }, "After the agent's first turn"],
     [
@@ -23,8 +23,8 @@ describe("subActorWhen", () => {
       "When the agent says total, price, or after the agent's turn 4",
     ],
     [undefined, "After the agent's first turn"],
-  ])("says when a sub-actor enters for %j", (trigger, said) => {
-    expect(subActorWhen(trigger)).toBe(said);
+  ])("says when an actor enters for %j", (trigger, said) => {
+    expect(callActorWhen(trigger)).toBe(said);
   });
 
   it.each([
@@ -38,11 +38,11 @@ describe("subActorWhen", () => {
   ])(
     "says someone taking the phone waits for the person for %j",
     (trigger, said) => {
-      expect(subActorWhen(trigger, "audio_handoff")).toBe(said);
+      expect(callActorWhen(trigger, "audio_handoff")).toBe(said);
     },
   );
 
   it("says a phone menu answers the call", () => {
-    expect(subActorWhen({ kind: "always" }, "ivr")).toBe("Answers the call");
+    expect(callActorWhen({ kind: "always" }, "ivr")).toBe("Answers the call");
   });
 });

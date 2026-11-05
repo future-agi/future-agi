@@ -16,11 +16,11 @@ vi.mock("src/api/simulate-environments/versions", () => ({
 }));
 
 describe("showActorsTab", () => {
-  it("shows the tab for a versioned environment or one with sub-actors, and hides it otherwise", () => {
+  it("shows the tab for a versioned environment or one with actors, and hides it otherwise", () => {
     expect(showActorsTab({ id: "env-1", versioning: { enabled: true } })).toBe(
       true,
     );
-    expect(showActorsTab({ subActors: [{ id: "friend" }] })).toBe(true);
+    expect(showActorsTab({ callActors: [{ id: "friend" }] })).toBe(true);
     expect(showActorsTab({})).toBe(false);
     expect(showActorsTab({ versioning: { enabled: false } })).toBe(false);
   });
@@ -28,42 +28,30 @@ describe("showActorsTab", () => {
 
 describe("ActorsTab with versioning", () => {
   const versioned = { id: "env-1", versioning: { enabled: true } };
-  const callerSide = () => screen.queryByText(/^On the caller's side/);
-
-  it("edits the cast, with the caller's side on a voice environment", () => {
-    render(<ActorsTab env={{ ...versioned, surface: "voice" }} />);
-    expect(screen.getByText(/^In the world/)).toBeInTheDocument();
-    expect(callerSide()).toBeInTheDocument();
-  });
-
-  it("leaves the caller's side out on a chat environment with no sub-actors", () => {
-    render(<ActorsTab env={{ ...versioned, surface: "chat" }} />);
-    expect(screen.getByText(/^In the world/)).toBeInTheDocument();
-    expect(callerSide()).toBeNull();
-  });
-
-  it("shows the caller's side on any environment that already has sub-actors", () => {
-    render(
-      <ActorsTab
-        env={{ ...versioned, surface: "chat", subActors: [{ id: "friend" }] }}
-      />,
-    );
-    expect(callerSide()).toBeInTheDocument();
+  it("edits every actor in one list, on any environment", () => {
+    for (const surface of ["voice", "chat"]) {
+      const { unmount } = render(<ActorsTab env={{ ...versioned, surface }} />);
+      expect(screen.getByText(/^Actors/)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/On the caller's side|In the world/),
+      ).toBeNull();
+      unmount();
+    }
   });
 
   it("is read-only when the environment is locked", () => {
     render(<ActorsTab env={{ ...versioned, surface: "voice" }} locked />);
-    expect(screen.queryByText("Add someone in the world")).toBeNull();
+    expect(screen.queryByText("Add an actor")).toBeNull();
   });
 });
 
 describe("ActorsTab without versioning", () => {
-  it("lists the environment's sub-actors with how they take part and how many scenarios include them", () => {
+  it("lists the environment's actors with how they take part and how many scenarios include them", () => {
     render(
       <ActorsTab
         env={{
           surface: "voice",
-          subActors: [
+          callActors: [
             {
               id: "friend",
               name: "Rowan",
@@ -76,7 +64,7 @@ describe("ActorsTab without versioning", () => {
         }}
       />,
     );
-    expect(screen.getByText("Sub-actors (1)")).toBeInTheDocument();
+    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText(/a friend with the caller/)).toBeInTheDocument();
     expect(
       screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios"),

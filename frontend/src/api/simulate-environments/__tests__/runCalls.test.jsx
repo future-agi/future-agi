@@ -694,9 +694,9 @@ describe("sub-goal verdicts", () => {
 describe("mapCallRow outcome reason", () => {
   it("carries why a scenario was skipped or is inconclusive, and nothing otherwise", () => {
     expect(
-      mapCallRow({ id: "a", outcome_reason: "sub-actors are switched off" })
+      mapCallRow({ id: "a", outcome_reason: "actors are switched off" })
         .outcomeReason,
-    ).toBe("sub-actors are switched off");
+    ).toBe("actors are switched off");
     expect(mapCallRow({ id: "b" }).outcomeReason).toBeNull();
   });
 });

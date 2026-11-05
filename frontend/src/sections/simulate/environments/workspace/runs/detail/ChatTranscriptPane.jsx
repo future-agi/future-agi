@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Tab,
+  TextField,
+  InputAdornment,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
@@ -37,14 +44,31 @@ function ToolCall({ call }) {
       direction="row"
       spacing={1}
       alignItems="flex-start"
-      sx={{ mt: 0.5, px: 1, py: 0.5, borderRadius: "4px", bgcolor: "background.neutral" }}
+      sx={{
+        mt: 0.5,
+        px: 1,
+        py: 0.5,
+        borderRadius: "4px",
+        bgcolor: "background.neutral",
+      }}
     >
-      <Iconify icon="solar:code-linear" width={13} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
+      <Iconify
+        icon="solar:code-linear"
+        width={13}
+        sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }}
+      />
       <Typography
-        sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary", wordBreak: "break-word" }}
+        sx={{
+          typography: "s3",
+          fontFamily: "ui-monospace, Menlo, monospace",
+          color: "text.secondary",
+          wordBreak: "break-word",
+        }}
       >
         {name || "tool"}
-        {args ? `(${typeof args === "string" ? args : JSON.stringify(args)})` : "()"}
+        {args
+          ? `(${typeof args === "string" ? args : JSON.stringify(args)})`
+          : "()"}
       </Typography>
     </Stack>
   );
@@ -69,7 +93,8 @@ export default function ChatTranscriptPane({ turns, customerName }) {
         : activeFilter !== "all" && s.role !== activeFilter
     )
       return false;
-    if (query && !s.text?.toLowerCase().includes(query.toLowerCase())) return false;
+    if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
+      return false;
     return true;
   });
 
@@ -80,7 +105,12 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           <CallParticipants others={others} customerName={customerName} />
         </Box>
       )}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1.25 }}
+      >
         <TextField
           size="small"
           fullWidth
@@ -90,12 +120,20 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:magnifer-linear"
+                  width={14}
+                  sx={{ color: "text.subtitle" }}
+                />
               </InputAdornment>
             ),
           }}
         />
-        <SegmentedTabs value={activeFilter} onChange={(_, v) => setRoleFilter(v)} sx={{ flexShrink: 0 }}>
+        <SegmentedTabs
+          value={activeFilter}
+          onChange={(_, v) => setRoleFilter(v)}
+          sx={{ flexShrink: 0 }}
+        >
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
           <Tab value="customer" label="Customer" />
@@ -111,8 +149,10 @@ export default function ChatTranscriptPane({ turns, customerName }) {
             key={i}
             sx={{
               borderLeft: "2px solid",
-              borderColor: s.role === "agent" ? "text.secondary" : "text.disabled",
-              bgcolor: s.role === "agent" ? "action.hover" : "background.neutral",
+              borderColor:
+                s.role === "agent" ? "text.secondary" : "text.disabled",
+              bgcolor:
+                s.role === "agent" ? "action.hover" : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
@@ -152,8 +192,12 @@ export default function ChatTranscriptPane({ turns, customerName }) {
           </Box>
         ))}
         {shown.length === 0 && (
-          <Typography sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}>
-            {turns.length === 0 ? "No messages captured for this conversation." : "No turns match that filter."}
+          <Typography
+            sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}
+          >
+            {turns.length === 0
+              ? "No messages captured for this conversation."
+              : "No turns match that filter."}
           </Typography>
         )}
       </Stack>
@@ -166,7 +210,7 @@ ChatTranscriptPane.propTypes = {
     PropTypes.shape({
       role: PropTypes.string,
       speakerName: PropTypes.string,
-      subActorId: PropTypes.string,
+      actorId: PropTypes.string,
       actorRole: PropTypes.string,
       channel: PropTypes.string,
       text: PropTypes.string,

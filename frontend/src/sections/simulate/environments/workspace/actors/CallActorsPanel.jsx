@@ -4,21 +4,21 @@ import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
 import { ACTORS_COPY } from "./actors.constants";
 
-const C = ACTORS_COPY.subActors;
+const C = ACTORS_COPY.callActors;
 
 /**
- * The environment's sub-actors: people on the person's side who are not the
+ * The environment's actors: people on the person's side who are not the
  * person. Read-only; they are added, changed and removed through the builder chat.
  */
-export default function SubActorsPanel({ subActors }) {
+export default function CallActorsPanel({ callActors }) {
   return (
-    <SectionCard title={C.title(subActors.length)} subtitle={C.subtitle}>
+    <SectionCard title={C.title(callActors.length)} subtitle={C.subtitle}>
       <Stack
         divider={
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
         }
       >
-        {subActors.map((one) => (
+        {callActors.map((one) => (
           <Stack key={one.id} spacing={0.25} sx={{ px: 2.5, py: 1.25 }}>
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
               {one.name}
@@ -49,8 +49,8 @@ export default function SubActorsPanel({ subActors }) {
   );
 }
 
-SubActorsPanel.propTypes = {
-  subActors: PropTypes.arrayOf(
+CallActorsPanel.propTypes = {
+  callActors: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string.isRequired,
       name: PropTypes.string,

@@ -39,18 +39,18 @@ export const seenValue = (input, value) => {
     .join(" · ");
 };
 
-// `never_sees` names: grader material (`scenario.*`, `file.*`) and other actors' private fields (`<id>.<field>`).
-export const hidden = (names) => {
+// `never_sees`: grader material, sent as scenario fields and files apart, and other actors' private fields
+// (`<name>.<field>`).
+export const hidden = (neverSees) => {
   const grader = new Set();
+  // Grader material reads as words, a file without its extension, so `sub_goals.json` and `sub_goals` are one line.
+  for (const name of neverSees?.scenario_fields || []) grader.add(words(name));
+  for (const name of neverSees?.files || [])
+    grader.add(name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
   const others = {};
-  for (const name of names || []) {
-    const [head, ...rest] = name.split(".");
-    const field = rest.join(".");
-    // Grader material reads as words, a file without its extension, so `sub_goals.json` and `sub_goals` are one line.
-    if (head === "file")
-      grader.add(field.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
-    else if (head === "scenario") grader.add(words(field));
-    else (others[head] ||= []).push(words(field));
+  for (const name of neverSees?.other_actors || []) {
+    const at = name.lastIndexOf(".");
+    (others[name.slice(0, at)] ||= []).push(words(name.slice(at + 1)));
   }
   // Every other actor keeps the same fields to itself, so one line per field set, not one per actor.
   const groups = {};
@@ -82,11 +82,11 @@ export const idRule = (records) => {
 export const idRuleText = (records) =>
   records?.[ID_SOURCE]?.properties?.id?.description || "";
 
-// A sub-actor speaks on a call channel; a world actor has none.
+// An actor with a channel speaks in the conversation; every actor has every other field.
 export const speaks = (actor) => Boolean(actor?.channel);
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
-// The persona fields a sub-actor's voice is picked from.
+// The persona fields an actor's voice is picked from.
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
 
 // The "Comes in" choice for a trigger the select can't make itself (a delay, a chance, a later call): kept as it is.
@@ -114,7 +114,7 @@ export const initialFields = (actor) => {
     id: "",
     name: actor?.name || "",
     role: actor?.role || "",
-    channel: actor?.channel,
+    channel: actor?.channel || "",
     loudness_ratio: actor?.loudness_ratio ?? null,
     ...Object.fromEntries(VOICE_FIELDS.map((one) => [one, persona[one] || ""])),
     kind: actor?.kind || "person",
@@ -131,6 +131,7 @@ export const initialFields = (actor) => {
     timing: timing.kind || "immediate",
     seconds: timing.seconds ?? 0,
     permitted: actor?.permitted_actions || [],
+    play: actor?.play || "mocked",
     tool: triggerChoice(activation.trigger),
     timeout: activation.timeout_seconds ?? 0,
     fallback: activation.fallback || "silent",
@@ -208,24 +209,30 @@ export const toRecord = (actor, fields, context) => {
   if (edited("name") && String(actor.persona?.name ?? "").trim())
     record.persona = { ...actor.persona, name: record.name };
 
-  if (speaks(actor)) {
-    if (isNew) record.side = "caller";
-    if (writes("channel")) record.channel = read("channel");
-    if (writes(...VOICE_FIELDS)) {
-      record.persona = { ...record.persona };
-      for (const name of VOICE_FIELDS) {
-        if (read(name)) record.persona[name] = read(name);
-        else delete record.persona[name];
-      }
-    }
-    if (writes("channel", "loudness_ratio"))
-      record.loudness_ratio = (context.loudness?.channels || []).includes(
-        read("channel"),
-      )
-        ? read("loudness_ratio")
-        : null;
-    return record;
+  // Every actor has the same fields; a channel only adds how it speaks in the conversation.
+  if (writes("channel")) {
+    if (read("channel")) record.channel = read("channel");
+    else delete record.channel;
   }
+  if (
+    writes(...VOICE_FIELDS) &&
+    (record.persona || VOICE_FIELDS.some((name) => read(name)))
+  ) {
+    record.persona = { ...record.persona };
+    for (const name of VOICE_FIELDS) {
+      if (read(name)) record.persona[name] = read(name);
+      else delete record.persona[name];
+    }
+  }
+  if (
+    writes("channel", "loudness_ratio") &&
+    (read("channel") || actor.loudness_ratio != null)
+  )
+    record.loudness_ratio = (context.loudness?.channels || []).includes(
+      read("channel"),
+    )
+      ? read("loudness_ratio")
+      : null;
 
   if (writes("kind")) record.kind = read("kind");
   if (writes("parent")) record.parent = read("parent") || null;
@@ -248,6 +255,7 @@ export const toRecord = (actor, fields, context) => {
           : { kind: "immediate", seconds: 0 };
   }
   if (writes("permitted")) record.permitted_actions = read("permitted");
+  if (edited("play")) record.play = read("play");
   if (writes("tool", "timeout", "fallback")) {
     record.activation = { ...actor.activation };
     if (writes("tool"))
@@ -261,6 +269,6 @@ export const toRecord = (actor, fields, context) => {
   return record;
 };
 
-// The tab shows what it can edit (versioning keeps a draft) or list (sub-actors read-only).
+// The tab shows what it can edit (versioning keeps a draft) or list (actors read-only).
 export const showActorsTab = (env) =>
-  Boolean(env?.versioning?.enabled && env?.id) || env?.subActors?.length > 0;
+  Boolean(env?.versioning?.enabled && env?.id) || env?.callActors?.length > 0;

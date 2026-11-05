@@ -133,7 +133,7 @@ describe("toRecord", () => {
     ).toEqual({ name: "", gender: "male" });
   });
 
-  it("changes a sub-actor's voice and loudness only when they are edited", () => {
+  it("changes an actor's voice and loudness only when they are edited", () => {
     const actor = {
       id: "colleague",
       name: "Jordan",
@@ -178,17 +178,22 @@ describe("toRecord", () => {
         fallback: "silent",
       },
     });
-    expect(
-      toRecord({ channel: "audio_mix" }, { name: "Sam", id: "x" }, CONTEXT),
-    ).toEqual({
+    // An actor who speaks gets every field too, with how it joins; no side, since there is no split.
+    const speaking = toRecord(
+      { channel: "audio_mix" },
+      { name: "Sam", id: "x", gender: "female" },
+      CONTEXT,
+    );
+    expect(speaking).toMatchObject({
       id: "x",
       name: "Sam",
-      role: "",
-      side: "caller",
       channel: "audio_mix",
-      persona: {},
+      persona: { gender: "female" },
       loudness_ratio: null,
+      permitted_actions: [],
+      goal: "",
     });
+    expect(speaking).not.toHaveProperty("side");
   });
 });
 
@@ -245,19 +250,31 @@ describe("actorUtils", () => {
 
   it("groups what an actor never sees into grader material and other actors' fields", () => {
     expect(
-      hidden([
-        "scenario.sub_goals",
-        "file.sub_goals.json",
-        "file.runtime-validation.json",
-        "colleague.goal",
-        "colleague.prompt",
-        "boss.goal",
-        "boss.prompt",
-      ]),
+      hidden({
+        scenario_fields: ["sub_goals"],
+        files: ["sub_goals.json", "runtime-validation.json"],
+        // Named by name, and a name may hold a dot or the word file.
+        other_actors: [
+          "Dr. File.goal",
+          "Dr. File.prompt",
+          "boss.goal",
+          "boss.prompt",
+        ],
+      }),
     ).toEqual({
       grader: ["sub goals", "runtime validation"],
       others: [["goal, prompt", 2]],
     });
     expect(hidden(undefined)).toEqual({ grader: [], others: [] });
+  });
+});
+
+describe("toRecord play", () => {
+  it("sends how an actor acts in the world only when it is changed", () => {
+    const actor = { id: "m", name: "Mia", permitted_actions: [] };
+    expect(toRecord(actor, { play: "live" }, {})).toMatchObject({
+      play: "live",
+    });
+    expect(toRecord(actor, { play: "mocked" }, {})).not.toHaveProperty("play");
   });
 });

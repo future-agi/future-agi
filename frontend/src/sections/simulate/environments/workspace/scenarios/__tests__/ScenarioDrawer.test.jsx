@@ -11,28 +11,58 @@ const API_ROW = {
   number: 3,
   name: "pricing_objection_handled",
   use_case: "Handle customer objections during sales inquiries.",
-  instruction: "You run a small 5-person team.\nAsk why the plan costs more than a rival.",
+  instruction:
+    "You run a small 5-person team.\nAsk why the plan costs more than a rival.",
   tests: "the agent explains the price and offers the cheaper plan",
   branch: "objection",
-  persona: { name: "Marcus Chen", gender: "male", age_group: "40-50", occupation: "Founder", accent: "neutral", personality: "Cautious and skeptical" },
+  persona: {
+    name: "Marcus Chen",
+    gender: "male",
+    age_group: "40-50",
+    occupation: "Founder",
+    accent: "neutral",
+    personality: "Cautious and skeptical",
+  },
   sub_goals: ["acknowledges_concern", "offers_alternative"],
 };
 
 const open = (apiRow = API_ROW, props = {}) =>
-  render(<ScenarioDrawer row={scenarioFromApi(apiRow)} onClose={vi.fn()} onEdit={vi.fn()} {...props} />);
+  render(
+    <ScenarioDrawer
+      row={scenarioFromApi(apiRow)}
+      onClose={vi.fn()}
+      onEdit={vi.fn()}
+      {...props}
+    />,
+  );
 
 describe("ScenarioDrawer", () => {
   it("shows every table column, in the table's order, as the API sends it", () => {
     open();
     expect(screen.getByText("pricing_objection_handled")).toBeInTheDocument();
     expect(screen.getByText("Scenario")).toBeInTheDocument();
-    const labels = ["#", "Persona", "Situation", "Sub-goals", "Ideal outcome"].map((l) => screen.getByText(l));
-    labels.slice(1).forEach((el, i) =>
-      expect(labels[i].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(),
-    );
+    const labels = [
+      "#",
+      "Persona",
+      "Situation",
+      "Sub-goals",
+      "Ideal outcome",
+    ].map((l) => screen.getByText(l));
+    labels
+      .slice(1)
+      .forEach((el, i) =>
+        expect(
+          labels[i].compareDocumentPosition(el) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy(),
+      );
     expect(screen.getByText("3")).toBeInTheDocument();
     // Ideal outcome = `tests`, word for word (no sentence rewriting).
-    expect(screen.getByText("the agent explains the price and offers the cheaper plan")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "the agent explains the price and offers the cheaper plan",
+      ),
+    ).toBeInTheDocument();
     // Persona = name · gender · age group, one line, as the table writes it.
     expect(screen.getByText("Marcus Chen")).toBeInTheDocument();
     expect(screen.getByText(/· Male · 40-50/)).toBeInTheDocument();
@@ -41,7 +71,11 @@ describe("ScenarioDrawer", () => {
     // The name is shown in full, so no initials badge.
     expect(screen.queryByText("MC")).toBeNull();
     // Situation = `instruction`, unsplit.
-    expect(screen.getByText(/You run a small 5-person team\.\s+Ask why the plan costs more than a rival\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /You run a small 5-person team\.\s+Ask why the plan costs more than a rival\./,
+      ),
+    ).toBeInTheDocument();
     // Sub-goals, numbered, in the order sent.
     expect(screen.getByText("acknowledges_concern")).toBeInTheDocument();
     expect(screen.getByText("2.")).toBeInTheDocument();
@@ -83,13 +117,17 @@ describe("ScenarioDrawer", () => {
   });
 });
 
-describe("ScenarioDrawer sub-actors", () => {
+describe("ScenarioDrawer actors", () => {
   it("says who else is in the scenario, when they enter and what they do", () => {
-    const env = { subActors: [{ id: "friend", name: "Rowan", role: "a friend with the caller" }] };
+    const env = {
+      callActors: [
+        { id: "friend", name: "Rowan", role: "a friend with the caller" },
+      ],
+    };
     open(
       {
         ...API_ROW,
-        sub_actors: [
+        actors: [
           {
             id: "friend",
             instruction: "You want a second item.",
@@ -99,14 +137,16 @@ describe("ScenarioDrawer sub-actors", () => {
       },
       { env },
     );
-    expect(screen.getByText("Sub-actors")).toBeInTheDocument();
+    expect(screen.getByText("Actors")).toBeInTheDocument();
     expect(screen.getByText("Rowan")).toBeInTheDocument();
-    expect(screen.getByText(/a friend with the caller · After the agent's turn 2/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/a friend with the caller · After the agent's turn 2/),
+    ).toBeInTheDocument();
     expect(screen.getByText("You want a second item.")).toBeInTheDocument();
   });
 
-  it("has no sub-actors row for a scenario that includes none", () => {
+  it("has no actors row for a scenario that includes none", () => {
     open();
-    expect(screen.queryByText("Sub-actors")).not.toBeInTheDocument();
+    expect(screen.queryByText("Actors")).not.toBeInTheDocument();
   });
 });

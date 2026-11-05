@@ -2,7 +2,7 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
-import { OTHER_PARTY_FALLBACK, SUB_ACTOR_CHANNEL_LABELS } from "./constants";
+import { OTHER_PARTY_FALLBACK, ACTOR_CHANNEL_LABELS } from "./constants";
 
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
@@ -22,20 +22,19 @@ export const normalizeRole = (role) => {
 };
 
 // Roles of anyone on the call other than the agent and the customer.
-const OTHER_ROLES = new Set(["sub_actor", "world_actor"]);
+const OTHER_ROLES = new Set(["actor", "world_actor"]);
 export const isOtherRole = (role) => OTHER_ROLES.has(role);
 
 // `Name · role`; a call stored before roles were kept shows just the name.
 export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
   [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
 
-// How a sub-actor was heard, in the actor editor's own words; none for an unknown channel.
-export const channelLabel = (channel) =>
-  SUB_ACTOR_CHANNEL_LABELS[channel] || "";
+// How an actor was heard, in the actor editor's own words; none for an unknown channel.
+export const channelLabel = (channel) => ACTOR_CHANNEL_LABELS[channel] || "";
 
-// One person on the call: a sub-actor by their id, or by name on a turn stored before ids were kept.
+// One person on the call: an actor by their id, or by name on a turn stored before ids were kept.
 export const otherPartyKey = (turn) =>
-  `${turn.role}:${turn.subActorId || turn.speakerName}`;
+  `${turn.role}:${turn.actorId || turn.speakerName}`;
 
 // Everyone other than the agent and the customer, once each, in the order they first appear.
 export const otherParties = (turns = []) => {
@@ -143,7 +142,7 @@ export const enrichTurns = (
       role,
       rawRole: item.speaker_role || item.role,
       speakerName: item.speaker_name || "",
-      subActorId: item.sub_actor_id || "",
+      actorId: item.actor_id || "",
       actorRole: item.actor_role || "",
       channel: item.channel || "",
       content: getContent(item),

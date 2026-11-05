@@ -844,14 +844,14 @@ describe("TraceTable skipped scenarios", () => {
             ...row("off"),
             status: "error",
             durationMs: null,
-            outcomeReason: "sub-actors are switched off",
+            outcomeReason: "actors are switched off",
             subGoalResults: [{ name: "noticed", passed: null }],
           },
         ],
         columns: new Set(["callDetails"]),
       }),
     );
-    expect(screen.getByText("sub-actors are switched off")).toBeInTheDocument();
+    expect(screen.getByText("actors are switched off")).toBeInTheDocument();
     expect(screen.getByText("noticed")).toBeInTheDocument();
   });
 });
@@ -887,8 +887,7 @@ describe("TraceTable calls with no pass or fail", () => {
           {
             ...row("in"),
             status: "unmeasured",
-            outcomeReason:
-              "The deciding moment cannot be heard.",
+            outcomeReason: "The deciding moment cannot be heard.",
             subGoalResults: [{ name: "booked", passed: true }],
           },
         ],
@@ -897,9 +896,7 @@ describe("TraceTable calls with no pass or fail", () => {
     );
     expect(screen.getByText("Inconclusive")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "The deciding moment cannot be heard.",
-      ),
+      screen.getByText("The deciding moment cannot be heard."),
     ).toBeInTheDocument();
   });
 

@@ -25,12 +25,11 @@ import {
   idRule,
   idRuleText,
   initialFields,
-  speaks,
   toRecord,
 } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
-const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
+const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
 
 // How loud a voice beside the caller is: automatic (each call picks within the release's range) or a fixed share.
 function Loudness({ value, automatic, onChange }) {
@@ -102,7 +101,6 @@ export default function ActorForm({
 }) {
   const F = C.form;
   const existing = Boolean(actor?.id);
-  const callerSide = speaks(actor);
   const [fields, setFields] = useState({});
   const [more, setMore] = useState(false);
   const initial = initialFields(actor);
@@ -122,9 +120,7 @@ export default function ActorForm({
   const activation = actor?.activation || {};
   const actions = context.actions;
   const actionIds = actions.map((one) => one.action);
-  const others = context.others.filter(
-    (one) => one.id !== actor?.id && !speaks(one),
-  );
+  const others = context.others.filter((one) => one.id !== actor?.id);
   const nameOf = (id) =>
     context.others.find((one) => one.id === id)?.name || id;
 
@@ -144,9 +140,12 @@ export default function ActorForm({
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
   const nameMissing = !value("name").trim();
   // The record schema this actor is checked against, as its environment's rules declare it.
-  const schema =
-    context.records[callerSide ? "sub_actors.json" : "actors.json"] || {};
-  const needsRole = (schema.required || []).includes("role");
+  const schema = context.records["actors.json"] || {};
+  // An actor who speaks in the conversation needs a role when the sealed schema says so (its `then`).
+  const needsRole =
+    (schema.required || []).includes("role") ||
+    (Boolean(value("channel")) &&
+      (schema.then?.required || []).includes("role"));
   const roleMissing = needsRole && !value("role").trim();
   // The channels with a loudness, as the rules give them.
   const loud = (one) => (context.loudness.channels || []).includes(one);
@@ -216,11 +215,7 @@ export default function ActorForm({
             }}
           >
             <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
-              {existing
-                ? F.editTitle(actor.name)
-                : callerSide
-                  ? F.createCallerTitle
-                  : F.createTitle}
+              {existing ? F.editTitle(actor.name) : F.createTitle}
             </Typography>
           </Box>
           {/* Above the scrolling fields, so a refused save shows wherever the form is scrolled to. */}
@@ -261,180 +256,192 @@ export default function ActorForm({
               needsRole ? F.roleRequired : F.role,
               bounded("role", F.roleHelp),
             )}
-            {callerSide ? (
-              <>
-                {choice(
-                  "channel",
-                  F.channel,
-                  Object.keys(context.channels).map((id) => [
+            <>
+              {choice(
+                "channel",
+                F.channel,
+                [
+                  ["", F.noChannel],
+                  ...Object.keys(context.channels).map((id) => [
                     id,
                     CHANNEL_LABELS[id] || id,
                   ]),
-                  {
-                    helperText: context.channels[channel],
-                    startLabel: CHANNEL_LABELS[initial.channel],
-                  },
-                )}
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                  {F.voice}
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  {choice("gender", F.gender, Object.entries(F.genders), {
-                    fullWidth: true,
-                  })}
-                  {choice(
-                    "age_group",
-                    F.ageGroup,
-                    Object.entries(F.ageGroups),
-                    {
+                ],
+                {
+                  helperText: channel
+                    ? context.channels[channel]
+                    : F.noChannelHelp,
+                  startLabel: initial.channel
+                    ? CHANNEL_LABELS[initial.channel]
+                    : F.noChannel,
+                },
+              )}
+              {channel && (
+                <>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {F.voice}
+                  </Typography>
+                  <Stack direction="row" spacing={1}>
+                    {choice("gender", F.gender, Object.entries(F.genders), {
                       fullWidth: true,
-                    },
-                  )}
-                  {choice(
-                    "accent",
-                    F.accent,
-                    F.accents.map((one) => [one, one || F.anyAccent]),
-                    { fullWidth: true },
-                  )}
-                </Stack>
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {F.voiceHelp}
-                </Typography>
-                {loud(channel) && context.loudness.automatic && (
-                  <Loudness
-                    value={value("loudness_ratio")}
-                    automatic={context.loudness.automatic}
-                    onChange={(next) => put("loudness_ratio", next)}
-                  />
-                )}
-              </>
-            ) : (
-              <>
-                {choice("kind", F.kind, Object.entries(F.kinds))}
-                {many("facts", F.facts, F.factsHelp)}
-                <Stack direction="row" spacing={1}>
-                  {choice(
-                    "timing",
-                    F.answers,
-                    [
-                      ["immediate", F.immediately],
-                      ["delayed", F.afterDelay],
-                    ],
-                    { sx: { flex: 1 } },
-                  )}
-                  {timingKind === "delayed" &&
-                    text("seconds", F.seconds, {
-                      type: "number",
-                      sx: { width: 140 },
-                      inputProps: { min: 0 },
                     })}
-                </Stack>
-                <Autocomplete
-                  multiple
-                  size="small"
-                  options={actionIds}
-                  value={permitted}
-                  disabled={actions.length === 0 && permitted.length === 0}
-                  onChange={(_, next) => put("permitted", next)}
-                  getOptionLabel={(id) => id}
-                  renderOption={(props, id) => (
-                    <li {...props} key={id}>
-                      <Box>
-                        <Typography sx={{ typography: "s2" }}>{id}</Typography>
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {describe(id)}
-                        </Typography>
-                      </Box>
-                    </li>
-                  )}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label={F.permitted}
-                      error={unknownActions.length > 0}
-                      helperText={
-                        unknownActions.length
-                          ? F.permittedUnknown(unknownActions)
-                          : actions.length
-                            ? F.permittedHelp
-                            : F.noWorldActions
-                      }
+                    {choice(
+                      "age_group",
+                      F.ageGroup,
+                      Object.entries(F.ageGroups),
+                      {
+                        fullWidth: true,
+                      },
+                    )}
+                    {choice(
+                      "accent",
+                      F.accent,
+                      F.accents.map((one) => [one, one || F.anyAccent]),
+                      { fullWidth: true },
+                    )}
+                  </Stack>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {F.voiceHelp}
+                  </Typography>
+                  {loud(channel) && context.loudness.automatic && (
+                    <Loudness
+                      value={value("loudness_ratio")}
+                      automatic={context.loudness.automatic}
+                      onChange={(next) => put("loudness_ratio", next)}
                     />
                   )}
-                />
+                </>
+              )}
+
+              {choice("kind", F.kind, Object.entries(F.kinds))}
+              {many("facts", F.facts, F.factsHelp)}
+              <Stack direction="row" spacing={1}>
                 {choice(
-                  "tool",
-                  F.trigger,
+                  "timing",
+                  F.answers,
                   [
-                    ["", C.atStart],
-                    ...actionIds.map((id) => [id, C.whenCalled(id)]),
+                    ["immediate", F.immediately],
+                    ["delayed", F.afterDelay],
                   ],
-                  {
-                    helperText: F.triggerHelp,
-                    startLabel:
-                      initial.tool === KEPT_TRIGGER
-                        ? C.comesInLabel(activation.trigger)
-                        : C.whenCalled(initial.tool),
-                  },
+                  { sx: { flex: 1 } },
                 )}
-                {text("timeout", F.timeout, {
-                  type: "number",
-                  helperText: F.timeoutHelp,
-                  inputProps: { min: 0 },
-                })}
-                {choice(
-                  "fallback",
-                  F.fallback,
-                  [
-                    ...Object.entries(F.fallbacks),
-                    ...others.map((one) => [one.id, F.answeredBy(one.name)]),
-                  ],
-                  { startLabel: F.answeredBy(nameOf(initial.fallback)) },
+                {timingKind === "delayed" &&
+                  text("seconds", F.seconds, {
+                    type: "number",
+                    sx: { width: 140 },
+                    inputProps: { min: 0 },
+                  })}
+              </Stack>
+              <Autocomplete
+                multiple
+                size="small"
+                options={actionIds}
+                value={permitted}
+                disabled={actions.length === 0 && permitted.length === 0}
+                onChange={(_, next) => put("permitted", next)}
+                getOptionLabel={(id) => id}
+                renderOption={(props, id) => (
+                  <li {...props} key={id}>
+                    <Box>
+                      <Typography sx={{ typography: "s2" }}>{id}</Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.secondary" }}
+                      >
+                        {describe(id)}
+                      </Typography>
+                    </Box>
+                  </li>
                 )}
-                {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
-                <Button
-                  size="small"
-                  sx={{ alignSelf: "flex-start" }}
-                  onClick={() => setMore((shown) => !shown)}
-                >
-                  {more ? F.lessDetails : F.moreDetails}
-                </Button>
-                <Collapse in={more} sx={{ flexShrink: 0 }}>
-                  <Stack spacing={2}>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.secondary" }}
-                    >
-                      {F.moreDetailsHelp}
-                    </Typography>
-                    {(others.length > 0 || initial.parent) &&
-                      choice(
-                        "parent",
-                        F.parent,
-                        [
-                          ["", F.nobody],
-                          ...others.map((one) => [one.id, one.name]),
-                        ],
-                        {
-                          helperText: F.parentHelp,
-                          startLabel: nameOf(initial.parent),
-                        },
-                      )}
-                    {text("goal", F.goal, {
-                      multiline: true,
-                      minRows: 2,
-                      helperText: F.goalHelp,
-                    })}
-                    {many("may_agree", F.mayAgree)}
-                    {many("private", F.private)}
-                    {many("escalate_when", F.escalateWhen)}
-                    {many("stop_when", F.stopWhen)}
-                    {text("style", F.style, { helperText: F.styleHelp })}
-                  </Stack>
-                </Collapse>
-              </>
-            )}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={F.permitted}
+                    error={unknownActions.length > 0}
+                    helperText={
+                      unknownActions.length
+                        ? F.permittedUnknown(unknownActions)
+                        : actions.length
+                          ? F.permittedHelp
+                          : F.noWorldActions
+                    }
+                  />
+                )}
+              />
+              {choice("play", F.play, Object.entries(F.plays), {
+                helperText: F.playHelp,
+              })}
+              {choice(
+                "tool",
+                F.trigger,
+                [
+                  ["", C.atStart],
+                  ...actionIds.map((id) => [id, C.whenCalled(id)]),
+                ],
+                {
+                  helperText: F.triggerHelp,
+                  startLabel:
+                    initial.tool === KEPT_TRIGGER
+                      ? C.comesInLabel(activation.trigger)
+                      : C.whenCalled(initial.tool),
+                },
+              )}
+              {text("timeout", F.timeout, {
+                type: "number",
+                helperText: F.timeoutHelp,
+                inputProps: { min: 0 },
+              })}
+              {choice(
+                "fallback",
+                F.fallback,
+                [
+                  ...Object.entries(F.fallbacks),
+                  ...others.map((one) => [one.id, F.answeredBy(one.name)]),
+                ],
+                { startLabel: F.answeredBy(nameOf(initial.fallback)) },
+              )}
+              {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
+              <Button
+                size="small"
+                sx={{ alignSelf: "flex-start" }}
+                onClick={() => setMore((shown) => !shown)}
+              >
+                {more ? F.lessDetails : F.moreDetails}
+              </Button>
+              <Collapse in={more} sx={{ flexShrink: 0 }}>
+                <Stack spacing={2}>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {F.moreDetailsHelp}
+                  </Typography>
+                  {(others.length > 0 || initial.parent) &&
+                    choice(
+                      "parent",
+                      F.parent,
+                      [
+                        ["", F.nobody],
+                        ...others.map((one) => [one.id, one.name]),
+                      ],
+                      {
+                        helperText: F.parentHelp,
+                        startLabel: nameOf(initial.parent),
+                      },
+                    )}
+                  {text("goal", F.goal, {
+                    multiline: true,
+                    minRows: 2,
+                    helperText: F.goalHelp,
+                  })}
+                  {many("may_agree", F.mayAgree)}
+                  {many("private", F.private)}
+                  {many("escalate_when", F.escalateWhen)}
+                  {many("stop_when", F.stopWhen)}
+                  {text("style", F.style, { helperText: F.styleHelp })}
+                </Stack>
+              </Collapse>
+            </>
           </Stack>
           <Stack
             direction="row"

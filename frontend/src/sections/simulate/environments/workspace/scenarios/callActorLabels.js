@@ -1,11 +1,11 @@
-// When a scenario's sub-actor enters, in the harness's own terms; a phone menu answers the call before anyone speaks.
+// When a scenario's actor enters, in the harness's own terms; a phone menu answers the call before anyone speaks.
 
-// A sub-actor waiting on a tool call or a word that never comes enters after this agent turn, as the harness runs it.
+// An actor waiting on a tool call or a word that never comes enters after this agent turn, as the harness runs it.
 const LATEST_ENTRY_TURN = 4;
 // Someone who takes the phone waits until the person has it: never before the agent's second turn.
 const TAKES_PHONE_FROM_TURN = 2;
 
-export const subActorWhen = (trigger = {}, channel) => {
+export const callActorWhen = (trigger = {}, channel) => {
   const latest = `, or after the agent's turn ${LATEST_ENTRY_TURN}`;
   const handoff = channel === "audio_handoff";
   const first = handoff ? "second" : "first";
