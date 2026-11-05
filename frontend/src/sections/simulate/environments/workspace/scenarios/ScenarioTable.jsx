@@ -300,6 +300,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onO
                 const p = row.persona;
                 const subTasks = row.subTasks || [];
                 const personaLine = personaSubline(p);
+                const subActorLine = `With ${(row.subActors || []).map((one) => subActorNames[one.id] || one.id).join(", ")}`;
                 const situationText = row.situation || row.task || "";
                 const idealOutcomeText = row.outcome || row.expected || "";
 
@@ -359,9 +360,9 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onO
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
                       </TruncTooltip>
                       {row.subActors?.length > 0 && (
-                        <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-                          With {row.subActors.map((one) => subActorNames[one.id] || one.id).join(", ")}
-                        </Typography>
+                        <TruncTooltip title={subActorLine}>
+                          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>{subActorLine}</Typography>
+                        </TruncTooltip>
                       )}
                     </TableCell>
 

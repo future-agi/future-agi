@@ -1,11 +1,18 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
+import useIsTruncated from "src/hooks/useIsTruncated";
 import { channelLabel, otherPartyLabel } from "./transcriptUtils";
 import { OTHER_PARTY_LABEL_MAX_WIDTH } from "./constants";
 
-export default function OtherPartyName({ party, color = "text.primary" }) {
+export default function OtherPartyName({
+  party,
+  color = "text.primary",
+  fontWeight = "fontWeightSemiBold",
+}) {
   const tag = channelLabel(party.channel);
   const label = otherPartyLabel(party);
+  const [labelRef, cut] = useIsTruncated(label);
   return (
     <Box
       component="span"
@@ -18,15 +25,17 @@ export default function OtherPartyName({ party, color = "text.primary" }) {
       }}
     >
       {/* A role can be a whole sentence; keep it to one line and show it in full on hover. */}
-      <Typography
-        component="span"
-        variant="s3"
-        title={label}
-        noWrap
-        sx={{ color, fontWeight: 600, maxWidth: OTHER_PARTY_LABEL_MAX_WIDTH }}
-      >
-        {label}
-      </Typography>
+      <CustomTooltip show={cut} size="small" arrow title={label}>
+        <Typography
+          ref={labelRef}
+          component="span"
+          variant="s3"
+          noWrap
+          sx={{ color, fontWeight, maxWidth: OTHER_PARTY_LABEL_MAX_WIDTH }}
+        >
+          {label}
+        </Typography>
+      </CustomTooltip>
       {tag && (
         <Typography
           component="span"
@@ -55,4 +64,5 @@ OtherPartyName.propTypes = {
     channel: PropTypes.string,
   }).isRequired,
   color: PropTypes.string,
+  fontWeight: PropTypes.string,
 };

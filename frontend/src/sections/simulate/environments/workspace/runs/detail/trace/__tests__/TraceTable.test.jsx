@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import TraceTable from "../TraceTable";
+import { STATUS_META } from "../../../runs.constants";
 
 const row = (id) => ({
   id,
@@ -885,7 +886,7 @@ describe("TraceTable calls with no pass or fail", () => {
         rows: [
           {
             ...row("in"),
-            status: "inconclusive",
+            status: "unmeasured",
             outcomeReason:
               "The deciding moment cannot be heard.",
             subGoalResults: [{ name: "booked", passed: true }],
@@ -894,10 +895,37 @@ describe("TraceTable calls with no pass or fail", () => {
         columns: new Set(["callDetails"]),
       }),
     );
+    expect(screen.getByText("Inconclusive")).toBeInTheDocument();
     expect(
       screen.getByText(
         "The deciding moment cannot be heard.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says a sub-goal did not apply, and why, apart from an inconclusive one", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("na"),
+            status: "no_score",
+            subGoalResults: [
+              {
+                name: "noticed",
+                passed: null,
+                result: "not_applicable",
+                reason: "The roommate never spoke",
+              },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    const verdict = within(screen.getByText("noticed").parentElement).getByText(
+      STATUS_META.not_applicable.label,
+    );
+    expect(verdict).toHaveAccessibleName("The roommate never spoke");
   });
 });

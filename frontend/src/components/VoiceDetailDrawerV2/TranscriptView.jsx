@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { ShowComponent } from "src/components/show";
@@ -27,6 +28,7 @@ import {
   formatClock,
   isOtherRole,
   otherParties,
+  otherPartyLabel,
 } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS, OTHER_PARTY_SERIES } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
@@ -242,9 +244,11 @@ const SpeakerTimelineStrip = ({
         const left = (t.start / dur) * 100;
         const width = Math.max(0.4, ((t.end - t.start) / dur) * 100);
         return (
-          <Tooltip
+          <CustomTooltip
             key={t.id}
-            title={`${t.role} · ${formatClock(t.start)}`}
+            show
+            size="small"
+            title={`${isOtherRole(t.role) ? otherPartyLabel(t) : t.role} · ${formatClock(t.start)}`}
             arrow
             placement="top"
           >
@@ -262,7 +266,7 @@ const SpeakerTimelineStrip = ({
                 "&:hover": { opacity: 1 },
               }}
             />
-          </Tooltip>
+          </CustomTooltip>
         );
       })}
       {/* Playhead */}
@@ -617,18 +621,20 @@ const TranscriptView = ({
   const filters = others.length
     ? [...FILTERS, { id: "others", label: DEFAULT_ROLE_LABELS.others }]
     : FILTERS;
+  // The view stays mounted across calls, and the next call may have no others.
+  const activeFilter = filter === "others" && !others.length ? "all" : filter;
 
   const filteredTurns = useMemo(() => {
     const q = query.trim().toLowerCase();
     return turns.filter((t) => {
-      if (filter === "assistant" && t.role !== "assistant") return false;
-      if (filter === "user" && t.role !== "user") return false;
-      if (filter === "others" && !isOtherRole(t.role)) return false;
+      if (activeFilter === "assistant" && t.role !== "assistant") return false;
+      if (activeFilter === "user" && t.role !== "user") return false;
+      if (activeFilter === "others" && !isOtherRole(t.role)) return false;
       if (t.role === "system") return false;
       if (q && !t.content.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [turns, query, filter]);
+  }, [turns, query, activeFilter]);
 
   // Which turn is currently playing based on currentTime?
   //
@@ -857,6 +863,7 @@ const TranscriptView = ({
         <Box
           sx={{
             flex: 1,
+            minWidth: 0,
             display: "flex",
             alignItems: "center",
             gap: 0.5,
@@ -880,6 +887,7 @@ const TranscriptView = ({
             onChange={(e) => setQuery(e.target.value)}
             sx={{
               flex: 1,
+              minWidth: 0,
               border: "none",
               outline: "none",
               bgcolor: "transparent",
@@ -904,9 +912,11 @@ const TranscriptView = ({
           )}
         </Box>
 
+        {/* The search gives way when the row is tight, so no filter gets clipped. */}
         <Box
           sx={{
             display: "inline-flex",
+            flexShrink: 0,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
@@ -922,9 +932,11 @@ const TranscriptView = ({
                 px: 1,
                 py: 0.4,
                 fontSize: 12,
-                fontWeight: filter === f.id ? 600 : 400,
-                color: filter === f.id ? "text.primary" : "text.secondary",
-                bgcolor: filter === f.id ? "background.neutral" : "transparent",
+                fontWeight: activeFilter === f.id ? 600 : 400,
+                color:
+                  activeFilter === f.id ? "text.primary" : "text.secondary",
+                bgcolor:
+                  activeFilter === f.id ? "background.neutral" : "transparent",
                 "&:hover": { bgcolor: "action.hover" },
                 borderRight:
                   f.id !== filters[filters.length - 1].id

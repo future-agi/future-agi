@@ -12,6 +12,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
+import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
@@ -222,7 +223,7 @@ export default function ChatCallDrawer({
           <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
               <Meta label="Type" value="Chat" />
-              <Meta label="Status" value={task.status === "passed" ? "completed" : task.status} />
+              <Meta label="Status" value={runOutcome(task.status).label} />
               <Meta label="Duration" value={secs(durationMs)} />
               <Meta label="Turns" value={turnCount ?? "-"} />
               <Meta label="Provider" value={callDetail?.provider || task.provider || "-"} />
@@ -315,7 +316,7 @@ export default function ChatCallDrawer({
               <Stack>
                 <Attr label="scenario" value={task.scenario} />
                 <Attr label="persona" value={task.persona} />
-                <Attr label="status" value={task.status} />
+                <Attr label="status" value={runOutcome(task.status).label} />
               </Stack>
             )}
           </Box>

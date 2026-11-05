@@ -93,11 +93,9 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    // Calls a pass rate counts: those with a pass or a fail. A call still pending, stopped or with no score is not one.
+    // The list's pass rate base: passed plus failed, and `failed` here includes
+    // errored and skipped calls. A call still pending, stopped or with no score is out.
     scored: hasOutcomes ? passed + failed : total,
-    pending: hasOutcomes
-      ? Math.max(total - passed - failed - noScore, 0)
-      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
     skipped,
     hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,
