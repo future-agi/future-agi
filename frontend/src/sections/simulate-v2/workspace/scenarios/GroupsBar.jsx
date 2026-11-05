@@ -112,25 +112,26 @@ export default function GroupsBar({
       )}
       <Box flex={1} />
       {current && newer.length > 0 && (
-        <Typography
-          sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ flexShrink: 0 }}
         >
-          {`${newer.length} newer than the suite · `}
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {`${newer.length} newer than the suite`}
+          </Typography>
           {onUpdate && !readOnly && (
-            <ButtonBase
+            <Button
+              size="small"
+              variant="outlined"
               onClick={() => onUpdate(current)}
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.primary",
-                textDecoration: "underline",
-                verticalAlign: "baseline",
-              }}
+              sx={{ color: "text.primary", borderColor: "divider" }}
             >
               Update suite
-            </ButtonBase>
+            </Button>
           )}
-        </Typography>
+        </Stack>
       )}
       {current && (
         <Button

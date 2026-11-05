@@ -192,13 +192,29 @@ export const agentContextOf = (agent, settings) => {
 };
 
 /** What a run's agent loaded: "Skills · refund-policy v3 · Observed" (or Unknown). */
-export const runSkillsLineOf = (settings, agent) => {
-  const list = attachmentsOf(settings)[agentKeyOf(agent)] || [];
+/* The version a tag pointed at when the run started — runs record the
+   version they used, not whatever production points at today. */
+const refAt = (skill, ref, at) => {
+  if (typeof ref === "number" || ref !== "production" || !at)
+    return resolveRef(skill, ref);
+  const t = new Date(at).getTime();
+  const before = (skill.promotions || []).filter(
+    (p) => new Date(p.at).getTime() <= t,
+  );
+  return before.length ? before[before.length - 1].v : resolveRef(skill, ref);
+};
+
+export const runSkillsLineOf = (settings, agent, run = null) => {
+  const startedAt = run?.startedAt || run?.finishedAt || null;
+  /* Only skills attached before the run started were loaded by it. */
+  const list = (attachmentsOf(settings)[agentKeyOf(agent)] || []).filter(
+    (a) => !a.at || !startedAt || new Date(a.at) <= new Date(startedAt),
+  );
   const library = libraryOf(settings);
   const named = list
     .map((a) => {
       const sk = library.find((x) => x.id === a.skillId);
-      return sk ? `${sk.name} v${resolveRef(sk, a.ref)}` : null;
+      return sk ? `${sk.name} v${refAt(sk, a.ref, startedAt)}` : null;
     })
     .filter(Boolean);
   if (!named.length) return null;
@@ -389,7 +405,10 @@ export const attach = (settings, agentKey, skillId, ref) => {
   const all = attachmentsOf(settings);
   const list = (all[agentKey] || []).filter((a) => a.skillId !== skillId);
   return {
-    skillAttachments: { ...all, [agentKey]: [...list, { skillId, ref }] },
+    skillAttachments: {
+      ...all,
+      [agentKey]: [...list, { skillId, ref, at: new Date().toISOString() }],
+    },
   };
 };
 export const detach = (settings, agentKey, skillId) => {

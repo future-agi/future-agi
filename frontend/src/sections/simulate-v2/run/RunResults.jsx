@@ -1629,6 +1629,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               const line = runSkillsLineOf(
                 simState?.workspaceSettings,
                 envState.agent,
+                sourceRun,
               );
               return line ? ` · ${line}` : "";
             })()}
