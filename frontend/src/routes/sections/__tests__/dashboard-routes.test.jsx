@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import process from "node:process";
 import { Suspense } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CAPABILITIES_QUERY_KEY } from "src/hooks/useCapabilities";
+import MetricsGate from "src/sections/derived-metrics/MetricsGate";
 import {
   Navigate,
   RouterProvider,
@@ -227,26 +230,38 @@ describe("existing Evals and Tasks routes", () => {
 // Exercise the production route entries and lazy page imports without mounting
 // the unrelated authenticated dashboard shell and its network providers.
 let metricsRouter;
+let metricsQueryClient;
 afterEach(() => {
   cleanup();
   metricsRouter?.dispose();
   metricsRouter = undefined;
+  metricsQueryClient?.clear();
+  metricsQueryClient = undefined;
 });
-function renderMetricsRoute(url) {
+function renderMetricsRoute(url, capabilities = { metrics_enabled: true }) {
   const [{ path, children }] = dashboardRoutes(WITHOUT_FLAG, null, {
     isCloud: true,
+  });
+  // Keep the production hook/query/provider path, with an explicit rollout
+  // response rather than a global mock that would bypass MetricsGate.
+  metricsQueryClient = new QueryClient();
+  metricsQueryClient.setQueryData(CAPABILITIES_QUERY_KEY, {
+    data: capabilities,
   });
   metricsRouter = createMemoryRouter(
     [
       { path: "/before-metrics", element: <div>Previous page</div> },
+      { path: "/404", element: <div>Not found</div> },
       { path, children },
     ],
     { initialEntries: ["/before-metrics", url], initialIndex: 1 },
   );
   render(
-    <Suspense fallback={<div>Loading page</div>}>
-      <RouterProvider router={metricsRouter} />
-    </Suspense>,
+    <QueryClientProvider client={metricsQueryClient}>
+      <Suspense fallback={<div>Loading page</div>}>
+        <RouterProvider router={metricsRouter} />
+      </Suspense>
+    </QueryClientProvider>,
   );
   return metricsRouter;
 }
@@ -310,9 +325,9 @@ describe("Metrics routes in Observe", () => {
 
   it("redirects the case-insensitive legacy route accepted by the router", async () => {
     const url = `/DASHBOARD/Derived-Metrics/${METRIC_ID}?metric=kept#x`;
-    expect(leafRoute(WITHOUT_FLAG, url).element.type).toBe(
-      LegacyMetricsRedirect,
-    );
+    const route = leafRoute(WITHOUT_FLAG, url);
+    expect(route.element.type).toBe(MetricsGate);
+    expect(route.element.props.children.type).toBe(LegacyMetricsRedirect);
     const router = renderMetricsRoute(url);
     await waitFor(() =>
       expect(router.state.location).toMatchObject({
@@ -337,9 +352,9 @@ describe("Metrics routes in Observe", () => {
       const search = `?metric=${METRIC_ID}&project=a%2Fb&project=second&tab=history&empty=`;
       const hash = "#x";
       const legacyUrl = `/dashboard/derived-metrics${suffix}${search}${hash}`;
-      expect(leafRoute(WITHOUT_FLAG, legacyUrl).element.type).toBe(
-        LegacyMetricsRedirect,
-      );
+      const route = leafRoute(WITHOUT_FLAG, legacyUrl);
+      expect(route.element.type).toBe(MetricsGate);
+      expect(route.element.props.children.type).toBe(LegacyMetricsRedirect);
       const router = renderMetricsRoute(legacyUrl);
       await waitFor(() =>
         expect(router.state.location).toMatchObject({
@@ -354,6 +369,37 @@ describe("Metrics routes in Observe", () => {
       expect(router.state.location.pathname).toBe("/before-metrics");
     },
   );
+});
+
+describe.each([
+  ["disabled", { metrics_enabled: false }],
+  ["missing from an older capability response", {}],
+])("Metrics routes when rollout is %s", (_label, capabilities) => {
+  it.each([
+    "/dashboard/metrics",
+    "/dashboard/metrics/new",
+    `/dashboard/metrics/${METRIC_ID}?tab=history`,
+    `/dashboard/metrics/${METRIC_ID}/edit`,
+    "/dashboard/derived-metrics",
+    "/dashboard/derived-metrics/",
+    "/dashboard/derived-metrics/new",
+    `/dashboard/derived-metrics/${METRIC_ID}?metric=kept#x`,
+    `/dashboard/derived-metrics/${METRIC_ID}/edit`,
+    `/DASHBOARD/Derived-Metrics/${METRIC_ID}?metric=kept#x`,
+  ])("%s replace-navigates to not found", async (url) => {
+    const router = renderMetricsRoute(url, capabilities);
+    expect(await screen.findByText("Not found")).toBeInTheDocument();
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+    expect(router.state.location).toMatchObject({
+      pathname: "/404",
+      search: "",
+      hash: "",
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+    await act(async () => router.navigate(-1));
+    expect(await screen.findByText("Previous page")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/before-metrics");
+  });
 });
 
 describe("old Agent Definition link", () => {

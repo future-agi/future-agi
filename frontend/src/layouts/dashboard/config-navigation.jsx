@@ -15,6 +15,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useMetricsEnabled } from "src/sections/derived-metrics/useMetricsEnabled";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import {
   ROLES,
@@ -73,6 +74,7 @@ export function useNavData() {
   // Orgs created after the cutoff see only Environments in Simulate.
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const agentsPath = agentsSidebarPath(usePathname());
+  const { enabled: metricsEnabled } = useMetricsEnabled();
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -192,11 +194,15 @@ export function useNavData() {
               });
             },
           },
-          {
-            title: "Metrics",
-            path: paths.dashboard.metrics.root,
-            icon: <Iconify icon="mdi:chart-line" />,
-          },
+          ...(metricsEnabled
+            ? [
+                {
+                  title: "Metrics",
+                  path: paths.dashboard.metrics.root,
+                  icon: <Iconify icon="mdi:chart-line" />,
+                },
+              ]
+            : []),
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
@@ -276,7 +282,13 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
+  }, [
+    isOwner,
+    isAdmin,
+    agentsPath,
+    restrictSimulateToEnvironments,
+    metricsEnabled,
+  ]);
   return data;
 }
 

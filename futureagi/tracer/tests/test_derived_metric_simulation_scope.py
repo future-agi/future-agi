@@ -13,7 +13,8 @@ from tracer.services.derived_metrics import service
 from tracer.services.simulation_project import ensure_simulation_project
 from tracer.tests.test_derived_metric_api import ROOT, RUNS, body, run_body
 
-pytestmark = pytest.mark.django_db
+# A rollout 404 must not mask the project-authorization boundary under test.
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("enabled_metrics")]
 
 
 @pytest.fixture

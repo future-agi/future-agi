@@ -27,6 +27,9 @@ from tracer.tests import test_derived_metric_clickhouse as metric_fixtures
 metric_ch = metric_fixtures.metric_ch
 seed_span = metric_fixtures.seed_span
 
+# These are enabled-feature scenarios; rollout denial has a separate suite.
+pytestmark = pytest.mark.usefixtures("enabled_metrics")
+
 ROOT = "/tracer/derived-metrics/"
 RUNS = "/tracer/derived-metric-runs/"
 
@@ -65,7 +68,8 @@ def run_body():
 
 
 @pytest.fixture
-def saved(auth_client, observe_project):
+def saved(auth_client, observe_project, enabled_metrics):
+    # Other suites import this fixture without this module's usefixtures mark.
     response = auth_client.post(ROOT, body(observe_project), format="json")
     assert response.status_code == 201, response.data
     # Legacy frozen-run tests start with a completed active definition. A fresh
