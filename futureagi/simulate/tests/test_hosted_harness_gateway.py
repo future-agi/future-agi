@@ -40,6 +40,8 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
+    update_execution_counts,
 )
 from simulate.services.hosted_harness_diagnostics import cached_attempt_redaction_values
 from simulate.services.hosted_harness_gateway import (
@@ -2982,8 +2984,17 @@ def _delivered_run(organization, key: str, *, receipts: int) -> HostedHarnessAtt
         )
         if number < receipts:
             _receive(attempt, execution)
+    job.refresh_from_db()
+    # The executions a Run sends its guest, which a relaunch can narrow.
+    metadata = {
+        **(job.payload.get("metadata") or {}),
+        "execution_manifest": [
+            {"execution_key": f"{name}:0", "scenario_key": name, "trial_index": 0}
+            for name in keys
+        ],
+    }
     HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        environment=environment
+        environment=environment, payload={**job.payload, "metadata": metadata}
     )
     return attempt
 
@@ -3091,17 +3102,23 @@ def test_reconcile_exit0_retries_a_run_only_when_its_results_are_missing(
 
 
 @pytest.mark.django_db
-def test_reconcile_exit0_counts_only_the_relaunchs_own_results(
+def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
     organization, monkeypatch
 ):
-    first = _delivered_run(organization, "run-missing-retry-spent", receipts=1)
+    first = _delivered_run(organization, "run-missing-relaunch", receipts=1)
     _deliver_terminal(first, "completed")
     gateway, _ = _exited_cleanly(monkeypatch)
     assert gateway.reconcile_completed(first).state == (
         HostedHarnessJob.State.RETRY_WAIT
     )
-    # The relaunch delivers the result the first attempt lost but loses the other one. The
-    # first attempt's result is not this attempt's, so the Run is not finished from it.
+    # Launch sends the guest what scope_dispatch_to_rerun leaves of the job's document:
+    # the call whose result was lost, not the call that already has its result.
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    dispatched = scope_dispatch_to_rerun(job.payload)
+    assert [
+        entry["execution_key"] for entry in dispatched["metadata"]["execution_manifest"]
+    ] == ["scenario-2:0"]
+    assert dispatched["scenario_count"] == 1
     second = register_attempt(
         first.job_id,
         endpoint_base_url="https://platform.example",
@@ -3110,15 +3127,18 @@ def test_reconcile_exit0_counts_only_the_relaunchs_own_results(
     _receive(
         second,
         HostedHarnessExecution.no_workspace_objects.get(
-            job_id=first.job_id, receipt__isnull=True
+            job_id=first.job_id, execution_key="scenario-2:0"
         ),
     )
     _deliver_terminal(second, "completed")
 
     job = gateway.reconcile_completed(second)
 
-    assert job.state == HostedHarnessJob.State.FAILED
-    assert job.failure["code"] == "terminal_delivery_incomplete"
+    # The first attempt's result and the relaunch's together finish the Run.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert (job.completed_count, job.failed_count) == (2, 0)
 
 
 @pytest.mark.django_db(transaction=True)

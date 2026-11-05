@@ -4379,23 +4379,48 @@ class HostedHarnessGateway:
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
-    def _received_every_result(self, attempt: HostedHarnessAttempt) -> bool:
-        """Whether this attempt delivered a result for every call it was sent to run.
+    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
+        """The keys of the executions this attempt was sent and delivered no result for.
 
-        Only a Run of a saved environment qualifies: a build's product is its bundle, not
-        call results. A result an earlier attempt delivered is not this attempt's.
+        None when it was sent none: a build's product is its bundle, not call results. A
+        result an earlier attempt delivered is not this attempt's.
         """
         job = attempt.job
         if job.environment_id is None:
-            return False
+            return None
         executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
         rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
         if rerun_keys:
             executions = executions.filter(execution_key__in=rerun_keys)
+        if not executions.exists():
+            return None
         received = HostedHarnessReceipt.no_workspace_objects.filter(
             job=job, attempt_number=attempt.attempt_number, execution__isnull=False
         ).values("execution_id")
-        return executions.exists() and not executions.exclude(id__in=received).exists()
+        return sorted(
+            executions.exclude(id__in=received).values_list("execution_key", flat=True)
+        )
+
+    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
+        """Scope the relaunch to the calls this attempt left without a result, as an in-run
+        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
+
+        With no result in, that scope is every call. A build, or an attempt that lost only
+        its terminal event, relaunches whole.
+        """
+        missing = self._results_missing(attempt)
+        if not missing:
+            return
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=attempt.job_id
+            )
+            metadata = {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            }
+            job.payload = {**job.payload, "metadata": metadata}
+            job.save(update_fields=["payload", "updated_at"])
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4656,7 +4681,7 @@ class HostedHarnessGateway:
             and attempt.terminal_event_received
             and not attempt.manifest_acked
             and attempt.terminal_stage == "completed"
-            and self._received_every_result(attempt)
+            and self._results_missing(attempt) == []
         ):
             # Every call's result is in, and the results are what the run page and a check
             # run read; only the manifest listing the artifacts was lost. Keep the scored
@@ -4675,6 +4700,8 @@ class HostedHarnessGateway:
                 not attempt.terminal_event_received
                 or attempt.terminal_stage == "completed"
             ) and self._should_retry(attempt, "infrastructure")
+            if retry_pending:
+                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",
