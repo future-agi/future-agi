@@ -23,6 +23,7 @@ export default function CallTracesPanel({
   testExecutionId,
   isError = false,
   onMountedChange,
+  openTraceId = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -46,6 +47,22 @@ export default function CallTracesPanel({
       resetStates();
     };
   }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
+
+  // Opened from another tab (a Participants step): show that trace once it is listed.
+  useEffect(() => {
+    if (openTraceId && traces.some((trace) => trace.traceId === openTraceId))
+      setTraceDetailDrawerOpen({
+        traceId: openTraceId,
+        projectId,
+        testExecutionId,
+      });
+  }, [
+    openTraceId,
+    traces,
+    projectId,
+    testExecutionId,
+    setTraceDetailDrawerOpen,
+  ]);
 
   if (isError && traces.length === 0) {
     return (
@@ -102,6 +119,7 @@ CallTracesPanel.propTypes = {
   testExecutionId: PropTypes.string,
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
+  openTraceId: PropTypes.string,
 };
 
 function TraceRow({ trace, onOpen }) {

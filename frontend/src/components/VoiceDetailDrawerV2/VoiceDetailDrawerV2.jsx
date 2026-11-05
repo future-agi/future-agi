@@ -79,6 +79,8 @@ const VoiceDetailDrawerV2 = ({
   hiddenActionIds = [],
   hidePathTabs = false,
   leftPanelTabs,
+  leftPanelTab,
+  onLeftPanelTabChange,
   hideAnnotationTab = false,
   showFixWithFalcon = true,
 }) => {
@@ -472,6 +474,8 @@ const VoiceDetailDrawerV2 = ({
                 scenarioId={scenarioId}
                 hidePathTabs={hidePathTabs}
                 extraTabs={leftPanelTabs}
+                tab={leftPanelTab}
+                onTabChange={onLeftPanelTabChange}
               />
             </Box>
 
@@ -643,6 +647,8 @@ VoiceDetailDrawerV2.propTypes = {
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hidePathTabs: PropTypes.bool,
   leftPanelTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  leftPanelTab: PropTypes.string,
+  onLeftPanelTabChange: PropTypes.func,
   hideAnnotationTab: PropTypes.bool,
   showFixWithFalcon: PropTypes.bool,
 };

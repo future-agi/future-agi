@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { simulateV3CallExecutionWorkers } from "src/generated/api-contracts/api";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
@@ -293,6 +294,7 @@ export function useRunDetail(
  * @property {?number} aiInterruptions AI interruption count.
  * @property {?number} tokens      Token total.
  * @property {?number} durationMs  Call duration, ms.
+ * @property {?string} completedAt When the call ended (ISO).
  * @property {?string} simulationCallType  "voice" | "text" — routes the call
  *                                 drawer to the voice vs chat branch.
  * @property {?string} provider    Call provider (vapi/retell/livekit/…).
@@ -618,9 +620,13 @@ export function mapCallDetail(raw) {
       a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
     0,
   );
+  // A hand-off to another agent is counted in the Participants tab, not as a tool call.
   const toolCalls = turns.reduce(
     (count, turn) =>
-      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
+      count +
+      (Array.isArray(turn.toolCalls)
+        ? turn.toolCalls.filter((call) => !call?.delegated_to).length
+        : 0),
     0,
   );
 
@@ -711,6 +717,48 @@ const traceRow = (raw) => ({
   status: raw.status ?? null,
   latencyMs: raw.latency_ms ?? null,
 });
+
+// The worker record is written about 35 s after a call's result, so a missing one is checked again
+// only while the call ended within this window.
+export const WORKERS_POLL_MS = 15000;
+export const WORKERS_ARRIVAL_WINDOW_MS = 5 * 60 * 1000;
+
+/** Whether a worker event hands work to another agent. */
+export const isHandOff = (event) =>
+  event?.type === "delegated" || event?.type === "transferred";
+
+/**
+ * Which of a multi-agent app's workers did what in one call; null when it has no record (204).
+ * Passing `completedAt` checks again for a record still arriving after a recent call.
+ */
+export function useCallWorkers(callExecutionId, { completedAt } = {}) {
+  const ended = completedAt ? Date.parse(completedAt) : NaN;
+  return useQuery({
+    queryKey: ["simulation-call-workers-v3", callExecutionId],
+    queryFn: async () =>
+      (await simulateV3CallExecutionWorkers(callExecutionId)).data || null,
+    enabled: !!callExecutionId,
+    retry: false,
+    // The panel says so inline; this tab must not toast about a call the user isn't looking at.
+    meta: { errorHandled: true },
+    refetchInterval: (query) =>
+      query.state.data === null &&
+      !query.state.error &&
+      Date.now() - ended < WORKERS_ARRIVAL_WINDOW_MS
+        ? WORKERS_POLL_MS
+        : false,
+  });
+}
+
+/**
+ * Whether a call has workers to show: false once it's known to have none (no Participants tab),
+ * undefined while the record is unread or couldn't be read.
+ */
+export function useHasWorkers(callExecutionId, completedAt) {
+  const { data } = useCallWorkers(callExecutionId, { completedAt });
+  if (data === undefined) return undefined;
+  return Boolean(data?.workers?.length || data?.events?.some(isHandOff));
+}
 
 export function useCallTraces(executionId, callExecutionId) {
   const query = useQuery({

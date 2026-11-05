@@ -18,6 +18,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   return {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
+    useHasWorkers: () => false,
     useCallExecutionV3Detail: () => ({
       data: { id: "voice-1", transcript: [] },
       isPending: false,

@@ -43,9 +43,14 @@ const VoiceLeftPanel = ({
   embedded = false,
   hidePathTabs = false,
   extraTabs = NO_EXTRA_TABS,
+  tab,
+  onTabChange,
 }) => {
   const isSimulate = data?.module === "simulate";
-  const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
+  const [ownTab, setOwnTab] = useState(TABS.TRANSCRIPT);
+  // A host that outlives this panel can hold the chosen tab itself.
+  const currentTab = tab ?? ownTab;
+  const setCurrentTab = onTabChange ?? setOwnTab;
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
@@ -221,6 +226,8 @@ VoiceLeftPanel.propTypes = {
   embedded: PropTypes.bool,
   hidePathTabs: PropTypes.bool,
   extraTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  tab: PropTypes.string,
+  onTabChange: PropTypes.func,
 };
 
 export default VoiceLeftPanel;
