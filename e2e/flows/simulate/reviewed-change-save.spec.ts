@@ -33,11 +33,11 @@ test('SIM-E2E-005: a reviewed draft saves only the accepted change, and only thr
             'add a Manager actor through the actors route',
             'read the review: the rule cited to the message, the actor to the person',
             'accept the rule and reject the actor',
-            'try a plain Save with the review digest',
+            'try a plain Save, first with the decisions alone, then with the review digest too',
             'Validate',
             'stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)',
             'read the drafts until validation is ready, then Save the candidates with a name'],
-    backendChecks: ['a reviewed Save without candidates is refused 409 validation_required, and the default does not move',
+    backendChecks: ['a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move',
                     'Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put',
                     'after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor',
                     'no draft is left open once saved'],
@@ -75,23 +75,30 @@ test('SIM-E2E-005: a reviewed draft saves only the accepted change, and only thr
 
   await test.step('api: a reviewed Save without candidates needs Validate first', async () => {
     const drafts = await actor.api.get<Drafts>(`${base}/drafts/`);
-    const refused = await actor.api.request<{ error: string }>('post', `${base}/drafts/save/`, { data: {
+    const plainSave = (digest?: string) => actor.api.request<{ error: string }>('post', `${base}/drafts/save/`, { data: {
       drafts: [{ piece: 'environment', expected_parent_id: drafts.environment?.parent_id,
                  expected_revision: drafts.environment?.revision }],
-      idempotency_key: `plain-${environment.environmentId}`,
-      expected_review_digest: decided.review_digest,
+      idempotency_key: `plain-${digest ? 'digest' : 'decided'}-${environment.environmentId}`,
+      ...(digest ? { expected_review_digest: digest } : {}),
     } });
-    expect([refused.status, refused.body.error]).toEqual([409, 'validation_required']);
+    // The decisions recorded on the draft are what hold a plain Save back: no digest is sent here.
+    const decidedOnly = await plainSave();
+    expect([decidedOnly.status, decidedOnly.body.error]).toEqual([409, 'validation_required']);
+    // Sending the digest the person saw is refused the same way.
+    const withDigest = await plainSave(decided.review_digest);
+    expect([withDigest.status, withDigest.body.error]).toEqual([409, 'validation_required']);
     expect(await defaultVersion()).toBe(environment.environmentVersionId);
   });
 
-  const validating = await actor.api.request<Validated>('post', `${base}/drafts/validate/`, { data: {
+  const validating = await actor.api.request<Validated & { error?: string }>('post', `${base}/drafts/validate/`, { data: {
     expected_revisions: revisions, expected_review_digest: decided.review_digest,
   } });
   const validated = validating.body;
-  await testInfo.attach('candidates', { contentType: 'application/json', body: JSON.stringify(validated.candidates) });
+  await testInfo.attach('validate', { contentType: 'application/json', body: JSON.stringify(validating) });
   await test.step('api: Validate builds candidates and leaves the default where it was', async () => {
-    expect([validating.status, validated.validation.state]).toEqual([202, 'validating']);
+    // The status first, with the refusal's error code, so a refused Validate reads as itself.
+    expect([validating.status, validated.error ?? null]).toEqual([202, null]);
+    expect(validated.validation.state).toBe('validating');
     expect(validated.candidates.environment_version_id).not.toBe(environment.environmentVersionId);
     expect(await defaultVersion()).toBe(environment.environmentVersionId);
   });
