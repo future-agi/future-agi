@@ -711,10 +711,11 @@ def worker_states(
     }
     # Only a hand-off the record shows can be still out; a worker seen only through its tool calls has no recorded
     # end, so it gets no end state rather than an invented one.
+    # A control pass never returns, so only a delegated hand-off with no return can be still out.
     handed = {
         event["worker_id"]
         for event in timeline["events"]
-        if event["type"] in _HAND_OFF_TYPES
+        if event["type"] == "delegated"
     }
     workers = []
     for worker in timeline["workers"]:

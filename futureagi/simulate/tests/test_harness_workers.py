@@ -1863,3 +1863,24 @@ def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_timed_out():
     }
     # The world's own refusal is the record; a worker with no such call gets no invented end.
     assert (states["order_lookup"], states["refund"]) == ("timed_out", None)
+
+
+def test_a_worker_handed_control_gets_no_end_state_since_a_control_pass_never_returns():
+    from simulate.services.harness_workers import worker_states
+
+    traced = [
+        {
+            "name": "transfer_to_agent",
+            "ok": True,
+            "at": 1.0,
+            "worker_label": "root_agent",
+            "kind": "transferred",
+            "delegated_to": "inspiration_agent",
+        },
+    ]
+    timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)
+    states = {
+        one["id"]: one.get("state")
+        for one in worker_states(timeline, trial="ended")["workers"]
+    }
+    assert states["inspiration_agent"] is None
