@@ -285,10 +285,17 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
             "message": "the fix ran out of the time it was given",
         }
     elif fix_run.sandbox_attempt >= attempts:
-        message = f"the improvement engine stopped {attempts} times before it finished"
-        if last_error := (fix_run.engine_notes or {}).get("last_error"):
-            message = f"{message}; last error: {last_error}"
-        failure = {"code": "fix_engine_died", "message": message}
+        # The engine's last error is its own text: the user gets fixed copy, we get the alert.
+        logger.error(
+            "agent_fix_engine_died",
+            fix_run=str(fix_run.id),
+            attempts=attempts,
+            last_error=(fix_run.engine_notes or {}).get("last_error"),
+        )
+        failure = {
+            "code": "fix_engine_died",
+            "message": f"the improvement engine stopped {attempts} times before it finished",
+        }
     else:
         return None
     close_fix_run(fix_run.id, AgentFixRun.State.FAILED, failure=failure)

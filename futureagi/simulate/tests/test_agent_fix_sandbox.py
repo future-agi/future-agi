@@ -609,34 +609,24 @@ def test_release_deletes_the_sandbox_once(fix_run, provider):
     assert fix_run.sandbox_ref == ""
 
 
-def test_an_engine_that_stopped_every_launch_names_its_last_error(fix_run, provider):
+def test_an_engine_that_stopped_every_launch_keeps_its_error_from_the_user(
+    fix_run, provider
+):
+    engine_error = "deepseek/flash timed out after 600s"
     _running(
         fix_run,
         sandbox_attempt=2,
-        engine_notes={
-            "lost_models": [],
-            "last_error": "the planner's model never answered",
-        },
+        engine_notes={"lost_models": [], "last_error": engine_error},
     )
 
-    launch(str(fix_run.id))
+    with capture_logs() as logs:
+        launch(str(fix_run.id))
 
     fix_run.refresh_from_db()
     assert fix_run.failure == {
         "code": "fix_engine_died",
-        "message": "the improvement engine stopped 2 times before it finished; "
-        "last error: the planner's model never answered",
+        "message": "the improvement engine stopped 2 times before it finished",
     }
-
-
-def test_an_engine_that_stopped_without_an_error_keeps_the_plain_message(
-    fix_run, provider
-):
-    _running(fix_run, sandbox_attempt=2)
-
-    launch(str(fix_run.id))
-
-    fix_run.refresh_from_db()
-    assert fix_run.failure["message"] == (
-        "the improvement engine stopped 2 times before it finished"
-    )
+    assert fix_run.engine_notes["last_error"] == engine_error
+    [died] = [log for log in logs if log["event"] == "agent_fix_engine_died"]
+    assert died["last_error"] == engine_error
