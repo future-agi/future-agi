@@ -133,4 +133,29 @@ describe("TrialChangesPanel", () => {
       screen.getByText("lead · Timed out · No answer: Dev answered instead"),
     ).toBeInTheDocument();
   });
+
+  it("says no change for a participant that committed nothing", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 0,
+              committed: 0,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+              no_change: true,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("No change: it committed nothing"),
+    ).toBeInTheDocument();
+  });
 });

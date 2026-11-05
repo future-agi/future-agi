@@ -42,6 +42,9 @@ export default function TrialChangesPanel({ trialState }) {
               {C.committed(one.committed_actions)}
             </Typography>
           )}
+          {one.no_change && !one.committed_actions?.length && (
+            <Typography sx={quiet}>{C.noChange}</Typography>
+          )}
         </Box>
       ))}
       {decisions.length > 0 && (

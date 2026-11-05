@@ -14,6 +14,8 @@ export const TRIAL_CHANGES_COPY = {
       .filter(Boolean)
       .join(" · "),
   committed: (actions) => `Committed: ${actions.join(", ")}`,
+  // Doing nothing can be the right result, so it is said, never left blank.
+  noChange: "No change: it committed nothing",
   decisionsHeading: "What the actors chose",
   plays: {
     mocked: "As scheduled",
