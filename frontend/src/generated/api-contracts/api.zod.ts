@@ -53971,6 +53971,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       csat: zod.number(),
       ended_reason: zod.string().min(1),
       error_message: zod.string().min(1),
+      failure_domain: zod.enum([
+        "agent",
+        "simulator",
+        "environment",
+        "connectivity",
+        "infrastructure",
+        "grading",
+        "platform_sync",
+      ]),
+      failure_code: zod.string().min(1),
       evaluations: zod.array(
         zod.object({
           id: zod.string().min(1),

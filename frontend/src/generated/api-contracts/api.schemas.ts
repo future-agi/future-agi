@@ -25795,6 +25795,19 @@ export const RunCallApiOutcome = {
   error: "error",
 } as const;
 
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
 export type RunCallApiScoringStatus =
   (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
 
@@ -25863,6 +25876,9 @@ export interface RunCallApi {
   ended_reason: string;
   /** @minLength 1 */
   error_message: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;
   csat_status: RunCallApiCsatStatus;

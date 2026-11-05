@@ -155973,6 +155973,8 @@
                 "csat",
                 "ended_reason",
                 "error_message",
+                "failure_domain",
+                "failure_code",
                 "evaluations",
                 "scoring_status",
                 "csat_status",
@@ -156144,6 +156146,26 @@
                 },
                 "error_message": {
                     "title": "Error message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "platform_sync"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
