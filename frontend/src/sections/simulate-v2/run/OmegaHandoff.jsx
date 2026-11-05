@@ -10,6 +10,7 @@ import PrCard from "../integrations/PrCard";
 import { prFilesOf, repoNameOf, useIntegrations } from "../_mock/integrations";
 import { prOfImprovement } from "../_mock/improvementPr";
 import { changeFileFor } from "../_mock/optimize";
+import { skillLandsOf } from "../_mock/skillLibrary";
 import {
   agentSourceOf,
   definitionOf,
@@ -610,8 +611,29 @@ export default function OmegaHandoff({
           : !!(done.copied || draftVersion));
   const currentStep = released ? shipSteps.length - 1 : made ? 1 : 0;
 
+  /* Skill changes: each says whether it saves as a library version or goes with the PR. */
+  const skillChanges = included.filter((p) => p.kind === "Skill");
+
   const actionBlocks = (
     <>
+      {skillChanges.length > 0 && (
+        <Stack spacing={0.25} sx={{ mb: 1.5 }}>
+          {skillChanges.map((p) => (
+            <Typography
+              key={p.id}
+              sx={{ typography: "s3", color: "text.secondary" }}
+            >
+              {`${p.skillId}: ${
+                skillLandsOf(
+                  store?.state?.workspaceSettings,
+                  envAgentKey(agent, env?.id),
+                  p.skillId,
+                ).line
+              }`}
+            </Typography>
+          ))}
+        </Stack>
+      )}
       {/* ── a mixed change: each part and how it ships ── */}
       {mixed && (
         <ShipParts

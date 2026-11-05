@@ -17,7 +17,9 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../components/SideDrawer";
 import { useConnectedAgents, useSimStore } from "../store";
 import { skillRuntimeOf } from "../_mock/skills";
+import { connectedAgentPath } from "../improvements/improvementNav";
 import {
+  agentContextOf,
   attach,
   createSkill,
   detach,
@@ -79,6 +81,21 @@ export default function SkillsLibrary() {
       .includes(query.trim().toLowerCase()),
   );
   const open = library.find((s) => s.id === openId) || null;
+  /* Always-on instructions of each agent that has code (skills.md, Agent context). */
+  const [allContexts, setAllContexts] = useState(false);
+  const contexts = useMemo(
+    () =>
+      agents
+        .map((a) => agentContextOf(a, settings))
+        .filter(Boolean)
+        .filter((c) =>
+          `${c.agentName} ${c.file} ${c.skills.join(" ")}`
+            .toLowerCase()
+            .includes(query.trim().toLowerCase()),
+        ),
+    [agents, settings, query],
+  );
+  const navigate = useNavigate();
 
   return (
     <Box
@@ -208,6 +225,144 @@ export default function SkillsLibrary() {
           </Box>
         </Box>
       </Box>
+
+      {contexts.length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
+            Agent context
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.secondary", mb: 1 }}>
+            The always-on instructions each agent starts with.
+          </Typography>
+          <Box
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              overflow: "auto",
+            }}
+          >
+            <Box
+              component="table"
+              sx={{ width: 1, borderCollapse: "collapse" }}
+            >
+              <Box component="thead">
+                <Box component="tr">
+                  {[
+                    "Agent",
+                    "File",
+                    "Its own skills",
+                    "Where it lives",
+                    "",
+                  ].map((h) => (
+                    <Box component="th" key={h || "open"} sx={head}>
+                      {h}
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+              <Box component="tbody">
+                {(allContexts ? contexts : contexts.slice(0, 5)).map((c) => {
+                  const inRepo = c.location === "repo";
+                  const openSource = () =>
+                    navigate(connectedAgentPath(c.agentId, "definition"));
+                  return (
+                    <Box
+                      component="tr"
+                      key={c.agentKey}
+                      onClick={inRepo ? openSource : undefined}
+                      sx={
+                        inRepo
+                          ? {
+                              cursor: "pointer",
+                              "&:hover": { bgcolor: "action.hover" },
+                            }
+                          : undefined
+                      }
+                    >
+                      <Box
+                        component="td"
+                        sx={{ ...cell, fontWeight: 500, maxWidth: 260 }}
+                      >
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s2", fontWeight: 500 }}
+                        >
+                          {c.agentName}
+                        </Typography>
+                      </Box>
+                      <Box
+                        component="td"
+                        sx={{
+                          ...cell,
+                          fontFamily: "ui-monospace, Menlo, monospace",
+                        }}
+                      >
+                        {c.file}
+                      </Box>
+                      <Box
+                        component="td"
+                        sx={{
+                          ...cell,
+                          maxWidth: 280,
+                          color: c.skills.length
+                            ? "text.primary"
+                            : "text.tertiary",
+                        }}
+                      >
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s2", color: "inherit" }}
+                        >
+                          {c.skills.length
+                            ? c.skills.join(", ")
+                            : "None linked"}
+                        </Typography>
+                      </Box>
+                      <Box
+                        component="td"
+                        sx={{ ...cell, color: "text.secondary" }}
+                      >
+                        {inRepo
+                          ? "In the repo · read-only here"
+                          : `In the library · v${c.v}`}
+                      </Box>
+                      <Box component="td" sx={{ ...cell, textAlign: "right" }}>
+                        {inRepo && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSource();
+                            }}
+                            sx={{
+                              color: "text.primary",
+                              borderColor: "divider",
+                            }}
+                          >
+                            Open source
+                          </Button>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          </Box>
+          {contexts.length > 5 && (
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setAllContexts((v) => !v)}
+              sx={{ mt: 1 }}
+            >
+              {allContexts ? "Show fewer" : `Show all ${contexts.length}`}
+            </Button>
+          )}
+        </Box>
+      )}
 
       <SideDrawer open={!!open} onClose={() => setOpenId(null)} width={640}>
         {open && (

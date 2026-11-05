@@ -12,8 +12,9 @@
   With nothing saved, the library starts from a small seed.
 */
 import { currentUser } from "./scenarioProvenance";
-import { agentKeyOf } from "./agentRegistry";
-import { skillRuntimeOf } from "./skills";
+import { agentKeyOf, definitionOf, sourceKindOf } from "./agentRegistry";
+import { skillRuntimeOf, skillSetOf } from "./skills";
+import { CODING_AGENTS } from "./codingAgents";
 
 const daysAgo = (d) => new Date(Date.now() - d * 864e5).toISOString();
 const md = (name, when, body) =>
@@ -125,6 +126,70 @@ export const usedByOf = (skillId, settings) =>
       .filter((a) => a.skillId === skillId)
       .map((a) => ({ agentKey, ref: a.ref })),
   );
+
+/**
+  How a skill change lands on an agent (skills.md SK-2): a skill attached
+  from the library saves as that skill's next version; any other skill lives
+  in the agent's repository and changes through the pull request.
+*/
+export const skillLandsOf = (settings, agentKey, skillId) => {
+  const attached = new Set(
+    (attachmentsOf(settings)[agentKey] || []).map((a) => a.skillId),
+  );
+  const lib = libraryOf(settings).find(
+    (x) => x.name === skillId && attached.has(x.id),
+  );
+  return lib
+    ? { inLibrary: true, line: `Saves as ${lib.name} v${latestV(lib) + 1}` }
+    : {
+        inLibrary: false,
+        line: "In your repo — changes through the pull request",
+      };
+};
+
+const INSTRUCTIONS_RE = /(^|\/)(AGENTS|CLAUDE)\.md$/i;
+/**
+  An agent's always-on instructions (skills.md, Agent context): the file, the
+  skills it links, and where it lives. A git agent keeps it in its repository
+  (read-only here); code with no repository to read (an upload or an adapter)
+  keeps it in the library, versioned like a skill. Saved choices in
+  workspaceSettings.agentContext[agentKey] = { location, v } win.
+  Null for an agent with no code to hold one.
+*/
+export const agentContextOf = (agent, settings) => {
+  const kind = sourceKindOf(agent);
+  if (!["repo", "upload", "framework"].includes(kind)) return null;
+  const v = agent?.values || {};
+  const def = definitionOf(agent);
+  const named = [agent?.prompts, v.prompts, def.prompts]
+    .flat()
+    .filter((x) => typeof x === "string")
+    .find((x) => INSTRUCTIONS_RE.test(x));
+  const file = named
+    ? named.split("/").pop()
+    : CODING_AGENTS[v.codingAgent]?.instructions ||
+      (v.framework === "claude-agent-sdk" ? "CLAUDE.md" : "AGENTS.md");
+  const saved = settings?.agentContext?.[agent.key];
+  const location = saved?.location || (kind === "repo" ? "repo" : "library");
+  const attached = new Set(
+    (attachmentsOf(settings)[agent.key] || []).map((a) => a.skillId),
+  );
+  const skills = [
+    ...skillSetOf(agent, settings).skills.map((x) => x.id),
+    ...libraryOf(settings)
+      .filter((x) => attached.has(x.id))
+      .map((x) => x.name),
+  ].filter((n, i, all) => all.indexOf(n) === i);
+  return {
+    agentKey: agent.key,
+    agentId: agent.id,
+    agentName: agent.name,
+    file,
+    skills,
+    location,
+    v: location === "library" ? saved?.v || 1 : null,
+  };
+};
 
 /** What a run's agent loaded: "Skills · refund-policy v3 · Observed" (or Unknown). */
 export const runSkillsLineOf = (settings, agent) => {

@@ -1,11 +1,16 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { changeFileFor } from "../../_mock/optimize";
+import { envAgentKey } from "../../_mock/agentRegistry";
+import { skillLandsOf } from "../../_mock/skillLibrary";
+import { useOptionalSimStore } from "../../store";
 import { CodePlan } from "./ImprovementPanels";
 
 /* What the winner changes — each file, why, and the lines. */
 export default function WinnerChanges({ env, winner, members, record }) {
+  const store = useOptionalSimStore();
   const proposals = winner?.proposals || [];
+  const agentKey = envAgentKey(store?.state?.byEnv?.[env?.id]?.agent, env?.id);
   if (!proposals.length) {
     return (
       <Typography
@@ -76,6 +81,20 @@ export default function WinnerChanges({ env, winner, members, record }) {
                   ? "skill use observed from the runtime's loading events"
                   : "skill use unknown: this runtime doesn't report loading, so the result shows outcomes only"
               }`}
+            </Typography>
+          )}
+          {/* Where it lands: the next library version, or the repo's pull request. */}
+          {p.kind === "Skill" && (
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+            >
+              {
+                skillLandsOf(
+                  store?.state?.workspaceSettings,
+                  agentKey,
+                  p.skillId,
+                ).line
+              }
             </Typography>
           )}
           {/* A settings change is a typed edit within the platform's allowed values. */}
