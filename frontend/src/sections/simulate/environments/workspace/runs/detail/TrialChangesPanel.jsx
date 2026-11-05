@@ -1,0 +1,68 @@
+import PropTypes from "prop-types";
+import { Box, Stack, Typography } from "@mui/material";
+import { TRIAL_CHANGES_COPY as C } from "./trialChanges.constants";
+
+const quiet = {
+  typography: "s3",
+  color: "text.secondary",
+  wordBreak: "break-word",
+};
+
+// A trial's world changes per participant (the agent and each actor), and what each actor chose. Kept apart:
+// attempted, refused and committed are never summed into one number.
+export default function TrialChangesPanel({ trialState }) {
+  const changes = trialState?.state_changes || [];
+  const decisions = trialState?.decisions || [];
+  if (!changes.length && !decisions.length)
+    return <Typography sx={{ ...quiet, p: 2 }}>{C.empty}</Typography>;
+  const names = Object.fromEntries(changes.map((one) => [one.who, one.name]));
+  return (
+    <Stack spacing={1.5} sx={{ p: 2 }}>
+      <Box>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {C.heading}
+        </Typography>
+        <Typography sx={quiet}>{C.about}</Typography>
+      </Box>
+      {changes.map((one) => (
+        <Box key={one.who}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {one.name}
+          </Typography>
+          <Typography sx={quiet}>{C.counts(one)}</Typography>
+          {one.committed_actions?.length > 0 && (
+            <Typography sx={quiet}>
+              {C.committed(one.committed_actions)}
+            </Typography>
+          )}
+        </Box>
+      ))}
+      {decisions.length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.decisionsHeading}
+          </Typography>
+          {decisions.map((one, index) => (
+            <Typography key={`${one.actor}-${index}`} sx={quiet}>
+              {[
+                names[one.actor] || one.actor,
+                C.plays[one.play] || one.play,
+                one.action || C.nothing,
+                one.why,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+          ))}
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
+TrialChangesPanel.propTypes = {
+  trialState: PropTypes.shape({
+    state_changes: PropTypes.arrayOf(PropTypes.object),
+    decisions: PropTypes.arrayOf(PropTypes.object),
+  }),
+};

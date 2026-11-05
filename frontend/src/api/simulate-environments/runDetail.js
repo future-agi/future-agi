@@ -645,6 +645,8 @@ export function mapCallDetail(raw) {
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
     persona: raw.persona ?? null,
+    // What changed in the world per participant, and what each actor chose; absent without actors or faults.
+    trial_state: raw.trial_state ?? null,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,
