@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Max, Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -55,7 +55,12 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
-from agentcc.services.config_push import push_all_org_configs, push_org_config
+from agentcc.services.config_push import (
+    _RULE_TO_REGISTRY,
+    push_all_org_configs,
+    push_org_config,
+    validate_org_config,
+)
 from agentcc.services.gateway_client import (
     AGENTCC_GATEWAY_URL,
     GatewayClientError,
@@ -175,6 +180,42 @@ def _remove_budget_level_config(budgets, level):
     updated.pop(level, None)
     updated.pop(normalized_level, None)
     return updated
+
+
+def _guardrail_checks_map(guardrails):
+    """
+    Return the checks{} map when guardrails use the Settings editor's shape.
+
+    The gateway contract has no rules[] next to a non-empty checks{} map (see
+    config_push._transform_guardrails), so edits must go into the map.
+    """
+    checks = guardrails.get("checks")
+    if isinstance(checks, dict) and checks:
+        return checks
+    return None
+
+
+def _guardrail_check_key(checks, name):
+    """
+    The checks{} key that `name` refers to. A rule name and its registry name
+    (pii-detector / pii-detection) are the same check at the gateway, so an
+    existing entry under either is reused instead of adding a duplicate.
+    """
+    aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
+    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    return next((alias for alias in aliases if alias in checks), name)
+
+
+def _guardrail_check_fields(guardrail_config):
+    """Map a rules-style guardrail config onto the fields a checks{} entry has."""
+    fields = {
+        key: guardrail_config[key]
+        for key in ("enabled", "action", "confidence_threshold", "config")
+        if key in guardrail_config
+    }
+    if "threshold" in guardrail_config:
+        fields["confidence_threshold"] = guardrail_config["threshold"]
+    return fields
 
 
 def _build_virtual_gateway(status="healthy", health=None):
@@ -739,6 +780,17 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Same upsert defaults as a new rule below
+                    check = checks.setdefault(
+                        _guardrail_check_key(checks, guardrail_name),
+                        {"action": "block", "confidence_threshold": 0.8, "config": {}},
+                    )
+                    check["enabled"] = enabled
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
 
                 # Find existing rule or create one with defaults
@@ -854,6 +906,19 @@ class AgentccGatewayViewSet(ViewSet):
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                checks = _guardrail_checks_map(guardrails)
+                if checks is not None:
+                    # Merge, so _policy and fields the payload leaves out stay.
+                    # A new check is enabled unless the payload says otherwise,
+                    # as a new rule is (rules default enabled when pushed).
+                    key = _guardrail_check_key(checks, guardrail_name)
+                    checks[key] = {
+                        **checks.get(key, {"enabled": True}),
+                        **_guardrail_check_fields(guardrail_config),
+                    }
+                    cfg.guardrails = guardrails
+                    return
+
                 rules = guardrails.get("rules", [])
                 found = False
                 for i, rule in enumerate(rules):
@@ -946,10 +1011,14 @@ class AgentccGatewayViewSet(ViewSet):
 
             # Extract guardrail info from response
             guardrail_info = {}
+            triggered = False
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
+                if lk == "x-agentcc-guardrail-triggered":
+                    triggered = str(val).lower() == "true"
+            blocked = status_code in (403, 446)
 
             return self._gm.success_response(
                 {
@@ -957,8 +1026,11 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
-                    "blocked": status_code in (403, 446),
-                    "warned": status_code == 246,
+                    "blocked": blocked,
+                    # A warn or log hit goes through and is marked by the
+                    # guardrail-triggered header; 246 is the legacy warn code.
+                    "warned": status_code == 246
+                    or (triggered and not blocked and status_code < 400),
                 }
             )
         except GatewayClientError as e:
@@ -1672,9 +1744,15 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or "Config update v1",
                 )
             else:
-                # Derive next version from locked active config — safe because
-                # select_for_update prevents concurrent reads of this row.
-                next_version = active_config.version + 1
+                # The active version is not always the highest: after a rollback
+                # an older version is active. The lock on the active row
+                # serializes savers, so the max is stable here.
+                next_version = (
+                    AgentccOrgConfig.no_workspace_objects.filter(
+                        organization=org, deleted=False
+                    ).aggregate(Max("version"))["version__max"]
+                    + 1
+                )
 
                 AgentccOrgConfig.no_workspace_objects.filter(
                     organization=org,
@@ -1707,6 +1785,9 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or f"Config update v{next_version}",
                 )
             updater_fn(new_config)
+            # Fail closed: a version the gateway contract rejects must not
+            # become active. Raising here rolls the whole save back.
+            validate_org_config(new_config)
             new_config.save()
 
         synced = self._push_current_config(org, new_config)

@@ -126,6 +126,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     sourceTimeWindow,
     filterForm: localFilterForm,
     requireInputs,
+    hideCompositeCreate,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   // Fail closed while capabilities load (both flags true) so we never flash
@@ -837,59 +838,63 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
-                  value={mode}
-                  onChange={(_, val) => setMode(val)}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
+                {!hideCompositeCreate && (
+                  <Tabs
+                    value={mode}
+                    onChange={(_, val) => setMode(val)}
+                    TabIndicatorProps={{ style: { display: "none" } }}
+                    sx={{
                       minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
-                >
-                  {MODE_TABS.map((tab) => (
-                    <Tab
-                      key={tab.value}
-                      value={tab.value}
-                      label={tab.label}
-                      sx={{
-                        bgcolor:
-                          mode === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
-                            : "transparent",
-                        boxShadow:
-                          mode === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
-                            : "none",
+                      "& .MuiTab-root": {
+                        minHeight: 28,
+                        px: 1.5,
+                        py: 0,
+                        mr: "0px !important",
+                        textTransform: "none",
+                        fontSize: "13px",
                         borderRadius: "6px",
-                        fontWeight: mode === tab.value ? 600 : 400,
-                        color:
-                          mode === tab.value ? "text.primary" : "text.disabled",
-                      }}
-                    />
-                  ))}
-                </Tabs>
+                      },
+                      border: "1px solid",
+                      borderColor: "divider",
+                      p: "2px",
+                      borderRadius: "8px",
+                      bgcolor: (theme) =>
+                        theme.palette.mode === "dark"
+                          ? "rgba(255,255,255,0.04)"
+                          : "background.neutral",
+                    }}
+                  >
+                    {MODE_TABS.map((tab) => (
+                      <Tab
+                        key={tab.value}
+                        value={tab.value}
+                        label={tab.label}
+                        sx={{
+                          bgcolor:
+                            mode === tab.value
+                              ? (theme) =>
+                                  theme.palette.mode === "dark"
+                                    ? "rgba(255,255,255,0.12)"
+                                    : "background.paper"
+                              : "transparent",
+                          boxShadow:
+                            mode === tab.value
+                              ? (theme) =>
+                                  theme.palette.mode === "dark"
+                                    ? "none"
+                                    : "0 1px 3px rgba(0,0,0,0.08)"
+                              : "none",
+                          borderRadius: "6px",
+                          fontWeight: mode === tab.value ? 600 : 400,
+                          color:
+                            mode === tab.value
+                              ? "text.primary"
+                              : "text.disabled",
+                        }}
+                      />
+                    ))}
+                  </Tabs>
+                )}
               </Box>
 
               {/* Eval Name — CompositeDetailPanel has its own name field,

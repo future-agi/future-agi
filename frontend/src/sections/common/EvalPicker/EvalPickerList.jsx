@@ -646,12 +646,8 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                     variant="outlined"
                     disabled={action.disabled}
                     onClick={() => action.onClick(e)}
-                    startIcon={
-                      action.busyName === e.name ? (
-                        <CircularProgress size={12} color="inherit" />
-                      ) : null
-                    }
                     sx={{
+                      position: "relative",
                       flexShrink: 0,
                       height: 24,
                       fontSize: 11,
@@ -659,7 +655,25 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                       px: 1,
                     }}
                   >
-                    {action.label}
+                    <Box
+                      component="span"
+                      sx={{ opacity: action.busyName === e.name ? 0 : 1 }}
+                    >
+                      {action.label}
+                    </Box>
+                    {action.busyName === e.name && (
+                      <CircularProgress
+                        size={12}
+                        color="inherit"
+                        sx={{
+                          position: "absolute",
+                          top: "50%",
+                          left: "50%",
+                          mt: "-6px",
+                          ml: "-6px",
+                        }}
+                      />
+                    )}
                   </Button>
                 )}
               </Box>

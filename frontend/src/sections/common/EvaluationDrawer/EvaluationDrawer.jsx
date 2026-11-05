@@ -21,6 +21,7 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
@@ -77,6 +78,8 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
+  const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
+    usePendingEvalSelections();
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -368,6 +371,8 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    autoSelectRequests={autoSelectRequests}
+                    onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -760,6 +765,7 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
+              requestAutoSelect(evalConfig.name);
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -777,7 +783,9 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
+          const addedName = payload.name;
           await handleRun(payload, () => {
+            requestAutoSelect(addedName);
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });

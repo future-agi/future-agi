@@ -1,11 +1,28 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { within } from "@testing-library/react";
 
 // The wrapper owns the network hook; feed it a fixed set of mapped tasks.
 const useRunCalls = vi.fn();
 vi.mock("src/api/simulate-environments/runDetail", () => ({
   useRunCalls: (...args) => useRunCalls(...args),
+}));
+
+// The eval column menu owns its own data; here it only has to receive the
+// right column, and the run page's actions as they were handed in.
+vi.mock("../../EvalColumnActions", () => ({
+  default: ({ menuFor, runTestId, rerunPending, onRerun, onEdit }) => (
+    <div data-testid="eval-actions">
+      {`eval-actions:${menuFor?.evalId ?? "-"}:${runTestId}:${rerunPending}`}
+      <button type="button" onClick={() => onRerun([{ id: "eval-1" }])}>
+        menu re-run
+      </button>
+      <button type="button" onClick={() => onEdit({ id: "eval-1" })}>
+        menu edit
+      </button>
+    </div>
+  ),
 }));
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
@@ -19,7 +36,10 @@ const TASKS = [
     id: "t1",
     scenario: "Refund a double charge",
     goal: "Refund a double charge",
-    subGoals: ["Identity verified", "Refund created"],
+    subGoalResults: [
+      { name: "Identity verified", passed: true },
+      { name: "Refund created", passed: true },
+    ],
     persona: "Impatient caller",
     personaDetails: {
       name: "The Hungry Customer in a Rush",
@@ -40,7 +60,7 @@ const TASKS = [
     id: "t2",
     scenario: "Escalate to a human",
     goal: "Escalate to a human",
-    subGoals: ["Transferred to human"],
+    subGoalResults: [{ name: "Transferred to human", passed: false }],
     persona: "Angry caller",
     personaDetails: {
       name: "Angry caller",
@@ -61,7 +81,7 @@ const TASKS = [
     id: "t3",
     scenario: "Handle a timeout",
     goal: "Handle a timeout",
-    subGoals: [],
+    subGoalResults: [],
     persona: "Caller",
     personaDetails: {
       name: "Caller",
@@ -91,7 +111,7 @@ const groupsFor = (tasks, groupBy = "goal") => {
   const labels = {
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
+    error: "Error",
   };
   return [...grouped].map(([key, rows]) => ({
     label: labels[key] || key,
@@ -116,6 +136,8 @@ const FACETS = {
     { value: "error", count: 1 },
   ],
 };
+// The status chips' counts, which the API sends apart from the facets.
+const STATUS_COUNTS = { passed: 1, failed: 1, error: 1 };
 
 const renderTable = (props = {}) =>
   render(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} {...props} />);
@@ -166,14 +188,18 @@ describe("RunTraceTable", () => {
   beforeEach(() => {
     useRunCalls.mockImplementation((_executionId, opts = {}) => {
       const status = opts.filters?.status?.[0];
-      const tasks = status
-        ? TASKS.filter((task) => task.status === status)
-        : TASKS;
+      const ids = opts.filters?.call_execution_id;
+      const tasks = TASKS.filter(
+        (task) =>
+          (!status || task.status === status) &&
+          (!ids || ids.includes(task.id)),
+      );
       return {
         tasks,
         columns: COLUMNS,
         groups: groupsFor(tasks, opts.groupBy),
         facets: FACETS,
+        statusCounts: STATUS_COUNTS,
         count: tasks.length,
         totalPages: 1,
         isLoading: false,
@@ -181,20 +207,52 @@ describe("RunTraceTable", () => {
     });
   });
 
+  it.each([
+    ["queued", "Queued"],
+    ["in_progress", "In progress"],
+    ["passed", "Passed"],
+    ["failed", "Failed"],
+    ["inconclusive", "Inconclusive"],
+    ["error", "Error"],
+  ])(
+    "uses the %s outcome for both row labels and filtering",
+    async (outcome, label) => {
+      const user = userEvent.setup();
+      useRunCalls.mockReturnValue({
+        tasks: [{ ...TASKS[0], status: outcome }],
+        columns: COLUMNS,
+        groups: groupsFor([{ ...TASKS[0], status: outcome }]),
+        facets: { status: [{ value: outcome, count: 1 }] },
+        statusCounts: { [outcome]: 1 },
+        count: 1,
+        totalPages: 1,
+        isLoading: false,
+      });
+      renderTable({ activeCallId: TASKS[0].id });
+      expect(screen.getAllByText(label)).toHaveLength(2);
+      await user.click(screen.getByRole("button", { name: label }));
+      expect(useRunCalls).toHaveBeenLastCalledWith(
+        "ex1",
+        expect.objectContaining({ filters: { status: [outcome] } }),
+      );
+    },
+  );
+
   describe("which groups are open", () => {
     const persona = {
       refund: () => screen.queryByText("The Hungry Customer in a Rush"),
       escalate: () => screen.queryByText("Angry caller"),
       timeout: () => screen.queryByText("Caller"),
     };
-    const header = (label) => screen.getAllByText(label)[0];
+    const header = (label) =>
+      within(screen.getByRole("table")).getAllByText(label)[0];
     const expandAll = () =>
       screen.getByRole("checkbox", { name: /Expand all/ });
 
     it("leaves the other groups closed after opening the only group a filter showed", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(screen.getByRole("button", { name: "Failing" }));
+      await user.click(screen.getByRole("button", { name: "Failed" }));
       await user.click(header("Escalate to a human"));
       await user.click(screen.getByRole("button", { name: /^All/ }));
 
@@ -247,7 +305,7 @@ describe("RunTraceTable", () => {
       expect(persona.escalate()).toBeNull();
 
       loading = true;
-      await user.click(screen.getByRole("button", { name: "Failing" }));
+      await user.click(screen.getByRole("button", { name: "Failed" }));
       expect(screen.getByText("Loading calls…")).toBeInTheDocument();
       loading = false;
       rerender(
@@ -274,6 +332,7 @@ describe("RunTraceTable", () => {
       columns: COLUMNS,
       groups: [group],
       facets: FACETS,
+      statusCounts: STATUS_COUNTS,
       count: 3,
       totalPages: 2,
       isLoading: false,
@@ -300,6 +359,16 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("US male")).toBeInTheDocument();
     expect(screen.getByText("34")).toBeInTheDocument();
     expect(screen.getByText("impatient, in a hurry")).toBeInTheDocument();
+    for (const [name, verdict] of [
+      ["Identity verified", "Passed"],
+      ["Refund created", "Passed"],
+      ["Transferred to human", "Failed"],
+    ]) {
+      const goal = screen.getByText(name).parentElement;
+      expect(
+        within(goal).getByRole("img", { name: verdict }),
+      ).toBeInTheDocument();
+    }
   });
 
   it("fires onOpenCall with the task on a row click", async () => {
@@ -339,7 +408,7 @@ describe("RunTraceTable", () => {
       groupBy: "status",
     });
 
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
     expect(onQueryChange).toHaveBeenLastCalledWith({
       ...base,
       groupBy: "status",
@@ -397,7 +466,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Refund a double charge")).toBeInTheDocument();
     // The chip is translated into an API filter; the server result replaces
     // the rendered rows.
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
 
     expect(screen.queryByText("Refund a double charge")).toBeNull();
     expect(screen.getByText("Escalate to a human")).toBeInTheDocument();
@@ -407,7 +476,7 @@ describe("RunTraceTable", () => {
       expect.objectContaining({ filters: { status: ["failed"] } }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Errored" }));
+    await user.click(screen.getByRole("button", { name: "Error" }));
     expect(screen.queryByText("Escalate to a human")).toBeNull();
     expect(screen.getByText("Handle a timeout")).toBeInTheDocument();
     expect(useRunCalls).toHaveBeenLastCalledWith(
@@ -434,7 +503,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Angry caller")).toBeInTheDocument();
 
     loading = true;
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
     expect(screen.getByText("Loading calls…")).toBeInTheDocument();
 
     loading = false;
@@ -454,6 +523,7 @@ describe("RunTraceTable", () => {
         ...FACETS,
         status: [...FACETS.status, { value: "inconclusive", count: 1 }],
       },
+      statusCounts: { ...STATUS_COUNTS, inconclusive: 1 },
     }));
     renderTable();
 
@@ -489,7 +559,8 @@ describe("RunTraceTable", () => {
       escalate: () => screen.queryByText("Angry caller"),
       timeout: () => screen.queryByText("Caller"),
     };
-    const header = (label) => screen.getAllByText(label)[0];
+    const header = (label) =>
+      within(screen.getByRole("table")).getAllByText(label)[0];
     const chip = (name) => screen.getByRole("button", { name });
     const expandAll = () =>
       screen.getByRole("checkbox", { name: /Expand all/ });
@@ -497,7 +568,7 @@ describe("RunTraceTable", () => {
     it("leaves other groups closed after opening the only group a filter showed", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
       await user.click(header("Escalate to a human"));
       await user.click(chip(/^All/));
 
@@ -509,7 +580,7 @@ describe("RunTraceTable", () => {
     it("opens groups from another filter after Expand all", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
 
@@ -533,7 +604,7 @@ describe("RunTraceTable", () => {
     it("keeps groups seen under Expand all open after one is closed elsewhere", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
       await user.click(header("Refund a double charge"));
@@ -615,10 +686,10 @@ describe("RunTraceTable", () => {
     it("keeps groups first seen under Expand all open after one closes on another filter", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
-      await user.click(chip(/^Errored/));
+      await user.click(chip(/^Error/));
       await user.click(header("Handle a timeout"));
       await user.click(chip(/^All/));
 
@@ -650,7 +721,7 @@ describe("RunTraceTable", () => {
       expect(persona.escalate()).toBeNull();
 
       loading = true;
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
       expect(screen.getByText("Loading calls…")).toBeInTheDocument();
 
       loading = false;
@@ -663,9 +734,113 @@ describe("RunTraceTable", () => {
       renderTable();
       await user.click(expandAll());
       await user.click(expandAll());
-      await user.click(chip("Failing"));
+      await user.click(chip("Failed"));
 
       expect(persona.escalate()).toBeNull();
+    });
+
+    it("opens the groups of handed-over calls, so their rows show without a click", () => {
+      renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).toBeChecked();
+    });
+
+    it("keeps the handed-over groups the user saw open once the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t2"] },
+      });
+      expect(persona.escalate()).toBeInTheDocument();
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.refund()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).not.toBeChecked();
+    });
+
+    // The calls API only returns the groups on the page it sends, so a group
+    // the user never paged to was never seen, and comes back closed.
+    it("closes a handed-over group on a page the user never opened once the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      useRunCalls.mockImplementation((_executionId, opts = {}) => {
+        const handedOver = !!opts.filters?.call_execution_id;
+        const tasks = !handedOver
+          ? TASKS
+          : opts.page === 2
+            ? [TASKS[2]]
+            : [TASKS[0], TASKS[1]];
+        return {
+          tasks,
+          columns: COLUMNS,
+          groups: groupsFor(tasks, opts.groupBy),
+          facets: FACETS,
+          statusCounts: STATUS_COUNTS,
+          count: handedOver ? 51 : TASKS.length,
+          totalPages: handedOver ? 2 : 1,
+          isLoading: false,
+        };
+      });
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t1", "t2", "t3"] },
+      });
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("leaves an Expand all the user switched on themselves on when the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t2"] },
+      });
+      await user.click(expandAll());
+      await user.click(expandAll());
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(expandAll()).toBeChecked();
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("starts an analytics hand-off closed, like any other filter", () => {
+      renderTable({ initialFilters: { goal_outcome: ["escalated"] } });
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).not.toBeChecked();
+    });
+
+    it("opens the groups on a later page of handed-over calls too", async () => {
+      const user = userEvent.setup();
+      useRunCalls.mockImplementation((_executionId, opts = {}) => {
+        const tasks = opts.page === 2 ? [TASKS[2]] : [TASKS[0], TASKS[1]];
+        return {
+          tasks,
+          columns: COLUMNS,
+          groups: groupsFor(tasks, opts.groupBy),
+          facets: FACETS,
+          statusCounts: STATUS_COUNTS,
+          count: 51,
+          totalPages: 2,
+          isLoading: false,
+        };
+      });
+      renderTable({ initialFilters: { callExecutionId: ["t1", "t2", "t3"] } });
+      expect(persona.refund()).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Go to page 2" }));
+
+      expect(persona.timeout()).toBeInTheDocument();
     });
   });
 
@@ -696,7 +871,7 @@ describe("RunTraceTable", () => {
     const user = userEvent.setup();
     renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
 
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
 
     expect(useRunCalls).toHaveBeenLastCalledWith(
       "ex1",
@@ -704,6 +879,98 @@ describe("RunTraceTable", () => {
         filters: { call_execution_id: ["t1", "t2"], status: ["failed"] },
       }),
     );
+  });
+
+  it("sends Is not filters to the server", () => {
+    renderTable({
+      initialFilters: {
+        goal_not: ["Refund a double charge"],
+        subGoal_not: ["Refund created"],
+        status_not: ["failed"],
+      },
+    });
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: {
+          goal_not: ["Refund a double charge"],
+          sub_goal_not: ["Refund created"],
+          status_not: ["failed"],
+        },
+      }),
+    );
+  });
+
+  it("counts the status chips from the server's status counts", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: { passed: 2, failed: 7 },
+    }));
+    renderTable();
+
+    expect(
+      within(screen.getByRole("button", { name: "Failed" })).getByText("7"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("button", { name: "All" })).getByText("9"),
+    ).toBeInTheDocument();
+  });
+
+  it("lets a status chip replace the panel's status filter", async () => {
+    const user = userEvent.setup();
+    renderTable({
+      initialFilters: {
+        goal: ["Refund a double charge"],
+        status_not: ["passed"],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Error" }));
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { goal: ["Refund a double charge"], status: ["error"] },
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { goal: ["Refund a double charge"] },
+      }),
+    );
+  });
+
+  it.each([
+    [{ status: ["failed"] }, "Failed"],
+    [{}, "All"],
+    [{ status: ["failed", "error"] }, null],
+    [{ status_not: ["failed"] }, null],
+  ])("lights the chip that alone describes %j", (initialFilters, lit) => {
+    renderTable({ initialFilters });
+
+    const pressed = ["All", "Failed", "Error", "Passed"].filter(
+      (name) =>
+        screen.getByRole("button", { name }).getAttribute("aria-pressed") ===
+        "true",
+    );
+    expect(pressed).toEqual(lit ? [lit] : []);
+  });
+
+  it("counts a chip's status in the Filter badge and shows it in the panel", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: "Failed" }));
+    const filterButton = screen.getByRole("button", { name: /Filter/ });
+    expect(filterButton).toHaveTextContent("1");
+
+    await user.click(filterButton);
+    const [fieldPicker] = screen.getAllByRole("combobox");
+    expect(fieldPicker).toHaveTextContent("Status");
   });
 
   it("exposes later server pages for runs with more than 100 trials", async () => {
@@ -721,6 +988,7 @@ describe("RunTraceTable", () => {
         columns: COLUMNS,
         groups: groupsFor(tasks, opts.groupBy),
         facets: FACETS,
+        statusCounts: STATUS_COUNTS,
         count: 200,
         totalPages: 2,
         isLoading: false,
@@ -747,6 +1015,7 @@ describe("RunTraceTable", () => {
       columns: COLUMNS,
       groups: groupsFor(TASKS, opts.groupBy),
       facets: FACETS,
+      statusCounts: STATUS_COUNTS,
       count: 200,
       totalPages: 2,
       isLoading: false,
@@ -778,6 +1047,226 @@ describe("RunTraceTable", () => {
     await user.click(screen.getByRole("menuitem", { name: "Latency" }));
 
     expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
+  });
+
+  describe("evaluation columns in the picker", () => {
+    const withEvals = () => {
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns: [
+          { key: "eval-1", label: "Tone", group: "Evaluations" },
+          { key: "eval-2", label: "Fact checker", group: "Evaluations" },
+        ],
+      }));
+    };
+    const openPicker = (user) =>
+      user.click(screen.getByRole("button", { name: /Columns/ }));
+
+    it("offers each of the run's evaluations, not one Evaluations toggle", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      expect(
+        screen.getByRole("menuitem", { name: "Tone" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("menuitem", { name: "Evaluations" }),
+      ).toBeNull();
+    });
+
+    it("hides only the unticked evaluation's column, and Reset brings it back", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      // The open menu hides the table from the accessibility tree.
+      await user.keyboard("{Escape}");
+
+      expect(screen.queryByRole("columnheader", { name: "Tone" })).toBeNull();
+      expect(
+        screen.getByRole("columnheader", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+
+      await openPicker(user);
+      await user.click(
+        screen.getByRole("menuitem", { name: "Reset to defaults" }),
+      );
+      await user.keyboard("{Escape}");
+      expect(
+        screen.getByRole("columnheader", { name: "Tone" }),
+      ).toBeInTheDocument();
+    });
+
+    it("has no Evaluations section when the run has no evaluations", async () => {
+      const user = userEvent.setup();
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns: [],
+      }));
+      renderTable();
+      await openPicker(user);
+
+      expect(screen.queryByText("Evaluations")).toBeNull();
+    });
+
+    it("caps the menu's height so a long evaluation list scrolls", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      const paper = screen.getByRole("menu").closest(".MuiPaper-root");
+      expect(window.getComputedStyle(paper).maxHeight).toBe("420px");
+    });
+
+    it("keeps a long evaluation name on one line inside a capped width", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      const paper = screen.getByRole("menu").closest(".MuiPaper-root");
+      expect(window.getComputedStyle(paper).maxWidth).toBe("320px");
+      const label = within(screen.getByRole("menu")).getByText("Fact checker");
+      expect(window.getComputedStyle(label).whiteSpace).toBe("nowrap");
+      expect(window.getComputedStyle(label).textOverflow).toBe("ellipsis");
+    });
+
+    it("counts the evaluations in the Columns total", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      const button = screen.getByRole("button", { name: /Columns/ });
+      const shownCount = () => Number(button.textContent.match(/(\d+)\//)[1]);
+      const before = shownCount();
+      expect(button).toHaveTextContent(`/${TRACE_COLUMNS.length + 2}`);
+
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      expect(shownCount()).toBe(before - 1);
+    });
+
+    it("keeps the evaluation entries and total while the next page loads", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((id, opts = {}) =>
+        opts.filters?.status
+          ? { ...impl(id, opts), columns: [], isLoading: true }
+          : impl(id, opts),
+      );
+      renderTable();
+      const button = screen.getByRole("button", { name: /Columns/ });
+      const before = button.textContent;
+      await user.click(screen.getByRole("button", { name: /Failed/ }));
+
+      expect(button.textContent).toBe(before);
+      await openPicker(user);
+      expect(
+        screen.getByRole("menuitem", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows an evaluation the run adds later, ticked, and keeps a hidden one hidden", async () => {
+      const user = userEvent.setup();
+      const impl = useRunCalls.getMockImplementation();
+      let columns = [{ key: "eval-1", label: "Tone", group: "Evaluations" }];
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns,
+      }));
+      const { rerender } = renderTable();
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      await user.keyboard("{Escape}");
+
+      columns = [
+        { key: "eval-1", label: "Tone", group: "Evaluations" },
+        { key: "eval-2", label: "Fact checker", group: "Evaluations" },
+      ];
+      rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+
+      expect(
+        screen.getByRole("columnheader", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("columnheader", { name: "Tone" })).toBeNull();
+      await openPicker(user);
+      const checkbox = (name) =>
+        within(screen.getByRole("menuitem", { name })).getByRole("checkbox");
+      expect(checkbox("Fact checker")).toBeChecked();
+      expect(checkbox("Tone")).not.toBeChecked();
+    });
+
+    describe("the full name on hover", () => {
+      const LONG = "Checks every fact the agent states against the policy";
+
+      beforeEach(() => {
+        vi.stubGlobal(
+          "ResizeObserver",
+          class {
+            observe() {}
+            disconnect() {}
+          },
+        );
+        // jsdom lays nothing out: report the long name as overflowing its box.
+        ["scrollWidth", "clientWidth"].forEach((prop) => {
+          Object.defineProperty(HTMLElement.prototype, prop, {
+            configurable: true,
+            get() {
+              const cut = this.textContent === LONG;
+              return prop === "scrollWidth" && cut ? 400 : 200;
+            },
+          });
+        });
+      });
+
+      afterEach(() => {
+        vi.unstubAllGlobals();
+        ["scrollWidth", "clientWidth"].forEach((prop) => {
+          delete HTMLElement.prototype[prop];
+        });
+      });
+
+      const withNames = () => {
+        const impl = useRunCalls.getMockImplementation();
+        useRunCalls.mockImplementation((...args) => ({
+          ...impl(...args),
+          columns: [
+            { key: "eval-1", label: "Tone", group: "Evaluations" },
+            { key: "eval-2", label: LONG, group: "Evaluations" },
+          ],
+        }));
+      };
+
+      it("shows a tooltip on a name cut off with an ellipsis", async () => {
+        const user = userEvent.setup();
+        withNames();
+        renderTable();
+        await openPicker(user);
+        await user.hover(within(screen.getByRole("menu")).getByText(LONG));
+
+        expect(await screen.findByRole("tooltip")).toHaveTextContent(LONG);
+      });
+
+      it("shows no tooltip on a name that fits", async () => {
+        const user = userEvent.setup();
+        withNames();
+        renderTable();
+        await openPicker(user);
+        await user.hover(within(screen.getByRole("menu")).getByText("Tone"));
+
+        await new Promise((r) => setTimeout(r, 300));
+        expect(screen.queryByRole("tooltip")).toBeNull();
+      });
+    });
   });
 
   describe("voice-only metrics on a chat run", () => {
@@ -820,7 +1309,7 @@ describe("RunTraceTable", () => {
       renderTable();
       headers().forEach((h) => expect(h).toBeNull());
       expect(screen.getByRole("button", { name: /Columns/ })).toHaveTextContent(
-        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size}`,
+        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size + COLUMNS.length}`,
       );
       (await pickerItems(user)).forEach((item) => expect(item).toBeNull());
     });
@@ -850,9 +1339,9 @@ describe("RunTraceTable", () => {
       expect.objectContaining({ groupBy: "status" }),
     );
 
-    expect(screen.getByText("Passed")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getAllByText("Errored")).not.toHaveLength(0);
+    expect(screen.getAllByText("Passed")).not.toHaveLength(0);
+    expect(screen.getAllByText("Failed")).not.toHaveLength(0);
+    expect(screen.getAllByText("Error")).not.toHaveLength(0);
   });
 
   it("offers the Scenarios tab's axes plus Status and requests the chosen one", async () => {
@@ -910,7 +1399,7 @@ describe("RunTraceTable", () => {
     expect(screen.queryByPlaceholderText(/Ask AI/)).toBeNull();
   });
 
-  it("offers only Goal, Sub goal, and Status filters", async () => {
+  it("offers only Use case, Sub-goal, and Status filters", async () => {
     const user = userEvent.setup();
     renderTable();
 
@@ -918,9 +1407,11 @@ describe("RunTraceTable", () => {
 
     const [fieldPicker] = screen.getAllByRole("combobox");
     await user.click(fieldPicker);
-    expect(screen.getByRole("option", { name: "Goal" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Sub goal" }),
+      screen.getByRole("option", { name: "Use case" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Sub-goal" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Status" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Persona" })).toBeNull();
@@ -955,5 +1446,42 @@ describe("RunTraceTable", () => {
     renderTable();
     expect(screen.getByText(/Couldn't load calls/i)).toBeInTheDocument();
     expect(screen.queryByText(/No calls match that filter/)).toBeNull();
+  });
+
+  it("adds no column menu without eval actions", () => {
+    renderTable();
+    expect(
+      screen.queryByRole("button", { name: "Actions for Tone" }),
+    ).toBeNull();
+    expect(screen.queryByTestId("eval-actions")).toBeNull();
+  });
+
+  it("opens the eval column's menu for that column, with the run page's actions", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    const onEdit = vi.fn();
+    renderTable({
+      evalActions: {
+        runTestId: "rt1",
+        canRun: true,
+        grading: false,
+        rerunPending: true,
+        onRerun,
+        onEdit,
+      },
+    });
+    expect(screen.getByText("eval-actions:-:rt1:true")).toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Actions for Tone" });
+    expect(button.closest("th")).toHaveTextContent("Tone");
+    await user.click(button);
+    expect(
+      screen.getByText("eval-actions:eval-1:rt1:true"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "menu re-run" }));
+    expect(onRerun).toHaveBeenCalledWith([{ id: "eval-1" }]);
+    await user.click(screen.getByRole("button", { name: "menu edit" }));
+    expect(onEdit).toHaveBeenCalledWith({ id: "eval-1" });
   });
 });

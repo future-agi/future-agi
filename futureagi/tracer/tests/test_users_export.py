@@ -122,6 +122,7 @@ _EXPECTED_HEADER = [
     "Evals Pass Rate (%)",
     "Input Tokens",
     "Output Tokens",
+    "Project",
 ]
 
 

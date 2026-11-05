@@ -46,6 +46,9 @@ services:
       # A reload restarts the embedded Temporal worker; don't wait 30 s for
       # in-flight activities to drain.
       TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: "3"
+      # Simulate cutoff (#3502), as the e2e stacks set it, so attach-mode e2e
+      # runs against this stack. Set it empty in .env to turn it off.
+      RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: ${RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF-2026-10-01T00:00:00Z}
 
   frontend:
     build:

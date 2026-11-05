@@ -6,6 +6,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelExecution } from "src/sections/common/simulation/hooks/useCancelExecution";
+import { refusalText } from "../evals/refusalText";
+
+const STOP_FALLBACK = "Couldn't stop the run. Try again";
 
 /**
  * Stop a live simulation run, from the runs table or the run-detail header.
@@ -33,7 +36,7 @@ StopRunControl.propTypes = {
 function StopRunButton({ executionId, label }) {
   const [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
-  const cancel = useCancelExecution();
+  const cancel = useCancelExecution({ errorHandled: true });
 
   const onConfirm = () => {
     setConfirming(false);
@@ -43,7 +46,14 @@ function StopRunButton({ executionId, label }) {
         queryClient.invalidateQueries({ queryKey: ["simulation-run-results-v3", executionId] });
         enqueueSnackbar("Cancelling the run", { variant: "success" });
       },
-      onError: () => enqueueSnackbar("Couldn't stop the run. Try again", { variant: "error" }),
+      // A 409 is the server declining to stop this run (a finished run whose
+      // evals are being graded again) and says why; any other failure keeps
+      // the generic line.
+      onError: (e) =>
+        enqueueSnackbar(
+          e?.statusCode === 409 ? refusalText(e, STOP_FALLBACK) : STOP_FALLBACK,
+          { variant: "error" },
+        ),
     });
   };
 

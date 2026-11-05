@@ -35,6 +35,8 @@ export const COLORS = [
   "#9a9fac",
 ];
 const OUTCOME_COLORS = {
+  queued: COLORS[5],
+  in_progress: COLORS[4],
   passed: COLORS[1],
   failed: COLORS[2],
   error: COLORS[3],
@@ -154,10 +156,12 @@ const pieLabel = (label) =>
     true: "Successful",
     false: "Unsuccessful",
     escalated: "Escalated",
+    queued: "Queued",
+    in_progress: "In progress",
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
-    inconclusive: "Not evaluated",
+    error: "Error",
+    inconclusive: "Inconclusive",
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",

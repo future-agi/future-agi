@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
@@ -122,7 +128,8 @@ const ObserveToolbar = ({
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
   const [filterButtonEl, setFilterButtonEl] = useState(null);
-  const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
+  // Callers without graphFilters keep the last applied rows locally.
+  const [appliedPanelFilters, setAppliedPanelFilters] = useState(null);
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
@@ -169,12 +176,12 @@ const ObserveToolbar = ({
       }));
   };
 
-  // Sync extra filters (the single source of truth) into panelFilters
-  useEffect(() => {
-    if (!graphFilters?.length) {
-      setPanelFilters(null);
-      return;
-    }
+  // Derived during render, not synced in an effect: TraceFilterPanel seeds its
+  // rows on the render it opens, which is also the render a graph Filter
+  // button switches filterTarget, so an effect would hand it the other
+  // graph's filters.
+  const graphPanelFilters = useMemo(() => {
+    if (!graphFilters?.length) return null;
     const RANGE_OPS = new Set(["between", "not_between"]);
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
@@ -233,12 +240,12 @@ const ObserveToolbar = ({
       const isDirectIdFilter =
         ID_ONLY_FIELDS.has(gf.column_id) && !explicitColType;
       const rawColType =
-        explicitColType ||
-        (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
+        explicitColType || (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
       const rawFilterType = gf.filter_config?.filter_type;
       const isGlobalAnnotatorFilter =
         gf.column_id === "annotator" &&
-        (isNativeColumnType(explicitColType) || explicitColType === "ANNOTATION");
+        (isNativeColumnType(explicitColType) ||
+          explicitColType === "ANNOTATION");
       // Auto-migrate legacy saved views: thumbs annotations used to be
       // stored as filter_type=categorical with values like ["Thumbs Up",
       // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
@@ -294,8 +301,10 @@ const ObserveToolbar = ({
         valueTypes: gf.filter_config?.attribute_value_types,
       };
     });
-    setPanelFilters(newPanelFilters);
+    return newPanelFilters;
   }, [graphFilters]);
+  const panelFilters =
+    graphFilters === undefined ? appliedPanelFilters : graphPanelFilters;
   const { openCreateModal } = useTabStoreShallow((s) => ({
     openCreateModal: s.openCreateModal,
   }));
@@ -355,6 +364,7 @@ const ObserveToolbar = ({
             open={customDateOpen}
             onClose={() => setCustomDateOpen(false)}
             anchorEl={dateButtonRef.current}
+            value={dateFilter?.dateFilter}
             setDateFilter={(range) => {
               setDateFilter?.((prev) => ({
                 ...prev,
@@ -424,7 +434,7 @@ const ObserveToolbar = ({
             projectId={projectId}
             allowWorkspaceScope={allowWorkspaceScope}
             onApply={(newFilters) => {
-              setPanelFilters(newFilters);
+              setAppliedPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {

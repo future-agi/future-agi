@@ -84,7 +84,6 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/simulate`,
       agentDefinition: `${ROOTS.DASHBOARD}/simulate/agent-definitions`,
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
-      personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
       testCallDetails: (testId, executionId) =>
@@ -104,6 +103,8 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        improvement: (envId, fixId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

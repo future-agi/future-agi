@@ -24,6 +24,7 @@ import { isCellValueEmpty } from "src/components/table/utils";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import { evalColumnMinWidth } from "./evalCellModel";
 
 // Normalize config object keys from snake_case to camelCase while preserving
 // id values as snake_case. Shared by the trace and span grids. Dedup by id: the
@@ -641,9 +642,11 @@ export const getTraceListColumnDefs = (col) => {
     ? 240
     : isCustomColumn
       ? 180
-      : isEvalOrAnnotation
-        ? 150
-        : 80;
+      : col?.groupBy === "Evaluation Metrics"
+        ? evalColumnMinWidth(col, 150)
+        : isEvalOrAnnotation
+          ? 150
+          : 80;
 
   // Custom columns need a valueGetter that handles dot-notation keys
   // and extracts values from flat row data (attributes included by backend).

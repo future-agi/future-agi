@@ -183,12 +183,56 @@ describe("VoiceRightPanel", () => {
       expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
     });
 
+    it("keeps the eval list and Falcon when the call also carries a rollup", async () => {
+      const withRollup = {
+        ...failingEval,
+        eval_rollup: {
+          scope: "trace",
+          evals: [
+            {
+              eval_config_id: "eval-1",
+              eval_name: "Concise replies",
+              aggregate: { pass: 0, fail: 1 },
+              spans: [{ span_id: "root", span_name: "call", value: "Failed" }],
+            },
+          ],
+        },
+      };
+      renderWithQueryClient(<VoiceRightPanel data={withRollup} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(screen.getByPlaceholderText("Search evals...")).toBeInTheDocument();
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+      expect(
+        screen.getByRole("button", { name: /per-span breakdown/i }),
+      ).toBeInTheDocument();
+    });
+
     it("hides when the host has no Falcon flow wired", async () => {
       renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
       await userEvent.click(screen.getByText("Concise replies"));
       expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
     });
+  });
+
+  it("drops the Annotations tab, and its Add Label, when the host hides it", () => {
+    const call = {
+      id: "call-1",
+      module: "simulate",
+      status: "completed",
+      transcript: [],
+    };
+    const { unmount } = renderWithQueryClient(<VoiceRightPanel data={call} />);
+    expect(
+      screen.getByRole("tab", { name: "Annotations" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithQueryClient(<VoiceRightPanel data={call} hideAnnotationTab />);
+    expect(screen.queryByRole("tab", { name: "Annotations" })).toBeNull();
+    expect(screen.queryByText("Add Label")).toBeNull();
   });
 
   it("shows the Scenario tab for a call with a persona but no scenario columns", () => {

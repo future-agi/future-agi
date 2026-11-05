@@ -946,3 +946,71 @@ func TestProcessResponse_SkipsInternalKey(t *testing.T) {
 		}
 	}
 }
+
+// Every header the gateway accepts a credential in must be starred before the
+// record is stored. x-goog-api-key was missing while the GenAI route reads a
+// caller's Google key from exactly that header, so those keys were kept in
+// plain text on the request log row.
+func TestSanitizeHeaders_StarsEveryCredentialHeader(t *testing.T) {
+	const secret = "SENTINEL-DO-NOT-LEAK"
+
+	credentialHeaders := []string{
+		"Authorization",
+		"Proxy-Authorization",
+		"X-Api-Key",
+		"Api-Key",
+		"X-Goog-Api-Key",
+		"X-Goog-Iam-Authorization-Token",
+		"X-Amz-Security-Token",
+		"X-Auth-Token",
+		"Cookie",
+		"Set-Cookie",
+		"X-Webhook-Secret",
+	}
+
+	in := map[string][]string{"Content-Type": {"application/json"}}
+	for _, name := range credentialHeaders {
+		in[name] = []string{secret}
+	}
+
+	out := sanitizeHeaders(in)
+
+	for _, name := range credentialHeaders {
+		got := out[name]
+		if len(got) != 1 || got[0] == secret {
+			t.Errorf("%s = %v, want it starred", name, got)
+		}
+	}
+	// A header that carries no credential stays readable, or the log stops
+	// being useful.
+	if got := out["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Errorf("Content-Type = %v, want it left alone", got)
+	}
+}
+
+// A vector-store write or a run on the assistant's own model has no model and
+// no chat request, but it is an endpoint's call and must be logged; only a
+// request that names no endpoint is skipped.
+func TestProcessResponse_LogsEndpointCallWithoutModel(t *testing.T) {
+	handler, cleanup := installCapturingLogger()
+	defer cleanup()
+
+	cfg := enabledCfg()
+	cfg.BufferSize = 10
+	cfg.Workers = 1
+	p := New(cfg, nil)
+
+	rc := newRC()
+	rc.Model = ""
+	rc.Request = nil
+	rc.EndpointType = "vector_stores"
+	p.ProcessResponse(context.Background(), rc)
+	p.Close()
+
+	for i := 0; i < handler.count(); i++ {
+		if handler.get(i).Message == "request.trace" {
+			return
+		}
+	}
+	t.Fatal("a vector-store call was not logged")
+}

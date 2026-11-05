@@ -105,3 +105,19 @@ describe("SelectionBar", () => {
     expect(screen.getByRole("button", { name: "Clear selection" })).toBeInTheDocument();
   });
 });
+
+describe("SelectionBar — Run while the environment can't run", () => {
+  it("keeps Run on the bar, disabled, with the reason on hover", async () => {
+    const props = { ...base(), onRun: undefined, runBlockedReason: "Add scenarios on the Scenarios tab" };
+    render(<SelectionBar {...props} />);
+    const run = screen.getByRole("button", { name: /Run simulation/ });
+    expect(run).toBeDisabled();
+    fireEvent.mouseOver(run.parentElement);
+    expect(await screen.findByText("Add scenarios on the Scenarios tab")).toBeInTheDocument();
+  });
+
+  it("shows no Run at all when nothing says why", () => {
+    render(<SelectionBar {...base()} onRun={undefined} />);
+    expect(screen.queryByRole("button", { name: /Run simulation/ })).toBeNull();
+  });
+});

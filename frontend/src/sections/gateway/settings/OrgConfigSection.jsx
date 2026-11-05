@@ -10,6 +10,7 @@ import {
   Box,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import {
   useOrgConfig,
   useCreateOrgConfig,
@@ -106,7 +107,11 @@ const OrgConfigSection = () => {
                   {activeConfig.created_at && (
                     <Typography variant="caption" color="text.secondary">
                       Last Updated:{" "}
-                      {new Date(activeConfig.created_at).toLocaleString()}
+                      <LocalDateTime
+                        value={activeConfig.created_at}
+                        withTime
+                        emptyText="No update time recorded"
+                      />
                     </Typography>
                   )}
                   {activeConfig.change_description && (

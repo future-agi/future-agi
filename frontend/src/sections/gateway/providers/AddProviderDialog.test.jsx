@@ -1,28 +1,36 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
+  act,
   fireEvent,
   render,
   screen,
   userEvent,
   waitFor,
 } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   DEFAULT_API_PATH_PREFIX,
   getApiPathPrefix,
   parseTimeoutSeconds,
   withApiPathPrefix,
 } from "./utils";
+import { RESPONSES_ONLY_TAG } from "./modelCompatibility";
 import AddProviderDialog from "./AddProviderDialog";
 
-const { updateMutate, fetchMutate, fetchState } = vi.hoisted(() => ({
-  updateMutate: vi.fn(),
-  fetchMutate: vi.fn(),
-  // Mutable so a test can render the dialog mid-fetch.
-  fetchState: { isPending: false },
-}));
+const { updateMutate, fetchMutate, fetchState, refreshState, snackbars } =
+  vi.hoisted(() => ({
+    updateMutate: vi.fn(),
+    fetchMutate: vi.fn(),
+    // Mutable so a test can render the dialog mid-fetch.
+    fetchState: { isPending: false },
+    // Whether the post-save config re-read failed.
+    refreshState: { failed: false },
+    snackbars: [],
+  }));
 
 vi.mock("./hooks/useGatewayConfig", () => ({
+  gatewayConfigRefreshFailed: () => refreshState.failed,
   useUpdateProvider: () => ({
     mutate: updateMutate,
     isPending: false,
@@ -35,6 +43,10 @@ vi.mock("./hooks/useGatewayConfig", () => ({
   }),
 }));
 
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (message, options) => snackbars.push({ message, options }),
+}));
+
 // Responses land on a later task, as a real request does; a synchronous mock
 // closes the window the dialog's ordering bugs live in.
 const deferred =
@@ -42,17 +54,27 @@ const deferred =
   (...args) =>
     setTimeout(() => impl(...args), 0);
 
+// The dialog reads the query cache to tell a clean save from one whose
+// follow-up re-read failed, so it needs a client in scope.
+const withClient = (ui) => (
+  <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
+);
+
 const renderCreateDialog = () =>
-  render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+  render(
+    withClient(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />),
+  );
 
 const renderEditDialogFor = (name, config) =>
   render(
-    <AddProviderDialog
-      open
-      onClose={vi.fn()}
-      gatewayId="gw-1"
-      provider={{ name, config }}
-    />,
+    withClient(
+      <AddProviderDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gw-1"
+        provider={{ name, config }}
+      />,
+    ),
   );
 
 const renderEditDialog = (config) => renderEditDialogFor("openai", config);
@@ -73,6 +95,8 @@ describe("AddProviderDialog validation", () => {
   beforeEach(() => {
     updateMutate.mockReset();
     fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
     // The dialog fetches the provider's models when it opens in edit mode.
     fetchMutate.mockReset();
     fetchMutate.mockImplementation(
@@ -129,6 +153,51 @@ describe("AddProviderDialog validation", () => {
 
     expect(updateMutate).toHaveBeenCalledTimes(1);
     expect(updateMutate.mock.calls[0][0].config.default_timeout).toBe(30);
+  });
+
+  const saveEditedProvider = async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+    await act(async () => callbacks.onSuccess?.({}));
+  };
+
+  it("reports a clean save as a success", async () => {
+    refreshState.failed = false;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toEqual([
+      { message: 'Provider "openai" updated', options: { variant: "success" } },
+    ]);
+  });
+
+  it("names the half that failed when only the config re-read failed", async () => {
+    // The POST landed; the follow-up read did not. Reporting this as a failed
+    // save is what made users distrust the screen.
+    refreshState.failed = true;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toHaveLength(1);
+    expect(snackbars[0].options.variant).toBe("warning");
+    expect(snackbars[0].message).toBe(
+      'Provider "openai" updated, but the provider list could not be reloaded — refresh the page to see it.',
+    );
+  });
+
+  it("shows the server's reason when the save itself fails", async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+
+    await act(async () =>
+      callbacks.onError?.({ statusCode: 400, result: "Unknown provider name" }),
+    );
+
+    expect(snackbars).toEqual([
+      { message: "Unknown provider name", options: { variant: "error" } },
+    ]);
   });
 
   it("blocks Save, and says why, when no model is selected", async () => {
@@ -656,5 +725,154 @@ describe("AddProviderDialog model discovery", () => {
       apiFormat: "openai",
       apiPathPrefix: "/openai/v1",
     });
+  });
+
+  it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
+    // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
+    // typed by hand for chat completions — but it does list aggregator IDs
+    // like `openai/gpt-4o`, which must still get tagged.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+    );
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar", "openai/gpt-4o"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
+    );
+
+    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
+
+    const catalogueChip = screen
+      .getByText("openai/gpt-4o")
+      .closest("li, [class*='MuiChip']");
+    expect(catalogueChip?.textContent).toContain(RESPONSES_ONLY_TAG);
+  });
+});
+
+describe("AddProviderDialog provider names", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["m-1"] })),
+    );
+  });
+
+  const renderWithNames = (existingNames) =>
+    render(
+      withClient(
+        <AddProviderDialog
+          open
+          onClose={vi.fn()}
+          gatewayId="gw-1"
+          existingNames={existingNames}
+        />,
+      ),
+    );
+
+  const addModel = async (model) => {
+    await userEvent.type(
+      await screen.findByPlaceholderText(/Select models|type manually/i),
+      `${model}{enter}`,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
+  };
+
+  const fillCustom = async (customName) => {
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Custom / Self-hosted" }),
+    );
+    const nameField = screen.getByLabelText(/^Name/);
+    await userEvent.clear(nameField);
+    if (customName) await userEvent.type(nameField, customName);
+    await userEvent.type(
+      screen.getByLabelText(/Base URL/),
+      "https://api.perplexity.ai",
+    );
+    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("sonar");
+  };
+
+  it("saves a custom provider under the name typed, next to an existing one", async () => {
+    // The second Perplexity API needs its own provider; it used to replace
+    // the first, because every custom provider was saved as "custom".
+    renderWithNames(["custom", "openai"]);
+    await fillCustom("perplexity-sonar");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("perplexity-sonar");
+    expect(updateMutate.mock.calls[0][0].config.base_url).toBe(
+      "https://api.perplexity.ai",
+    );
+  });
+
+  it("treats an object method name as an ordinary name", async () => {
+    renderWithNames([]);
+    await fillCustom("constructor");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("constructor");
+  });
+
+  it("keeps the old name for a first custom provider", async () => {
+    renderWithNames(["openai"]);
+    await fillCustom("custom");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("custom");
+  });
+
+  it.each([
+    ["custom", /A provider named "custom" already exists/],
+    ["openai", /"openai" is a built-in provider/],
+    ["Perplexity Sonar", /Use lowercase letters, digits, - and _/],
+    ["", /Name is required/],
+  ])("refuses the name %j", async (customName, message) => {
+    renderWithNames(["custom"]);
+    await fillCustom(customName);
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect((await screen.findAllByText(message)).length).toBeGreaterThan(0);
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("offers Perplexity on its Agent API endpoint", async () => {
+    renderWithNames([]);
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "Perplexity" }));
+
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.getByLabelText(/Base URL/).value).toBe(
+      "https://api.perplexity.ai/v1",
+    );
+    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("perplexity/sonar");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("perplexity");
+    expect(payload.config.base_url).toBe("https://api.perplexity.ai/v1");
+    expect(payload.config.api_path_prefix).toBe("/v1");
   });
 });

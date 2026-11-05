@@ -1,166 +1,100 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Button, Tab, TextField, Popover, MenuItem, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Button, TextField } from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import SvgColor from "src/components/svg-color/svg-color";
-import ColumnResizer from "src/components/ColumnResizer/ColumnResizer";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import { FilterPanel } from "src/components/filter-panel";
-import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
+import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
+import DisplayPanel from "./DisplayPanel";
 
-// Per-axis icon, keyed by the server grouping `value`. Falls back to a neutral
-// icon for any axis the backend adds later.
-const GROUPING_ICONS = {
-  goal: "solar:target-linear",
-  sub_goal: "solar:map-linear",
-  accent: "solar:soundwave-linear",
-  age: "solar:user-rounded-linear",
-  attack: "solar:shield-warning-linear",
-  task: "solar:checklist-minimalistic-linear",
-  "": "solar:list-linear",
-};
-const groupingIcon = (value) => GROUPING_ICONS[value] ?? "solar:list-linear";
+// One row holds everything until the search would shrink below ~200px; under
+// that the search takes the whole first row and the controls sit beneath it.
+// Set where the selection bar also needs two rows, so selecting never moves
+// the table.
+const SEARCH_OWN_ROW = "@container (max-width: 599px)";
 
-// Shared toolbar for both scenario views: search, the group-by axis, the
-// platform FilterPanel, an "N of M · N groups hidden" count with a Clear/Show
-// all reset, and the Table/List switch. Lifting it to the parent lets filters
-// and grouping survive a view change — both views read the same filtered,
-// grouped rows.
+// Shared toolbar for both scenario views: search, the platform FilterPanel and a
+// Display panel holding the view, the group-by axis and the row height. Lifting
+// it to the parent lets filters and grouping survive a view change — both views
+// read the same filtered, grouped rows. The "N of M · Clear" readout sits with
+// the results, in the list's footer, not here.
 export default function ScenarioToolbar({
   query, onQueryChange,
   view, onViewChange,
   groupBy, onGroupByChange, groupings = [],
   filterFields, filters, onApplyFilters, filterCount,
-  shownCount, totalCount, hiddenCount = 0, onClear,
   rowHeight = "Short", onRowHeightChange,
+  actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const [heightAnchor, setHeightAnchor] = useState(null);
-  const [groupByAnchor, setGroupByAnchor] = useState(null);
-  const anyFilter = query.length > 0 || filterCount > 0;
-  // "Show all" reads truer than "Clear" when the only thing set is a hidden
-  // group; a search or filter present means the reset also drops those.
-  const onlyGroupsHidden = hiddenCount > 0 && query.length === 0 && filterCount === 0;
-  const activeGrouping = groupings.find((g) => g.value === groupBy) || groupings[0] || { value: groupBy, label: "" };
-  const hiddenSuffix = hiddenCount > 0
-    ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
-    : "";
+  const [displayAnchor, setDisplayAnchor] = useState(null);
 
   return (
     <>
-      <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
-      >
-        <TextField
-          size="small"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder={SCENARIOS_COPY.searchPlaceholder}
-          InputProps={{
-            sx: { typography: "s2", height: 38 },
-            startAdornment: (
-              <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
-                <Iconify icon="solar:magnifer-linear" width={14} />
-              </Box>
-            ),
-          }}
-          sx={{ maxWidth: 380, flex: 1 }}
-        />
-        <Button
-          size="medium" variant="outlined"
-          onClick={(e) => setGroupByAnchor(e.currentTarget)}
-          startIcon={<Iconify icon={groupingIcon(activeGrouping.value)} width={14} />}
-          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
-          sx={{
-            typography: "s2", fontWeight: "fontWeightBold", textTransform: "none",
-            color: "text.primary", borderColor: "divider",
-          }}
+      {/* Sized by its own width, not the window's: the builder panel beside
+          it changes the room it has. Narrow, the search takes the first row
+          and the controls wrap beneath it, the actions staying right-aligned. */}
+      <Box sx={{ containerType: "inline-size" }}>
+        <Stack
+          role="toolbar" aria-label="Scenarios"
+          direction="row" alignItems="center" columnGap={0.5} rowGap={1} flexWrap="wrap"
+          sx={{ pb: 1.5 }}
         >
-          {`${SCENARIOS_COPY.groupByLabel} · ${activeGrouping.label}`}
-        </Button>
-        <Popover
-          open={!!groupByAnchor}
-          anchorEl={groupByAnchor}
-          onClose={() => setGroupByAnchor(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-          transformOrigin={{ vertical: "top", horizontal: "left" }}
-          slotProps={{ paper: { sx: { minWidth: 200, p: 0.5, mt: 0.5 } } }}
-        >
-          {groupings.map((g) => {
-            const active = g.value === groupBy;
-            return (
-              <MenuItem
-                key={g.value}
-                selected={active}
-                onClick={() => { onGroupByChange(g.value); setGroupByAnchor(null); }}
-                sx={{ gap: 1, px: 1.25, py: 0.875, borderRadius: 0.75 }}
-              >
-                <Iconify icon={groupingIcon(g.value)} width={14} sx={{ color: active ? "primary.main" : "text.subtitle" }} />
-                <Typography sx={{ typography: "s2", flex: 1, fontWeight: active ? "fontWeightBold" : "fontWeightMedium" }}>
-                  {g.label}
-                </Typography>
-                {active && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
-              </MenuItem>
-            );
-          })}
-        </Popover>
-        <Button
-          size="medium" variant="outlined"
-          onClick={(e) => setFilterAnchor(e.currentTarget)}
-          startIcon={<Iconify icon="mage:filter" width={14} />}
-          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
-          sx={{
-            typography: "s2", fontWeight: "fontWeightBold", textTransform: "none",
-            color: filterCount ? "primary.main" : "text.primary",
-            borderColor: filterCount ? "primary.main" : "divider",
-          }}
-        >
-          {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
-        </Button>
-        {(anyFilter || hiddenCount > 0) && (
-          <>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>
-              {`${shownCount} of ${totalCount}${hiddenSuffix}`}
-            </Typography>
-            <Button
-              size="small"
-              onClick={onClear}
-              sx={{ typography: "s3", fontWeight: "fontWeightMedium", color: "text.secondary" }}
-            >
-              {onlyGroupsHidden ? SCENARIOS_COPY.showAll : SCENARIOS_COPY.clearLabel}
-            </Button>
-          </>
-        )}
-        <Box sx={{ flex: 1 }} />
-        {view === "table" && onRowHeightChange && (
-          <Tooltip arrow title={SCENARIOS_COPY.rowHeight}>
-            <IconButton
-              size="medium"
-              aria-label={SCENARIOS_COPY.rowHeight}
-              onClick={(e) => setHeightAnchor(e.currentTarget)}
-            >
-              <SvgColor src="/assets/icons/action_buttons/ic_height.svg" sx={{ width: 16, height: 16, color: "text.primary" }} />
-            </IconButton>
-          </Tooltip>
-        )}
-        <SegmentedTabs value={view} onChange={(_, v) => onViewChange(v)} sx={{ flexShrink: 0 }}>
-          <Tab value="table" label="Table" />
-          <Tab value="list" label="List" />
-        </SegmentedTabs>
-      </Stack>
-
-      {onRowHeightChange && (
-        <ColumnResizer
-          open={!!heightAnchor}
-          anchorEl={heightAnchor}
-          onClose={() => setHeightAnchor(null)}
-          sizeMapping={ROW_HEIGHTS}
-          defaultActive={rowHeight}
-          setCellHeight={onRowHeightChange}
-        />
-      )}
+          <TextField
+            size="small"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder={SCENARIOS_COPY.searchPlaceholder}
+            InputProps={{
+              sx: { typography: "s2", height: 32 },
+              startAdornment: (
+                <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
+                  <Iconify icon="solar:magnifer-linear" width={14} />
+                </Box>
+              ),
+            }}
+            sx={{
+              flex: 1, minWidth: 200, maxWidth: 420, mr: 0.5,
+              [SEARCH_OWN_ROW]: {
+                flexBasis: "100%", maxWidth: "none", mr: 0,
+              },
+            }}
+          />
+          <Button
+            onClick={(e) => setFilterAnchor(e.currentTarget)}
+            startIcon={<Iconify icon="mdi:filter-outline" width={16} />}
+            sx={{
+              ...scenarioToolbarButtonSx,
+              ...(filterCount > 0 && { color: "primary.main", bgcolor: "action.selected" }),
+            }}
+          >
+            {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
+          </Button>
+          <Button
+            aria-haspopup="dialog"
+            aria-expanded={!!displayAnchor}
+            onClick={(e) => setDisplayAnchor(e.currentTarget)}
+            startIcon={<Iconify icon="mdi:tune-vertical" width={16} />}
+            sx={scenarioToolbarButtonSx}
+          >
+            {SCENARIOS_COPY.displayLabel}
+          </Button>
+          <DisplayPanel
+            anchorEl={displayAnchor}
+            onClose={() => setDisplayAnchor(null)}
+            view={view}
+            onViewChange={onViewChange}
+            groupBy={groupBy}
+            onGroupByChange={onGroupByChange}
+            groupings={groupings}
+            rowHeight={rowHeight}
+            onRowHeightChange={onRowHeightChange}
+          />
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: "auto" }}>
+            {actions}
+          </Stack>
+        </Stack>
+      </Box>
 
       <FilterPanel
         anchorEl={filterAnchor}
@@ -192,10 +126,7 @@ ScenarioToolbar.propTypes = {
   filters: PropTypes.object,
   onApplyFilters: PropTypes.func,
   filterCount: PropTypes.number,
-  shownCount: PropTypes.number,
-  totalCount: PropTypes.number,
-  hiddenCount: PropTypes.number,
-  onClear: PropTypes.func,
   rowHeight: PropTypes.string,
   onRowHeightChange: PropTypes.func,
+  actions: PropTypes.node,
 };

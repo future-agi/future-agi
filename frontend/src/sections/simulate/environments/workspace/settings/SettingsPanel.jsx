@@ -64,13 +64,6 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ mb: 3 }}>
-        <Typography sx={{ typography: "m2", fontWeight: 600 }}>Settings</Typography>
-        <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 760 }}>
-          How this environment was built. Everything here is fixed at build time.
-          Only the name can be changed.
-        </Typography>
-      </Box>
 
       {!backed ? (
         <SectionCard title="Settings">
@@ -323,8 +316,8 @@ EnvVarsBody.propTypes = {
   restoring the matching block below plus the props/state/imports it needs
   (`envState`, `patch`; the version/restore state + handlers; `useState`,
   `alpha`, `Slider`, `Switch`, `IconButton`, `Tooltip`, `MenuItem`, `Iconify`,
-  `ConfirmDialog`, `MockBadge`, and the `envConfig` / `versions` fixtures). Full
-  original wiring is in git history for this file.
+  `ConfirmDialog`, `MockBadge`, and the since-deleted `envConfig` / `versions`
+  fixtures). Full original wiring is in git history.
 
   --- Run defaults (fixture: DEFAULT_RUNTIME / ISOLATION_OPTIONS, REGION_OPTIONS)
   <SectionCard title="Run defaults"

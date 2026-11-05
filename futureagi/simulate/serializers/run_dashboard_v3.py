@@ -148,6 +148,8 @@ class RunDashboardEvaluationSummarySerializer(serializers.Serializer):
 
 
 class RunDashboardRiskSerializer(serializers.Serializer):
+    queued = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
     scenario = serializers.CharField()
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()

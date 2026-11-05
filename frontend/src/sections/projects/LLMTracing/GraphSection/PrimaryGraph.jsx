@@ -1117,18 +1117,6 @@ const PrimaryGraph = ({
     ],
   );
 
-  if (isColdGraphLoading) {
-    return (
-      <Box
-        role="status"
-        aria-label={GRAPH_LOADING_MESSAGE}
-        sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}
-      >
-        <GraphSkeleton />
-      </Box>
-    );
-  }
-
   const hasData = metricData.length > 0;
 
   // Order of category groups in the dropdown
@@ -1389,6 +1377,7 @@ const PrimaryGraph = ({
                 open={customDateOpen}
                 onClose={() => setCustomDateOpen(false)}
                 anchorEl={dateButtonRef.current}
+                value={dateFilter?.dateFilter}
                 setDateFilter={(range) => {
                   setDateFilter?.((prev) => ({
                     ...prev,
@@ -1462,7 +1451,17 @@ const PrimaryGraph = ({
           {graphStatusMessage}
         </Typography>
       ) : null}
-      {hasData ? (
+      {/* Only the chart area loads: the header stays mounted because an open
+          filter panel is anchored to its Filter button. */}
+      {isColdGraphLoading ? (
+        <Box
+          role="status"
+          aria-label={GRAPH_LOADING_MESSAGE}
+          sx={{ height: CHART_HEIGHT }}
+        >
+          <GraphSkeleton />
+        </Box>
+      ) : hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
             options={chartOptions}

@@ -462,7 +462,7 @@ ChatSplitPane.propTypes = {
   // ({ collapse, open }) => node
   chat: PropTypes.func.isRequired,
   children: PropTypes.node,
-  // Shows a dot on the collapsed rail while the builder is working or waiting
-  // on an answer from the user.
+  // Shows a dot on the collapsed rail while the builder is working, waiting
+  // on an answer from the user, or a nudge waits for one.
   busy: PropTypes.bool,
 };

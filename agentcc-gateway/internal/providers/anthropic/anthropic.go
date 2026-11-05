@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 const defaultAnthropicVersion = "2023-06-01"
@@ -68,6 +70,20 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
+// endpoint builds an upstream URL for a versioned path such as
+// "/v1/messages". Anthropic has no configurable API path prefix, so this
+// uses the fixed default rather than cfg.EffectiveAPIPathPrefix() -- the
+// model-discovery call for this provider resolves against the same fixed
+// prefix, and the two layers must agree on one URL.
+func (p *Provider) endpoint(path string) string {
+	return config.JoinEndpoint(p.baseURL, config.DefaultAPIPathPrefix, path)
+}
+
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {
 	case p.semaphore <- struct{}{}:
@@ -99,7 +115,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
 	}
@@ -108,7 +124,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("anthropic: request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: request failed: %v", err))
@@ -117,7 +133,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("anthropic: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "anthropic: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -160,7 +176,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
 			return
@@ -171,7 +187,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("anthropic: request timed out")
 				return
 			}
@@ -214,6 +230,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, done, err := state.parseSSELine(currentEvent, data)
 			if err != nil {
+				var apiErr *models.APIError
+				if errors.As(err, &apiErr) {
+					errs <- apiErr
+					return
+				}
 				slog.Warn("anthropic: error parsing stream event",
 					"error", err,
 					"provider", p.id,
@@ -236,7 +257,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: stream read error: %v", err))
+				errs <- common.ReadError(err, 0, "anthropic: stream read")
 			}
 		}
 	}()
@@ -257,7 +278,7 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic native request: %v", err))
 	}
@@ -266,7 +287,7 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("anthropic request timed out")
 		}
 		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic request failed: %v", err))
@@ -275,7 +296,7 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading anthropic response: %v", err))
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic response")
 	}
 
 	return respBody, resp.StatusCode, nil
@@ -288,7 +309,7 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages/count_tokens"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic count_tokens request: %v", err))
 	}
@@ -297,7 +318,7 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("anthropic count_tokens request timed out")
 		}
 		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic count_tokens request failed: %v", err))
@@ -306,7 +327,7 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading anthropic count_tokens response: %v", err))
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic count_tokens response")
 	}
 
 	return respBody, resp.StatusCode, nil
@@ -319,7 +340,7 @@ func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, h
 	}
 	// Semaphore released when caller closes the stream.
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming anthropic request: %v", err))
@@ -330,7 +351,7 @@ func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, h
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("streaming anthropic request timed out")
 		}
 		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("streaming anthropic request failed: %v", err))

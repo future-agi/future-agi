@@ -72,6 +72,7 @@ import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
 import { getTraceGridRowId } from "./traceGridRowId";
+import { supportsUsageSort, USAGE_SORT_COLUMNS } from "./usageSort";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -133,6 +134,7 @@ const TraceGrid = React.forwardRef(
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -153,6 +155,25 @@ const TraceGrid = React.forwardRef(
     const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [usageSort, setUsageSort] = useState([]);
+    const canUsageSort = supportsUsageSort(
+      projectId,
+      toBackendFilters([
+        ...filters,
+        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+        ...(extraFilters || EMPTY_EXTRA_FILTERS),
+        ...(metricFilters || []),
+      ]),
+    );
+    const usageSortKey = JSON.stringify(canUsageSort ? usageSort : []);
+    useEffect(() => {
+      if (!canUsageSort && usageSort.length) {
+        setUsageSort([]);
+        withLiveGridApi(gridRef?.current?.api, (api) =>
+          api.applyColumnState({ defaultState: { sort: null } }),
+        );
+      }
+    }, [canUsageSort, usageSort, gridRef]);
     const [readMessage, setReadMessage] = useState(null);
     const readMessageRef = useRef(null);
     const [continuationNotice, setContinuationNotice] = useState(null);
@@ -163,9 +184,12 @@ const TraceGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
+      frontierPage,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -187,6 +211,14 @@ const TraceGrid = React.forwardRef(
 
     const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a filter/date/page-size change can all make a page
+    // that was genuinely visited unreachable again. `frontierPage` is
+    // 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
+      ? frontierPage
+      : 0;
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
@@ -196,6 +228,7 @@ const TraceGrid = React.forwardRef(
       (purge = true) => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         resetPagination();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
@@ -203,7 +236,7 @@ const TraceGrid = React.forwardRef(
           api.refreshServerSide({ purge }),
         );
       },
-      [enabled, gridRef, resetPagination],
+      [enabled, gridRef, resetPagination, usageSortKey],
     );
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -223,6 +256,7 @@ const TraceGrid = React.forwardRef(
           enabled,
           showErrors,
           compareType,
+          usageSortKey,
         }),
       [
         filters,
@@ -234,6 +268,7 @@ const TraceGrid = React.forwardRef(
         enabled,
         showErrors,
         compareType,
+        usageSortKey,
       ],
     );
     const filterRequestKey = useMemo(
@@ -353,6 +388,7 @@ const TraceGrid = React.forwardRef(
       () => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         return {
           getRows: async (params) => {
             if (!enabled) {
@@ -406,6 +442,9 @@ const TraceGrid = React.forwardRef(
                   // detail page).
                   ...(projectId ? { project_id: projectId } : {}),
                   page_size: requestPageSize,
+                  ...(usageSortKey !== "[]"
+                    ? { sort_params: usageSortKey }
+                    : {}),
                   // JSON preserves attribute paths containing commas. The API
                   // rejects oversized requests; neither side truncates.
                   ...(requestedAttributeKeysKey === "[]"
@@ -547,6 +586,7 @@ const TraceGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata,
               });
 
               finishRequest({
@@ -671,10 +711,14 @@ const TraceGrid = React.forwardRef(
     );
 
     const { columnDefs } = useMemo(() => {
+      const withUsageSort = (definition) => ({
+        ...definition,
+        sortable: canUsageSort && USAGE_SORT_COLUMNS.includes(definition.field),
+      });
       // If columns are empty → return initial/default columnDefs
       if (!columns || columns.length === 0) {
         return {
-          columnDefs: TRACE_DEFAULT_COLUMNS,
+          columnDefs: TRACE_DEFAULT_COLUMNS.map(withUsageSort),
           bottomRow: [],
         };
       }
@@ -713,14 +757,14 @@ const TraceGrid = React.forwardRef(
         }
       }
       return {
-        columnDefs: columnDefsResult,
+        columnDefs: columnDefsResult.map(withUsageSort),
         bottomRow: [
           {
             ...bottomRowObj,
           },
         ],
       };
-    }, [columns, showMetricsIds]);
+    }, [columns, showMetricsIds, canUsageSort]);
 
     useEffect(() => {
       return () => resetMetricIds();
@@ -778,6 +822,10 @@ const TraceGrid = React.forwardRef(
           //disguard clicks on empty rows
           return;
         }
+        // A regular grid click must not inherit the one-shot eval focus from
+        // a previous eval-cell click. Use removeValue rather than serializing
+        // a null query value so shared URLs stay clean.
+        removeEvalFocus();
         if (event?.column?.colId === "status") return;
         if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
           return;
@@ -821,6 +869,10 @@ const TraceGrid = React.forwardRef(
         // cross-project user page) an unpinned read serves the newest copy
         // of this trace id in any project.
         const rowProjectId = event.data.project_id;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
+        if (sourceColumn?.groupBy === "Evaluation Metrics") {
+          setEvalFocus(true);
+        }
         setTraceDetailDrawerOpen({
           traceId: traceId,
           ...(rowProjectId ? { projectId: rowProjectId } : {}),
@@ -829,7 +881,7 @@ const TraceGrid = React.forwardRef(
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, removeEvalFocus, setEvalFocus, setTraceDetailDrawerOpen],
     );
 
     const shouldDisable = useMemo(() => {
@@ -918,6 +970,21 @@ const TraceGrid = React.forwardRef(
                   </Typography>,
                 )
           }
+          onSortChanged={({ api }) => {
+            const next = api
+              .getColumnState()
+              .filter((column) => column.sort)
+              .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+              .map((column) => ({
+                column_id: column.colId,
+                direction: column.sort,
+              }));
+            setUsageSort((previous) =>
+              JSON.stringify(previous) === JSON.stringify(next)
+                ? previous
+                : next,
+            );
+          }}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           onColumnMoved={onColumnMoved}
@@ -963,8 +1030,11 @@ const TraceGrid = React.forwardRef(
           }
           loading={isPageLoading}
           page={page}
-          pageCount={pageCount}
           pageSize={pageSize}
+          endUnknown={endUnknown}
+          furthestPage={furthestPage}
+          hasMore={hasMore}
+          provenNext={provenNext}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />

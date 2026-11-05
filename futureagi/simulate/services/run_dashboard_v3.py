@@ -37,6 +37,15 @@ from simulate.services.run_results_v3_expressions import (
 
 CHART_BUCKETS = 100
 NOT_REPORTED = "Not reported"
+GOAL_OUTCOMES = (
+    "queued",
+    "in_progress",
+    "passed",
+    "failed",
+    "error",
+    "escalated",
+    "inconclusive",
+)
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
 END_REASONS = [
@@ -89,6 +98,10 @@ def annotate_goal_outcome(queryset: QuerySet) -> QuerySet:
     )
     return queryset.annotate(dashboard_disconnection=end_reason).annotate(
         dashboard_goal=Case(
+            When(
+                result_outcome__in=["queued", "in_progress"],
+                then=F("result_outcome"),
+            ),
             When(
                 Q(call_metadata__harness_outcome_status__in=["escalated", "handoff"])
                 | Q(dashboard_disconnection="Transferred"),
@@ -147,7 +160,7 @@ def _breakdown(
             }
         )
     order = {
-        "goal_outcome": ["passed", "failed", "error", "escalated", "inconclusive"],
+        "goal_outcome": GOAL_OUTCOMES,
     }.get(key)
     if order:
         by_label = {segment["label"]: segment for segment in segments}
@@ -371,7 +384,6 @@ def build_run_dashboard(
     summary: dict,
     evaluations: list,
     risk: list,
-    reliability: dict | None = None,
     comparison: dict | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
@@ -475,20 +487,15 @@ def build_run_dashboard(
 
     is_voice = noun == "call"
     outcomes = summary["outcomes"]
-    interval = (reliability or {}).get("pass_rate_interval")
     metric(
         "pass_rate",
         f"{noun.capitalize()}s passed",
         summary["pass_rate"],
         "percent",
         summary["measured"],
-        (
-            f"Passed every eval, out of evaluated {noun}s. 95% range "
-            f"{interval['low']:.0f}–{interval['high']:.0f}% across "
-            f"{interval['clusters']} scenarios."
-            if interval
-            else f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
-        ),
+        # pass^1's range belongs to the run header: this rate pools trials, so
+        # the range need not bracket it.
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
@@ -709,6 +716,8 @@ def build_run_dashboard(
         "use_case_risk": [
             {
                 "scenario": row["scenario"],
+                "queued": row["outcomes"]["queued"],
+                "in_progress": row["outcomes"]["in_progress"],
                 "passed": row["outcomes"]["passed"],
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],

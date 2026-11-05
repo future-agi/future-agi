@@ -1,10 +1,19 @@
-import React, { useEffect, useRef, useCallback, useState, memo } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  useState,
+  memo,
+} from "react";
 import MultiTrack from "wavesurfer-multitrack";
 import PropTypes from "prop-types";
 import { Icon } from "@iconify/react";
 import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
 import { darkenColor } from "src/utils/utils";
 import AudioDownloadButton from "src/sections/test-detail/AudioDownloadButton";
+import RecordingFailure from "./RecordingFailure";
+import { UNAVAILABLE, LOAD_FAILED } from "./failureVariants";
 import { ShowComponent } from "../show";
 import Iconify from "../iconify";
 
@@ -13,6 +22,15 @@ export const MemoizedBarsIcon = memo(() => (
 ));
 
 MemoizedBarsIcon.displayName = "MemoizedBarsIcon";
+
+// MediaError codes worth telling apart; the rest mean the source itself
+// could not be used. https://developer.mozilla.org/docs/Web/API/MediaError
+const MEDIA_ERR_NETWORK = 2;
+const MEDIA_ERR_DECODE = 3;
+
+// The multitrack stops a track itself a frame before its end, so "at the end"
+// has to allow for that gap.
+const END_TOLERANCE_S = 0.25;
 
 const MultiTrackAudioPlayer = ({
   trackUrls,
@@ -26,10 +44,20 @@ const MultiTrackAudioPlayer = ({
   const isDark = theme.palette.mode === "dark";
   const multiTrackAudioRef = useRef(null);
   const mtRef = useRef(null);
+  const mediasRef = useRef([]);
   const onInstanceRef = useRef(onInstance);
   const reportedInstanceRef = useRef(false);
   const [ready, setReady] = useState(0);
-  const isReady = ready === trackUrls.length;
+  const [failure, setFailure] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  // trackUrls is always the fixed [customer, assistant] pair; either side can
+  // arrive with no recording. Everything below is driven off the tracks that
+  // actually have one to play.
+  const playable = useMemo(
+    () => trackUrls.filter(({ url }) => url),
+    [trackUrls],
+  );
+  const isReady = playable.length > 0 && ready === playable.length && !failure;
 
   // Keep latest onInstance in a ref so the instance callback fires with the
   // freshest handler without re-running the WaveSurfer init effect.
@@ -39,10 +67,62 @@ const MultiTrackAudioPlayer = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   useEffect(() => {
-    if (!multiTrackAudioRef.current || trackUrls.length === 0) return;
+    // A track with nothing to play is simply not built. Callers never hand
+    // over a set with no URL at all: AudioPlayerCustom says "No recording
+    // found" for a call without one, and StereoMultiTrackPlayer reports a
+    // failed stereo split itself.
+    if (!multiTrackAudioRef.current || playable.length === 0) return;
+    let cancelled = false;
     setReady(0);
+    setFailure(null);
     reportedInstanceRef.current = false;
-    const tracks = trackUrls.map(({ url, color, name, peaks }, index) => ({
+
+    // The player owns one media element per track and hands it to the track
+    // below. wavesurfer-multitrack emits no error event, and when a track's
+    // media never loads it leaves `wavesurfers` empty forever, so an element
+    // we own is the only thing that can report that failure.
+    // "metadata" is enough to surface a refused source without pulling the
+    // whole file up front; wavesurfer fetches it separately for the waveform
+    // regardless.
+    const medias = playable.map(() => {
+      const media = new Audio();
+      media.preload = "metadata";
+      return media;
+    });
+    mediasRef.current = medias;
+
+    const onMediaError = (media) => () => {
+      const code = media.error?.code;
+      // A source the server refused (403/404/CORS) is a recording we cannot
+      // reach at all; a dropped download or a file we cannot decode is worth
+      // another attempt. First failure wins, so two tracks failing for
+      // different reasons cannot flip the variant on arrival order.
+      setFailure(
+        (prev) =>
+          prev ??
+          (code === MEDIA_ERR_NETWORK || code === MEDIA_ERR_DECODE
+            ? LOAD_FAILED
+            : UNAVAILABLE),
+      );
+    };
+    const mediaErrorHandlers = medias.map((media) => {
+      const handler = onMediaError(media);
+      media.addEventListener("error", handler);
+      return handler;
+    });
+
+    // Only the button changes `isPlaying`, so the end of the recording has to
+    // be caught here or the button keeps showing pause. Listen for "pause",
+    // not "ended": the multitrack pauses each track itself a frame before its
+    // end, so "ended" never fires. Tracks can differ in length, so wait until
+    // the last one has stopped.
+    const onMediaPause = () => {
+      if (cancelled) return;
+      if (medias.every((media) => media.paused)) setIsPlaying(false);
+    };
+    medias.forEach((media) => media.addEventListener("pause", onMediaPause));
+
+    const tracks = playable.map(({ url, color, name, peaks }, index) => ({
       id: `track-${index}`,
       url,
       peaks: peaks ? [peaks] : undefined,
@@ -54,11 +134,16 @@ const MultiTrackAudioPlayer = ({
         barGap: 5,
         barHeight: 0.5,
         barRadius: 2,
+        // Supplying `media` opts the track out of the library's iOS
+        // WebAudioPlayer branch (multi-track sync, getChannelData() peaks).
+        // Accepted because the dashboard is desktop-only, and owning the
+        // element is the only way to observe a load error.
+        media: medias[index],
       },
       name: `${name}`,
     }));
 
-    mtRef.current = new MultiTrack(tracks, {
+    const multitrack = new MultiTrack(tracks, {
       container: multiTrackAudioRef.current,
       cursorColor: isDark ? "#fafafa" : "#0F172A",
       cursorWidth: 2,
@@ -68,22 +153,48 @@ const MultiTrackAudioPlayer = ({
       dragBounds: true,
     });
 
-    mtRef.current.on("canplay", () => {
-      trackUrls.forEach((_, index) => {
-        const currentWave = mtRef.current?.wavesurfers?.[index];
+    mtRef.current = multitrack;
+
+    // The wavesurfers only exist once the multitrack reports canplay, so the
+    // success path has to wait for it. A track whose media never loads never
+    // gets this far — that is what the media listeners above are for.
+    //
+    // Bound to `multitrack`, never `mtRef.current`: destroy() leaves its own
+    // listeners attached, so a torn-down instance can still emit canplay and
+    // would otherwise subscribe a second set of "ready" handlers to whatever
+    // instance is current, pushing the count past the total and stranding the
+    // loader. In wavesurfer-multitrack 0.4.12 destroy() mid-load is a no-op —
+    // its async init chain has no cancellation and keeps resolving after
+    // teardown — so `cancelled` is checked in every handler this chain can
+    // still reach, not just here.
+    multitrack.on("canplay", () => {
+      if (cancelled) return;
+      playable.forEach((_, index) => {
+        const currentWave = multitrack.wavesurfers?.[index];
         currentWave?.on("ready", () => {
+          if (cancelled) return;
           setReady((prev) => prev + 1);
         });
       });
     });
 
-    mtRef.current.initAllAudios();
-
     return () => {
-      mtRef.current?.destroy();
+      // Set before destroy(): the chain above outlives it and would otherwise
+      // keep landing "ready" against whatever instance is current.
+      cancelled = true;
+      // Listeners come off before destroy(), which sets src = "" on every
+      // element — that resolves against the document URL and would otherwise
+      // fire a spurious "source refused" error per track. Do not reorder.
+      medias.forEach((media, index) => {
+        media.removeEventListener("error", mediaErrorHandlers[index]);
+        media.removeEventListener("pause", onMediaPause);
+      });
+      multitrack.destroy();
       mtRef.current = null;
     };
-  }, [trackUrls, height, isDark]);
+    // `attempt` is the retry lever: bumping it tears the tracks down and
+    // rebuilds them from scratch.
+  }, [playable, height, isDark, attempt]);
 
   useEffect(() => {
     if (!isReady || reportedInstanceRef.current || !mtRef.current) return;
@@ -94,9 +205,9 @@ const MultiTrackAudioPlayer = ({
     // "setState while rendering another component" warning.
     onInstanceRef.current?.({
       multitrack: mtRef.current,
-      wavesurfers: trackUrls.map((__, i) => mtRef.current?.wavesurfers?.[i]),
+      wavesurfers: playable.map((__, i) => mtRef.current?.wavesurfers?.[i]),
     });
-  }, [isReady, trackUrls]);
+  }, [isReady, playable]);
 
   const togglePlay = useCallback(() => {
     if (!mtRef.current || !isReady) return;
@@ -104,6 +215,15 @@ const MultiTrackAudioPlayer = ({
       mtRef.current.pause();
       setIsPlaying(false);
     } else {
+      // Playing from the end would only replay the last frame and stop, so a
+      // finished recording starts over.
+      const end = Math.max(
+        0,
+        ...mediasRef.current.map((media) => media.duration || 0),
+      );
+      if (end && mtRef.current.getCurrentTime() >= end - END_TOLERANCE_S) {
+        mtRef.current.setTime(0);
+      }
       mtRef.current.play();
       setIsPlaying(true);
     }
@@ -121,12 +241,23 @@ const MultiTrackAudioPlayer = ({
       <Box
         sx={{
           position: "relative",
-          minHeight: !isReady ? height * trackUrls.length + 20 : "auto",
+          // A failure occupies exactly the footprint the waveform would have
+          // had, so nothing below it shifts. The drawer that hosts this is what
+          // decides where that block sits vertically.
+          ...(failure
+            ? { height: height * playable.length + 20 }
+            : { minHeight: !isReady ? height * playable.length + 20 : "auto" }),
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
       >
-        {!isReady && (
+        {failure && (
+          <RecordingFailure
+            variant={failure}
+            onRetry={() => setAttempt((n) => n + 1)}
+          />
+        )}
+        {!isReady && !failure && (
           <Box
             sx={{
               position: "absolute",
@@ -154,57 +285,34 @@ const MultiTrackAudioPlayer = ({
             visibility: !isReady ? "hidden" : "visible",
             opacity: !isReady ? 0 : 1,
             transition: "opacity 0.3s ease-in-out",
-            minHeight: 170,
+            // The hidden container reserves 170px, which would prop the
+            // failure box open past the footprint above.
+            minHeight: failure ? 0 : 170,
+            height: failure ? 0 : undefined,
           }}
         />
       </Box>
 
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{
-          width: "100%",
-          paddingTop: 1.4,
-        }}
-      >
-        <IconButton
-          aria-label="play-pause"
-          onClick={(event) => {
-            event.stopPropagation();
-            togglePlay();
-          }}
-          disabled={!isReady}
+      {/* Nothing to play and nothing to download once a track has failed, so
+          the whole transport goes rather than leaving a dead play button
+          beside the failure message. */}
+      {!failure && (
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
           sx={{
-            padding: "6px",
-            bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
-            opacity: isReady ? 1 : 0.5,
+            width: "100%",
+            paddingTop: 1.4,
           }}
         >
-          <Icon
-            icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
-            width={20}
-            height={20}
-            color="text.primary"
-            style={{ pointerEvents: "none" }}
-          />
-        </IconButton>
-        <ShowComponent condition={allowDownload && isReady}>
-          <AudioDownloadButton
-            audioUrls={{
-              mono:
-                audioUrls?.mono?.combinedUrl ||
-                audioUrls?.combined ||
-                (typeof audioUrls?.mono === "string" ? audioUrls.mono : ""),
-              stereo: audioUrls?.stereoUrl || audioUrls?.stereo,
-              assistant: audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
-              customer: audioUrls?.mono?.customerUrl || audioUrls?.customer,
+          <IconButton
+            aria-label="play-pause"
+            onClick={(event) => {
+              event.stopPropagation();
+              togglePlay();
             }}
-            filename={`recording-${id || "audio"}.wav`}
-            size="small"
+            disabled={!isReady}
             sx={{
               padding: "6px",
               bgcolor: "background.paper",
@@ -213,9 +321,41 @@ const MultiTrackAudioPlayer = ({
               borderRadius: 0.5,
               opacity: isReady ? 1 : 0.5,
             }}
-          />
-        </ShowComponent>
-      </Stack>
+          >
+            <Icon
+              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              width={20}
+              height={20}
+              color="text.primary"
+              style={{ pointerEvents: "none" }}
+            />
+          </IconButton>
+          <ShowComponent condition={allowDownload && isReady}>
+            <AudioDownloadButton
+              audioUrls={{
+                mono:
+                  audioUrls?.mono?.combinedUrl ||
+                  audioUrls?.combined ||
+                  (typeof audioUrls?.mono === "string" ? audioUrls.mono : ""),
+                stereo: audioUrls?.stereoUrl || audioUrls?.stereo,
+                assistant:
+                  audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
+                customer: audioUrls?.mono?.customerUrl || audioUrls?.customer,
+              }}
+              filename={`recording-${id || "audio"}.wav`}
+              size="small"
+              sx={{
+                padding: "6px",
+                bgcolor: "background.paper",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
+                opacity: isReady ? 1 : 0.5,
+              }}
+            />
+          </ShowComponent>
+        </Stack>
+      )}
     </Stack>
   );
 };

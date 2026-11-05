@@ -19,6 +19,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/cohere"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -126,8 +127,10 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return cohere.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
+	case "deepgram", "cartesia":
+		return speech.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, deepgram, cartesia)", cfg.APIFormat)
 	}
 }
 
@@ -184,8 +187,9 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Try routing first if router is available and model has multiple targets.
-	if r.router != nil && r.router.HasTargets(model) {
+	// Try routing first if the model has routing targets. A single target
+	// routes too: it can name the provider and the model_override to send.
+	if r.router != nil && r.router.TargetCount(model) > 0 {
 		var (
 			routingResult *routing.RoutingResult
 			err           error

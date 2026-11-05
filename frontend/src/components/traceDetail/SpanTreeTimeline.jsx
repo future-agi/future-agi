@@ -17,6 +17,7 @@ import {
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import { getTypeConfig } from "./spanTypeConfig";
+import { getOwnEvalScores } from "./evalScores";
 
 // ---------------------------------------------------------------------------
 // Helpers (same logic as TraceTreeV2)
@@ -60,7 +61,7 @@ function countErrors(entry) {
 }
 
 function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
+  const evals = getOwnEvalScores(entry);
   let pass = 0;
   let fail = 0;
   let total = evals.length;
@@ -264,7 +265,7 @@ const TimelineRow = ({
 
   // Eval scores
   const subtreeEvals = useMemo(() => collectSubtreeEvals(entry), [entry]);
-  const ownEvals = entry?.eval_scores || [];
+  const ownEvals = getOwnEvalScores(entry);
 
   // Bar label — duration only (metrics are in the left panel)
   const durationLabel = formatLatency(durationMs);

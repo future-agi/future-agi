@@ -1030,7 +1030,9 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
         expect(await probe.pg("SELECT config->>'currentWorkspaceId' AS current_workspace FROM accounts_user WHERE id=$1", [scopes.member.userId]))
           .toEqual([{ current_workspace: a2.workspaceId }]);
         uiActor = memberA2;
-        await expect.poll(() => page.evaluate(() => sessionStorage.getItem('workspaceId')), { timeout: UI_READY }).toBe(a2.workspaceId);
+        // WorkspaceContext hard-navigates after switching; keep the wait alive across document replacement.
+        await page.waitForFunction(workspaceId => sessionStorage.getItem('workspaceId') === workspaceId,
+          a2.workspaceId, { timeout: UI_READY });
         await openUsers(); await detail([p3]);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await openUsers();

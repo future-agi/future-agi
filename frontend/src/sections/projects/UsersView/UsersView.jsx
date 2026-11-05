@@ -132,6 +132,8 @@ const UsersView = ({
   activeViewConfig: activeViewConfigProp,
 }) => {
   const { observeId } = useParams();
+  // Cross-project page (no project in the route): rows carry a Project column.
+  const includeProject = !observeId;
   const { currentWorkspaceId } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
@@ -443,13 +445,12 @@ const UsersView = ({
         if (currentCustomIds.length > 0) {
           removeCustomColumns(currentCustomIds);
         }
-        const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
-          (acc, col) => {
-            acc[col.field] = col.hide === undefined ? true : !col.hide;
-            return acc;
-          },
-          {},
-        );
+        const defaultsVisibility = (
+          getUsersColumnConfig({ includeProject }) || []
+        ).reduce((acc, col) => {
+          acc[col.field] = col.hide === undefined ? true : !col.hide;
+          return acc;
+        }, {});
         if (Object.keys(defaultsVisibility).length > 0) {
           updateColumnVisibility(defaultsVisibility);
         }
@@ -563,6 +564,7 @@ const UsersView = ({
       columns,
       gridApi,
       displayStorageKey,
+      includeProject,
     ],
   );
 
@@ -591,11 +593,13 @@ const UsersView = ({
   // was baked into the store); disarms at the fixpoint so manual drags persist.
   useEffect(() => {
     if (!pendingDefaultReorderRef.current) return;
-    const canonical = (getUsersColumnConfig() || []).map((c) => c.field);
+    const canonical = (getUsersColumnConfig({ includeProject }) || []).map(
+      (c) => c.field,
+    );
     const next = reorderColumns(columns, canonical);
     if (next !== columns) setColumns(next);
     else pendingDefaultReorderRef.current = false;
-  }, [columns, setColumns]);
+  }, [columns, setColumns, includeProject]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {

@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
@@ -10,44 +10,40 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
+import {
+  callDetailKeyPrefix,
+  compareRunsKeyPrefix,
+  runAnalyticsKey,
+} from "src/api/simulate-environments/runEvals";
+import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
+import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
+import AllEvaluationsDrawer from "./AllEvaluationsDrawer";
+import RunEvalDialogs from "./RunEvalDialogs";
+import { useRunEvalActions } from "./useRunEvalActions";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
+import LaunchFixDialog from "../../improvements/LaunchFixDialog";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
+import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
-
-// Terminal execution failures/cancellations outrank call-level outcomes.
-// Otherwise mixed pass/fail results are a completed run with findings.
-function headerStatus(identity, stats) {
-  // No verdict until the run resolves: while loading, identity is null and the
-  // zeroed stats would otherwise read as "Failed".
-  if (!identity) return null;
-  if (identity.status === "running" || identity.status === "cancelling") {
-    return identity.status;
-  }
-  if (identity.status === "failed" || identity.status === "cancelled") {
-    return identity.status;
-  }
-  if (stats.passed === 0) return "failed";
-  if (stats.failed === 0) return "passed";
-  return "completed";
-}
 
 /**
  * The designer-style run/execution detail page.
@@ -64,9 +60,11 @@ export default function RunDetail({
   testId,
   executionId,
   onStartRun,
+  runStarting = false,
   creditBanner = null,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [tab, setTab] = useState("tasks");
   // Filters handed to the calls table from elsewhere on the page (an analytics
   // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
@@ -77,6 +75,10 @@ export default function RunDetail({
     setTab("tasks");
   };
   const [addingEvals, setAddingEvals] = useState(false);
+  // Whether the table has a call to tick for a re-run; a run made before calls
+  // carried their scenario has none, so it keeps the whole-run Run again.
+  const [hasTickableCalls, setHasTickableCalls] = useState(null);
+  const [allEvalsOpen, setAllEvalsOpen] = useState(false);
   // The exact query the trace table reads, or null when it isn't mounted.
   const [tableQuery, setTableQuery] = useState(null);
   // The open call, where it was opened from ("table", "analytics" or "link")
@@ -89,9 +91,11 @@ export default function RunDetail({
   });
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [fixLaunching, setFixLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
+    callsShown: tab === "tasks",
   });
   const callNav = useCallListNavigation({
     executionId,
@@ -100,6 +104,11 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  // The All Evaluations drawer and the table's eval column menus share one
+  // edit form, one confirm and one re-run request, so a re-run sent from
+  // either holds both.
+  const evalRun = useRunEvalActions({ envId: env?.id, executionId });
+  const rerunInRun = useRerunCallsInRun(executionId);
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -108,26 +117,70 @@ export default function RunDetail({
     useOptimizationRuns(executionId);
   const hasTrials = optimizationRuns.length > 0;
   const selfImprovementOpen = useSelfImprovementOpen();
+  const { allowed: fixAllowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   // Keep the client bound: `useQueryClient().invalidateQueries` detached from
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
+
+  // Analytics and an open call drawer don't poll for grading, so both are
+  // refreshed once, when grading on this run finishes and the scores are
+  // final.
+  const executionStatus = identity?.executionStatus ?? null;
+  const previousStatus = useRef(executionStatus);
+  useEffect(() => {
+    const was = previousStatus.current;
+    previousStatus.current = executionStatus;
+    if (
+      was === "evaluating" &&
+      executionStatus &&
+      executionStatus !== "evaluating"
+    ) {
+      queryClient.invalidateQueries({ queryKey: runAnalyticsKey(executionId) });
+      queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
+      queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
+    }
+  }, [executionStatus, executionId, queryClient]);
 
   const openOptimization = (row) =>
     navigate(
       `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
     );
 
-  const status = headerStatus(identity, stats);
+  const status = identity?.runState;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
-  const live = status === "running" || status === "cancelling";
+  const live =
+    identity?.status === "running" || identity?.status === "cancelling";
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
+  // The agent version this run was pinned to, else the one it was recorded with.
+  const agentLabel =
+    identity?.pinnedAgentVersion?.label ?? identity?.agentVersion ?? "-";
+  // The environment and scenario versions this run was pinned to, if any.
+  const pinnedLabels = [
+    identity?.environmentVersion?.label &&
+      `env ${identity.environmentVersion.label}`,
+    identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+  ]
+    .filter(Boolean)
+    .map((label) => ` · ${label}`)
+    .join("");
+  // A re-run starts from the versions this run used.
+  const rerunOptions = {
+    initialPicks: {
+      agent: identity?.pinnedAgentVersion?.id,
+      environment: identity?.environmentVersion?.id,
+      suite: identity?.suiteVersion?.id,
+    },
+  };
 
+  // A check run opened from a fix carries the fix page as its way back; it is
+  // not in the Runs list, so Back would otherwise land somewhere without it.
   const back = () =>
     navigate(
-      paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
+      location.state?.backTo ??
+        paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
     );
 
   const exportResults = async () => {
@@ -165,7 +218,7 @@ export default function RunDetail({
           flexShrink: 0,
         }}
       >
-        <IconButton size="small" onClick={back}>
+        <IconButton size="small" onClick={back} aria-label="Back">
           <Iconify
             icon="solar:alt-arrow-left-linear"
             width={18}
@@ -199,9 +252,15 @@ export default function RunDetail({
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
               {identity
-                ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
+                ? `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
                 : "Run complete"}
             </Typography>
+            {identity?.agentDiffers && (
+              <AgentDiffersTag
+                agentVersion={identity.pinnedAgentVersion}
+                environmentVersion={identity.environmentVersion}
+              />
+            )}
             {status && <StatusChip status={status} />}
             <StopRunControl
               executionId={executionId}
@@ -215,12 +274,30 @@ export default function RunDetail({
           </Typography>
         </Box>
 
+        <ReliabilityHeadline
+          executionId={executionId}
+          enabled={!!identity && !live}
+        />
+
+        {/* A backed run opens its evals, to grade again or add to; a
+            client-only env keeps its store picker. */}
         <Button
           variant="outlined"
           size="small"
-          onClick={() => setAddingEvals(true)}
-          disabled={live}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+          onClick={() =>
+            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+          }
+          // A re-grade reads as running, but its evals stay reachable so the
+          // drawer can say why they are locked until grading finishes.
+          disabled={live && executionStatus !== "evaluating"}
+          startIcon={
+            <Iconify
+              icon={
+                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
+              }
+              width={15}
+            />
+          }
           sx={{
             color: "text.primary",
             borderColor: "divider",
@@ -228,7 +305,7 @@ export default function RunDetail({
             fontWeight: 600,
           }}
         >
-          Add evals
+          {backed ? "Run evals" : "Add evals"}
         </Button>
         <Button
           variant="outlined"
@@ -247,26 +324,29 @@ export default function RunDetail({
         >
           {exporting ? "Exporting…" : "Export"}
         </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          disabled={live}
-          startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-          onClick={() =>
-            onStartRun?.(
-              identity?.scenarioIds || undefined,
-              identity?.trials || 1,
-            )
-          }
-          sx={{
-            color: "text.primary",
-            borderColor: "divider",
-            typography: "s2",
-            fontWeight: 600,
-          }}
-        >
-          Run again
-        </Button>
+        {hasTickableCalls === false && (
+          <Button
+            variant="outlined"
+            size="small"
+            disabled={live || runStarting}
+            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
+            onClick={() =>
+              onStartRun?.(
+                identity?.scenarioIds || undefined,
+                identity?.trials || 1,
+                rerunOptions,
+              )
+            }
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              typography: "s2",
+              fontWeight: 600,
+            }}
+          >
+            Run again
+          </Button>
+        )}
         <Button
           variant="contained"
           color="primary"
@@ -333,7 +413,41 @@ export default function RunDetail({
               onQueryChange={setTableQuery}
               activeCallId={openCall?.task.id ?? null}
               activePage={openCall?.page ?? null}
+              // Same gating as the All Evaluations drawer below; a client-only
+              // env has no server evals to act on.
+              evalActions={
+                backed
+                  ? {
+                      runTestId: testId,
+                      canRun: executionStatus === "completed",
+                      grading: executionStatus === "evaluating",
+                      rerunPending: evalRun.isPending,
+                      onRerun: evalRun.requestRerun,
+                      onEdit: evalRun.requestEdit,
+                    }
+                  : null
+              }
               initialFilters={tableHandoff.filters}
+              // Ticked calls re-run either inside this run (their rows are
+              // refilled in place) or as a new simulation, through the same
+              // start as any run: that one opens the new run.
+              onRerunScenarios={
+                onStartRun
+                  ? (keys, trials) => onStartRun(keys, trials, rerunOptions)
+                  : null
+              }
+              onRerunInRun={rerunInRun.mutate}
+              onTickableChange={setHasTickableCalls}
+              runTrials={identity?.trials || 1}
+              rerunDisabledReason={
+                live
+                  ? "Wait for this run to finish before re-running calls"
+                  : runStarting
+                    ? "Starting the run…"
+                    : rerunInRun.isPending
+                      ? "Starting the re-run…"
+                      : null
+              }
             />
           )}
 
@@ -381,6 +495,24 @@ export default function RunDetail({
         </Box>
       </Box>
 
+      {backed && (
+        <AllEvaluationsDrawer
+          open={allEvalsOpen}
+          onClose={() => setAllEvalsOpen(false)}
+          env={env}
+          runTestId={testId}
+          executionId={executionId}
+          canRun={executionStatus === "completed"}
+          grading={executionStatus === "evaluating"}
+          rerunPending={evalRun.isPending}
+          editOpen={evalRun.editOpen}
+          onRerun={evalRun.requestRerun}
+          onEdit={evalRun.requestEdit}
+          onAddEvaluations={() => setAddingEvals(true)}
+        />
+      )}
+      {backed && <RunEvalDialogs env={env} {...evalRun.dialogProps} />}
+
       {/* The same picker the Evaluations tab opens. Adding from here binds
           the eval to the environment exactly as the tab's add does and then
           grades this run's finished calls by name; the drawer shows the
@@ -414,6 +546,7 @@ export default function RunDetail({
 
       <CallDrawer
         task={openCall?.task ?? null}
+        executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}
         hasPrev={callNav.hasPrev}
@@ -429,13 +562,22 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
-          setLaunching(true);
+          setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
           setDebugging(false);
           openCallsWith({ callExecutionId: callExecutionIds });
         }}
       />
+
+      {fixAllowed && (
+        <LaunchFixDialog
+          open={fixLaunching}
+          onClose={() => setFixLaunching(false)}
+          envId={env.id}
+          sourceRunId={executionId}
+        />
+      )}
 
       <LaunchOptimizationDrawer
         open={launching}
@@ -475,5 +617,7 @@ RunDetail.propTypes = {
   testId: PropTypes.string,
   executionId: PropTypes.string,
   onStartRun: PropTypes.func,
+  // A run start is in flight; the table's Re-run waits for it.
+  runStarting: PropTypes.bool,
   creditBanner: PropTypes.node,
 };

@@ -103,6 +103,7 @@ const DateRangePill = ({ dateFilter, setDateFilter, label, sx }) => {
         open={customDateOpen}
         onClose={() => setCustomDateOpen(false)}
         anchorEl={dateButtonRef.current}
+        value={dateFilter?.dateFilter}
         setDateFilter={(range) => {
           setDateFilter?.((prev) => ({
             ...prev,

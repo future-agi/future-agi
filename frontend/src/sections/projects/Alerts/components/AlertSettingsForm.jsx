@@ -18,11 +18,12 @@ import {
   timeOptions,
   alertDefinitionOptions,
   convertFiltersToPayload,
+  evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import RadioField from "src/components/RadioField/RadioField";
 import { ShowComponent } from "src/components/show";
@@ -62,6 +63,7 @@ export default function AlertSettingsForm({
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
   const { currentOrganizationId } = useOrganization();
+  const queryClient = useQueryClient();
   const observeId = selectedProject || alertRuleDetails?.project || null;
 
   const buildFormValues = useCallback(
@@ -155,13 +157,22 @@ export default function AlertSettingsForm({
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
 
-  const selectedEvalOutputType = useMemo(() => {
-    if (!expandedEvaluations?.length || !metric) return null;
-    return (
-      expandedEvaluations.find((evaluation) => evaluation?.id === metric)
-        ?.output_type ?? null
-    );
-  }, [expandedEvaluations, metric]);
+  const selectedEval = useMemo(
+    () => expandedEvaluations?.find((evaluation) => evaluation?.id === metric),
+    [expandedEvaluations, metric],
+  );
+  const selectedEvalOutputType = selectedEval?.output_type ?? null;
+  // The eval the preview payload actually names. The payload carries the
+  // debounced metric, so for 300ms after a switch it still points at the old
+  // eval; gating on the live one in that window previews a choice eval with no
+  // label, and the backend rejects it.
+  const debouncedSelectedEval = useMemo(
+    () =>
+      expandedEvaluations?.find(
+        (evaluation) => evaluation?.id === debouncedMetric,
+      ),
+    [expandedEvaluations, debouncedMetric],
+  );
   // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
   // evals are avg(output_float) with no upper bound, so only the bounded
   // kinds get the fraction label. percentage_change divides this same field
@@ -175,9 +186,7 @@ export default function AlertSettingsForm({
 
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
-      const selectedEval = expandedEvaluations.find(
-        (evaluation) => evaluation?.id === metric,
-      );
+      if (!evalUsesChoiceThreshold(selectedEval)) return [];
       return (
         selectedEval?.choices?.map((choice) => ({
           label: choice,
@@ -186,7 +195,7 @@ export default function AlertSettingsForm({
       );
     }
     return [];
-  }, [expandedEvaluations, metric]);
+  }, [expandedEvaluations, metric, selectedEval]);
 
   const queryPayload = useMemo(() => {
     const { observation_type, span_attributes_filters } =
@@ -210,7 +219,10 @@ export default function AlertSettingsForm({
 
     if (debouncedMetricType === "evaluation_metrics") {
       payload.metric = debouncedMetric;
-      if (debouncedThresHoldMetricValue && selectedMetricOptions?.length > 0) {
+      if (
+        debouncedThresHoldMetricValue &&
+        evalUsesChoiceThreshold(debouncedSelectedEval)
+      ) {
         payload.threshold_metric_value = debouncedThresHoldMetricValue;
       }
     }
@@ -227,6 +239,7 @@ export default function AlertSettingsForm({
     debouncedFrequency,
     debouncedMetric,
     debouncedThresHoldMetricValue,
+    debouncedSelectedEval,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     JSON.stringify(debounceWatchedFilters),
   ]);
@@ -254,7 +267,19 @@ export default function AlertSettingsForm({
       debouncedWarning !== undefined &&
       debouncedFrequency &&
       !hasErrors &&
-      (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
+      (debouncedMetricType === "evaluation_metrics"
+        ? debouncedMetric &&
+          // Wait for the debounced metric to catch up with the picker, so the
+          // preview never runs for the eval the user just left.
+          debouncedMetric === metric &&
+          // Until the eval list resolves, a Pass/Fail eval looks like a score
+          // one and would be previewed without the label it needs.
+          debouncedSelectedEval &&
+          // A choice-thresholded eval's graph requires the chosen label; firing
+          // the preview before it is set 400s. Score evals need no choice.
+          (!evalUsesChoiceThreshold(debouncedSelectedEval) ||
+            debouncedThresHoldMetricValue)
+        : true);
 
     const isThresholdValid = (() => {
       if (debouncedOperator === "less_than") {
@@ -278,14 +303,26 @@ export default function AlertSettingsForm({
     debouncedWarning,
     debouncedFrequency,
     debouncedMetric,
+    metric,
+    debouncedThresHoldMetricValue,
+    debouncedSelectedEval,
     errors,
     openSheetView,
     isDirty,
   ]);
 
+  // A choice-thresholded eval with no label yet has nothing to preview; the
+  // chart says so rather than keep drawing the eval the user just left.
+  const previewAwaitingLabel = Boolean(
+    debouncedMetricType === "evaluation_metrics" &&
+      debouncedMetric === metric &&
+      evalUsesChoiceThreshold(debouncedSelectedEval) &&
+      !debouncedThresHoldMetricValue,
+  );
+
   useEffect(() => {
-    onPayloadChange(queryPayload, isQueryEnabled);
-  }, [queryPayload, isQueryEnabled, onPayloadChange]);
+    onPayloadChange(queryPayload, isQueryEnabled, previewAwaitingLabel);
+  }, [queryPayload, isQueryEnabled, previewAwaitingLabel, onPayloadChange]);
 
   useEffect(() => {
     if (queryPayload) {
@@ -334,6 +371,10 @@ export default function AlertSettingsForm({
       handleCloseCreateAlert();
       refreshGrid();
       refreshIssues();
+      // The details-page graph is keyed only on the alert id + date window, so
+      // a threshold_type or config change leaves its cache stale until the 10s
+      // poll happens to refetch. Invalidate it so the saved graph updates now.
+      queryClient.invalidateQueries({ queryKey: ["alert-graph"] });
     },
   });
 
@@ -360,6 +401,16 @@ export default function AlertSettingsForm({
       return;
     }
 
+    const isUpdate = Boolean(openSheetView && !duplicateAlertName);
+    // Send the choice only for an eval known to take one. While the eval list
+    // is unresolved an update leaves it out: the server keeps the stored choice
+    // for a Pass/Fail eval and drops it for a score eval, where resending it
+    // would 400 with no visible field to clear. A new alert has no stored
+    // choice to fall back on, so it keeps sending what the form holds.
+    const sendChoice = selectedEval
+      ? evalUsesChoiceThreshold(selectedEval)
+      : !isUpdate;
+
     const payload = {
       name: data?.name,
       metric_type: data?.metric_type,
@@ -378,9 +429,10 @@ export default function AlertSettingsForm({
       }),
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
-        ...(data?.threshold_metric_value && {
-          threshold_metric_value: data?.threshold_metric_value,
-        }),
+        ...(data?.threshold_metric_value &&
+          sendChoice && {
+            threshold_metric_value: data?.threshold_metric_value,
+          }),
       }),
       ...notificationPayload,
       ...(data?.threshold_type === "percentage_change" && {

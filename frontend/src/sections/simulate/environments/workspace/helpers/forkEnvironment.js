@@ -21,13 +21,12 @@ export function forkEnvironment(env, envState, now) {
       // The parent's run links must not come along: `platform` is how the Runs
       // tab and the header's Run action locate an environment's executions, so a
       // copied one opens a brand-new fork on the parent's run history and makes
-      // "Run again" re-run the parent.
+      // a re-run start the parent.
       platform: undefined,
       adoptedAt: now,
     },
     // A fork inherits the world but becomes editable: the template sticker is
-    // peeled off, the version lineage restarts at v1 against the seeded agent,
-    // and there is no run history.
+    // peeled off and there is no run history.
     envState: {
       ...emptyEnvState(),
       scenarios,
@@ -36,21 +35,6 @@ export function forkEnvironment(env, envState, now) {
       agent: envState.agent,
       additionalAgents: [...(envState.additionalAgents || [])],
       activeAgentId: envState.activeAgentId ?? null,
-      agentVersions: envState.agentVersions
-        ? envState.agentVersions.map((v) => ({ ...v }))
-        : [],
-      envVersions: [
-        {
-          id: `${forkedId}-v1`,
-          label: "v1",
-          createdAt: now,
-          note: SEED_COPY.forkEnvNote(env.name),
-          scenarios: scenarios.length,
-          changed: ["fork"],
-        },
-      ],
-      envDerivedForAgent: "v1",
-      activeAgentVersion: "v1",
       seededFromTemplate: false,
       runs: [],
     },

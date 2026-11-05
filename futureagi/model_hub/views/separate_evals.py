@@ -156,6 +156,7 @@ from tracer.services.clickhouse.query_builders.base import (
     BoundedDateTimeRange,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.exact_aggregation_cache import (
     mark_refresh_failed,
     publish_exact_snapshot,
@@ -7607,6 +7608,9 @@ class EvalPlayGroundFeedbackAPIView(APIView):
 
             row_dict["feedback_comment"] = explanation
             row_dict["feedback_value"] = value
+            # Stable identity so a retune/delete tombstones the prior vector
+            # for this Feedback record instead of orphaning it.
+            row_dict["feedback_id"] = str(feedback.id)
 
             org_for_embedding = str(
                 (getattr(request, "organization", None) or request.user.organization).id
@@ -7853,9 +7857,11 @@ class DeleteEvalTemplateView(APIView):
                     APICallLog.objects.filter(source_id=eval_template_id).update(
                         deleted=True, deleted_at=timezone.now()
                     )
-                EvalLogger.objects.filter(
-                    custom_eval_config__eval_template=eval_template
-                ).update(deleted=True, deleted_at=timezone.now())
+                soft_delete_eval_results(
+                    EvalLogger.objects.filter(
+                        custom_eval_config__eval_template=eval_template
+                    )
+                )
 
                 # EvalSettings has no FK; cascade on the just-verified template id.
                 EvalSettings.objects.filter(

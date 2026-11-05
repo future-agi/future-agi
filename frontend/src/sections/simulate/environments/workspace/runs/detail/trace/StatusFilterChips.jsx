@@ -6,11 +6,16 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { STATUS_CHIPS } from "./traceTable.constants";
 
-const TONE = { red: BUILD_TONES.red, amber: BUILD_TONES.amber, green: BUILD_TONES.green };
+const TONE = {
+  blue: BUILD_TONES.blue,
+  red: BUILD_TONES.red,
+  amber: BUILD_TONES.amber,
+  green: BUILD_TONES.green,
+};
 
 // Outcome quick-filter — one chip per status bucket plus All. The active chip is
 // filled in its status colour; each carries its count so the distribution is
-// legible before you click. Counts are over the loaded page, not the whole run.
+// legible before you click. Counts follow the table's other filters, not the status one.
 export default function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
@@ -32,6 +37,7 @@ export default function StatusFilterChips({ value, counts, onChange, blocked = [
             <Box
               role="button"
               aria-label={chip.label}
+              aria-pressed={active}
               tabIndex={disabled ? -1 : 0}
               onClick={() => !disabled && onChange(chip.id)}
               onKeyDown={(e) => { if (!disabled && (e.key === "Enter" || e.key === " ")) onChange(chip.id); }}

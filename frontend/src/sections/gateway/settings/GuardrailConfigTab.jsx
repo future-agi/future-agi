@@ -176,11 +176,16 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "password",
         required: true,
       },
+      // No defaultValue: an empty Base URL means "this platform", which is
+      // what gets the org's keys injected. A filled-in api.futureagi.com
+      // would be saved and point self-hosted installs at the cloud.
       {
         key: "base_url",
         label: "Base URL",
         type: "text",
-        defaultValue: "https://api.futureagi.com",
+        placeholder: "https://api.futureagi.com",
+        helperText:
+          "Leave empty to use this platform. Set only to target another Future AGI environment.",
       },
     ],
   },

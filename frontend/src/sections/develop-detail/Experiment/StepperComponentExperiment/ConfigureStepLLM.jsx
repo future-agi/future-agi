@@ -19,6 +19,7 @@ import { getRandomId } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useGetListOfAgents } from "../../../../api/experiment/use-get-agents";
 import { PROMPT_CONFIG_TYPE, PROMPT_CONFIG_TYPES } from "../common";
+import { PLAYGROUND_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
 
 const transformPromptToFormSchema = (listPrompt) => {
   const modelArray = [
@@ -369,7 +370,7 @@ const ConfigureStepLLM = ({
                       : ""
                 }
                 zeroOptionsActionLabel="Add New Agent"
-                zeroOptionsActionUrl="/dashboard/agents"
+                zeroOptionsActionUrl={PLAYGROUND_AGENTS_PATH}
                 error={agentsError ?? null}
                 getOptionLabel={(option) => option?.name || ""}
                 getOptionValue={(option) => option?.agentId}

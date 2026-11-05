@@ -15,14 +15,14 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
-  -p futureagi-e2e)
+  -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
 # Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
 # dedicated exact-aggregation worker. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
@@ -74,7 +74,8 @@ wait_ready() {
 
 build_target() {
   case "$1" in
-    backend)   docker build -t futureagi/future-agi:e2e-local -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+    backend)   docker build -t futureagi/future-agi:e2e-base -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+               docker build -t futureagi/future-agi:e2e-local --build-arg BASE_TAG=e2e-base -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
     frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
                echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;

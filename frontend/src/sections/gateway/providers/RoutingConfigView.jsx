@@ -18,21 +18,17 @@ import Iconify from "src/components/iconify";
 import { useUpdateConfig } from "./hooks/useGatewayConfig";
 import { useOrgConfig, useCreateOrgConfig } from "./hooks/useOrgConfig";
 import OrgConfigEditor from "../../gateway/settings/OrgConfigEditor";
-
-const STRATEGIES = [
-  "round-robin",
-  "weighted",
-  "least-latency",
-  "random",
-  "priority",
-];
+import {
+  DEFAULT_ROUTING_STRATEGY,
+  ROUTING_STRATEGY_OPTIONS,
+} from "../constants/routing";
 
 const RoutingConfigView = ({ config, gatewayId }) => {
   const routing = config?.routing || {};
   const failover = routing?.failover || {};
   const rateLimit = config?.rate_limiting ?? config?.rateLimiting ?? {};
 
-  const [strategy, setStrategy] = useState("round-robin");
+  const [strategy, setStrategy] = useState(DEFAULT_ROUTING_STRATEGY);
   const [failoverEnabled, setFailoverEnabled] = useState(false);
   const [maxAttempts, setMaxAttempts] = useState("3");
   const [retryCodes, setRetryCodes] = useState([]);
@@ -50,9 +46,7 @@ const RoutingConfigView = ({ config, gatewayId }) => {
   };
 
   useEffect(() => {
-    setStrategy(
-      routing?.default_strategy ?? routing?.defaultStrategy ?? "round-robin",
-    );
+    setStrategy(routing?.strategy ?? DEFAULT_ROUTING_STRATEGY);
     setFailoverEnabled(failover?.enabled ?? false);
     setMaxAttempts(
       String(failover?.max_attempts ?? failover?.maxAttempts ?? 3),
@@ -71,7 +65,7 @@ const RoutingConfigView = ({ config, gatewayId }) => {
   const handleSave = () => {
     const routingPatch = {
       routing: {
-        default_strategy: strategy,
+        strategy,
         failover: {
           enabled: failoverEnabled,
           max_attempts: Number(maxAttempts),
@@ -112,9 +106,9 @@ const RoutingConfigView = ({ config, gatewayId }) => {
             onChange={(e) => handleChange(setStrategy)(e.target.value)}
             size="small"
           >
-            {STRATEGIES.map((s) => (
-              <MenuItem key={s} value={s}>
-                {s}
+            {ROUTING_STRATEGY_OPTIONS.map((s) => (
+              <MenuItem key={s.value} value={s.value}>
+                {s.label}
               </MenuItem>
             ))}
           </TextField>

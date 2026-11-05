@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
+import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
@@ -11,6 +12,8 @@ import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
+import VersionsPanel from "./versions/VersionsPanel";
+import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
@@ -51,6 +54,7 @@ export default function WorkspacePanels({
   graphData,
   onStartRun,
   canRun = false,
+  runBlockedReason,
 }) {
   const navigate = useNavigate();
   const {
@@ -58,6 +62,10 @@ export default function WorkspacePanels({
     count: runCount,
     isLoading: runsLoading,
   } = useEnvironmentRuns(env, envState);
+
+  // Editing an eval waits while any run is being graded. Only the newest page
+  // of runs is read, and it polls while one is grading, so this clears itself.
+  const grading = runs.some((run) => run.grading);
 
   // The runs list's total is what the Runs tab lists. The environment's own
   // count comes with the environment, so it stands in until the list loads;
@@ -69,7 +77,17 @@ export default function WorkspacePanels({
   // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
-  const tabs = showRuns ? WORKSPACE_TABS : WORKSPACE_TABS.filter((t) => t.id !== "runs");
+  // Improvements appears once the environment has a fix, the same way Runs does.
+  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
+  const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
+  // Versions appears only while versioning is switched on for this environment.
+  const showVersions = Boolean(env?.versioning?.enabled);
+  const tabs = WORKSPACE_TABS.filter(
+    (t) =>
+      (t.id !== "runs" || showRuns) &&
+      (t.id !== "improvements" || showImprovements) &&
+      (t.id !== "versions" || showVersions),
+  );
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
@@ -92,21 +110,38 @@ export default function WorkspacePanels({
   const badgeCount = (badge) => {
     if (!counts) return null;
     if (badge === "runs") return runsTotal;
+    if (badge === "improvements") return fixCount;
     return counts[badge] ?? 0;
   };
 
   const renderBody = () => {
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
       case "evals":
-        return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
+        return (
+          <EvalsStep
+            env={env}
+            envState={envState}
+            patch={patch}
+            onGo={go}
+            locked={locked}
+            backed={backed}
+            grading={grading}
+            onFork={onFork}
+            scenarioCount={counts?.scenarios}
+          />
+        );
       case "runs":
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
-        return <RunsSummary env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
+        return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
+      case "improvements":
+        return <ImprovementsPanel env={env} />;
+      case "versions":
+        return <VersionsPanel env={env} />;
       case "settings":
         return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
@@ -119,11 +154,11 @@ export default function WorkspacePanels({
           <OverviewPanel
             env={env}
             envState={serverEnvState}
-            patch={patch}
             onGo={go}
             agentConnected={!!envState?.agent}
             locked={locked}
             counts={overviewCounts}
+            latestRun={runs[0]}
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
@@ -176,6 +211,7 @@ WorkspacePanels.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
   envState: PropTypes.shape({
     agent: PropTypes.shape({ name: PropTypes.string }),
@@ -211,4 +247,6 @@ WorkspacePanels.propTypes = {
   onStartRun: PropTypes.func,
   // Whether the env is runnable; gates the scenarios selection-bar Run.
   canRun: PropTypes.bool,
+  // Why Run is unavailable, for the Scenarios selection bar's disabled Run.
+  runBlockedReason: PropTypes.string,
 };

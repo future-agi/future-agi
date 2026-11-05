@@ -10,10 +10,14 @@ import {
 import PlatformLogo from "../PlatformLogo";
 import { PLATFORMS } from "../constants";
 
-export default function StepPlatformSelect({ data, onUpdate, onNext }) {
+export default function StepPlatformSelect({ data, onUpdate, onNext, onSelectSlack }) {
   const theme = useTheme();
 
   const handleSelect = (platformId) => {
+    if (platformId === "slack") {
+      onSelectSlack();
+      return;
+    }
     onUpdate({ platform: platformId });
     onNext();
   };
@@ -82,4 +86,5 @@ StepPlatformSelect.propTypes = {
   data: PropTypes.object.isRequired,
   onUpdate: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
+  onSelectSlack: PropTypes.func.isRequired,
 };

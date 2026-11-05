@@ -11,6 +11,8 @@ import DeleteConfirmationDialog from "./DeleteConfirmationDialog";
 import CircularProgress from "@mui/material/CircularProgress"; // Import loader component
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import logger from "src/utils/logger";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 
 const handleResend = async (invitationId, email, setLoadingResend) => {
   trackEvent(Events.resendInviteClicked, {
@@ -86,7 +88,16 @@ const columns = (
   },
   { field: "name", headerName: "User Name", flex: 1, sortable: false },
   { field: "email", headerName: "Email", flex: 1, sortable: false },
-  { field: "created_at", headerName: "Date Invited", flex: 1, sortable: false },
+  {
+    field: "created_at",
+    headerName: "Date Invited",
+    flex: 1,
+    sortable: false,
+    valueFormatter: (params) => fDateLocal(params.value),
+    renderCell: (params) => (
+      <LocalDateTime value={params.value} emptyText="No invite date recorded" />
+    ),
+  },
   {
     field: "action",
     headerName: "Action",
