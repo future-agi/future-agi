@@ -2443,3 +2443,30 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
+
+**Goal:** A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker
+
+**Spec:** `flows/simulate/participants-table.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed chat call with a stored Participants record and trial world changes
+2. open the call from its run
+3. open the Participants tab
+4. open the first hand-off row and Open in Traces
+5. open the World changes tab
+
+**Backend state verified:**
+
+- the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
+
+**Browser observations:**
+
+- one table section per turn, each with its own request and only its own hand-off
+- the unplaced hand-off carries the parent unknown chip, and only that one
+- a step read from a trace opens the Traces tab
+- World changes lists the worker's refused attempt with its reason
