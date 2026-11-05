@@ -19438,6 +19438,14 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessActorLimitsWriteApiLimits = { [key: string]: string };
+
+export interface HarnessActorLimitsWriteApi {
+  limits: HarnessActorLimitsWriteApiLimits;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
 export type HarnessActorListApiActorsItem = { [key: string]: unknown };
 
 export type HarnessActorListApiSource =
@@ -19453,6 +19461,8 @@ export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 export type HarnessActorListApiChannels = { [key: string]: string };
 
 export type HarnessActorListApiLoudness = { [key: string]: unknown };
+
+export type HarnessActorListApiLimits = { [key: string]: unknown };
 
 export interface HarnessWorldActionApi {
   /** @minLength 1 */
@@ -19482,6 +19492,8 @@ export interface HarnessActorListApi {
   loudness: HarnessActorListApiLoudness;
   reserved_ids: string[];
   knowledge_sources: HarnessActorKnowledgeSourcesApi;
+  limits?: HarnessActorListApiLimits;
+  actor_models?: string[];
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };
@@ -25126,6 +25138,7 @@ export type SubGoalResultApiResult =
 export const SubGoalResultApiResult = {
   not_applicable: "not_applicable",
   inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
 } as const;
 
 export interface SubGoalResultApi {
@@ -25134,6 +25147,8 @@ export interface SubGoalResultApi {
   passed: boolean | null;
   result?: SubGoalResultApiResult;
   reason?: string;
+  /** What the check was decided from: world_state, tool_calls, transcript, recording. */
+  evidence?: string[];
 }
 
 export interface CostBreakdownApi {
@@ -25244,6 +25259,8 @@ export interface TrialStateChangeApi {
   faulted: number;
   duplicate: number;
   committed_actions: string[];
+  /** True when this participant committed nothing: a result shown as 'no change', never left out. */
+  no_change?: boolean;
 }
 
 export type ActorDecisionApiPlay =
@@ -25253,7 +25270,15 @@ export const ActorDecisionApiPlay = {
   mocked: "mocked",
   live: "live",
   history: "history",
+  waiting: "waiting",
+  timeout: "timeout",
+  problem: "problem",
 } as const;
+
+/**
+ * What it sent: for a pre-run message (`history`), the message itself.
+ */
+export type ActorDecisionApiArguments = { [key: string]: string };
 
 export interface ActorDecisionApi {
   /** @minLength 1 */
@@ -25261,13 +25286,73 @@ export interface ActorDecisionApi {
   play: ActorDecisionApiPlay;
   /** @minLength 1 */
   action?: string;
+  /** What it sent: for a pre-run message (`history`), the message itself. */
+  arguments?: ActorDecisionApiArguments;
+  /**
+   * `voice` when decided on the call by a speaking actor.
+   * @minLength 1
+   */
+  channel?: string;
+  /**
+   * For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.
+   * @minLength 1
+   */
+  problem?: string;
   why?: string;
   status?: number;
+  timeout_seconds?: number;
+  /**
+   * silent, decline, one of the actor's own actions, or the id of the actor who answers instead
+   * @minLength 1
+   */
+  fallback?: string;
+  /**
+   * For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
+   * @minLength 1
+   */
+  outcome?: string;
 }
+
+export interface ApprovalWriteApi {
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  outcome: string;
+}
+
+export type ApprovalLineApiRequest = { [key: string]: string };
+
+export type ApprovalLineApiDecision = { [key: string]: string };
+
+export interface ApprovalLineApi {
+  request: ApprovalLineApiRequest;
+  decision: ApprovalLineApiDecision;
+  before_decision: ApprovalWriteApi[];
+  after_decision: ApprovalWriteApi[];
+  acted_before_decision: boolean;
+}
+
+export interface ActorUsageApi {
+  /** @minLength 1 */
+  actor: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+/**
+ * The actor limits this trial ran with; null is no limit.
+ */
+export type TrialStateApiLimits = { [key: string]: string };
 
 export interface TrialStateApi {
   state_changes?: TrialStateChangeApi[];
   decisions?: ActorDecisionApi[];
+  approvals?: ApprovalLineApi[];
+  usage?: ActorUsageApi[];
+  /** The actor limits this trial ran with; null is no limit. */
+  limits?: TrialStateApiLimits;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -39260,6 +39345,13 @@ export type SimulateApiHarnessEnvironmentsCompareParams = {
    * The run to compare against; the previous completed run if absent.
    */
   against_execution_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsUploadFileBody = {
+  file: Blob;
+  /** What the file is for: `knowledge`, a document an actor may be given to read. */
+  kind: string;
+  expected_revision?: number;
 };
 
 export type SimulateApiHarnessEnvironmentsNudgesParams = {

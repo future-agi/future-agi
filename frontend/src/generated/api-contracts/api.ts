@@ -597,6 +597,7 @@ import type {
   GroupingOutboxRequestApi,
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
+  HarnessActorLimitsWriteApi,
   HarnessActorListApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
@@ -1223,6 +1224,7 @@ import type {
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
@@ -59928,6 +59930,52 @@ export const simulateApiHarnessEnvironmentsDelete = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsActorLimitsResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponseSuccess =
+  simulateApiHarnessEnvironmentsActorLimitsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsActorLimitsResponseError =
+  simulateApiHarnessEnvironmentsActorLimitsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponse =
+  | simulateApiHarnessEnvironmentsActorLimitsResponseSuccess
+  | simulateApiHarnessEnvironmentsActorLimitsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsActorLimitsUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/actor-limits/`;
+};
+
+/**
+ * Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model.
+ */
+export const simulateApiHarnessEnvironmentsActorLimits = async (
+  id: string,
+  harnessActorLimitsWriteApi: HarnessActorLimitsWriteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsActorLimitsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsActorLimitsResponse>(
+    getSimulateApiHarnessEnvironmentsActorLimitsUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorLimitsWriteApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsActorsResponse200 = {
   data: HarnessActorListApi;
   status: 200;
@@ -60655,6 +60703,69 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponseSuccess =
+  simulateApiHarnessEnvironmentsUploadFileResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsUploadFileResponseError =
+  simulateApiHarnessEnvironmentsUploadFileResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsUploadFileResponse =
+  | simulateApiHarnessEnvironmentsUploadFileResponseSuccess
+  | simulateApiHarnessEnvironmentsUploadFileResponseError;
+
+export const getSimulateApiHarnessEnvironmentsUploadFileUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/files/`;
+};
+
+/**
+ * Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
+it, for picking per actor.
+ */
+export const simulateApiHarnessEnvironmentsUploadFile = async (
+  id: string,
+  simulateApiHarnessEnvironmentsUploadFileBody?: SimulateApiHarnessEnvironmentsUploadFileBody,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsUploadFileResponse> => {
+  const formData = new FormData();
+  if (simulateApiHarnessEnvironmentsUploadFileBody?.file !== undefined) {
+    formData.append(`file`, simulateApiHarnessEnvironmentsUploadFileBody.file);
+  }
+  if (simulateApiHarnessEnvironmentsUploadFileBody?.kind !== undefined) {
+    formData.append(`kind`, simulateApiHarnessEnvironmentsUploadFileBody.kind);
+  }
+  if (
+    simulateApiHarnessEnvironmentsUploadFileBody?.expected_revision !==
+    undefined
+  ) {
+    formData.append(
+      `expected_revision`,
+      simulateApiHarnessEnvironmentsUploadFileBody.expected_revision.toString(),
+    );
+  }
+
+  return apiMutator<simulateApiHarnessEnvironmentsUploadFileResponse>(
+    getSimulateApiHarnessEnvironmentsUploadFileUrl(id),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
     },
   );
 };
