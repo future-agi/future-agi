@@ -8,9 +8,15 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
 
 from accounts.models import OrgApiKey
-from simulate.models import HarnessSuiteMember, HarnessSuiteVersion, HostedHarnessJob
+from simulate.models import (
+    CallExecution,
+    HarnessSuiteMember,
+    HarnessSuiteVersion,
+    HostedHarnessJob,
+)
 from simulate.models import TestExecution as Execution
 from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.held_back import held_back, verify_run, version_verify
@@ -28,7 +34,9 @@ from simulate.services.harness_versioning.versions import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
+    project_terminal_job_onto_run,
 )
+from simulate.services.hosted_harness_gateway import RUNTIME_VALIDATION_FAILED
 from simulate.services.run_compare import wilson_interval
 from simulate.tests.test_agent_fix_services import (
     KEYS,
@@ -914,7 +922,7 @@ class TestWhatACodingAgentReads:
         for secret in (hidden, member.content["instruction"], member.content["name"]):
             assert secret not in text
 
-    def test_a_failed_run_reads_without_the_guest_logs(
+    def test_a_failed_run_reads_without_the_guest_output(
         self, api_client, environment, keys
     ):
         chosen = ensure_held_back(environment)
@@ -931,32 +939,49 @@ class TestWhatACodingAgentReads:
             HTTP_IDEMPOTENCY_KEY="coder-failed",
         )
         assert created.status_code == 202, created.content
-        # A cache-miss certify runs every case of the suite; its logs name them.
+        # A cache-miss certify runs every case of the suite, and the guest's output
+        # names them: in the details and in the cause the message ends with.
         failure = {
             "domain": "environment",
             "stage": "validating_environment",
             "code": "authoring_runtime_validation_failed",
-            "message": "Generated environment failed real-runtime validation",
+            "message": f"{RUNTIME_VALIDATION_FAILED}: RuntimeError: {hidden} said hi",
             "details": {
                 "guest_log_tail": f"chat timed out in {hidden}: caller said hello",
                 "process_logs": f"{hidden} transcript",
             },
         }
-        HostedHarnessJob.no_workspace_objects.filter(
-            id=created.json()["job_id"]
-        ).update(state=HostedHarnessJob.State.FAILED, failure=failure)
-        path = f"/simulate/api/harness-jobs/{created.json()['job_id']}/"
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = failure
+        run.save(update_fields=["state", "failure", "updated_at"])
+        project_terminal_job_onto_run(run, timezone.now())
+        execution = created.json()["test_execution_id"]
+        call = CallExecution.objects.filter(test_execution_id=execution).first()
+        job_path = f"/simulate/api/harness-jobs/{run.id}/"
+        reads = [
+            job_path,
+            f"/simulate/test-executions/{execution}/",
+            f"/simulate/v3/test-executions/{execution}/calls/",
+            f"/simulate/v3/call-executions/{call.id}/",
+        ]
 
-        coder = _as(api_client, keys.coder, "get", path)
-        person = _as(api_client, keys.user, "get", path)
+        coder = {path: _as(api_client, keys.coder, "get", path) for path in reads}
+        person = _as(api_client, keys.user, "get", job_path)
 
-        assert coder.status_code == person.status_code == 200, coder.content
-        assert person.json()["status"]["failure"] == failure
-        assert coder.json()["status"]["failure"] == {
-            name: failure[name] for name in ("domain", "stage", "code", "message")
+        for path, response in coder.items():
+            assert response.status_code == 200, (path, response.content)
+            assert hidden not in json.dumps(response.json()), path
+        assert coder[job_path].json()["status"]["failure"] == {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": RUNTIME_VALIDATION_FAILED,
         }
-        assert coder.json()["status"]["state"] == HostedHarnessJob.State.FAILED
-        assert hidden not in json.dumps(coder.json())
+        assert person.json()["status"]["failure"] == failure
+        assert (
+            coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
+        )
 
     def test_a_person_s_read_chooses_nothing(self, api_client, environment, keys):
         _as(api_client, keys.user, "get", f"{BASE}/{environment.id}/")

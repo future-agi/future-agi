@@ -16,6 +16,10 @@ from accounts.models import OrgApiKey
 from simulate.models import HostedHarnessExecution, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import HELD_BACK_VERIFIED_MIN
 from simulate.selectors.agent_fix import FINISHED_RUN_STATES
+from simulate.services.hosted_harness_gateway import (
+    AUTHORING_FAILED,
+    RUNTIME_VALIDATION_FAILED,
+)
 from simulate.services.run_compare import trial_passed, wilson_interval
 
 # The environment payload metadata key; never copied to a run's payload.
@@ -123,6 +127,18 @@ _RUN_METADATA_FIELDS = (
 # A failure's details hold the guest's logs, and a certify on a cache miss runs every
 # case of the suite there, held-back ones included; only these fields stay.
 _RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
+# The message a coding agent reads instead of the stored one, which can end with what
+# the guest printed: the label of its code.
+_FAILURE_LABELS = {
+    "authoring_runtime_validation_failed": RUNTIME_VALIDATION_FAILED,
+    "authoring_failed": AUTHORING_FAILED,
+}
+
+
+def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
+    """A failure's message as a coding agent reads it: fixed text for its code."""
+    code = str(failure.get("code") or "failed")
+    return _FAILURE_LABELS.get(code, f"The run failed ({code})")
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
@@ -135,7 +151,12 @@ def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
         shown["status"] = {
             **shown["status"],
             "failure": {
-                name: failure[name] for name in _RUN_FAILURE_FIELDS if name in failure
+                **{
+                    name: failure[name]
+                    for name in _RUN_FAILURE_FIELDS
+                    if name in failure
+                },
+                "message": coding_agent_failure_message(failure),
             },
         }
     return {
