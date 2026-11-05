@@ -439,7 +439,7 @@ describe("RunTraceTable", () => {
     );
   });
 
-  it("says how many calls each sub-actor entered in the filter", async () => {
+  it("says how many calls each sub-actor was planned for and how many it never reached", async () => {
     const user = userEvent.setup();
     const base = useRunCalls.getMockImplementation();
     useRunCalls.mockImplementation((...args) => ({
@@ -448,7 +448,22 @@ describe("RunTraceTable", () => {
         ...FACETS,
         sub_actor: [
           { value: "none", count: 3, label: "Simulated user only" },
-          { value: "friend", count: 2, label: "Rowan" },
+          {
+            value: "friend",
+            count: 4,
+            label: "Rowan",
+            delivered: 2,
+            dropped: 1,
+            not_triggered: 1,
+          },
+          {
+            value: "kid",
+            count: 2,
+            label: "Sam",
+            delivered: 2,
+            dropped: 0,
+            not_triggered: 0,
+          },
         ],
       },
     }));
@@ -457,7 +472,10 @@ describe("RunTraceTable", () => {
     await user.click(screen.getAllByRole("combobox")[0]);
     await user.click(await screen.findByRole("option", { name: "Sub-actor" }));
     await user.click(screen.getByText(/Select values/));
-    expect(await screen.findByText("Rowan (2)")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Rowan (4; 1 dropped, 1 not triggered)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sam (2)")).toBeInTheDocument();
     expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
   });
 

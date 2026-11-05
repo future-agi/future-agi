@@ -102,6 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
+from simulate.types import SubActorDelivery, SubActorFacetValue, SubActorTookPart
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -1019,10 +1020,21 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
-def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
-    """Calls where a sub-actor (or this one) entered: at least one of its lines reached the agent."""
+def sub_actor_delivery(took_part: SubActorTookPart) -> SubActorDelivery:
+    """How far a sub-actor got in one call; a summary from before `drawn` counts as drawn."""
+    if (took_part.get("delivered") or 0) > 0:
+        return "delivered"
+    if took_part.get("triggered"):
+        return "dropped"
+    if took_part.get("drawn") is False:
+        return "not_drawn"
+    return "not_triggered"
+
+
+def _sub_actor_planned(sub_actor: str | None = None) -> Q:
+    """Calls a sub-actor (or this one) was planned for, whether or not any of its lines reached the agent."""
     who = " && @.sub_actor == $who" if sub_actor else ""
-    path = Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})")
+    path = Value(f"$.harness_sub_actors.summary[*] ? (!(@.drawn == false){who})")
     return Q(
         Func(
             F("call_metadata"),
@@ -1036,13 +1048,13 @@ def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
 
 
 def _sub_actor_q(values: list[str]) -> Q:
-    """Calls each sub-actor entered; ``none`` is a call no sub-actor entered."""
+    """Calls each sub-actor was planned for; ``none`` is a call no sub-actor was planned for."""
     query = Q(pk__in=[])
     for value in values:
         if value == NO_SUB_ACTOR:
-            query |= Q(call_metadata__isnull=True) | ~_sub_actor_spoke()
+            query |= Q(call_metadata__isnull=True) | ~_sub_actor_planned()
         else:
-            query |= _sub_actor_spoke(value)
+            query |= _sub_actor_planned(value)
     return query
 
 
@@ -1257,9 +1269,10 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
-def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
-    """Calls per sub-actor that entered them, by name; none when no run call had one."""
+def _sub_actor_facet(calls: QuerySet) -> list[SubActorFacetValue]:
+    """Calls per sub-actor planned for them, by name and by how far it got; none when no run call had one."""
     counts: Counter = Counter()
+    deliveries: defaultdict[str, Counter] = defaultdict(Counter)
     names = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
     summaries = (
         calls.order_by()
@@ -1267,23 +1280,31 @@ def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
         .iterator(chunk_size=2000)
     )
     for summary in summaries:
-        entered = [
+        planned = [
             one
             for one in (summary if isinstance(summary, list) else [])
             if isinstance(one, dict)
-            and (one.get("delivered") or 0) > 0
             and one.get("sub_actor")
+            and sub_actor_delivery(one) != "not_drawn"
         ]
-        for one in entered:
+        for one in planned:
             key = str(one["sub_actor"])
             counts[key] += 1
+            deliveries[key][sub_actor_delivery(one)] += 1
             names.setdefault(key, str(one.get("name") or key))
-        if not entered:
+        if not planned:
             counts[NO_SUB_ACTOR] += 1
     if set(counts) <= {NO_SUB_ACTOR}:
         return []
     return [
-        {"value": value, "count": count, "label": names[value]}
+        {
+            "value": value,
+            "count": count,
+            "label": names[value],
+            "delivered": deliveries[value]["delivered"],
+            "dropped": deliveries[value]["dropped"],
+            "not_triggered": deliveries[value]["not_triggered"],
+        }
         for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
 

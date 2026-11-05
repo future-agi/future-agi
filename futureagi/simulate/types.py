@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class SubActorTrigger(TypedDict, total=False):
@@ -65,6 +65,22 @@ class SubActorTookPart(TypedDict, total=False):
     delivered: int
     drawn: bool
     dropped: list[str]
+
+
+# A sub-actor's part in one call: heard by the agent, triggered with nothing heard, never
+# triggered, or left out by the call's draw.
+SubActorDelivery = Literal["delivered", "dropped", "not_triggered", "not_drawn"]
+
+
+class SubActorFacetValue(TypedDict):
+    """A run's calls one sub-actor was planned for, by how far they got; or the calls with none."""
+
+    value: str
+    label: str
+    count: int
+    delivered: int
+    dropped: int
+    not_triggered: int
 
 
 class SubActorEvent(TypedDict, total=False):

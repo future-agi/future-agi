@@ -60,6 +60,17 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
+// "Rowan (5; 1 dropped, 1 not triggered)": the calls a sub-actor was planned for, then
+// any where none of its lines reached the agent.
+const subActorChoiceLabel = (item) => {
+  if (item.count == null) return item.label;
+  const missed = [
+    item.dropped && `${item.dropped} dropped`,
+    item.not_triggered && `${item.not_triggered} not triggered`,
+  ].filter(Boolean);
+  return `${item.label} (${[item.count, missed.join(", ")].filter(Boolean).join("; ")})`;
+};
+
 export default function RunTraceTable({
   executionId,
   onOpenCall,
@@ -385,7 +396,7 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
-  // Only a run where some call had a sub-actor enter offers this filter. Facets
+  // Only a run where some call had a sub-actor planned offers this filter. Facets
   // are empty while loading or failed, so the row keeps the last ones it had.
   const lastSubActorFacetRef = useRef(facets.sub_actor);
   useEffect(() => {
@@ -405,13 +416,12 @@ export default function RunTraceTable({
               label: "Sub-actor",
               type: "enum",
               choices: subActorFacet.map((item) => item.value),
-              // Each choice says how many of the run's calls it entered.
+              // Each choice says how many of the run's calls it was planned for,
+              // and how many of those it never reached the agent in.
               choiceLabels: Object.fromEntries(
                 subActorFacet.map((item) => [
                   item.value,
-                  item.count != null
-                    ? `${item.label} (${item.count})`
-                    : item.label,
+                  subActorChoiceLabel(item),
                 ]),
               ),
             },
