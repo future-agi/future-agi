@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { Box, Menu, MenuItem, Typography } from "@mui/material";
+import { Box, Menu, MenuItem, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
   SUPPORTED_ACCEPT,
@@ -33,7 +33,7 @@ export default function AddSourceMenu({
         anchorEl={anchorEl}
         open={!!anchorEl}
         onClose={onClose}
-        slotProps={{ paper: { sx: { width: 320 } } }}
+        slotProps={{ paper: { sx: { width: 280 } } }}
       >
         {title && (
           <Typography
@@ -49,70 +49,71 @@ export default function AddSourceMenu({
             {title}
           </Typography>
         )}
-        <MenuItem
-          onClick={() => {
-            onClose();
-            fileRef.current?.click();
-          }}
-          sx={{ alignItems: "flex-start", gap: 1, whiteSpace: "normal" }}
-        >
-          <Iconify icon="solar:upload-linear" width={16} sx={{ mt: "2px" }} />
-          <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        <Tooltip arrow placement="left" title={SUPPORTED_LINE}>
+          <MenuItem
+            onClick={() => {
+              onClose();
+              fileRef.current?.click();
+            }}
+            sx={rowSx}
+          >
+            <Iconify icon="solar:upload-linear" width={16} />
+            <Typography sx={{ typography: "s2", flex: 1 }}>
               Upload files
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {SUPPORTED_LINE}
+              up to 25 MB
             </Typography>
-          </Box>
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            onClose();
-            setKbOpen(true);
-          }}
-          sx={{ alignItems: "flex-start", gap: 1, whiteSpace: "normal" }}
-        >
-          <Iconify
-            icon="solar:document-text-linear"
-            width={16}
-            sx={{ mt: "2px" }}
-          />
-          <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              Choose from Knowledge base
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {KB_SNAPSHOT_LINE}
-            </Typography>
-          </Box>
-        </MenuItem>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            px: 2,
-            pt: 1,
-            pb: 0.5,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          Other connectors
-        </Typography>
-        {UNAVAILABLE_CONNECTORS.map((c) => (
-          <MenuItem key={c.id} disabled sx={{ gap: 1 }}>
-            <Iconify icon={c.icon} width={16} />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography noWrap sx={{ typography: "s2" }}>
-                {c.name}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Not available yet
-              </Typography>
-            </Box>
           </MenuItem>
-        ))}
+        </Tooltip>
+        <Tooltip arrow placement="left" title={KB_SNAPSHOT_LINE}>
+          <MenuItem
+            onClick={() => {
+              onClose();
+              setKbOpen(true);
+            }}
+            sx={rowSx}
+          >
+            <Iconify icon="solar:document-text-linear" width={16} />
+            <Typography sx={{ typography: "s2", flex: 1 }}>
+              From the Knowledge base
+            </Typography>
+            <Iconify
+              icon="solar:alt-arrow-right-linear"
+              width={14}
+              sx={{ color: "text.tertiary" }}
+            />
+          </MenuItem>
+        </Tooltip>
+        {/* Connectors that aren't ready: one quiet line, not a row each. */}
+        <Tooltip
+          arrow
+          placement="left"
+          title={UNAVAILABLE_CONNECTORS.map((c) => c.name).join(", ")}
+        >
+          <Box
+            sx={{
+              ...rowSx,
+              display: "flex",
+              alignItems: "center",
+              px: 2,
+              py: 1,
+              mt: 0.5,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              color: "text.tertiary",
+            }}
+          >
+            <Box sx={{ display: "flex", gap: 0.5, opacity: 0.5 }}>
+              {UNAVAILABLE_CONNECTORS.map((c) => (
+                <Iconify key={c.id} icon={c.icon} width={14} />
+              ))}
+            </Box>
+            <Typography sx={{ typography: "s3", flex: 1 }}>
+              Not available yet
+            </Typography>
+          </Box>
+        </Tooltip>
       </Menu>
       <KnowledgeBasePicker
         open={kbOpen}
@@ -141,6 +142,8 @@ export default function AddSourceMenu({
     </>
   );
 }
+const rowSx = { gap: 1, minHeight: 36, typography: "s2" };
+
 AddSourceMenu.propTypes = {
   added: PropTypes.arrayOf(PropTypes.string),
   anchorEl: PropTypes.any,
