@@ -50702,6 +50702,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        lost_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 50,
+        },
+        last_error: {
+          title: "Last error",
+          type: "string",
+          "x-nullable": true,
+        },
       },
     },
     AgentFixEngineState: {
@@ -94895,6 +94910,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         score: {
           title: "Score",
@@ -110650,13 +110667,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         ended_reason: {
           title: "Ended reason",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         error_message: {
           title: "Error message",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         evaluations: {
@@ -110793,6 +110808,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         summary: {
           $ref: "#/definitions/RunSummary",
+        },
+        fix_run: {
+          $ref: "#/definitions/RunFixRun",
         },
       },
     },
@@ -125630,6 +125648,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    RunFixRun: {
+      required: ["id", "label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     RunResume: {
       required: ["resumable", "finished", "unfinished", "history"],
