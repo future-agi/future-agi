@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0101_agent_fix_candidate_override"),
+        ("simulate", "0102_agent_fix_engine_notes"),
     ]
 
     operations = [

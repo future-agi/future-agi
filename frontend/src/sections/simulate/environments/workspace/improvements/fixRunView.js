@@ -170,11 +170,15 @@ function stepLines(id, fix) {
     return [count, cause].filter(Boolean);
   }
   if (id === "verify") {
-    return plan
-      ? [
-          `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios`,
-        ]
-      : [];
+    if (!plan) return [];
+    // Must-pass holds every other scenario too, so it is larger than the
+    // protected count the launch form showed; name both.
+    const kept = plan.protected
+      ? `, including the ${plan.protected} you protected`
+      : "";
+    return [
+      `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios${kept}`,
+    ];
   }
   return ["You choose the trial to keep and ship"];
 }

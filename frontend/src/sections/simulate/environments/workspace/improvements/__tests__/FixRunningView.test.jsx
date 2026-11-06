@@ -118,4 +118,15 @@ describe("TrialChart", () => {
       screen.getByText(/^pass rate on the target scenarios · Trial 3 · winner/),
     ).toBeInTheDocument();
   });
+
+  it("shows no arrow when the best trial did not move the pass rate", () => {
+    const [trial] = byId("fix-search").candidates;
+    trial.verdict.target_pass_rate = [0.5, 0.5];
+    render(<TrialChart candidates={[trial]} />);
+    const lead = screen.getByText(/^pass rate on the target scenarios/);
+    expect(lead).toHaveTextContent(
+      "Trial 1 · best so far · no change from the agent before the change, on the same scenarios",
+    );
+    expect(lead).not.toHaveTextContent(/[▲▼]/);
+  });
 });

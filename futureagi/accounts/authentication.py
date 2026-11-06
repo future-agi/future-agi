@@ -14,6 +14,10 @@ from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import (
@@ -44,6 +48,20 @@ from tfc.utils.api_errors import (
 
 logger = structlog.get_logger(__name__)
 security_logger = structlog.get_logger("saml2_auth.security")
+
+# Postgres or Redis being slow or down says nothing about a credential.
+INFRASTRUCTURE_ERRORS = (
+    DatabaseError,
+    InterfaceError,
+    ConnectionInterrupted,
+    RedisError,
+)
+# The cache could not be reached; any other Redis error is a bug and stays a 500.
+_CACHE_UNAVAILABLE_ERRORS = (
+    ConnectionInterrupted,
+    RedisConnectionError,
+    RedisTimeoutError,
+)
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -189,8 +207,8 @@ class APIKeyAuthentication(BaseAuthentication):
                     "saml_credential_denied", reason=exc.reason, transport="http"
                 )
                 raise
-            except (PermissionDenied, DatabaseError, InterfaceError):
-                raise  # Authorization denials and database failures are not bad tokens.
+            except (PermissionDenied, *INFRASTRUCTURE_ERRORS):
+                raise  # Authorization denials and database or cache failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -1107,7 +1125,7 @@ def decode_token(token: str, *, transport: str = "http"):
 
         return user, token, None
 
-    except (DatabaseError, InterfaceError, SamlCredentialInvalid):
+    except (*INFRASTRUCTURE_ERRORS, SamlCredentialInvalid):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -1133,6 +1151,12 @@ def _pydantic_error_response(exc):
 class DatabaseUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "Database temporarily unavailable."
+    default_code = "service_unavailable"
+
+
+class CacheUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Cache temporarily unavailable."
     default_code = "service_unavailable"
 
 
@@ -1195,6 +1219,9 @@ def custom_exception_handler(exc, context):
         )
         # Keep raw database details private and use DRF's normal rollback path.
         exc = DatabaseUnavailable()
+    elif isinstance(exc, _CACHE_UNAVAILABLE_ERRORS):
+        logger.warning("api_cache_unavailable", error_class=type(exc).__name__)
+        exc = CacheUnavailable()
     response = exception_handler(exc, context)
 
     if isinstance(exc, FeatureUnavailable):
