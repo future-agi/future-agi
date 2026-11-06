@@ -413,7 +413,13 @@ class Fixture:
                     "email": "gitops-admin@example.com", "name": "GitOps Smoke", "password": ADMIN_PASSWORD,
                     "output": str(self.output / ("browser-" + name + ".json"))}), check=False)
             if result.returncode:
-                raise Refused("real browser login/profile check failed: " + name)
+                report_path = self.output / ("browser-" + name + ".json")
+                report = json.loads(report_path.read_text()) if report_path.is_file() else {}
+                # Only the browser's sanitized stage/type, never entered values
+                # or raw Playwright exception text, belongs in the command log.
+                detail = {key: report.get(key) for key in ("stage", "error_type", "page_errors")}
+                detail["outcome_file_present"] = report_path.is_file()
+                raise Refused("real browser login/profile check failed: " + name + " " + json.dumps(detail))
         print("PASS real browser login and retained profile " + name, flush=True)
 
     def deployment_templates(self):

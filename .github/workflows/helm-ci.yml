@@ -295,19 +295,22 @@ jobs:
   kind:
     name: install and upgrade on kind (${{ matrix.mode }})
     needs: static
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - mode: helm
+            os: ubuntu-latest
             minutes: 90
-          # New lanes build the product, install a real controller and exercise
-          # multiple fresh bootstrap/recovery boundaries. The original Helm
-          # lane and all per-operation product deadlines remain unchanged.
+          # Pin the new browser lanes to an OS supported by Playwright 1.57;
+          # ubuntu-latest can move ahead of that browser's dependency support.
+          # The original Helm lane and product deadlines remain unchanged.
           - mode: argo
+            os: ubuntu-24.04
             minutes: 180
           - mode: flux
+            os: ubuntu-24.04
             minutes: 180
     timeout-minutes: ${{ matrix.minutes }}
     permissions:
