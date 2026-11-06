@@ -2446,8 +2446,10 @@
 
 ### SIM-E2E-003 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
 
-**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs  
-**Spec:** `flows/simulate/pairing-readiness.spec.ts:36`  
+**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:44`
+
 **Tags:** —
 
 **User steps:**
@@ -2465,12 +2467,14 @@
 - the uncertified pairing reads not_run and unchecked
 - recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
 - the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
-- the run answers 409 pair_validating and creates no run job
+- the run answers 409 pair_validating, retryable, with when to retry and the check it waits on, and creates no run job
 
 ### SIM-E2E-004 — the cases a pairing holds back are bucketed and paged by scenario number
 
-**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases  
-**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`  
+**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases
+
+**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`
+
 **Tags:** —
 
 **User steps:**
@@ -2487,3 +2491,24 @@
 - the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
 - the eligible page is the two lookups, held by nothing
 - the page numbers are the stored suite members' numbers
+
+### SIM-E2E-006 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
+
+**Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:147`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built Environment whose pairing's last check failed on issue_refund (e2e/lib/harness_environment_seed.py, failed_check)
+2. read the pairing's readiness (GET capabilities)
+3. try to run a scenario on that pairing
+4. ask for it to be checked again (POST capabilities/recheck)
+
+**Backend state verified:**
+
+- the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
+- the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
+- recheck answers 202 with a new validating job, and the bundle is pending again

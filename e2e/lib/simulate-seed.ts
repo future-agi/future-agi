@@ -226,6 +226,8 @@ export interface HarnessEnvironmentSeed {
  * `certified`, the pairing's certified bundle (every check passed, both tools
  * certified). Uncertified, the pairing has no bundle and its first check is a
  * validation. `productionOnly` names a tool the contract says reaches production.
+ * `failedCheck` names an action an uncertified pairing's last validation failed on,
+ * leaving its bundle failed by that check.
  * Refund scenarios use `lookup_order` and `issue_refund`; lookups use only
  * `lookup_order`. See e2e/lib/harness_environment_seed.py.
  */
@@ -236,6 +238,7 @@ export function seedHarnessEnvironment(opts: {
   lookups?: number;
   certified?: boolean;
   productionOnly?: 'lookup_order' | 'issue_refund';
+  failedCheck?: 'lookup_order' | 'issue_refund';
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -251,6 +254,7 @@ export function seedHarnessEnvironment(opts: {
         lookups: opts.lookups ?? 1,
         certified: opts.certified ?? true,
         production_only: opts.productionOnly ?? null,
+        failed_check: opts.failedCheck ?? null,
       }),
     },
   ) as HarnessEnvironmentSeed;
