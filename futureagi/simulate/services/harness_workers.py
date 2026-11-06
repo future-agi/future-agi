@@ -139,66 +139,81 @@ def _digest(value: Any) -> str | None:
     return None if payload is None else json.dumps(payload, sort_keys=True, default=str)
 
 
-class _ShownBySpans:
-    """The calls and hand-offs the spans showed, each standing for at most one sealed row of the same call.
+def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set[int]:
+    """The sealed rows a span already showed, by row index; each span stands for at most one row.
 
-    A row is that call when it names the span's id. A row without one is that call only when its input or time says so
-    and no other span could be it; a row that can't be told apart is kept, never dropped.
+    First, a row that names a span's id (its span id or runtime event id) is that span's call, for every row before
+    any guess, and a row whose id names no span is another call. Then a row with no id is a span's call only when its
+    input or time fits that span and nothing else could be paired: the row and the span are each other's only candidate,
+    or every row and span that could be paired have the same input. An input recorded on one side only is no evidence.
+    A row that can't be told apart is kept, so it can show next to its span, but no call is dropped.
     """
+    open_ = [one for one in spans if one["type"] in ("tool_call", "delegated")]
+    shown: set[int] = set()
+    claimed: set[int] = set()
+    for row in rows:
+        if not row["ids"]:
+            continue
+        for at, span in enumerate(open_):
+            # A hand-off from spans carries its launching call's span id, so the kind decides too.
+            if (
+                at not in claimed
+                and span["type"] == row["kind"]
+                and span.get("span_id") in row["ids"]
+            ):
+                claimed.add(at)
+                shown.add(row["index"])
+                break
 
-    def __init__(self, events: list[WorkerEvent]) -> None:
-        self._open = [
-            one for one in events if one["type"] in ("tool_call", "delegated")
-        ]
+    def sig(span: WorkerEvent) -> str | None:
+        return (
+            _digest(span.get("input"))
+            if span["type"] == "tool_call"
+            else (span.get("task") or None)
+        )
 
-    def take(
-        self,
-        kind: str,
-        worker_id: str | None,
-        *,
-        ids: set[str],
-        tool: str | None = None,
-        task: str | None = None,
-        payload: str | None = None,
-        at: str | None = None,
-    ) -> bool:
-        exact = [
-            one for one in self._open if one.get("span_id") and one["span_id"] in ids
-        ]
-        if exact:
-            self._open.remove(exact[0])
-            return True
-
-        def says(one: WorkerEvent) -> tuple[bool, bool]:
-            # (nothing says it is another call, something says it is this one)
-            checks = []
-            if kind == "tool_call":
-                theirs = _digest(one.get("input"))
-                if theirs is not None and payload is not None:
-                    checks.append(theirs == payload)
-            elif one.get("task") and task:
-                checks.append(one["task"] == task)
-            mine, theirs_at = _moment(at), _moment(one.get("at"))
-            if mine is not None and theirs_at is not None:
-                checks.append(abs(mine - theirs_at) <= _SAME_CALL_SECONDS)
-            return all(checks), any(checks)
-
-        matches = [
-            one
-            for one in self._open
-            if one["type"] == kind
-            and one.get("worker_id") == worker_id
-            and (kind != "tool_call" or one.get("tool") == tool)
-            and says(one) == (True, True)
-        ]
-        alike = {
-            (_digest(one.get("input")) if kind == "tool_call" else one.get("task"))
-            for one in matches
-        }
-        if not matches or len(alike) > 1:
+    def fits(row: dict[str, Any], span: WorkerEvent) -> bool:
+        if span["type"] != row["kind"] or span.get("worker_id") != row["worker_id"]:
             return False
-        self._open.remove(matches[0])
-        return True
+        if row["kind"] == "tool_call" and span.get("tool") != row["tool"]:
+            return False
+        checks = []
+        if row["sig"] is not None and sig(span) is not None:
+            checks.append(row["sig"] == sig(span))
+        mine, theirs = _moment(row["at"]), _moment(span.get("at"))
+        if mine is not None and theirs is not None:
+            checks.append(abs(mine - theirs) <= _SAME_CALL_SECONDS)
+        return bool(checks) and all(checks)
+
+    loose = [row for row in rows if not row["ids"]]
+    free = [at for at in range(len(open_)) if at not in claimed]
+    edges = {row["index"]: [at for at in free if fits(row, open_[at])] for row in loose}
+    # Rows and spans that could be each other's call, in groups that share no candidate.
+    group: dict[Any, Any] = {}
+
+    def root(node: Any) -> Any:
+        while group.setdefault(node, node) != node:
+            node = group[node]
+        return node
+
+    for index, spans_of in edges.items():
+        for at in spans_of:
+            group[root(("row", index))] = root(("span", at))
+    members: dict[Any, tuple[list[dict[str, Any]], list[int]]] = {}
+    for row in loose:
+        if edges[row["index"]]:
+            members.setdefault(root(("row", row["index"])), ([], []))[0].append(row)
+    for at in free:
+        if ("span", at) in group:
+            members.setdefault(root(("span", at)), ([], []))[1].append(at)
+    for paired_rows, paired_spans in members.values():
+        sigs = {row["sig"] for row in paired_rows} | {
+            sig(open_[at]) for at in paired_spans
+        }
+        alike = None not in sigs and len(sigs) == 1
+        if (len(paired_rows) == 1 and len(paired_spans) == 1) or alike:
+            shown.update(row["index"] for row in paired_rows[: len(paired_spans)])
+    return shown
 
 
 def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
@@ -220,6 +235,38 @@ def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
 
 def _status(span: Mapping[str, Any]) -> Literal["ok", "error"]:
     return "error" if str(span.get("status") or "").upper() == "ERROR" else "ok"
+
+
+def _in_order(events: list[WorkerEvent]) -> None:
+    """Sort a call's events into reading order and number them."""
+    order = {"transferred": 0, "delegated": 0, "tool_call": 1, "returned": 2}
+    returns = {
+        one["delegation_id"]: one.get("at")
+        for one in events
+        if one["type"] == "returned" and one.get("at")
+    }
+
+    def placed(one: Mapping[str, Any]) -> str:
+        if (
+            one.get("at")
+            or one["type"] != "delegated"
+            or one.get("delegation_id") not in returns
+        ):
+            return str(one.get("at") or "")
+        until = returns[one["delegation_id"]]
+        steps = [
+            other.get("at")
+            for other in events
+            if other["worker_id"] == one["worker_id"]
+            and other["type"] == "tool_call"
+            and other.get("at")
+            and other["at"] <= until
+        ]
+        return min([until, *steps])
+
+    events.sort(key=lambda one: (placed(one), order[one["type"]]))
+    for seq, event in enumerate(events, 1):
+        event["seq"] = seq
 
 
 def worker_timeline(
@@ -416,8 +463,6 @@ def worker_timeline(
         if model and model not in used:
             entry["model"] = ", ".join([*used, model])
         entry["tokens"] = int(entry.get("tokens") or 0) + int(span.get("tokens") or 0)
-    # A sealed call or hand-off a span already showed is not repeated.
-    shown = _ShownBySpans(events)
     rows = [call for call in traced_calls if isinstance(call, Mapping)]
 
     def by_of(row: Mapping[str, Any]) -> str:
@@ -528,6 +573,45 @@ def worker_timeline(
             or f"traced-{index}"
         )
 
+    # A sealed call or hand-off a span already showed is not repeated.
+    sealed: list[dict[str, Any]] = []
+    for index, call in enumerate(rows):
+        by, target = by_of(call), str(call.get("delegated_to") or "").strip()
+        if (not by and not target) or index in transfers:
+            continue
+        arguments = call.get("arguments")
+        sealed.append(
+            {
+                "index": index,
+                "ids": ids_of(call),
+                "kind": "delegated" if target else "tool_call",
+                "worker_id": (
+                    traced_worker(target, target)
+                    if target
+                    else traced_worker(by, str(call.get("worker_label") or by))
+                ),
+                "tool": str(call.get("name") or ""),
+                "sig": (
+                    _summary(
+                        (
+                            json.dumps(arguments)
+                            if isinstance(arguments, dict)
+                            else arguments
+                        ),
+                        argument=True,
+                    )
+                    or None
+                    if target
+                    else _digest(arguments)
+                ),
+                "at": (
+                    started(call)
+                    if target
+                    else started(call) or when(call.get("ended_at"))
+                ),
+            }
+        )
+    shown = _shown_by_spans(events, sealed)
     for index, call in enumerate(rows):
         by = by_of(call)
         if not by and not call.get("delegated_to"):
@@ -565,13 +649,7 @@ def worker_timeline(
                 json.dumps(arguments) if isinstance(arguments, dict) else arguments,
                 argument=True,
             )
-            if shown.take(
-                "delegated",
-                handed_to,
-                ids=ids_of(call),
-                task=task,
-                at=started(call),
-            ):
+            if index in shown:
                 continue
             delegation_id = own_id(call, index)
             events.append(
@@ -600,14 +678,7 @@ def worker_timeline(
                 )
             continue
         tool = str(call.get("name") or "")
-        if shown.take(
-            "tool_call",
-            worker_id,
-            ids=ids_of(call),
-            tool=tool,
-            payload=_digest(call.get("arguments")),
-            at=started(call) or when(call.get("ended_at")),
-        ):
+        if index in shown:
             continue
         event: WorkerEvent = {
             "type": "tool_call",
@@ -639,34 +710,7 @@ def worker_timeline(
             event["runtime_parent_event_id"] = str(runtime_ids["parent_event_id"])
         events.append(event)
     # A return sorts after the work it closes; a hand-off with no start sorts just before its worker's first step.
-    order = {"transferred": 0, "delegated": 0, "tool_call": 1, "returned": 2}
-    returns = {
-        one["delegation_id"]: one["at"]
-        for one in events
-        if one["type"] == "returned" and one["at"]
-    }
-
-    def placed(one: Mapping[str, Any]) -> str:
-        if (
-            one["at"]
-            or one["type"] != "delegated"
-            or one["delegation_id"] not in returns
-        ):
-            return str(one["at"] or "")
-        until = returns[one["delegation_id"]]
-        steps = [
-            other["at"]
-            for other in events
-            if other["worker_id"] == one["worker_id"]
-            and other["type"] == "tool_call"
-            and other["at"]
-            and other["at"] <= until
-        ]
-        return min([until, *steps])
-
-    events.sort(key=lambda one: (placed(one), order[one["type"]]))
-    for seq, event in enumerate(events, 1):
-        event["seq"] = seq
+    _in_order(events)
     for one in declared:
         worker_id = f"{run_key}/{one['id']}"
         workers.setdefault(
@@ -821,33 +865,69 @@ def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
 
 
 # How much a record says, best first. A record from before the field was kept was a successful read.
+# How far a read got, best first. A record without the field says nothing about its read, so it ranks with a failed one.
 _COLLECTION_RANK = {
     "complete": 3,
-    None: 3,
     "partial": 2,
     "unavailable": 1,
+    None: 1,
     "no_evidence": 0,
 }
 
 
-def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
-    """What a call keeps after another read: never less evidence than it already had.
+def _event_key(one: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Which call or hand-off an event is, across reads: its recorded id, else everything it recorded."""
+    ident = one.get("span_id") or one.get("runtime_event_id")
+    if one["type"] != "tool_call":
+        ident = one.get("delegation_id") or ident
+    if ident:
+        return (one["type"], str(ident))
+    return (
+        one["type"],
+        one.get("worker_id"),
+        one.get("tool"),
+        one.get("at"),
+        _digest(one.get("input")),
+        one.get("task"),
+        one.get("result"),
+    )
 
-    The record that says the most stays (how complete its read was, then how many events it has); a worker the other
-    record observed stays observed.
+
+def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
+    """What a call keeps after another read: everything either read found.
+
+    Events are joined by their recorded ids, so no event either read kept is lost, and a worker either read observed
+    stays observed. The record's other fields come from the read that found spans, then got further, then found more
+    events; on a tie, the later read. Its `collection` is the best of the reads that found spans, if any did.
     """
     if not isinstance(stored, Mapping) or not (
         stored.get("events") or stored.get("workers")
     ):
         return read
 
-    def weight(one: Mapping[str, Any]) -> tuple[int, int]:
+    def weight(one: Mapping[str, Any]) -> tuple[bool, int, int]:
         return (
+            bool(one.get("spans_received")),
             _COLLECTION_RANK.get(one.get("collection"), 0),
             len(one.get("events") or []),
         )
 
     best, other = (read, stored) if weight(read) >= weight(stored) else (stored, read)
+    events = [dict(one) for one in best.get("events") or []]
+    # Counted, so two events alike in everything they recorded stay two.
+    held = Counter(_event_key(one) for one in events)
+    for one in other.get("events") or []:
+        if held[_event_key(one)]:
+            held[_event_key(one)] -= 1
+        else:
+            events.append(dict(one))
+    _in_order(events)
+    omitted = max(
+        int(best.get("events_omitted") or 0), int(other.get("events_omitted") or 0)
+    )
+    if len(events) > _MAX_EVENTS:
+        omitted += len(events) - _MAX_EVENTS
+        events = events[:_MAX_EVENTS]
     workers = [dict(one) for one in best.get("workers") or []]
     by_id = {one["worker_id"]: one for one in workers}
     for one in other.get("workers") or []:
@@ -866,7 +946,25 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
                     ]
                 )
             )
-    return cast(WorkerTimeline, {**best, "workers": workers})
+    traced = [one for one in (stored, read) if one.get("spans_received")] or [
+        stored,
+        read,
+    ]
+    collection = max(
+        (one.get("collection") for one in traced),
+        key=lambda name: _COLLECTION_RANK.get(name, 0),
+    )
+    return cast(
+        WorkerTimeline,
+        {
+            **best,
+            "events": events,
+            "events_omitted": omitted,
+            "workers": workers,
+            "spans_received": any(one.get("spans_received") for one in (stored, read)),
+            "collection": collection,
+        },
+    )
 
 
 def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:

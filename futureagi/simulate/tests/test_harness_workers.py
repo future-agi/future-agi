@@ -1811,92 +1811,234 @@ def test_a_hand_off_read_from_spans_keeps_the_span_it_was_made_in():
     assert handed == {"run-1/planner": "lt", "run-1/searcher": "c"}
 
 
-# A coordinator handing work to a researcher that called `search` with q=a; the sandbox sealed two searches, B then A.
-_SEARCH_SPANS = [
-    _span("c", None, "agent", "coordinator", "t1", "t9"),
-    _span("cl", "c", "llm", "route", "t1", "t1"),
-    _span("r", "c", "agent", "researcher", "t2", "t8"),
-    _span("ra", "r", "tool", "search", "t3", "t3", input='{"q": "a"}'),
+# A coordinator handing work to a researcher, with times the timeline can compare.
+_RESEARCH = [
+    _span(
+        "c", None, "agent", "coordinator", "2024-11-01T09:50:00", "2024-11-01T09:51:00"
+    ),
+    _span("cl", "c", "llm", "route", "2024-11-01T09:50:00", "2024-11-01T09:50:00"),
+    _span(
+        "r", "c", "agent", "researcher", "2024-11-01T09:50:01", "2024-11-01T09:50:59"
+    ),
 ]
+_T0 = 1730454600.0  # 2024-11-01T09:50:00Z
 
 
-def _sealed_search(q, at):
+def _search_span(span_id, q, second):
+    at = f"2024-11-01T09:50:{second:02d}"
+    return _span(
+        span_id,
+        "r",
+        "tool",
+        "search",
+        at,
+        at,
+        input=None if q is None else json.dumps({"q": q}),
+    )
+
+
+def _search_row(q, second, **extra):
     return {
         "name": "search",
         "ok": True,
-        "at": at,
         "worker_label": "researcher",
-        "arguments": {"q": q},
+        "at": _T0 + second,
+        **({"arguments": {"q": q}} if q is not None else {}),
+        **extra,
     }
 
 
+def _searches(spans, rows):
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    return sorted(
+        json.dumps(one.get("input"), sort_keys=True)
+        for one in events
+        if one["type"] == "tool_call"
+    )
+
+
 def test_a_sealed_call_the_spans_did_not_show_is_kept_whatever_order_the_rows_come_in():
+    # The review's case: a span for search(q=a), and sealed rows for B then A.
+    spans = [*_RESEARCH, _search_span("ra", "a", 2)]
     for rows in (
-        [_sealed_search("b", 1730454601.0), _sealed_search("a", 1730454602.0)],
-        [_sealed_search("a", 1730454602.0), _sealed_search("b", 1730454601.0)],
+        [_search_row("b", 2), _search_row("a", 2)],
+        [_search_row("a", 2), _search_row("b", 2)],
     ):
-        events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=rows)[
-            "events"
-        ]
-        searches = sorted(
-            json.dumps(one["input"], sort_keys=True)
-            for one in events
-            if one["type"] == "tool_call" and one["tool"] == "search"
-        )
-        assert searches == ['{"q": "a"}', '{"q": "b"}']
+        assert _searches(spans, rows) == ['{"q": "a"}', '{"q": "b"}']
 
 
-def test_a_sealed_call_is_matched_to_its_span_by_id_first():
-    # Nothing but the id says which call it is.
-    row = {"name": "search", "ok": True, "worker_label": "researcher", "span_id": "ra"}
-    events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=[row])[
-        "events"
-    ]
-    assert [one["type"] for one in events].count("tool_call") == 1
-
-
-def test_a_sealed_call_that_cannot_be_told_from_the_spans_is_kept_rather_than_dropped():
+def test_three_overlapping_calls_are_each_shown_once_whatever_order_the_rows_come_in():
     spans = [
-        *_SEARCH_SPANS,
-        _span("rb", "r", "tool", "search", "t4", "t4", input='{"q": "b"}'),
+        *_RESEARCH,
+        _search_span("a", "a", 2),
+        _search_span("b", "b", 2),
+        _search_span("x", "c", 3),
     ]
+    for rows in (
+        [_search_row("c", 3), _search_row("b", 2), _search_row("a", 2)],
+        [_search_row("b", 2), _search_row("a", 2), _search_row("c", 3)],
+    ):
+        assert _searches(spans, rows) == ['{"q": "a"}', '{"q": "b"}', '{"q": "c"}']
+
+
+def test_alike_calls_are_each_shown_once():
+    spans = [
+        *_RESEARCH,
+        _search_span("a1", "x", 2),
+        _search_span("a2", "x", 2),
+        _search_span("a3", "x", 3),
+    ]
+    rows = [_search_row("x", 2), _search_row("x", 3), _search_row("x", 2)]
+    assert len(_searches(spans, rows)) == 3
+
+
+def test_a_row_naming_a_span_is_its_call_and_a_row_naming_no_span_is_another():
+    spans = [*_RESEARCH, _search_span("a", "x", 2), _search_span("b", "y", 2)]
+    rows = [
+        _search_row("y", 2, span_id="b"),
+        # The same input and time as span a, but its own id: a second call whose span this read did not get.
+        _search_row("x", 2, span_id="zzz"),
+    ]
+    assert _searches(spans, rows) == ['{"q": "x"}', '{"q": "x"}', '{"q": "y"}']
+
+
+def test_a_row_is_matched_by_its_runtime_event_id():
+    spans = [*_RESEARCH, _search_span("a", "x", 2)]
+    # Nothing but the id says which call it is.
+    row = {
+        "name": "search",
+        "ok": True,
+        "worker_label": "researcher",
+        "runtime_ids": {"event_id": "a"},
+    }
+    assert len(_searches(spans, [row])) == 1
+
+
+def test_every_id_is_matched_before_any_row_without_one():
+    spans = [*_RESEARCH, _search_span("a1", "x", 2), _search_span("a2", "x", 2)]
+    rows = [
+        _search_row("x", 2),
+        _search_row("x", 2, runtime_ids={"event_id": "a1"}),
+        _search_row("x", 2, runtime_ids={"event_id": "a2"}),
+    ]
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    tools = [one for one in events if one["type"] == "tool_call"]
+    assert len(tools) == 3
+    # Each span once, and the row without an id is the third call.
+    assert sorted(one.get("span_id") or "" for one in tools) == ["", "a1", "a2"]
+
+
+def test_a_tool_row_and_a_hand_off_row_with_the_same_id_are_not_taken_for_each_other():
+    spans = [
+        *_RESEARCH[:2],
+        _span(
+            "h",
+            "c",
+            "tool",
+            "ask_researcher",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:05",
+            input='{"input": "find"}',
+        ),
+        _span(
+            "r1",
+            "h",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:05",
+        ),
+        _span(
+            "r1l", "r1", "llm", "think", "2024-11-01T09:50:02", "2024-11-01T09:50:02"
+        ),
+    ]
+    rows = [
+        {
+            "name": "lookup",
+            "ok": True,
+            "worker_label": "researcher",
+            "at": _T0 + 2,
+            "arguments": {"k": 1},
+            "runtime_ids": {"event_id": "h"},
+        },
+        {
+            "name": "ask_researcher",
+            "ok": True,
+            "worker_label": "coordinator",
+            "delegated_to": "researcher",
+            "at": _T0 + 1,
+            "ended_at": _T0 + 5,
+            "arguments": {"input": "find"},
+            "runtime_ids": {"event_id": "h"},
+        },
+    ]
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    kinds = [(one["type"], one.get("tool")) for one in events]
+    assert kinds.count(("delegated", None)) == 1
+    assert ("tool_call", "lookup") in kinds
+
+
+def test_an_input_on_one_side_only_does_not_pick_a_span():
+    # The span recorded no input; rows B then A both fall in its time. Neither can be told to be its call.
+    spans = [*_RESEARCH, _search_span("a", None, 2)]
+    assert _searches(spans, [_search_row("b", 2), _search_row("a", 2)]) == [
+        "null",
+        '{"q": "a"}',
+        '{"q": "b"}',
+    ]
+
+
+def test_time_alone_matches_a_row_and_a_span_that_are_each_others_only_candidate():
+    spans = [*_RESEARCH, _search_span("a", "x", 2)]
+    # Within the window, the boundary included: the same call.
+    for second in (2, 7):
+        assert len(_searches(spans, [_search_row(None, second)])) == 1
+    # Further apart: another call.
+    assert len(_searches(spans, [_search_row(None, 8)])) == 2
+
+
+def test_a_row_that_cannot_be_told_apart_is_kept_rather_than_dropped():
+    spans = [*_RESEARCH, _search_span("a", "a", 2), _search_span("b", "b", 3)]
     # No id, input or time: it could be either span's call, or a third one.
-    row = {"name": "search", "ok": True, "worker_label": "researcher"}
-    events = worker_timeline(spans, [], run_key=RUN, traced_calls=[row])["events"]
-    assert [one["type"] for one in events].count("tool_call") == 3
+    bare = {"name": "search", "ok": True, "worker_label": "researcher"}
+    assert len(_searches(spans, [bare])) == 3
     # Nor when only its time is known and two different calls fit it.
-    timed = [
-        *_SEARCH_SPANS[:3],
-        _span("ra", "r", "tool", "search", "2024-11-01T09:50:00", input='{"q": "a"}'),
-        _span("rb", "r", "tool", "search", "2024-11-01T09:50:01", input='{"q": "b"}'),
-    ]
-    at_only = {**row, "at": 1730454600.5}
-    events = worker_timeline(timed, [], run_key=RUN, traced_calls=[at_only])["events"]
-    assert [one["type"] for one in events].count("tool_call") == 3
+    assert len(_searches(spans, [{**bare, "at": _T0 + 2.5}])) == 3
     # Nor is it taken to be the only span's call when nothing says so.
-    events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=[row])[
-        "events"
-    ]
-    assert [one["type"] for one in events].count("tool_call") == 2
+    assert len(_searches(spans[:-1], [bare])) == 2
 
 
 def test_a_sealed_hand_off_the_spans_did_not_show_is_kept_whatever_order_the_rows_come_in():
     spans = [
-        _span("c", None, "agent", "coordinator", "t1", "t9"),
-        _span("cl", "c", "llm", "route", "t1", "t1"),
+        *_RESEARCH[:2],
         _span(
-            "h1", "c", "tool", "ask_researcher", "t2", "t5", input='{"input": "find a"}'
+            "h1",
+            "c",
+            "tool",
+            "ask_researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:05",
+            input='{"input": "find a"}',
         ),
-        _span("r1", "h1", "agent", "researcher", "t2", "t5"),
-        _span("r1l", "r1", "llm", "think", "t3", "t3"),
+        _span(
+            "r1",
+            "h1",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:02",
+            "2024-11-01T09:50:05",
+        ),
+        _span(
+            "r1l", "r1", "llm", "think", "2024-11-01T09:50:03", "2024-11-01T09:50:03"
+        ),
     ]
 
-    def handed(task, at):
+    def handed(task, second):
         return {
             "name": "ask_researcher",
             "ok": True,
-            "at": at,
-            "ended_at": at + 1,
+            "at": _T0 + second,
+            "ended_at": _T0 + second + 1,
             "worker_label": "coordinator",
             "delegated_to": "researcher",
             "arguments": {"input": task},
@@ -1904,8 +2046,8 @@ def test_a_sealed_hand_off_the_spans_did_not_show_is_kept_whatever_order_the_row
         }
 
     for rows in (
-        [handed("find b", 1730454601.0), handed("find a", 1730454603.0)],
-        [handed("find a", 1730454603.0), handed("find b", 1730454601.0)],
+        [handed("find b", 2), handed("find a", 2)],
+        [handed("find a", 2), handed("find b", 2)],
     ):
         events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
         tasks = sorted(one["task"] for one in events if one["type"] == "delegated")
@@ -1963,37 +2105,101 @@ def test_a_later_read_never_replaces_a_complete_record_with_less(
         assert read(_Reader(SPANS)) == first
 
 
-def test_a_later_read_keeps_the_record_that_says_more_and_every_worker_either_observed():
+def _record(collection, tools, observed=(), spans=True, **extra):
+    return {
+        "collection": collection,
+        "spans_received": spans,
+        "events_omitted": 0,
+        "events": [
+            {
+                "type": "tool_call",
+                "tool": tool,
+                "span_id": tool,
+                "worker_id": "a",
+                "at": None,
+            }
+            for tool in tools
+        ],
+        "workers": [
+            {"worker_id": name, "observed": name in observed, "instance_ids": [name]}
+            for name in ("a", "b")
+        ],
+        **extra,
+    }
+
+
+def _tools(record):
+    return sorted(one["tool"] for one in record["events"])
+
+
+def test_a_later_read_keeps_every_event_either_read_found():
     from simulate.services.harness_workers import kept_record
 
-    def record(collection, events, observed):
-        return {
-            "collection": collection,
-            "events": [{"type": "tool_call", "seq": n} for n in range(events)],
-            "workers": [
-                {
-                    "worker_id": name,
-                    "observed": name in observed,
-                    "instance_ids": [name],
-                }
-                for name in ("a", "b")
-            ],
-        }
-
-    stored = record("complete", 3, {"a"})
-    # As many events, but from a read that failed: the complete record stays.
-    assert (
-        kept_record(stored, record("unavailable", 3, set()))["collection"] == "complete"
+    # Two reads that got as far, each with an event the other lacks: both are kept.
+    kept = kept_record(
+        _record("complete", ["A", "B", "C"]), _record("complete", ["A", "B", "D"])
     )
+    assert _tools(kept) == ["A", "B", "C", "D"]
+    # A first read before any span arrived, from the sandbox's rows alone, and a later read that hit the row bound:
+    # the later read's spans are added, and the record says the read was partial.
+    rows_only = _record("complete", ["A", "B"], spans=False)
+    later = _record("partial", [str(n) for n in range(400)])
+    kept = kept_record(rows_only, later)
+    assert len(kept["events"]) == 402 and kept["collection"] == "partial"
     # A fuller read replaces a partial one.
-    assert kept_record(record("partial", 1, {"a"}), stored)["collection"] == "complete"
-    # The record kept still marks every worker either read observed.
-    kept = kept_record(stored, record("complete", 4, {"b"}))
-    assert len(kept["events"]) == 4
+    assert (
+        kept_record(_record("partial", ["A"]), _record("complete", ["A"]))["collection"]
+        == "complete"
+    )
+    # Two calls alike in everything recorded, without ids, stay two however the reads split them.
+    alike = {"type": "tool_call", "tool": "X", "worker_id": "a", "at": None}
+    one_seen = {**_record("complete", ["A"]), "events": [dict(alike)]}
+    both_seen = {**_record("partial", ["A"]), "events": [dict(alike), dict(alike)]}
+    assert _tools(kept_record(both_seen, one_seen)) == ["X", "X"]
+    # A read that failed leaves the complete record as it was.
+    stored = _record("complete", ["A", "B"], {"a"})
+    assert (
+        kept_record(stored, _record("unavailable", [], spans=False))["collection"]
+        == "complete"
+    )
+
+
+def test_a_later_read_keeps_every_worker_either_read_observed():
+    from simulate.services.harness_workers import kept_record
+
+    kept = kept_record(
+        _record("complete", ["A"], {"a"}), _record("complete", ["A", "B"], {"b"})
+    )
     assert {one["worker_id"] for one in kept["workers"] if one["observed"]} == {
         "a",
         "b",
     }
-    # Nothing stored yet: the read is kept as it is.
-    read = record("no_evidence", 0, set())
+
+
+def test_on_a_tie_the_later_read_gives_the_record_its_other_fields():
+    from simulate.services.harness_workers import kept_record
+
+    kept = kept_record(
+        _record("complete", ["A"], coordinator={"name": "first"}),
+        _record("complete", ["A"], coordinator={"name": "second"}),
+    )
+    assert kept["coordinator"] == {"name": "second"}
+
+
+def test_a_record_without_a_collection_ranks_below_a_partial_read():
+    from simulate.services.harness_workers import kept_record
+
+    legacy = {
+        key: value
+        for key, value in _record("complete", ["A"]).items()
+        if key != "collection"
+    }
+    kept = kept_record(legacy, _record("partial", ["A", "B", "C"]))
+    assert kept["collection"] == "partial" and _tools(kept) == ["A", "B", "C"]
+
+
+def test_nothing_stored_yet_keeps_the_read_as_it_is():
+    from simulate.services.harness_workers import kept_record
+
+    read = _record("no_evidence", [], spans=False)
     assert kept_record(None, read) is read
