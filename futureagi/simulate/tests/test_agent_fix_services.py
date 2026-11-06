@@ -1289,6 +1289,10 @@ class TestCheckRunStatus:
                 FailureOwner.USER,
             ),
             (
+                "chat_target_failed: HTTPCallFailure: [Errno 110] Connection timed out",
+                FailureOwner.USER,
+            ),
+            (
                 "BundleAuthorError: target_runtime_configuration_missing: "
                 "environment:LIVEKIT_URL",
                 FailureOwner.USER,
@@ -1303,6 +1307,7 @@ class TestCheckRunStatus:
             "duplicate-tool-ids",
             "agent-model-refused",
             "agent-gone",
+            "agent-never-accepted-wrapped",
             "setup-missing",
         ],
     )

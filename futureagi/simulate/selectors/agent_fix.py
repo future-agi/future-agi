@@ -273,7 +273,8 @@ _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
 # agent's own process refused or never accepted, stays the user's.
 _CERTIFY_FAILED = "authoring_runtime_validation_failed"
 _CERTIFY_TIMED_OUT = re.compile(
-    r"chat_target_failed: (?!Connect)(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
+    r"chat_target_failed: (?!Connect|[^;\n]*\bConnection timed out\b)"
+    r"(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
     r"|depends_on/depends_on_timeout"
 )
 
