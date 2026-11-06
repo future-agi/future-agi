@@ -26,6 +26,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import connections, transaction
 from django.db.models import (
     BooleanField,
+    CharField,
     DateTimeField,
     DurationField,
     Exists,
@@ -34,19 +35,24 @@ from django.db.models import (
     FloatField,
     OuterRef,
     Q,
+    Subquery,
+    Value,
 )
 from django.db.models.fields.json import KeyTextTransform
-from django.db.models.functions import Cast, Coalesce, Least, Power
+from django.db.models.functions import Cast, Coalesce, Concat, Least, Power
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from tracer.models.derived_metric import (
     DerivedMetricVersion,
     LeaseGrant,
+    MetricErasureRequest,
     MetricFencingError,
     MetricProjectRefresh,
     MetricRefreshAttempt,
 )
+from tracer.models.project import Project
+from tracer.services.derived_metrics.deletion_protocol import serialized_project
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.lease import DEFAULT_LEASE_TTL, ProjectLease
 from tracer.services.derived_metrics.refresh import RefreshWriter
@@ -65,6 +71,12 @@ class Reservation:
     grant: LeaseGrant
     purpose: str
     requested_at: datetime | None
+    expiry_id: UUID | None = None
+
+    @property
+    def job(self) -> str:
+        # Bind the queued/running holder to the durable operation, not just its lane.
+        return f"cleanup:{self.expiry_id}" if self.expiry_id else self.purpose
 
     def payload(self) -> dict:
         return {
@@ -73,6 +85,7 @@ class Reservation:
             "token": str(self.grant.lease_token),
             "expires_at": self.grant.expires_at.isoformat(),
             "purpose": self.purpose,
+            **({"expiry_id": str(self.expiry_id)} if self.expiry_id else {}),
             "requested_at": self.requested_at.isoformat()
             if self.requested_at
             else None,
@@ -81,8 +94,10 @@ class Reservation:
     @classmethod
     def from_payload(cls, payload: dict) -> "Reservation":
         purpose = payload["purpose"]
-        if purpose not in {"incremental", "backfill", "repair"}:
+        if purpose not in {"incremental", "backfill", "repair", "cleanup"}:
             raise ValueError("unknown metric dispatch purpose")
+        if (purpose == "cleanup") != bool(payload.get("expiry_id")):
+            raise ValueError("cleanup requires a durable expiry identity")
         return cls(
             LeaseGrant(
                 UUID(payload["project_id"]),
@@ -94,6 +109,7 @@ class Reservation:
             datetime.fromisoformat(payload["requested_at"])
             if payload.get("requested_at")
             else None,
+            UUID(payload["expiry_id"]) if purpose == "cleanup" else None,
         )
 
 
@@ -122,6 +138,23 @@ def reconciliation_interval() -> timedelta:
             "METRICS_RECONCILIATION_INTERVAL_SECONDS must be positive"
         )
     return timedelta(seconds=value)
+
+
+def _expiry_requests(project_id, organization_id):
+    # Only the publication outbox can authorize this lane; pending flags cannot.
+    return MetricErasureRequest.objects.filter(
+        project_key=project_id,
+        organization_key=organization_id,
+        scope_kind="history",
+        store_payload__protocol="metric_expiry",
+        deletion_key=Concat(
+            Value("expiry:"),
+            KeyTextTransform("checkpoint_attempt", "store_payload"),
+            output_field=CharField(),
+        ),
+        status__in=("queued", "failed"),
+        completed_at__isnull=True,
+    ).order_by("requested_at", "id")
 
 
 def eligible_projects(now: datetime):
@@ -158,6 +191,12 @@ def eligible_projects(now: datetime):
                 ),
                 output_field=DateTimeField(),
             ),
+            cleanup_id=Subquery(
+                _expiry_requests(
+                    OuterRef("project_id"), OuterRef("project__organization_id")
+                ).values("id")[:1]
+            ),
+            simulation_agent_id=F("project__simulation_agent_id"),
             recovery_pending=Exists(recovery),
             has_active_definition=Exists(active),
             # Coverage is through the sweep's START, not its completion time
@@ -183,6 +222,7 @@ def eligible_projects(now: datetime):
             )
         )
         .filter(project__deleted=False)
+        .filter(Q(simulation_agent_id__isnull=True) | Q(cleanup_id__isnull=False))
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .filter(
             Q(consecutive_failures=0)
@@ -200,6 +240,7 @@ def eligible_projects(now: datetime):
             | Q(pending_repair=True)
             | Q(routine_repair_due=True)
             | Q(pending_expiry=True)
+            | Q(cleanup_id__isnull=False)
             | Q(pending_erasure=True)
             | Q(recovery_pending=True)
             | Q(head_manifest__published_by__source_ceilings__recovery_pending=True)
@@ -209,6 +250,38 @@ def eligible_projects(now: datetime):
         # failing projects must move to the back of the same fair queue.
         .order_by(Coalesce("last_started_at", "created_at"), "project_id")
     )
+
+
+@contextmanager
+def _project_admission(
+    project_id: UUID, expiry_id: UUID | None = None
+) -> Iterator[bool]:
+    # Lifecycle -> parent -> refresh. Visibility linearizes at the locked claim;
+    # cleanup authorization instead names an existing immutable publication debt.
+    # Keep the existing global OFF and deleted-parent policies for both lanes.
+    with serialized_project(project_id):
+        if expiry_id is None:
+            yield metrics_enabled(project=project_id) and (
+                Project.no_workspace_objects.select_for_update()
+                .filter(pk=project_id)
+                .exists()
+            )
+            return
+        # Resolve only an already-enrolled refresh row; this path cannot create
+        # hidden state. Lock its parent alone, retaining the normal lock order.
+        state = (
+            MetricProjectRefresh.objects.select_related("project")
+            .select_for_update(of=("project",))
+            .filter(project_id=project_id, project__deleted=False)
+            .first()
+        )
+        yield bool(
+            state
+            and metrics_enabled(project=project_id)
+            and _expiry_requests(project_id, state.project.organization_id)
+            .filter(pk=expiry_id)
+            .exists()
+        )
 
 
 def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
@@ -244,24 +317,32 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                     and (state.pending_repair or state.routine_repair_due)
                 )
             )
-            grant = MetricProjectRefresh.take_lease(
-                state.project_id,
-                holder=f"metrics:queued:{purpose}",
-                ttl=DEFAULT_LEASE_TTL,
-                now=now,
-            )
-            if grant is None:
-                continue
-            updates = {"last_started_at": now}
-            if purpose == "repair":
-                # take_lease holds the project serialization lock until this
-                # transaction commits. Persist eligibility before enqueue, but
-                # leave coverage and its CAS token to the existing writer.
-                updates["pending_repair"] = True
-            MetricProjectRefresh.objects.filter(project_id=state.project_id).update(
-                **updates
-            )
-            reservations.append(Reservation(grant, purpose, state.refresh_requested_at))
+            expiry_id = state.cleanup_id if state.simulation_agent_id else None
+            if expiry_id:
+                purpose = "cleanup"
+            job = f"cleanup:{expiry_id}" if expiry_id else purpose
+            with _project_admission(state.project_id, expiry_id) as admitted:
+                if not admitted:
+                    continue
+                grant = MetricProjectRefresh.take_lease(
+                    state.project_id,
+                    holder=f"metrics:queued:{job}",
+                    ttl=DEFAULT_LEASE_TTL,
+                    now=now,
+                )
+                if grant is None:
+                    continue
+                updates = {"last_started_at": now}
+                if purpose == "repair":
+                    # Persist eligibility before enqueue, leaving coverage and
+                    # its CAS token to the existing fenced writer.
+                    updates["pending_repair"] = True
+                MetricProjectRefresh.objects.filter(project_id=state.project_id).update(
+                    **updates
+                )
+                reservations.append(
+                    Reservation(grant, purpose, state.refresh_requested_at, expiry_id)
+                )
         return reservations
 
 
@@ -274,10 +355,10 @@ def request_refresh(project_id: UUID, *, clock: Callable = timezone.now) -> bool
     """
     if not metrics_enabled(project=project_id):
         return False
-    from tracer.services.derived_metrics.deletion_protocol import serialized_project
-
     now = clock()
-    with serialized_project(project_id):
+    with _project_admission(project_id) as admitted:
+        if not admitted:
+            return False
         state = MetricProjectRefresh.for_project(project_id)
         if state.refresh_requested_at is not None or (
             state.last_started_at and now < state.last_started_at + RUN_NOW_THROTTLE
@@ -312,27 +393,49 @@ def release(reservation: Reservation, *, now: datetime) -> None:
     )
 
 
+def _queued_reservation(reservation: Reservation):
+    grant = reservation.grant
+    return MetricProjectRefresh.objects.filter(
+        project_id=grant.project_id,
+        fencing_epoch=grant.fencing_epoch,
+        lease_token=grant.lease_token,
+        lease_holder=f"metrics:queued:{reservation.job}",
+    )
+
+
+def _release_queued(reservation: Reservation) -> None:
+    # Rejection and duplicate delivery must not release a running/replacement job.
+    _queued_reservation(reservation).update(
+        lease_token=None, lease_expires_at=None, lease_holder=""
+    )
+
+
 def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now) -> int:
     count = 0
     for reservation in reserve_projects(clock=clock):
-        try:
-            if not metrics_enabled():
-                release(reservation, now=clock())
+        with _project_admission(
+            reservation.grant.project_id, reservation.expiry_id
+        ) as admitted:
+            if not admitted:
+                _release_queued(reservation)
                 continue
-            enqueue(reservation.payload())
-            count += 1
-        except Exception:
-            # Ambiguous enqueue is safe: the old token cannot start after its
-            # release. If the worker already claimed it, leave its lease alone.
-            with transaction.atomic():
-                state = MetricProjectRefresh.objects.select_for_update().get(
-                    project_id=reservation.grant.project_id
-                )
-                if state.lease_holder == f"metrics:queued:{reservation.purpose}":
+            if (
+                not _queued_reservation(reservation)
+                .filter(lease_expires_at__gt=clock())
+                .exists()
+            ):
+                continue
+            try:
+                enqueue(reservation.payload())
+                count += 1
+            except Exception:
+                # A lost enqueue response may already have a running consumer.
+                # Catch inside the transaction so its claim is not rolled back.
+                if _queued_reservation(reservation).select_for_update().exists():
                     record_failure(
                         reservation, now=clock(), code="metric_dispatch_failed"
                     )
-                    release(reservation, now=clock())
+                    _release_queued(reservation)
     return count
 
 
@@ -377,47 +480,92 @@ def execute_reservation(
     reservation = Reservation.from_payload(payload)
     lease = ProjectLease(reservation.grant, clock=clock)
     if not metrics_enabled(project=lease.project_id):
-        release(reservation, now=clock())
+        _release_queued(reservation)
         return False
     with execution_slot(lease.project_id) as admitted:
         if not admitted:
-            # No work ran. Return only a still-queued reservation to the next
-            # tick; a duplicate delivery must never release a running writer.
-            MetricProjectRefresh.objects.filter(
-                project_id=lease.project_id,
-                fencing_epoch=reservation.grant.fencing_epoch,
-                lease_token=reservation.grant.lease_token,
-                lease_holder=f"metrics:queued:{reservation.purpose}",
-            ).update(lease_token=None, lease_expires_at=None, lease_holder="")
+            _release_queued(reservation)
             return False
-        claimed = MetricProjectRefresh.objects.filter(
-            MetricProjectRefresh.lease_q(**lease.fence()),
-            project_id=lease.project_id,
-            lease_holder=f"metrics:queued:{reservation.purpose}",
-        ).update(lease_holder=f"metrics:running:{reservation.purpose}")
-        if not claimed:
-            return False
+        claimed = False
         try:
-            lease.renew()
+            with _project_admission(lease.project_id, reservation.expiry_id) as visible:
+                if not visible:
+                    _release_queued(reservation)
+                    return False
+                claimed = (
+                    _queued_reservation(reservation)
+                    .filter(MetricProjectRefresh.lease_q(**lease.fence()))
+                    .update(lease_holder=f"metrics:running:{reservation.job}")
+                )
+                if not claimed:
+                    return False
+                lease.renew()
+            # Admission commits before the runner: publication/physical cleanup
+            # require their existing independent commit boundaries.
             if not metrics_enabled(project=lease.project_id):
                 return False
-            (runner or run_project_pass)(lease, reservation.purpose)
+            if reservation.expiry_id:
+                run_project_cleanup(lease, reservation.expiry_id)
+            else:
+                (runner or run_project_pass)(lease, reservation.purpose)
             # The writer alone advances work flags, cursors and manifest. A
             # successful backfill/repair is not proof of incremental catch-up.
             updates = {"consecutive_failures": 0, "last_error_code": ""}
             with transaction.atomic():
                 state = MetricProjectRefresh._locked(lease.project_id, **lease.check())
-                if state.refresh_requested_at == reservation.requested_at:
+                if (
+                    not reservation.expiry_id
+                    and state.refresh_requested_at == reservation.requested_at
+                ):
                     updates["refresh_requested_at"] = None
                 MetricProjectRefresh.objects.filter(pk=state.pk).update(**updates)
             return True
         except MetricFencingError:
             return False
         except Exception:
-            record_failure(reservation, now=clock(), code="metric_refresh_failed")
+            if claimed:
+                record_failure(reservation, now=clock(), code="metric_refresh_failed")
             raise
         finally:
-            lease.release()
+            if claimed:
+                lease.release()
+
+
+def run_project_cleanup(lease: ProjectLease, expiry_id: UUID) -> None:
+    """Retry one publication debt without discovery, analytics or new metric state.
+
+    Unlike normal work this needs no current retention-policy provider: the
+    immutable intent already fixes the namespace. Existing scrub/barrier proof,
+    not a successful task return, is the only authority to mark it complete.
+    """
+    from clickhouse_driver import Client
+
+    from tracer.services.clickhouse.v2 import get_v2_config
+    from tracer.services.derived_metrics.publication import ClickHousePublicationStore
+    from tracer.services.derived_metrics.retention import finish_pending_expiry
+
+    state = MetricProjectRefresh.objects.select_related("project").get(
+        project_id=lease.project_id
+    )
+    config = get_v2_config()
+    client = Client(
+        host=config["host"],
+        port=config["tcp_port"],
+        user=config["user"],
+        password=config["password"],
+        database=config["database"],
+        connect_timeout=10,
+        send_receive_timeout=60,
+    )
+    try:
+        writer = RefreshWriter(
+            lease,
+            ClickHousePublicationStore(client),
+            org_id=state.project.organization_id,
+        )
+        finish_pending_expiry(writer, expiry_id=expiry_id)
+    finally:
+        client.disconnect()
 
 
 class NativeMetricAnalytics:

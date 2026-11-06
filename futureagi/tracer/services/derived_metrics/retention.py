@@ -614,7 +614,7 @@ def purge_checkpoint(writer, attempt, manifest, *, recovery_pending=False, now=N
     return finish_pending_expiry(writer, now=now)
 
 
-def finish_pending_expiry(writer, *, now=None):
+def finish_pending_expiry(writer, *, now=None, expiry_id=None):
     """Drain obligations independently of ledger/manifest GC and horizon changes.
 
     A successful early DELETE is NOT a completion receipt. Unknown submission
@@ -625,18 +625,43 @@ def finish_pending_expiry(writer, *, now=None):
     from tracer.models.derived_metric import MetricErasureRequest
 
     project_id = writer.lease.project_id
+    pending = MetricErasureRequest.objects.filter(
+        project_key=project_id, store_payload__protocol="metric_expiry"
+    ).exclude(status="done")
+    if expiry_id is not None:
+        if connection.in_atomic_block:
+            raise MetricStateConflict(
+                "physical purge requires an outer commit boundary"
+            )
+        pending = pending.filter(
+            id=expiry_id,
+            organization_key=writer.org_id,
+            scope_kind="history",
+            status__in=("queued", "failed"),
+            completed_at__isnull=True,
+        )
     with serialized_project(project_id):
         writer.lease.check()
-        head = MetricProjectRefresh.for_project(project_id).head_manifest
+        state = MetricProjectRefresh.objects.get(project_id=project_id)
+        head = state.head_manifest
         if head is None or head.revoked_at:
             raise MetricStateConflict("retention cleanup requires a safe checkpoint")
+        if expiry_id is not None:
+            intent = pending.first()
+            through = intent.store_payload.get("through_generation") if intent else None
+            if (
+                intent is None
+                or type(through) is not int
+                or not 0 <= through <= state.generation_high_water
+                or intent.deletion_key
+                != f"expiry:{intent.store_payload.get('checkpoint_attempt')}"
+            ):
+                raise MetricStateConflict(
+                    "cleanup requires a durable expiry obligation"
+                )
         boundaries = [
             payload["through_generation"]
-            for payload in MetricErasureRequest.objects.filter(
-                project_key=project_id, store_payload__protocol="metric_expiry"
-            )
-            .exclude(status="done")
-            .values_list("store_payload", flat=True)
+            for payload in pending.values_list("store_payload", flat=True)
         ]
         private_cleanup = head.published_by.source_ceilings.get(
             "private_cleanup_through"
@@ -688,10 +713,6 @@ def finish_pending_expiry(writer, *, now=None):
         for retained in MetricReadManifest.objects.filter(id__in=roots):
             keep.update(a for _, a in retained.allowed_attempts())
         keep = tuple(keep) or (UUID(int=0),)
-        pending = MetricErasureRequest.objects.filter(
-            project_key=project_id,
-            store_payload__protocol="metric_expiry",
-        ).exclude(status="done")
         complete = True
         for obligation in pending.order_by("requested_at"):
             # Recovery can enter here without purge_checkpoint, including a
@@ -794,10 +815,17 @@ def finish_pending_expiry(writer, *, now=None):
             .exclude(status="done")
             .exists()
         )
-        MetricProjectRefresh.objects.filter(project_id=project_id).update(
-            pending_expiry=not complete or replan
+        remaining = (
+            MetricErasureRequest.objects.filter(
+                project_key=project_id, store_payload__protocol="metric_expiry"
+            )
+            .exclude(status="done")
+            .exists()
         )
-        return complete and not replan
+        MetricProjectRefresh.objects.filter(project_id=project_id).update(
+            pending_expiry=not complete or replan or remaining
+        )
+        return complete and not replan and not remaining
 
 
 def _span_dependencies(sql, retained_conversation, cutoff_parameter):
