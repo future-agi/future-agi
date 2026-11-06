@@ -3826,6 +3826,7 @@ class TestRunPromptToolPayload:
 TTS_PHRASE = "record audio with script"
 TTS_AUDIO_URL = "https://audio.example/th-2356.mp3"
 TTS_EMPTY_SCRIPT_ERROR = "Enter text to synthesize speech."
+TTS_PREVIOUS_AUDIO_URL = "https://audio.example/th-2356-previous-run.mp3"
 
 
 def tts_messages(user_text):
@@ -3973,7 +3974,8 @@ class TestLiteralTTSScriptRoutes:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         speech.assert_not_called()
 
-    def _saved_tts_column(self, dataset, organization, workspace):
+    def _saved_tts_column(self, dataset, organization, workspace, row):
+        """A saved TTS column whose row already holds an earlier run's audio."""
         run_prompter = RunPrompter.objects.create(
             name="TTS Column",
             dataset=dataset,
@@ -3992,7 +3994,14 @@ class TestLiteralTTSScriptRoutes:
             source=SourceChoices.RUN_PROMPT.value,
             source_id=str(run_prompter.id),
         )
-        return run_prompter, column
+        previous = Cell.objects.create(
+            dataset=dataset,
+            column=column,
+            row=row,
+            value=TTS_PREVIOUS_AUDIO_URL,
+            status=CellStatus.PASS.value,
+        )
+        return run_prompter, column, previous
 
     @pytest.mark.parametrize(
         ("cell_value", "expected_status", "expected_value", "speaks"),
@@ -4019,7 +4028,9 @@ class TestLiteralTTSScriptRoutes:
 
         speech, _ = speech_boundary
         Cell.objects.create(dataset=dataset, column=input_column, row=row, value=cell_value)
-        run_prompter, column = self._saved_tts_column(dataset, organization, workspace)
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
+        )
         stored_messages = json.loads(json.dumps(run_prompter.messages))
 
         with (
@@ -4031,8 +4042,10 @@ class TestLiteralTTSScriptRoutes:
             runner.process_row(row, column, edit_mode=True)
 
         cell = Cell.objects.get(dataset=dataset, column=column, row=row)
+        assert cell.id == previous.id
         assert cell.status == expected_status
         assert cell.value == expected_value
+        speech.assert_called_once()
         assert speech.call_args.kwargs["input"] == speaks
         run_prompter.refresh_from_db()
         assert run_prompter.messages == stored_messages
@@ -4051,7 +4064,9 @@ class TestLiteralTTSScriptRoutes:
 
         speech, upload = speech_boundary
         Cell.objects.create(dataset=dataset, column=input_column, row=row, value=" ")
-        run_prompter, column = self._saved_tts_column(dataset, organization, workspace)
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
+        )
         run_prompter.messages = tts_messages("{{Input Column}}")
         run_prompter.save()
 
@@ -4064,8 +4079,11 @@ class TestLiteralTTSScriptRoutes:
             runner.process_row(row, column, edit_mode=True)
 
         cell = Cell.objects.get(dataset=dataset, column=column, row=row)
+        assert cell.id == previous.id
         assert cell.status == CellStatus.ERROR.value
         assert TTS_EMPTY_SCRIPT_ERROR in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in str(cell.value_infos)
         assert TTS_PHRASE not in cell.value
         speech.assert_not_called()
         upload.assert_not_called()

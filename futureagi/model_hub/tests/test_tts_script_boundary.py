@@ -352,6 +352,13 @@ def fallback_response():
     )
 
 
+def completion_with_audio():
+    """Provider-shaped completion response carrying base64 audio."""
+    message = MagicMock()
+    message.audio.data = base64.b64encode(b"ID3 fake completion audio").decode()
+    return MagicMock(choices=[MagicMock(message=message)])
+
+
 class TestAudioPreviewUnchanged:
     def test_alias_with_system_only_prompt_still_reaches_completion_fallback(self):
         """Provider-qualified audio-preview names reach SpeechAPIHandler.
@@ -399,6 +406,47 @@ class TestAudioPreviewUnchanged:
             assert text in sent
         assert seen["messages"] == control_and_user()
         assert result.response == AUDIO_URL
+
+    def test_alias_fallback_generates_audio_through_real_completion_handler(self, upload):
+        context = tts_context(
+            ALIAS, copy.deepcopy(SYSTEM_ONLY), run_prompt_config={"voice": "nova", "format": "wav"}
+        )
+
+        with (
+            patch("litellm.speech", side_effect=Exception("404 page not found")) as speech,
+            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+        ):
+            result = TTSHandler(context).execute_sync()
+
+        assert result.failure is None, result.failure
+        assert result.response == AUDIO_URL
+        speech.assert_called_once()
+        completion.assert_called_once()
+        kwargs = completion.call_args.kwargs
+        assert [m["role"] for m in kwargs["messages"]] == ["system", "user"]
+        assert kwargs["modalities"] == ["text", "audio"]
+        assert kwargs["audio"] == {"voice": "nova", "format": "wav"}
+        assert upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+
+    async def test_alias_async_fallback_generates_audio_through_real_completion_handler(
+        self, upload
+    ):
+        context = tts_context(ALIAS, control_and_user())
+
+        with (
+            patch("litellm.aspeech", new_callable=AsyncMock, side_effect=Exception("Invalid URL")),
+            patch(
+                "litellm.acompletion", new_callable=AsyncMock, return_value=completion_with_audio()
+            ) as acompletion,
+        ):
+            result = await TTSHandler(context).execute_async()
+
+        assert result.failure is None, result.failure
+        acompletion.assert_awaited_once()
+        sent = acompletion.call_args.kwargs["messages"]
+        assert [m["role"] for m in sent] == ["system", "developer", "assistant", "tool", "user"]
+        for text in CONTROL_TEXTS + [SCRIPT]:
+            assert text in upload.call_args.kwargs["input_text"]
 
     def test_exact_audio_preview_model_sends_role_bearing_messages(self):
         context = tts_context("gpt-4o-audio-preview", control_and_user())

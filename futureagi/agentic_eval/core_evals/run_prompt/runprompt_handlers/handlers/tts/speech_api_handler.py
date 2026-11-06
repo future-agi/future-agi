@@ -196,10 +196,10 @@ class SpeechAPIHandler(BaseModelHandler):
 
     async def execute_async(self, streaming: bool = False) -> HandlerResponse:
         """
-        Execute TTS request asynchronously via litellm.speech().
+        Execute TTS request asynchronously via litellm.aspeech().
 
-        Note: litellm.speech() doesn't have an async version, so we use
-        sync_to_async wrapper.
+        Only the output formatting and upload step is wrapped with
+        sync_to_async.
 
         Args:
             streaming: Not used for TTS
