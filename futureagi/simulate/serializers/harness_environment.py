@@ -806,6 +806,13 @@ class HarnessCapabilityRecheckResponseSerializer(serializers.Serializer):
     validation = HarnessPairValidationSerializer()
 
 
+class HarnessCapabilityAgentToolsSerializer(serializers.Serializer):
+    read = serializers.BooleanField(
+        help_text="Whether this agent version's tools have been read."
+    )
+    count = serializers.IntegerField(help_text="How many tools it has; 0 when unread.")
+
+
 class HarnessCapabilityPairingSerializer(serializers.Serializer):
     agent_version = RunVersionLabelSerializer(allow_null=True)
     environment_version = RunVersionLabelSerializer(allow_null=True)
@@ -818,6 +825,8 @@ class HarnessCapabilityPairingSerializer(serializers.Serializer):
             " with."
         ),
     )
+    # Absent from a run's snapshot taken before agent tools were read.
+    agent_tools = HarnessCapabilityAgentToolsSerializer(required=False)
 
 
 class HarnessCapabilityAnswerSerializer(serializers.Serializer):
@@ -840,7 +849,10 @@ class HarnessCapabilityAreaSerializer(serializers.Serializer):
 
 
 class HarnessCapabilityTargetSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=("tool", "action", "check"))
+    kind = serializers.ChoiceField(
+        choices=("tool", "agent_tool", "action", "check"),
+        help_text="agent_tool: a tool of the agent version the environment lacks.",
+    )
     name = serializers.CharField()
     result = serializers.CharField()
 

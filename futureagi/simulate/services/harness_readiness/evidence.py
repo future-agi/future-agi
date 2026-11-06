@@ -134,6 +134,17 @@ def _build_certification(
     return None
 
 
+def agent_tools(pairing: Pairing) -> list[Mapping[str, Any]] | None:
+    """The tools the picked agent version's stored document lists; ``None`` when no
+    document of it was read, or it no longer matches the agent's provider."""
+    from simulate.services.agent_setup import stored_agent
+
+    if pairing.agent_version is None:
+        return None
+    document = stored_agent(pairing.agent_version.id)
+    return list(document["tools"]) if document is not None else None
+
+
 def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Evidence:
     """A certified pair bundle, else the environment version's build certificate."""
     if certified(bundle):

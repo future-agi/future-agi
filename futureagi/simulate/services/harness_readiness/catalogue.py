@@ -14,7 +14,7 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "6"
+RULES_VERSION = "7"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
@@ -78,11 +78,18 @@ class VersionRef(TypedDict):
     label: str | None
 
 
+class AgentToolsView(TypedDict):
+    # Whether the agent version's tools were read, and how many it has.
+    read: bool
+    count: int
+
+
 class PairingView(TypedDict):
     agent_version: VersionRef | None
     environment_version: VersionRef | None
     suite_version: VersionRef | None
     evidence: EvidenceSource
+    agent_tools: AgentToolsView
 
 
 class AnswerView(TypedDict):
@@ -98,7 +105,8 @@ class AreaView(TypedDict):
 
 
 class Target(TypedDict):
-    kind: Literal["tool", "action", "check"]
+    # ``agent_tool``: a tool of the agent version the environment version lacks.
+    kind: Literal["tool", "agent_tool", "action", "check"]
     name: str
     result: str
 

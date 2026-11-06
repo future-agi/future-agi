@@ -18,21 +18,26 @@ from simulate.serializers.harness_environment import (
     HarnessCapabilitySelectionReportSerializer,
 )
 from simulate.services import harness_readiness
+from simulate.services.agent_setup import store_agent
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
 from simulate.services.hosted_harness import HostedHarnessError
-from simulate.tests.test_harness_agent_versions import _a1, _create
-from simulate.tests.test_harness_agent_versions import _environment as _agent_env
+from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+    _a1,
+    _create,
+)
+from simulate.tests.test_harness_agent_versions import _environment as _agent_env
+from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
 from simulate.tests.test_harness_versioning_assembly import _row, _sealed_authoring
 from simulate.tests.test_harness_versioning_backfill import (
     _agent_version,
     _definition,
 )
-from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
+    storage as storage,
 )
 from simulate.tests.test_harness_versioning_runs import _run
 
@@ -80,16 +85,28 @@ def _environment(user, workspace, storage, key):
     return environment
 
 
-def _with_a2(user, workspace, storage, key):
+def _with_a2(user, workspace, storage, key, *, tools=()):
     """Also A2: checked, not the default, and a new prompt, so it runs bundles of its
-    own."""
+    own. Its tools were read: ``tools``, or ``None`` for a version never read."""
     environment = _environment(user, workspace, storage, key)
     a2 = _create(_a1(environment), environment, secret_values={"OPENAI_API_KEY": "v2"})
     HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
         preflight_status="passed", prompt_hash="sha256:" + "f" * 64
     )
     assert not assembly.same_bundle_agent(a2.id, _a1(environment).id, environment)
+    if tools is not None:
+        _read_tools(a2, list(tools))
     return environment, a2
+
+
+def _read_tools(agent, tools):
+    """Store ``agent``'s document as a build's understand stage does, with ``tools``."""
+    document = source_agent(tools=tools)
+    document["behaviour"][0]["tools"] = [tool["name"] for tool in tools]
+    assert (
+        store_agent(agent_version_id=agent.id, agent=document, sdk_version="0.2.3")
+        == "stored"
+    )
 
 
 def _certify(
@@ -706,7 +723,9 @@ class TestApi:
             "environment_version",
             "suite_version",
             "evidence",
+            "agent_tools",
         }
+        assert body["pairing"]["agent_tools"] == {"read": False, "count": 0}
         assert set(body["validation"]) == {
             "state",
             "job_id",
@@ -1232,7 +1251,7 @@ class TestConsequence:
             "Every trial starts from the same seed, agent included"
         )
         assert rows["audio"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "6"
+        assert report["rules_version"] == "7"
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     def test_reset_consequence_by_connection(self, user, workspace, storage):
@@ -1410,3 +1429,230 @@ class TestCancel:
         )
 
         assert _rows(report)["cancel"]["needed_by"] == 0
+
+
+WORLD = {
+    "tools": [
+        {"name": "lookup_order", "args": ["order_id"]},
+        {"name": "issue_refund", "args": ["order_id", "amount"]},
+    ]
+}
+
+
+def _tool(name, *arguments):
+    return {
+        "name": name,
+        "description": None,
+        "kind": "builtin",
+        "parameters": {
+            "type": "object",
+            "properties": {argument: {} for argument in arguments},
+            "required": list(arguments),
+        },
+        "endpoint": None,
+    }
+
+
+SAME_TOOLS = (
+    _tool("lookup_order", "order_id"),
+    _tool("issue_refund", "order_id", "amount"),
+)
+
+
+class TestAgentGap:
+    """Chintan's case: E1 built with A1, then A2 brings a tool E1 does not offer."""
+
+    def test_a_tool_the_world_lacks_blocks_before_and_after_a_check(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "rd-gap-world",
+            tools=(*SAME_TOOLS, _tool("send_email", "to", "body")),
+        )
+        _built(environment, contract=WORLD)
+
+        for certified in (False, True):
+            if certified:
+                _certify(environment, storage, agent=a2)
+            report = _report(environment, a2)
+            discovery = _rows(report)["tool_discovery"]
+
+            assert (discovery["status"], discovery["reason_code"]) == (
+                "blocked",
+                "tool_not_in_world",
+            )
+            assert discovery["targets"] == [
+                {"kind": "agent_tool", "name": "send_email", "result": "failed"}
+            ]
+            assert discovery["fix"] == {
+                "type": "tool_not_in_world",
+                "category": "tool_routing",
+                "target": "send_email",
+                "action": "Add send_email to this environment in the builder, or test"
+                " this agent version in an environment that has it",
+                "would": "send_email is simulated in the test world and its probe passes",
+                "recheck": None,
+            }
+            assert discovery["consequence"].startswith(
+                "In a run, send_email would reach outside the test world"
+            )
+            assert report["answer"]["kind"] == "blocked"
+            assert report["pairing"]["agent_tools"] == {"read": True, "count": 3}
+            HarnessCapabilityReportSerializer(data=report).is_valid(
+                raise_exception=True
+            )
+
+    def test_a_changed_signature_blocks_routing_on_that_tool(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "rd-gap-signature",
+            tools=(
+                _tool("lookup_order", "order_id"),
+                _tool("issue_refund", "order_id", "amount", "reason"),
+            ),
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        report = _report(environment, a2)
+        rows = _rows(report)
+
+        assert rows["tool_discovery"]["status"] == "supported"
+        routing = rows["tool_routing"]
+        assert (routing["status"], routing["reason_code"], routing["targets"]) == (
+            "blocked",
+            "tool_signature_changed",
+            [{"kind": "tool", "name": "issue_refund", "result": "failed"}],
+        )
+        assert (routing["fix"]["type"], routing["fix"]["target"]) == (
+            "tool_signature_changed",
+            "issue_refund",
+        )
+        assert report["answer"]["kind"] == "blocked"
+
+    def test_a_world_tool_the_agent_lacks_blocks_the_cases_that_use_it(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "rd-gap-agent",
+            tools=(_tool("lookup_order", "order_id"),),
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        discovery = _rows(_report(environment, a2))["tool_discovery"]
+
+        assert (discovery["status"], discovery["reason_code"]) == (
+            "blocked",
+            "tool_not_in_agent",
+        )
+        assert discovery["targets"] == [
+            {"kind": "tool", "name": "issue_refund", "result": "failed"}
+        ]
+        assert discovery["fix"]["action"] == (
+            "Give this agent version issue_refund, or pick an agent version that has it"
+        )
+
+    def test_an_unread_version_is_untested_with_a_recheck(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user, workspace, storage, "rd-gap-unread", tools=None
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        report = _report(environment, a2)
+        discovery = _rows(report)["tool_discovery"]
+
+        assert (discovery["status"], discovery["reason_code"]) == (
+            "untested",
+            "agent_tools_unread",
+        )
+        assert discovery["fix"] == {
+            "type": "agent_tools_unread",
+            "category": "startup",
+            "target": None,
+            "action": "Re-check to read this agent's tools",
+            "would": "This agent's tools are compared with the environment's",
+            "recheck": {
+                "scope": "pair",
+                "method": "POST",
+                "path": f"{BASE}/{environment.id}/capabilities/recheck/",
+            },
+        }
+        assert report["pairing"]["agent_tools"] == {"read": False, "count": 0}
+        assert report["answer"]["kind"] == "unchecked"
+
+    def test_the_same_tools_leave_the_certificate_reading(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user, workspace, storage, "rd-gap-same", tools=SAME_TOOLS
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        report = _report(environment, a2)
+
+        assert {
+            row["status"]
+            for row in report["rows"]
+            if row["measured"] and row["id"] != "cancel"
+        } == {"supported"}
+        assert report["answer"]["kind"] == "ready"
+
+    def test_the_agent_the_environment_was_built_with_is_not_compared(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-gap-built-with")
+        _built(environment, contract=WORLD)
+        _certify(environment, storage)
+
+        report = _report(environment)
+
+        assert report["pairing"]["agent_tools"]["read"] is False
+        assert _rows(report)["tool_discovery"]["status"] == "supported"
+
+    def test_a_changed_signature_keeps_the_actions_a_failed_pair_named(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "rd-gap-named",
+            tools=(_tool("lookup_order", "id"), SAME_TOOLS[1]),
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        HarnessAssembledBundle._base_manager.filter(
+            id=_bundle(environment, a2).id
+        ).update(
+            state="failed",
+            object_key=None,
+            error={
+                "code": "authoring_runtime_validation_failed",
+                "source": "validation",
+                "failed_actions": [{"action": "issue_refund", "reason": "live"}],
+            },
+        )
+
+        routing = _rows(_report(environment, a2))["tool_routing"]
+
+        assert routing["reason_code"] == "tool_signature_changed"
+        assert routing["targets"] == [
+            {"kind": "tool", "name": "lookup_order", "result": "failed"},
+            {"kind": "action", "name": "issue_refund", "result": "failed"},
+        ]
+        assert routing["reason"].endswith("failed its probe: issue_refund")

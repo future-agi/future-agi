@@ -31,6 +31,7 @@ from simulate.services.harness_readiness.catalogue import (
     Status,
 )
 from simulate.services.harness_readiness.evidence import (
+    agent_tools,
     certified,
     pair_bundle,
     read_evidence,
@@ -256,7 +257,8 @@ def readiness_report(
     """
     bundle = bundle or pair_bundle(pairing)
     evidence = read_evidence(pairing, bundle)
-    found = rows(pairing, evidence, bundle)
+    tools = agent_tools(pairing)
+    found = rows(pairing, evidence, bundle, agent_tools=tools)
     view = _validation(pairing, bundle)
     refs = version_refs(
         pairing.agent_version, pairing.environment_version, pairing.suite_version
@@ -280,6 +282,7 @@ def readiness_report(
             "environment_version": refs["environment"],
             "suite_version": refs["suite"],
             "evidence": evidence.source,
+            "agent_tools": {"read": tools is not None, "count": len(tools or [])},
         },
         "validation": view,
         "answer": answer(

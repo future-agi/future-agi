@@ -16,21 +16,24 @@ from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     PASSED,
     PRODUCTION_ONLY,
+    SAME_TOOLS,
+    WORLD,
     _built,
     _certify,
     _environment,
     _pairing,
     _rows,
+    _tool,
     _with_a2,
 )
-from simulate.tests.test_harness_readiness import (
-    readiness_on as readiness_on,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    readiness_on as readiness_on,
 )
-from simulate.tests.test_harness_readiness import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
-from simulate.tests.test_harness_readiness import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
 )
 from simulate.tests.test_harness_versioning_assembly import _row
 from simulate.tests.test_harness_versioning_runs import _run
@@ -622,3 +625,88 @@ class TestHoldBack:
 
         assert refused.value.code == "environment_not_ready"
         assert refused.value.retryable is True
+
+
+class TestAgentGapCases:
+    def _a2(self, user, workspace, storage, key, tools, documents=None):
+        environment, a2 = _with_a2(user, workspace, storage, key, tools=tools)
+        _suite(environment, documents or _ten())
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        return environment, _pairing(environment, a2)
+
+    def test_a_tool_the_world_lacks_holds_back_every_case(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user,
+            workspace,
+            storage,
+            "gap-cases-world",
+            (*SAME_TOOLS, _tool("send_email", "to")),
+            # A case calling no tool can still have the agent call send_email.
+            [*_ten(), _doc("chat-1", sub_goals=("polite",))],
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        assert (chosen["blocked"], chosen["eligible"]) == (11, 0)
+        discovery = _rows(report)["tool_discovery"]
+        assert discovery["affected"]["count"] == 11
+        assert discovery["needed_by"] == 11
+        plan = harness_readiness.select_for_run(
+            pairing, keys=[*REFUND_KEYS, *LOOKUP_KEYS, "chat-1"], trials=1
+        )
+        assert (plan.view["running"], plan.view["held_back"]["by"]) == (
+            0,
+            {"tool_discovery": 11},
+        )
+        assert plan.view["reasons"]["tool_discovery"] == (
+            "Not in this environment: send_email"
+        )
+
+    def test_a_world_tool_the_agent_lacks_holds_back_only_its_cases(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user, workspace, storage, "gap-cases-agent", (SAME_TOOLS[0],)
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        # The rest still run: routing waits on discovery, as for any blocked tool.
+        assert (chosen["blocked"], chosen["untested"]) == (4, 6)
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert _rows(report)["tool_discovery"]["affected"]["count"] == 4
+
+    def test_a_changed_signature_holds_back_only_the_cases_using_it(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(
+            user,
+            workspace,
+            storage,
+            "gap-cases-signature",
+            (SAME_TOOLS[0], _tool(REFUND, "order_id")),
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        assert report["selection"]["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert _rows(report)["tool_routing"]["affected"]["count"] == 4
+
+    def test_an_unread_version_holds_back_no_case(self, user, workspace, storage):
+        environment, pairing = self._a2(
+            user, workspace, storage, "gap-cases-unread", None
+        )
+
+        report = _select(environment, pairing=pairing)
+
+        chosen = report["selection"]
+        assert (chosen["blocked"], chosen["untested"]) == (0, 10)
+        plan = harness_readiness.select_for_run(
+            pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
+        )
+        assert plan.view["running"] == 10

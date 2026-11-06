@@ -403,11 +403,15 @@ def _voice(pairing: Pairing) -> bool:
 
 def _status_for(row: RowView, case: CaseNeeds) -> Status:
     """The row's status for this case: a tool row failing only on tools the case
-    does not need is Supported for it."""
+    does not need is Supported for it. An agent tool the world lacks may be called
+    in any case."""
     if (
         row["id"] in TOOL_ROWS
         and row["targets"]
-        and not any(target["name"] in case.tools for target in row["targets"])
+        and not any(
+            target["kind"] == "agent_tool" or target["name"] in case.tools
+            for target in row["targets"]
+        )
     ):
         return "supported"
     return row["status"]
@@ -428,6 +432,12 @@ def _place(
         # A voice case reaches the agent by audio, not by a test chat message.
         needed.discard("message")
         needed.add("audio")
+    # Every case needs a row naming an agent tool the world lacks.
+    needed.update(
+        one
+        for one, row in rows.items()
+        if any(target["kind"] == "agent_tool" for target in row["targets"])
+    )
     reset = rows.get("reset")
     if many and reset is not None and reset["finding"] != "not_applicable":
         # In a seeded world each case starts from what an earlier one left behind.

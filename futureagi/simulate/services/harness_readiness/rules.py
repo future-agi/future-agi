@@ -27,6 +27,7 @@ from simulate.services.harness_readiness.evidence import (
     readings,
 )
 from simulate.services.harness_readiness.findings import (
+    agent_findings,
     preflight_findings,
     structural_findings,
 )
@@ -88,18 +89,23 @@ def rows(
     pairing: Pairing,
     evidence: Evidence,
     bundle: HarnessAssembledBundle | None,
+    *,
+    agent_tools: list[Mapping[str, Any]] | None = None,
 ) -> list[RowView]:
     """One row per capability, first matching rule wins.
 
     Unmeasured rows are Untested. ``start`` is Blocked on a failed or unfinished
-    preflight. Then: (1) a failed pair blocks tool routing on the actions it failed;
-    (3) evidence measured with another agent is Stale; (4) a gate not Supported or
+    preflight. Then: (0) the agent version's own tools against the environment's,
+    for an agent other than the one it was built with, whatever the certificate
+    says; (1) a failed pair blocks tool routing on the actions it failed; (3)
+    evidence measured with another agent is Stale; (4) a gate not Supported or
     Partial leaves the row Untested; (5-9) the row's own reading.
     """
     measured = _measured(pairing, evidence)
     preflight = preflight_findings(pairing.runtime)
     named = failed_actions(bundle)
     stale = _stale(pairing, evidence)
+    gap = _agent_gap(pairing, agent_tools)
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
     fresh: dict[str, Status] = {}
@@ -133,6 +139,24 @@ def rows(
                 reason_code=code,
                 reason=reason,
                 checked_at=reading.checked_at,
+            )
+        elif capability.id in gap:
+            found = gap[capability.id]
+            if capability.id == "tool_routing" and named:
+                names = [one["action"] for one in named]
+                found = Reading(
+                    found.finding,
+                    found.reason_code,
+                    found.reason + "; failed its probe: " + ", ".join(names),
+                    found.targets + targets("action", names, "failed"),
+                )
+            status, _, _ = _status(found)
+            row = _row(
+                capability,
+                status,
+                reading=found,
+                reason_code=found.reason_code,
+                reason=found.reason,
             )
         elif capability.id == "tool_routing" and named:
             names = [one["action"] for one in named]
@@ -190,6 +214,23 @@ def rows(
         row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
     return rows
+
+
+def _agent_gap(
+    pairing: Pairing, agent_tools: list[Mapping[str, Any]] | None
+) -> dict[str, Reading]:
+    """The agent-side tool rows of a pairing whose agent is not the one its
+    environment version was built with (that one's tools are the contract's)."""
+    if pairing.agent_version is None or assembly.same_bundle_agent(
+        pairing.agent_version.id,
+        pairing.environment_version.agent_version_id,
+        pairing.environment,
+    ):
+        return {}
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    return agent_findings(
+        agent_tools, contract if isinstance(contract, Mapping) else None
+    )
 
 
 def _gated(
@@ -259,6 +300,23 @@ _FIXES: dict[str, tuple[str, str]] = {
     ),
 }
 
+# The agent version's tools against the environment version's.
+_AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
+    "tool_not_in_world": (
+        "Add {target} to this environment in the builder, or test this agent version"
+        " in an environment that has it",
+        "{target} is simulated in the test world and its probe passes",
+    ),
+    "tool_not_in_agent": (
+        "Give this agent version {target}, or pick an agent version that has it",
+        "The agent can call {target} in the cases that use it",
+    ),
+    "tool_signature_changed": (
+        "Rebuild this environment from this agent version so {target} takes the"
+        " arguments the agent sends, or test it in an environment built for them",
+        "{target} takes the agent's arguments in the test world and its probe passes",
+    ),
+}
 
 # Each fixable row's kind of repair: the screen its fix opens.
 _CATEGORIES: dict[str, FixCategory] = {
@@ -284,12 +342,20 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
         "unavailable": "This connection takes no chat message; only voice cases apply",
     },
     "tool_discovery": {
+        "blocked:tool_not_in_world": "In a run, {target} would reach outside the test"
+        " world or fail; its effect would not be graded, so no case can run",
+        "blocked:tool_not_in_agent": "Cases that use {target} cannot run: this agent"
+        " version does not have it",
+        "untested:agent_tools_unread": "This agent version's tools are not known, so a"
+        " tool the environment lacks would go unseen until a run calls it",
         "supported": "Every tool the cases use is found before they call it",
         "partial": "Some tools appear only once the agent runs, so a case can fail on a"
         " tool found late",
         "blocked": "Cases that use {target} cannot run until it is exposed",
     },
     "tool_routing": {
+        "blocked:tool_signature_changed": "Cases that use {target} cannot run: the"
+        " agent calls it with other arguments than the test world takes",
         "supported": "Every tool call lands in the test world, never in a real system",
         "partial": "Some tools were not probed, so a case may still reach a real system"
         " through them",
@@ -397,6 +463,34 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
                     f"{pairing.agent_version.id}/retry/"
                 ),
             },
+        }
+    if code == "agent_tools_unread":
+        # Checking the pairing reads the version's tools, whether or not it is
+        # certified already.
+        return {
+            "type": code,
+            "category": "startup",
+            "target": None,
+            "action": "Re-check to read this agent's tools",
+            "would": "This agent's tools are compared with the environment's",
+            "recheck": {
+                "scope": "pair",
+                "method": "POST",
+                "path": f"{_BASE_PATH}/{environment_id}/capabilities/recheck/",
+            },
+        }
+    if code in _AGENT_GAP_FIXES:
+        kind = "agent_tool" if code == "tool_not_in_world" else "tool"
+        names = [one["name"] for one in row["targets"] if one["kind"] == kind]
+        action, would = _AGENT_GAP_FIXES[code]
+        # Only a new agent or environment version changes the documents compared.
+        return {
+            "type": code,
+            "category": "tool_routing",
+            "target": names[0] if names else None,
+            "action": action.format(target=", ".join(names)),
+            "would": would.format(target=", ".join(names)),
+            "recheck": None,
         }
     if pair is not None and (
         row["status"] == "stale" or code in ("built_with_unknown", "not_run")
