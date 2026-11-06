@@ -54,7 +54,7 @@ export const CALL_WORKERS_COPY = {
   noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
   returnCutOff: (name) =>
-    `Return from ${name} not shown: this call's record reached its size limit`,
+    `Return from ${name} not shown: this call's record is incomplete`,
   failed: "error",
   input: "Input",
   output: "Output",

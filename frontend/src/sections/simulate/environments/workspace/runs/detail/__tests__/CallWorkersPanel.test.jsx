@@ -736,6 +736,28 @@ describe("CallWorkersPanel", () => {
       ).toBeInTheDocument();
     });
 
+    it.each(["partial", "unavailable"])(
+      "does not call a return missing after a %s read a failure",
+      (collection) => {
+        result = {
+          data: timeline({ returned: null, collection }),
+          isLoading: false,
+          isError: false,
+        };
+        render(<CallWorkersPanel callExecutionId="c1" />);
+        expect(screen.getByTestId("worker-row")).toHaveAttribute(
+          "data-end",
+          "cut_off",
+        );
+        expect(
+          screen.getByText(
+            "Return from Order-lookup worker not shown: this call's record is incomplete",
+          ),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/^No return from/)).toBeNull();
+      },
+    );
+
     it("says when only part of the call's traces could be read", () => {
       result = {
         data: { ...TIMELINE, collection: "partial" },

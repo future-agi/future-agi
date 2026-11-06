@@ -767,7 +767,11 @@ export default function CallWorkersPanel({
   const start = data.started_at;
   const hasHandOffs = data.events.some(isHandOff);
   const tree = nest(data);
-  const cutOff = data.events_omitted > 0;
+  // A record cut at its limit, or read only in part, can't say a missing return never came.
+  const cutOff =
+    data.events_omitted > 0 ||
+    data.collection === "partial" ||
+    data.collection === "unavailable";
   const rows = handOffRows(tree.items);
   // With no hand-off there is nothing to tabulate, so the steps are the whole story.
   const showSteps = rawEvents || !rows.length;
