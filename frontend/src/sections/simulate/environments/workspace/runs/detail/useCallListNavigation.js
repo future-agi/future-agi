@@ -134,6 +134,8 @@ export default function useCallListNavigation({
   };
 
   return {
+    // The open call's row as the table last read it; the task it opened with is a snapshot.
+    openRow: index >= 0 ? onScreen[index] : null,
     hasPrev: !crossing && index >= 0 && (index > 0 || page > 1),
     hasNext:
       !crossing &&

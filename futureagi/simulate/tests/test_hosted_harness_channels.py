@@ -948,7 +948,7 @@ def test_job_idempotency_cannot_cross_workspaces(organization, workspace):
 
 @pytest.mark.django_db
 def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
-    organization, workspace
+    organization, workspace, django_capture_on_commit_callbacks
 ):
     job, _ = create_hosted_job(
         organization,
@@ -1016,13 +1016,21 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "failure": None,
     }
     receipt["digest"] = canonical_digest(receipt)
-    result = client.post(
-        f"{BASE}/{capability.attempt.id}/results/",
-        receipt,
-        format="json",
-        **headers,
-    )
+    with (
+        patch("simulate.tasks.alk_sim.record_call_workers.apply_async") as read_workers,
+        patch("simulate.services.alk_simulate_ingestion._dispatch_csat_once"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        result = client.post(
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
+        )
     assert result.status_code == 200, result.content
+    # Which worker did what is read once the call's spans have had time to arrive.
+    [scheduled] = read_workers.call_args_list
+    assert scheduled.kwargs["start_delay"].total_seconds() == 35
 
     job.refresh_from_db()
     assert job.run_test.workspace == workspace

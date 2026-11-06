@@ -16,4 +16,6 @@ export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   value: PropTypes.string.isRequired,
   icon: PropTypes.string,
   content: PropTypes.node,
+  // Stays mounted, hidden, on other tabs, so what the reader opened in it survives a tab change.
+  keepMounted: PropTypes.bool,
 });
