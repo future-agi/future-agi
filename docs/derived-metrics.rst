@@ -461,74 +461,38 @@ fail explicitly rather than truncating or merging categories. Broad workloads th
 budget must use smaller closed windows. This is a correctness-preserving workload
 limit, not a claim to have benchmarked a billion-span population.
 
-Deployment applies additive PostgreSQL migrations and
-``028_derived_metrics.sql``, ``029_derived_metric_uncertainty.sql``, then
-``030_derived_metric_view_refresh.sql`` through the existing schema runner. 029
-adds columns idempotently and refreshes the committed-only SQL view; it has its
-own receipt, so installations that already applied 028 upgrade without changing
-its checksum. The replicated runner distributes ordinary view creation and
-replacement with the configured ``ON CLUSTER``. 030 has a new receipt to repair a
-stale projection even where an older runner already recorded 029 as applied.
-Neither earlier file is rewritten. Local runner execution and replicated emitted
-DDL are tested separately; multi-replica deployment remains a qualification gate.
-Existing raw span and evaluation schemas are not rewritten. Provision the ClickHouse schema before
-enabling writes, and register the existing exact-aggregation task queue. An
-application writer connection is required for snapshot persistence; readonly-only
-deployments fail explicitly. PostgreSQL migrations add new empty tables and one
-nullable monitor field, without backfilling historical data. Apply the delivery
-ledger migration before enabling derived monitors; historical delivery identities
-are not fabricated from a last-run pointer. Application rollback
-leaves ClickHouse evidence intact; do not drop snapshot tables to roll back code.
+Deployment applies the PostgreSQL migration graph and ClickHouse schema files
+``028_derived_metrics.sql`` through ``037_list_current_user_activity.sql`` using
+the existing schema runner. The source ``spans`` table is unchanged;
+``tracer_eval_logger_v2`` gains the additive ``status`` and ``config_hash``
+columns. Schema 029 refreshes the committed-only SQL view, and 030 has a separate
+receipt to repair that projection where 029 was already recorded as applied.
+The configured ``ON CLUSTER`` runner handles ordinary view creation and
+replacement; supported multi-replica deployment still requires qualification.
 
-Public competitive references
------------------------------
+PostgreSQL adds Metrics-owned tables and extends ``UserAlertMonitor`` with
+``last_derived_run_id``, ``alert_when`` and the derived-metric type choice.
+Migrations 0126 and 0127 also transform existing metric state; they are not an
+empty-table-only upgrade. Rehearse their data operations and downgrade guards
+before rollout, and do not rewrite already deployed migration files.
 
-Checked against primary public documentation on 2026-10-21:
+Provision the schema before enabling writes and register the exact-aggregation
+task queue. ``METRICS_ENABLED`` defaults to OFF; schema application does not
+activate Metrics. Trace-level Metrics remain disabled. An application writer
+connection is required for snapshot persistence; readonly-only deployments fail
+explicitly. Apply the delivery ledger migration before enabling derived
+monitors; historical delivery identities are not fabricated from a last-run
+pointer. Application rollback leaves ClickHouse evidence intact; do not drop
+snapshot tables to roll back code.
 
-* Arize documents AQL custom metrics, weighted composites and ratios, usable in
-  dashboards and monitors. This feature must NOT be described as something Arize
-  cannot do: https://arize.com/docs/ax/observe/projects/custom-metrics-api
-* Arize documents the custom-metric monitor source:
-  https://arize.com/docs/ax/observe/production-monitoring
-* Galileo documents composite metrics and ``required_metrics`` dependencies:
-  https://docs.galileo.ai/concepts/metrics/custom-metrics/composite-metrics
-* Galileo documents custom-code evaluation at session/trace/span levels:
-  https://docs.galileo.ai/concepts/metrics/custom-metrics/custom-metrics-ui-code
-* Galileo's release notes document configurable span/trace/session rollups:
-  https://docs.galileo.ai/release-notes
+Missing data and delivery semantics
+-----------------------------------
 
-Behaviour-level references for missing data, alert retry and evaluator binding,
-checked against primary public documentation on 2026-10-22:
-
-* Langfuse alerts default to “Treat missing data as 0” (alternatives: keep the
-  previous severity, show NO_DATA, notify after sustained NO_DATA):
-  https://langfuse.com/docs/observability/features/alerts . Its blob-export
-  reference documents ``total_cost`` as ``0`` when no cost was recorded and
-  ``latency`` as nullable:
-  https://langfuse.com/docs/api-and-data-platform/features/blob-storage-export-fields
-* Datadog monitors offer “Evaluate as zero”, “Show last known status”, “Show NO
-  DATA”, “Show NO DATA and notify” and “Show OK” for missing data:
-  https://docs.datadoghq.com/monitors/configuration . Datadog webhooks retry on
-  internal errors or 5XX responses, with missed connections retried 5 times:
-  https://docs.datadoghq.com/integrations/webhooks
-* Arize AQL custom metrics return one number per query (no ``GROUP BY``); null
-  exclusion is written by the author, e.g. ``COUNT(*) FILTER (WHERE … != null)``
-  in its rate pattern: https://arize.com/docs/ax/observe/projects/custom-metrics-api
-* LangSmith alerts cover average feedback score, average latency and errors, and
-  its dashboards chart cost with sum/average/percentile:
-  https://docs.langchain.com/langsmith/alerts and
-  https://docs.langchain.com/langsmith/dashboards
-
-Design choices made here in that light, each covered by tests in this
-repository rather than by a comparison: missing span measures are a counted,
-visible status instead of an implicit zero; a missing newest value never alerts
-and never falls back to an older value; a failed delivery is retried for a
-bounded period without re-emitting an older observation; and a weighted metric
-cannot be saved with an evaluator binding that could only read unsampled rows.
-
-These sources establish feature existence, not comparative accuracy, performance,
-pricing or implementation details. No unsupported parity or superiority claim is
-made.
+Missing span measures are a counted, visible status instead of an implicit zero.
+A missing newest value never alerts and never falls back to an older value. A
+failed delivery is retried for a bounded period without re-emitting an older
+observation. A weighted metric cannot be saved with an evaluator binding that
+could only read unsampled rows.
 
 Verification
 ------------
