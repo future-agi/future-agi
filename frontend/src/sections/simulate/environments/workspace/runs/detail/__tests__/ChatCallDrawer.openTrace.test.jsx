@@ -12,13 +12,29 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   };
 });
 
-vi.mock("../CallWorkersPanel", () => ({
-  default: ({ onOpenTrace }) => (
-    <button type="button" onClick={() => onOpenTrace("tr-1")}>
-      open step trace
-    </button>
-  ),
-}));
+vi.mock("../CallWorkersPanel", async () => {
+  const { useState } = await import("react");
+  return {
+    default: function WorkersStub({ onOpenTrace }) {
+      // Stands for what the reader opened in the panel: expanded rows, the Raw events toggle.
+      const [expanded, setExpanded] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => onOpenTrace("tr-1")}>
+            open step trace
+          </button>
+          <button
+            type="button"
+            aria-pressed={expanded}
+            onClick={() => setExpanded(true)}
+          >
+            expand row
+          </button>
+        </>
+      );
+    },
+  };
+});
 
 vi.mock("../CallTracesPanel", () => ({
   default: ({ openTraceId }) => (
@@ -49,6 +65,29 @@ describe("ChatCallDrawer Open in Traces", () => {
     expect(screen.getByTestId("traces-panel")).toHaveAttribute(
       "data-open-trace",
       "null",
+    );
+  });
+
+  it("keeps what was opened in Participants after a visit to another tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "expand row" }));
+
+    await user.click(screen.getByRole("tab", { name: "Traces" }));
+    expect(
+      screen.queryByRole("button", { name: "expand row" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+
+    expect(screen.getByRole("button", { name: "expand row" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
   });
 });

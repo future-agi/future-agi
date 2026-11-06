@@ -111,6 +111,7 @@ export default function ChatCallDrawer({
     chosenArtifact === "workers" && hasWorkers === false
       ? "transcript"
       : chosenArtifact;
+  const showWorkers = hasWorkers || artifact === "workers";
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -200,20 +201,22 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            {hasWorkers || artifact === "workers" ? (
-              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
-            ) : null}
+            {showWorkers ? <Tab value="workers" label={CALL_WORKERS_COPY.tab} /> : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {artifact === "workers" ? (
-              <CallWorkersPanel
-                key={task.id}
-                callExecutionId={task.id}
-                onOpenTrace={openTrace}
-                traceIds={callTraces.traces.map((trace) => trace.traceId)}
-              />
-            ) : showTraces ? (
+            {/* Hidden, not unmounted, on another tab, so its open rows and Raw events survive a visit to Traces. */}
+            {showWorkers ? (
+              <Box sx={{ display: artifact === "workers" ? "block" : "none" }}>
+                <CallWorkersPanel
+                  key={task.id}
+                  callExecutionId={task.id}
+                  onOpenTrace={openTrace}
+                  traceIds={callTraces.traces.map((trace) => trace.traceId)}
+                />
+              </Box>
+            ) : null}
+            {artifact === "workers" ? null : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
                   traces={callTraces.traces}
