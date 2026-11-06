@@ -373,9 +373,7 @@ def test_saved_id_reaches_evaluator_transport_unchanged(
     monkeypatch.setattr(
         "model_hub.utils.utils.litellm.completion", _fake_completion(seen)
     )
-    assert (
-        client.post(CREATE_URL, _payload(model_id), format="json").status_code == 200
-    )
+    assert client.post(CREATE_URL, _payload(model_id), format="json").status_code == 200
 
     # The evaluator resolves provider and credentials from the saved row,
     # then calls LiteLLM. Only the transport is replaced.
