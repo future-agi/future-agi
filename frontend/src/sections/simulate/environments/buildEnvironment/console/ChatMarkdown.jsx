@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useMemo } from "react";
 import { Box } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,6 +18,22 @@ const htmlAsText = () => (tree) => {
 
 /** Markdown prose in the builder chat: builder notes and question prompts. */
 export default function ChatMarkdown({ text, dim, sx }) {
+  // Every keystroke in the composer redraws the chat; parse only when text changes.
+  const body = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, htmlAsText]}
+        rehypePlugins={[rehypeSanitize]}
+        // An image loads as soon as the chat opens, so model-written text could
+        // send data to any site through its URL.
+        disallowedElements={["img"]}
+      >
+        {text || ""}
+      </ReactMarkdown>
+    ),
+    [text],
+  );
+
   return (
     <Box
       sx={{
@@ -64,15 +81,7 @@ export default function ChatMarkdown({ text, dim, sx }) {
         ...sx,
       }}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, htmlAsText]}
-        rehypePlugins={[rehypeSanitize]}
-        // An image loads as soon as the chat opens, so model-written text could
-        // send data to any site through its URL.
-        disallowedElements={["img"]}
-      >
-        {text || ""}
-      </ReactMarkdown>
+      {body}
     </Box>
   );
 }

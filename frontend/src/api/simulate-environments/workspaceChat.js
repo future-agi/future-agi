@@ -5,7 +5,7 @@
 // its messages + events into the BuilderConsole turn/step model, and posts user
 // turns back through POST …/conversation/messages/. Poll parity, not streaming:
 // assistant_delta is ignored; a whole assistant_message renders on the next poll,
-// with a "working" cue in between (the ring around the composer's Stop button).
+// with a "working" cue in between (the orbit around the composer's Stop button).
 //
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.

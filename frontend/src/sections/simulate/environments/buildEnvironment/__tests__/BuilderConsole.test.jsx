@@ -189,7 +189,7 @@ describe("BuilderConsole", () => {
       expect(scrollTo).not.toHaveBeenCalled();
     });
 
-    it("shows the dots for tool rows, then the arrow for a message", () => {
+    it("shows the ship for tool rows, then the ping for a message", () => {
       const { rerender } = renderScrolledUp();
       rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
       expect(jump(CONSOLE_COPY.jumpWorking)).toBeInTheDocument();

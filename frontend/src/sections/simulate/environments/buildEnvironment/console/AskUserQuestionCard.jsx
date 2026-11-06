@@ -7,7 +7,8 @@ import ChatMarkdown from "./ChatMarkdown";
 
 // Prompts are the model's free text. Plain questions must show exactly as written,
 // so `# of rooms` or `__init__` only go through markdown alongside real markdown.
-const MARKDOWN_BLOCK = /^(#{1,6} |[-*+] |\d+[.)] |> |```)/m;
+// The table case matches its `|---|---|` row, not any line with a pipe in it.
+const MARKDOWN_BLOCK = /^(#{1,6} |[-*+] |\d+[.)] |> |```|\s*\|?\s*:?-+:?\s*\|[\s|:-]*$)/m;
 const MARKDOWN_INLINE = /\*\*[^*\s][^*]*\*\*|`[^`\n]+`/;
 const looksLikeMarkdown = (text = "") =>
   (text.includes("\n") && MARKDOWN_BLOCK.test(text)) || MARKDOWN_INLINE.test(text);

@@ -36,8 +36,8 @@ function composerReducer(state, action) {
 // reading the last few rows.
 const NEAR_BOTTOM_PX = 8;
 
-// Things worth reading. Tool rows and other progress only keep the dots going,
-// or the new-message arrow would replace them almost at once.
+// Things worth reading. Tool rows and other progress only keep the ship flying,
+// or the new-message ping would replace it almost at once.
 const MESSAGE_KINDS = new Set(["note", "ask", "error", "nudge"]);
 
 const countMessages = (turns) =>

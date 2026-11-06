@@ -115,6 +115,28 @@ describe("ConsoleTurn new step kinds", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it.each([
+    ["with outer pipes", "Pick one:\n\n| Rate | Refund |\n|---|---|\n| Flexible | Yes |"],
+    ["without outer pipes", "Pick one:\n\nRate | Refund\n---|:--:\nFlexible | Yes"],
+    ["with no blank line above", "Pick one:\n| Rate | Refund |\n|---|---|\n| Flexible | Yes |"],
+  ])("renders a question that is only a table: %s", (_, prompt) => {
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Flexible" })).toBeInTheDocument();
+  });
+
+  it("keeps a plain question with pipes as written", () => {
+    const prompt = "Use a | b or c?\nThe --- divider stays too.";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    const { container } = render(
+      <Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />,
+    );
+    expect(container.querySelector("table")).toBeNull();
+    expect(container).toHaveTextContent("Use a | b or c?");
+    expect(container).toHaveTextContent("The --- divider stays too.");
+  });
+
   it("keeps raw angle brackets inside a markdown question", () => {
     const prompt = "Approve this?\n\n- send it to the <front desk>";
     const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
