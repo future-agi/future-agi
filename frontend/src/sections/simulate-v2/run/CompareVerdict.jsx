@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
@@ -7,7 +6,6 @@ import {
   Typography,
   Button,
   Checkbox,
-  Collapse,
   Tooltip,
   FormControlLabel,
 } from "@mui/material";
@@ -15,7 +13,6 @@ import Iconify from "src/components/iconify";
 import { neutralCheckboxSx } from "../components/primitives";
 import { textTone } from "../components/textTone";
 import { noiseBandText, PAIR_FLOOR, verdictWithMustPass } from "../_mock/pairs";
-import { clickable, focusRing } from "../components/clickable";
 
 /* Red is for regressions only. Everything else stays neutral. */
 
@@ -79,7 +76,6 @@ export default function CompareVerdict({
   promote = null,
   onImprove = null,
 }) {
-  const [pinsOpen, setPinsOpen] = useState(false);
   if (!read) return null;
   const { counts, interval: iv, fixes, warnings, trend, band } = read;
   const label = verdictWithMustPass(read.label, mustPass);
@@ -108,7 +104,6 @@ export default function CompareVerdict({
     (read.excludeRechecked ? counts.rechecked : 0) -
     iv.n;
   const [head, ...rest] = read.sentence.split(" · ");
-  const differs = held?.differs || [];
 
   return (
     <Box
@@ -122,92 +117,108 @@ export default function CompareVerdict({
       }}
     >
       {/* What each run pinned — first, so differing inputs are read before
-          any delta (runs §2 Compare selection). The closed line already names
-          what differs; opened, it lists only those, the rest on one line. */}
+          any delta (runs §2 Compare selection). One row of chips: what
+          changed is tinted, its effect on hover; what matched is quiet. */}
       {held && (
-        <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+        <Tooltip
+          arrow
+          placement="bottom-start"
+          title={`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
+        >
           <Stack
             direction="row"
             alignItems="center"
-            spacing={0.75}
-            {...clickable(() => setPinsOpen((o) => !o), { expanded: pinsOpen })}
+            spacing={1.5}
             sx={{
               px: 2,
-              py: 0.875,
-              cursor: "pointer",
-              "&:hover": { bgcolor: "action.hover" },
-              ...focusRing,
+              py: 1,
+              borderBottom: "1px solid",
+              borderColor: "divider",
             }}
           >
-            <Iconify
-              icon={
-                pinsOpen
-                  ? "solar:alt-arrow-down-linear"
-                  : "solar:alt-arrow-right-linear"
-              }
-              width={14}
-              sx={{ color: "text.tertiary" }}
-            />
             <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.secondary",
-              }}
+              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
             >
-              What each run pinned
+              Pinned
             </Typography>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              useFlexGap
+              flexWrap="wrap"
+              sx={{ flex: 1, minWidth: 0 }}
+            >
+              {[
+                ...held.rows.filter((r) => !r.same),
+                ...held.rows.filter((r) => r.same),
+              ].map((r) => (
+                <Tooltip
+                  key={r.id}
+                  arrow
+                  title={
+                    r.same
+                      ? `${pinLabel(r)}: ${pinValue(r)} in every run`
+                      : `${pinLabel(r)} ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`
+                  }
+                >
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{
+                      height: 20,
+                      px: 0.75,
+                      borderRadius: "4px",
+                      cursor: "default",
+                      ...(r.same
+                        ? {
+                            bgcolor: "action.selected",
+                            color: "text.secondary",
+                          }
+                        : {
+                            bgcolor: "status.warning.bg",
+                            color: "status.warning.fg",
+                          }),
+                    }}
+                  >
+                    <Iconify
+                      icon={
+                        r.same
+                          ? "solar:check-read-linear"
+                          : "solar:danger-triangle-linear"
+                      }
+                      width={12}
+                    />
+                    <Typography
+                      noWrap
+                      sx={{
+                        fontSize: 11,
+                        lineHeight: "16px",
+                        fontWeight: 500,
+                        color: "inherit",
+                      }}
+                    >
+                      {r.same ? pinLabel(r) : `${pinLabel(r)} changed`}
+                    </Typography>
+                  </Stack>
+                </Tooltip>
+              ))}
+            </Stack>
             <Typography
               noWrap
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+              sx={{
+                typography: "s3",
+                color: "text.secondary",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                flexShrink: 0,
+              }}
             >
-              {differs.length
-                ? `${differs.length} differ${differs.length === 1 ? "s" : ""}: ${differs.map((d) => pinLabel(d).toLowerCase()).join(", ")}`
-                : held.agents.length > 1
-                  ? "only the agent varies"
-                  : "everything matches"}
-              {` · ${held.agents.length > 1 ? held.agents.join(" → ") : `agent ${held.agents[0] || "—"}`}`}
+              {held.agents.length > 1
+                ? held.agents.join(" → ")
+                : `agent ${held.agents[0] || "—"}`}
             </Typography>
           </Stack>
-          <Collapse in={pinsOpen} unmountOnExit>
-            <Tooltip
-              arrow
-              placement="bottom-start"
-              title={`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
-            >
-              <Box sx={{ px: 2, pb: 1, pl: 4.25 }}>
-                {held.rows
-                  .filter((r) => !r.same)
-                  .map((r) => (
-                    <Typography
-                      key={r.id}
-                      noWrap
-                      sx={{ typography: "s3", color: "text.secondary" }}
-                    >
-                      <Box
-                        component="span"
-                        sx={{ fontWeight: 600, color: "text.primary" }}
-                      >
-                        {pinLabel(r)}
-                      </Box>
-                      {` ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`}
-                    </Typography>
-                  ))}
-                {held.rows.some((r) => r.same) && (
-                  <Typography
-                    noWrap
-                    sx={{ typography: "s3", color: "text.tertiary" }}
-                  >
-                    {`Same: ${held.rows
-                      .filter((r) => r.same)
-                      .map((r) => pinLabel(r).toLowerCase())
-                      .join(", ")}`}
-                  </Typography>
-                )}
-              </Box>
-            </Tooltip>
-          </Collapse>
-        </Box>
+        </Tooltip>
       )}
       {/* A confirmed regression: improve the agent from these failures. */}
       {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
@@ -311,13 +322,48 @@ export default function CompareVerdict({
               </Typography>
             </>
           ) : floor ? (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <Box
-                component="span"
-                sx={{ fontWeight: 600, color: "text.primary" }}
-              >{`Only ${iv.n} comparable pair${iv.n === 1 ? "" : "s"}.`}</Box>
-              {` Below ${PAIR_FLOOR} there's no aggregate — read the rows below, regressions first.`}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.5}
+                sx={{
+                  height: 22,
+                  px: 0.875,
+                  borderRadius: "4px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
+                <Iconify
+                  icon="solar:question-circle-linear"
+                  width={14}
+                  sx={{ color: "text.secondary" }}
+                />
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  No verdict yet
+                </Typography>
+              </Stack>
+              <Typography
+                noWrap
+                sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    color: "text.primary",
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {`${iv.n} of ${PAIR_FLOOR}`}
+                </Box>
+                {
+                  " comparable pairs needed — read the rows below, regressions first"
+                }
+              </Typography>
+            </Stack>
           ) : (
             <Stack
               direction="row"
