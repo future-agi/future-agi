@@ -125,3 +125,29 @@ def test_an_upload_of_the_wrong_kind_format_or_size_is_refused(
         "upload_invalid",
         "upload_kind_unknown",
     )
+
+
+def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_to_another(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services.harness_versioning.versions import suite_documents
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    environment = _built(user, workspace, "actor-guard-scope")
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    first, *rest = suite_documents(drafts.edit_sides(environment)["suite"])
+    drafts.write_suite_edit(
+        environment, [{**first, "actors": [{"id": "manager"}]}, *rest], user=user
+    )
+    saved = suite_documents(drafts.edit_sides(environment)["suite"])
+    # The actor list no longer has the manager, as after a removal.
+    monkeypatch.setattr(drafts, "actor_ids", lambda files: set())
+    other = [saved[0], {**saved[1], "instruction": "Ask for the invoice again."}]
+    assert drafts.write_suite_edit(environment, other, user=user) is not None
+    with pytest.raises(HostedHarnessError) as refused:
+        drafts.write_suite_edit(
+            environment,
+            [{**saved[0], "instruction": "Ask again."}, saved[1]],
+            user=user,
+        )
+    assert refused.value.code == "actor_unknown"

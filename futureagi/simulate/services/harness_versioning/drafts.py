@@ -840,14 +840,21 @@ def write_suite_edit(
         with_sessions_to_rewrite,
     )
 
-    known = actor_ids(sides["environment"])
-    problems = [one for doc in suite for one in actor_reference_problems(doc, known)]
-    if problems:
-        raise HostedHarnessError("actor_unknown", "; ".join(problems), status_code=400)
     before = {
         str(doc.get("scenario_key") or doc.get("name") or ""): doc
         for doc in suite_documents(sides["suite"])
     }
+    # Only the scenarios this edit changes are held to the actor list: one sealed earlier that names an actor the
+    # list no longer has runs as a recorded scenario problem, and never blocks an edit to another scenario.
+    known = actor_ids(sides["environment"])
+    problems = [
+        one
+        for doc in suite
+        if doc != before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
+        for one in actor_reference_problems(doc, known)
+    ]
+    if problems:
+        raise HostedHarnessError("actor_unknown", "; ".join(problems), status_code=400)
     suite = [
         with_sessions_to_rewrite(
             doc, before.get(str(doc.get("scenario_key") or doc.get("name") or ""))
