@@ -67,7 +67,13 @@ def _user(index: int) -> str:
 class _Users:
     """Candidates newest first; records what every statement asked the server."""
 
-    def __init__(self, count: int = 70, *, stop_first: Exception | None = None):
+    def __init__(
+        self,
+        count: int = 70,
+        *,
+        stop_first: Exception | None = None,
+        stop_at: int = 1,
+    ):
         self.rows = [
             {
                 "end_user_id": _user(i),
@@ -76,7 +82,9 @@ class _Users:
             }
             for i in range(count)
         ]
+        # ``stop_first`` is raised by statement number ``stop_at`` (1-based).
         self.stop_first = stop_first
+        self.stop_at = stop_at
         self.sent: list[dict] = []
 
     def service(self):
@@ -89,7 +97,7 @@ class _Users:
                 users.sent.append(
                     {"remap": "dimension_candidate_ids" in params, **kwargs}
                 )
-                if users.stop_first is not None and len(users.sent) == 1:
+                if users.stop_first is not None and len(users.sent) == users.stop_at:
                     raise users.stop_first
                 if users.sent[-1]["remap"]:
                     return SimpleNamespace(data=[])
@@ -247,6 +255,53 @@ def test_first_batch_stopped_at_its_cap_propagates_and_publishes_nothing(filters
     _assert_first_batch_cap(users.sent[0])
 
 
+def _cancelled():
+    from clickhouse_driver.errors import ErrorCodes, ServerException
+
+    return ServerException("cancelled", code=ErrorCodes.QUERY_WAS_CANCELLED)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("stop", "stop_at", "resumed"),
+    [
+        (ReadDeadlineExceeded("execution cap"), 2, False),
+        ("cancelled", 1, False),
+        (ReadDeadlineExceeded("execution cap"), 1, True),
+    ],
+    ids=["survivor-stopped", "raw-cancellation", "resumed-request"],
+)
+def test_any_first_batch_stop_propagates_instead_of_publishing(stop, stop_at, resumed):
+    """Survivor stops, raw server cancellations and resumed requests alike.
+
+    A first batch has no checkpoint of its own, so none of these may become
+    an empty or complete-looking page: each one surfaces as the read failure.
+    """
+    from tracer.services.clickhouse.read_budget import is_read_budget_error
+
+    error = _cancelled() if stop == "cancelled" else stop
+    users = _Users(stop_first=error, stop_at=stop_at)
+    cursor = (
+        ListCursor(
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            order=(USER_LIST_CURSOR_ORDER, users.rows[24]["last_active"], _user(24)),
+            seen_rows=25,
+        )
+        if resumed
+        else None
+    )
+
+    with pytest.raises(type(error)) as raised:
+        _read(_manager([]), users, page_size=25, cursor=cursor)
+
+    assert raised.value is error
+    assert is_read_budget_error(raised.value)
+    assert len(users.sent) == stop_at
+    for kwargs in users.sent:
+        _assert_first_batch_cap(kwargs)
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
@@ -284,7 +339,12 @@ def test_users_route_answers_a_stopped_first_page_with_its_retryable_503(
 
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     body = response.json()
-    assert "table" not in str(body.get("result", ""))
-    assert "temporarily unavailable" in str(body).lower()
+    text = str(body)
+    # The route's existing sanitized, retryable answer: no rows, no cursor and
+    # none of the server's own error text.
+    assert "service_unavailable" in text
+    assert "User data is temporarily unavailable. Please retry." in text
+    assert "execution cap" not in text
+    assert "table" not in text and "next_cursor" not in text
     assert len(users.sent) == 1
     _assert_first_batch_cap(users.sent[0])

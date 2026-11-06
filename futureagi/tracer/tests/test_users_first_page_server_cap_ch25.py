@@ -141,7 +141,7 @@ def manager(store, monkeypatch):
 
 
 def _statements(store, hi):
-    """(kind, exception code, max_execution_time, is_survivor) per statement."""
+    """Candidate and survivor statements, each ``(kind, code, max_execution_time)``."""
 
     marker = str(int(hi.timestamp() * 1_000_000))
     store.client.execute("SYSTEM FLUSH LOGS")
@@ -194,10 +194,13 @@ def test_first_page_statements_reach_clickhouse_with_the_analytics_wall_left(
     assert len(survivors) == 1, survivors
     for kind, code, cap in candidates + survivors:
         assert (kind, code) == ("QueryFinish", 0)
-        # The server saw what was left of the analytics wall, not "no limit"
-        # and not the refill's per-statement hint.
+        # The server saw what was left of the analytics wall, not "no limit".
         assert 0 < float(cap) <= wall_s, cap
-        assert float(cap) > USER_LIST_QUERY_TIMEOUT_MS / 1000, cap
+    candidate_cap = float(candidates[0][2])
+    # Sent as the wall starts: the analytics wall, not the refill's
+    # eight-second statement hint. The survivor gets what the candidate left.
+    assert candidate_cap > USER_LIST_QUERY_TIMEOUT_MS / 1000, candidates
+    assert float(survivors[0][2]) <= candidate_cap, survivors
 
 
 def test_a_first_page_past_its_wall_is_stopped_by_the_server(
