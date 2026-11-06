@@ -38911,6 +38911,14 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .describe(
         "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
       ),
+    agent_tools: zod
+      .object({
+        read: zod
+          .boolean()
+          .describe("Whether this agent version's tools have been read."),
+        count: zod.number().describe("How many tools it has; 0 when unread."),
+      })
+      .optional(),
   }),
   validation: zod.object({
     state: zod
@@ -38987,7 +38995,11 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       reason: zod.string().min(1),
       targets: zod.array(
         zod.object({
-          kind: zod.enum(["tool", "action", "check"]),
+          kind: zod
+            .enum(["tool", "agent_tool", "action", "check"])
+            .describe(
+              "agent_tool: a tool of the agent version the environment lacks.",
+            ),
           name: zod.string().min(1),
           result: zod.string().min(1),
         }),
@@ -39230,6 +39242,14 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         .describe(
           "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
         ),
+      agent_tools: zod
+        .object({
+          read: zod
+            .boolean()
+            .describe("Whether this agent version's tools have been read."),
+          count: zod.number().describe("How many tools it has; 0 when unread."),
+        })
+        .optional(),
     }),
     validation: zod.object({
       state: zod
@@ -39306,7 +39326,11 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         reason: zod.string().min(1),
         targets: zod.array(
           zod.object({
-            kind: zod.enum(["tool", "action", "check"]),
+            kind: zod
+              .enum(["tool", "agent_tool", "action", "check"])
+              .describe(
+                "agent_tool: a tool of the agent version the environment lacks.",
+              ),
             name: zod.string().min(1),
             result: zod.string().min(1),
           }),
@@ -54343,6 +54367,12 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
 
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne = 0;
+
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -54410,6 +54440,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .describe(
               "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
             ),
+          agent_tools: zod
+            .object({
+              read: zod
+                .boolean()
+                .describe("Whether this agent version's tools have been read."),
+              count: zod
+                .number()
+                .describe("How many tools it has; 0 when unread."),
+            })
+            .optional(),
         }),
         validation: zod.object({
           state: zod
@@ -54492,7 +54532,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             reason: zod.string().min(1),
             targets: zod.array(
               zod.object({
-                kind: zod.enum(["tool", "action", "check"]),
+                kind: zod
+                  .enum(["tool", "agent_tool", "action", "check"])
+                  .describe(
+                    "agent_tool: a tool of the agent version the environment lacks.",
+                  ),
                 name: zod.string().min(1),
                 result: zod.string().min(1),
               }),
@@ -54564,6 +54608,41 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       })
       .optional()
       .describe("The run readiness of the run's versions when it was created."),
+    readiness_selection: zod
+      .object({
+        requested: zod.number().min(1),
+        running: zod
+          .number()
+          .min(
+            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin,
+          ),
+        held_back: zod.object({
+          count: zod
+            .number()
+            .min(
+              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          by: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne,
+                ),
+            )
+            .describe("Held-back cases per readiness row that held them."),
+        }),
+        reasons: zod
+          .record(zod.string(), zod.string().min(1))
+          .describe("Each holding row's reason, in plain words."),
+      })
+      .optional()
+      .describe(
+        "The cases readiness held back from this run and why; null when runs are not pinned to versions.",
+      ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
       .default(

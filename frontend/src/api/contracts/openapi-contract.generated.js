@@ -68216,6 +68216,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "stage",
         "versions",
         "warnings",
+        "selection",
       ],
       type: "object",
       properties: {
@@ -68278,6 +68279,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessRunWarning",
           },
+        },
+        selection: {
+          $ref: "#/definitions/HarnessRunReadinessSelection",
         },
       },
     },
@@ -101582,6 +101586,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["pair_certificate", "build_certificate", "none"],
         },
+        agent_tools: {
+          $ref: "#/definitions/HarnessCapabilityAgentTools",
+        },
       },
     },
     HarnessCapabilitySelectionCounts: {
@@ -104222,6 +104229,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/RunVersionLabel",
         },
       },
+    },
+    HarnessRunReadinessSelection: {
+      description:
+        "The cases readiness held back from this run and why; null when runs are not pinned to versions.",
+      required: ["requested", "running", "held_back", "reasons"],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+          minimum: 1,
+        },
+        running: {
+          title: "Running",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          $ref: "#/definitions/HarnessRunHeldBack",
+        },
+        reasons: {
+          title: "Reasons",
+          description: "Each holding row's reason, in plain words.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
     },
     HarnessRunWarning: {
       required: ["code", "message", "piece"],
@@ -111517,6 +111555,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         capability_snapshot: {
           $ref: "#/definitions/HarnessCapabilityReport",
+        },
+        readiness_selection: {
+          $ref: "#/definitions/HarnessRunReadinessSelection",
         },
         selected_scenario_keys: {
           type: "array",
@@ -121750,6 +121791,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityAgentTools: {
+      required: ["read", "count"],
+      type: "object",
+      properties: {
+        read: {
+          title: "Read",
+          description: "Whether this agent version's tools have been read.",
+          type: "boolean",
+        },
+        count: {
+          title: "Count",
+          description: "How many tools it has; 0 when unread.",
+          type: "integer",
+        },
+      },
+    },
     HarnessCapabilityCaseLists: {
       required: ["eligible", "blocked", "stale", "untested"],
       type: "object",
@@ -121904,8 +121961,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         kind: {
           title: "Kind",
+          description:
+            "agent_tool: a tool of the agent version the environment lacks.",
           type: "string",
-          enum: ["tool", "action", "check"],
+          enum: ["tool", "agent_tool", "action", "check"],
         },
         name: {
           title: "Name",
@@ -122612,6 +122671,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    HarnessRunHeldBack: {
+      required: ["count", "keys", "truncated", "by"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        by: {
+          title: "By",
+          description: "Held-back cases per readiness row that held them.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+      },
     },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],

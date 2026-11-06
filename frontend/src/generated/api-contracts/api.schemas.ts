@@ -19401,12 +19401,20 @@ export const HarnessCapabilityPairingApiEvidence = {
   none: "none",
 } as const;
 
+export interface HarnessCapabilityAgentToolsApi {
+  /** Whether this agent version's tools have been read. */
+  read: boolean;
+  /** How many tools it has; 0 when unread. */
+  count: number;
+}
+
 export interface HarnessCapabilityPairingApi {
   agent_version: RunVersionLabelApi;
   environment_version: RunVersionLabelApi;
   suite_version: RunVersionLabelApi;
   /** pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with. */
   evidence: HarnessCapabilityPairingApiEvidence;
+  agent_tools?: HarnessCapabilityAgentToolsApi;
 }
 
 /**
@@ -19523,16 +19531,21 @@ export const HarnessCapabilitySelectionRowApiFinding = {
   not_run: "not_run",
 } as const;
 
+/**
+ * agent_tool: a tool of the agent version the environment lacks.
+ */
 export type HarnessCapabilityTargetApiKind =
   (typeof HarnessCapabilityTargetApiKind)[keyof typeof HarnessCapabilityTargetApiKind];
 
 export const HarnessCapabilityTargetApiKind = {
   tool: "tool",
+  agent_tool: "agent_tool",
   action: "action",
   check: "check",
 } as const;
 
 export interface HarnessCapabilityTargetApi {
+  /** agent_tool: a tool of the agent version the environment lacks. */
   kind: HarnessCapabilityTargetApiKind;
   /** @minLength 1 */
   name: string;
@@ -20471,6 +20484,38 @@ export interface HarnessRunCreateApi {
   suite_version_id?: string | null;
 }
 
+/**
+ * Held-back cases per readiness row that held them.
+ */
+export type HarnessRunHeldBackApiBy = { [key: string]: number };
+
+export interface HarnessRunHeldBackApi {
+  /** @minimum 0 */
+  count: number;
+  keys: string[];
+  truncated: boolean;
+  /** Held-back cases per readiness row that held them. */
+  by: HarnessRunHeldBackApiBy;
+}
+
+/**
+ * Each holding row's reason, in plain words.
+ */
+export type HarnessRunReadinessSelectionApiReasons = { [key: string]: string };
+
+/**
+ * The cases readiness held back from this run and why; null when runs are not pinned to versions.
+ */
+export interface HarnessRunReadinessSelectionApi {
+  /** @minimum 1 */
+  requested: number;
+  /** @minimum 0 */
+  running: number;
+  held_back: HarnessRunHeldBackApi;
+  /** Each holding row's reason, in plain words. */
+  reasons: HarnessRunReadinessSelectionApiReasons;
+}
+
 export interface HarnessRunCreateResponseApi {
   environment_id: string;
   job_id: string;
@@ -20492,6 +20537,7 @@ export interface HarnessRunCreateResponseApi {
   stage: string;
   versions: HarnessRunPinnedVersionsApi;
   warnings: HarnessRunWarningApi[];
+  selection: HarnessRunReadinessSelectionApi;
 }
 
 export interface HarnessEnvironmentRunEvaluationQueuedApi {
@@ -26171,6 +26217,7 @@ export interface RunExecutionApi {
   pinned_agent_version?: RunVersionLabelApi | null;
   agent_differs?: boolean;
   capability_snapshot?: HarnessCapabilityReportApi;
+  readiness_selection?: HarnessRunReadinessSelectionApi;
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
