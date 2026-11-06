@@ -418,9 +418,19 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             locked.plan = report.plan.model_dump(mode="json")
         if report.diagnosis is not None:
             locked.diagnosis = report.diagnosis.model_dump(mode="json")
+        if report.lost_models or report.last_error:
+            locked.engine_notes = _engine_notes(locked.engine_notes, report)
         if report.ending is not None:
             locked.report = report.model_dump(
-                mode="json", exclude={"candidates", "step", "plan", "diagnosis"}
+                mode="json",
+                exclude={
+                    "candidates",
+                    "step",
+                    "plan",
+                    "diagnosis",
+                    "lost_models",
+                    "last_error",
+                },
             )
         locked.save(
             update_fields=[
@@ -430,6 +440,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
                 "diagnosis",
                 "heartbeat_at",
                 "report",
+                "engine_notes",
                 "updated_at",
             ]
         )
@@ -461,6 +472,28 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
         _ENDING_STATES[report.ending],
         failure=_ending_failure(locked, report),
     )
+
+
+LAST_ERROR_CHARS = 500
+
+
+def _engine_notes(
+    stored: dict[str, Any] | None, report: EngineReport
+) -> dict[str, Any]:
+    """Every model a launch lost, with when it was first reported lost, for the next
+    launch's brief, and the last error an engine sent, for the failure of a fix whose
+    launches all stopped. The engine names its brief's models again in every report, so
+    a model already noted keeps its time."""
+    stored = stored or {}
+    now = timezone.now().isoformat()
+    lost = dict(stored.get("lost_models") or {})
+    for model in report.lost_models:
+        lost.setdefault(model, now)
+    return {
+        "lost_models": lost,
+        "last_error": (report.last_error or "")[:LAST_ERROR_CHARS]
+        or stored.get("last_error"),
+    }
 
 
 def _ending_failure(

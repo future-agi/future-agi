@@ -23,6 +23,7 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
@@ -74,6 +75,8 @@ from simulate.services.run_results_v3_scoring import (
 )
 
 TRANSCRIPT_CHARS = 8000
+# A lost model is skipped for this long after it was lost: a short outage may be over.
+LOST_MODELS_SKIPPED_FOR = timedelta(hours=1)
 FINISHED_RUN_STATES = {
     HostedHarnessJob.State.COMPLETED,
     HostedHarnessJob.State.FAILED,
@@ -134,6 +137,18 @@ def fix_deadline(fix_run: AgentFixRun) -> datetime:
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
 
 
+def recent_lost_models(engine_notes: dict[str, Any] | None) -> dict[str, str]:
+    """The fix's lost models, each with when it was lost, that were lost within
+    LOST_MODELS_SKIPPED_FOR."""
+    cutoff = timezone.now() - LOST_MODELS_SKIPPED_FOR
+    lost = (engine_notes or {}).get("lost_models") or {}
+    return {
+        model: lost_at
+        for model, lost_at in lost.items()
+        if datetime.fromisoformat(lost_at) > cutoff
+    }
+
+
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
     if fix_run.source_run is None:
         raise HostedHarnessError(
@@ -150,6 +165,7 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         base_commit=str(source.get("commit_sha") or ""),
         request=request,
         inventory=inventory(fix_run),
+        lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
