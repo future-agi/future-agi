@@ -15,6 +15,7 @@ from django.utils.dateparse import parse_datetime
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.microsoft_agents import MICROSOFT_CONNECTORS
 from tfc.ee_gating import is_oss
 
 _ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
@@ -109,7 +110,7 @@ def require_harness_run_usage(organization_id: str, payload: dict) -> None:
     metadata = payload.get("metadata") or {}
     modality = str(metadata.get("modality") or config.get("modality") or "").lower()
     connector = str(agent.get("connector") or "").lower()
-    if modality == "text" or connector == "retell_chat":
+    if modality == "text" or connector in {"retell_chat", *MICROSOFT_CONNECTORS}:
         actions = ("text_call",)
     elif modality == "voice" or connector in _VOICE_CONNECTORS:
         actions = ("voice_call",)
