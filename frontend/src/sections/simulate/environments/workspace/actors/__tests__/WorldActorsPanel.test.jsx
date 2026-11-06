@@ -203,6 +203,35 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     });
   });
 
+  it("saves on top of a document uploaded from the open form, in one request at the upload's revision", async () => {
+    const uploaded = cast([MANAGER], {
+      revision: 4,
+      knowledge_sources: { files: ["knowledge/policy.md"], records: [] },
+    });
+    axios.get.mockResolvedValue({
+      data: cast([MANAGER], { knowledge_sources: { files: [], records: [] } }),
+    });
+    axios.post.mockReset();
+    axios.post.mockResolvedValueOnce({ data: uploaded });
+    await openEdit();
+    const picker = document.querySelector('input[type="file"]');
+    fireEvent.change(picker, {
+      target: {
+        files: [new File(["# Policy"], "policy.md", { type: "text/markdown" })],
+      },
+    });
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    // Sent at the revision the form opened at.
+    expect(axios.post.mock.calls[0][1].get("expected_revision")).toBe("3");
+    await screen.findByText("knowledge/policy.md");
+    axios.put.mockResolvedValueOnce({ data: uploaded });
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    await waitFor(() => expect(screen.queryByText("Save to draft")).toBeNull());
+    expect(axios.put).toHaveBeenCalledTimes(1);
+    expect(body(0).expected_revision).toBe(4);
+    expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+  });
+
   it("says so and won't save when the actor was removed elsewhere", async () => {
     await openEdit();
     axios.put.mockRejectedValueOnce(DRAFT_CHANGED);

@@ -94,11 +94,16 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       ? null
       : async (file) => {
           const before = new Set(data?.knowledge_sources?.files || []);
+          // Sent at the open form's revision, so an edit made elsewhere since it opened is refused, not stepped over.
           const next = await upload.mutateAsync({
             file,
             kind: "knowledge",
-            revision,
+            revision: editing?.revision ?? revision,
           });
+          // The upload is a draft change of its own: the form saves on top of it.
+          if (typeof next?.revision === "number") {
+            setEditing((open) => open && { ...open, revision: next.revision });
+          }
           return (
             (next?.knowledge_sources?.files || []).find(
               (one) => !before.has(one),
