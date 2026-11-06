@@ -67820,7 +67820,7 @@ export const TracerObservationSpanUpdateTagsBody = zod.object({
         .describe("String or JSON object."),
     )
     .describe(
-      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.',
+      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
     ),
   span_id: zod
     .string()
@@ -70091,7 +70091,7 @@ export const TracerProjectTagDefinitionsReadResponse = zod.object({
         usage_count: zod
           .number()
           .describe(
-            "Rows in this project carrying the name: spans, or trace rows when more traces than spans carry it (a trace tag is on both its trace row and its root span and counts once).",
+            "Live spans in this project whose tags contain the name, once per span. A trace tag sits on the trace's root span, so it counts once; a name seen only on a trace row counts 0.",
           ),
       }),
     ),
@@ -75147,7 +75147,7 @@ export const TracerTraceUpdateTagsBody = zod.object({
         .describe("String or JSON object."),
     )
     .describe(
-      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.',
+      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
     ),
 });
 

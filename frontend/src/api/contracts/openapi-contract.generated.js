@@ -85075,7 +85075,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         tags: {
           description:
-            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.',
+            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
           type: "array",
           items: {
             type: "object",
@@ -87716,7 +87716,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         tags: {
           description:
-            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.',
+            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
           type: "array",
           items: {
             type: "object",
@@ -124070,7 +124070,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         usage_count: {
           title: "Usage count",
           description:
-            "Rows in this project carrying the name: spans, or trace rows when more traces than spans carry it (a trace tag is on both its trace row and its root span and counts once).",
+            "Live spans in this project whose tags contain the name, once per span. A trace tag sits on the trace's root span, so it counts once; a name seen only on a trace row counts 0.",
           type: "integer",
         },
       },
