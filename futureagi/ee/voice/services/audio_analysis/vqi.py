@@ -104,6 +104,104 @@ def _intersections(a, b):
     ]
 
 
+WINDOW_SAMPLES = 144160  # 9.01 s at 16 kHz, the upstream DNSMOS input length.
+WINDOW_HOP_SAMPLES = 16000
+MIN_WINDOW_SPEECH_SECONDS = 3.0
+MIN_SPEECH_COVERAGE = 0.80
+
+
+def prepare_vqi_windows(y, sr, detector):
+    """Resample, detect target speech and admit full 9.01 s windows (R07).
+
+    Returns ``(y16, admitted_starts, coverage, reason)``; ``reason`` is
+    ``insufficient_voice``/``insufficient_coverage`` when no score may be
+    computed. Short audio is never repeated or padded.
+    """
+    y16, expected = resample_for_vqi(y, sr)
+    duration = len(y16) / 16000
+    spans = detector.detect(y16)
+    if any(
+        not np.isfinite([a, b]).all() or a < 0 or b < a or b > duration
+        for a, b in spans
+    ):
+        raise AudioDeterministicError("analysis_error")
+    spans = interval_union(spans)
+    starts = list(range(0, len(y16) - WINDOW_SAMPLES + 1, WINDOW_HOP_SAMPLES))
+    admitted = [
+        s
+        for s in starts
+        if interval_seconds(
+            _intersections([(s / 16000, (s + WINDOW_SAMPLES) / 16000)], spans)
+        )
+        >= MIN_WINDOW_SPEECH_SECONDS - 1e-9
+    ]
+    covered = interval_seconds(
+        _intersections(
+            interval_union(
+                (s / 16000, (s + WINDOW_SAMPLES) / 16000) for s in admitted
+            ),
+            spans,
+        )
+    )
+    detected = interval_seconds(spans)
+    coverage = {
+        "window_count": len(admitted),
+        "excluded_window_count": len(starts) - len(admitted),
+        "detected_speech_seconds": detected,
+        "covered_speech_seconds": covered,
+        "expected_sample_count": expected,
+        "resampled_sample_count": len(y16),
+        "detector_id": detector.detector_id,
+        "polynomial_version": POLYNOMIAL_VERSION,
+        "window_policy_version": WINDOW_POLICY_VERSION,
+        "preprocessing_version": VQI_PREPROCESSING_VERSION,
+    }
+    reason = None
+    if not admitted or detected <= 0:
+        reason = "insufficient_voice"
+    elif covered / detected < MIN_SPEECH_COVERAGE - 1e-9:
+        reason = "insufficient_coverage"
+    return y16, admitted, coverage, reason
+
+
+def mean_adjusted_ovrl(session, y16, admitted):
+    """Mean upstream-polynomial OVRL over admitted windows: the calibration input x."""
+    values = []
+    for start in admitted:
+        window = y16[start : start + WINDOW_SAMPLES][np.newaxis, :].astype(np.float32)
+        outputs = np.asarray(session.run(None, {"input_1": window})[0])
+        if outputs.shape != (1, 3):
+            raise AudioDeterministicError("analysis_error")
+        if not np.isfinite(outputs).all():
+            raise AudioDeterministicError("nonfinite_output")
+        ovr = float(outputs[0, 2])
+        adjusted = -0.06766283 * ovr**2 + 1.11546468 * ovr + 0.04602535
+        if not np.isfinite(adjusted):
+            raise AudioDeterministicError("nonfinite_output")
+        values.append(adjusted)
+    return float(np.mean(values))
+
+
+def calibration_input(y, sr, *, detector, session):
+    """The exact product path to x, without calibration or cohort admission.
+
+    Shared by ``analyze_vqi`` and the offline calibration study so the fitted
+    mapping is applied to the same quantity it was fitted on.
+    """
+    y16, admitted, coverage, reason = prepare_vqi_windows(y, sr, detector)
+    if reason:
+        return {"x": None, "coverage": coverage, "reason": reason}
+    return {
+        "x": mean_adjusted_ovrl(session, y16, admitted),
+        "coverage": coverage,
+        "reason": None,
+    }
+
+
+def cohort_tag(language, transport, capture_origin):
+    return f"{language or 'und'}/{transport}/{capture_origin}"
+
+
 def analyze_vqi(
     y,
     sr,
@@ -147,68 +245,16 @@ def analyze_vqi(
         if calibration.model_sha256 != digest or calibration.detector_id != detector_id:
             raise AudioDeterministicError("not_validated")
         entry["calibration_id"] = calibration.calibration_id
-        y16, expected = resample_for_vqi(y, sr)
-        duration = len(y16) / 16000
-        spans = detector.detect(y16)
-        if any(
-            not np.isfinite([a, b]).all() or a < 0 or b < a or b > duration
-            for a, b in spans
-        ):
-            raise AudioDeterministicError("analysis_error")
-        spans = interval_union(spans)
-        starts = list(range(0, len(y16) - 144160 + 1, 16000))
-        admitted = [
-            s
-            for s in starts
-            if interval_seconds(
-                _intersections([(s / 16000, (s + 144160) / 16000)], spans)
-            )
-            >= 3.0 - 1e-9
-        ]
-        covered = interval_seconds(
-            _intersections(
-                interval_union((s / 16000, (s + 144160) / 16000) for s in admitted),
-                spans,
-            )
-        )
-        detected = interval_seconds(spans)
-        entry["coverage"] = {
-            "window_count": len(admitted),
-            "excluded_window_count": len(starts) - len(admitted),
-            "detected_speech_seconds": detected,
-            "covered_speech_seconds": covered,
-            "expected_sample_count": expected,
-            "resampled_sample_count": len(y16),
-            "detector_id": detector_id,
-            "polynomial_version": POLYNOMIAL_VERSION,
-            "window_policy_version": WINDOW_POLICY_VERSION,
-            "preprocessing_version": VQI_PREPROCESSING_VERSION,
-        }
-        if not admitted or detected <= 0:
-            raise AudioDeterministicError("insufficient_voice")
-        if covered / detected < 0.80 - 1e-9:
-            raise AudioDeterministicError("insufficient_coverage")
-        if (
-            capture_origin == "unknown"
-            or f"{language or 'und'}/{transport}/{capture_origin}"
-            not in calibration.cohorts
-        ):
+        y16, admitted, coverage, reason = prepare_vqi_windows(y, sr, detector)
+        cohort = cohort_tag(language, transport, capture_origin)
+        entry["coverage"] = {**coverage, "cohort": cohort}
+        if reason:
+            raise AudioDeterministicError(reason)
+        if capture_origin == "unknown" or cohort not in calibration.cohorts:
             raise AudioDeterministicError("out_of_domain")
-        values = []
-        for start in admitted:
-            window = y16[start : start + 144160][np.newaxis, :].astype(np.float32)
-            outputs = np.asarray(session.run(None, {"input_1": window})[0])
-            if outputs.shape != (1, 3):
-                raise AudioDeterministicError("analysis_error")
-            if not np.isfinite(outputs).all():
-                raise AudioDeterministicError("nonfinite_output")
-            ovr = float(outputs[0, 2])
-            adjusted = -0.06766283 * ovr**2 + 1.11546468 * ovr + 0.04602535
-            if not np.isfinite(adjusted):
-                raise AudioDeterministicError("nonfinite_output")
-            values.append(adjusted)
+        x = mean_adjusted_ovrl(session, y16, admitted)
         entry.update(
-            value=calibration.apply(float(np.mean(values))),
+            value=calibration.apply(x),
             state="available",
             reason=None,
         )
