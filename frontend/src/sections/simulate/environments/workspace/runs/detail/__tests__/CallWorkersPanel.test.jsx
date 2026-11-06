@@ -707,6 +707,35 @@ describe("CallWorkersPanel", () => {
       expect(onOpenTrace).toHaveBeenCalledWith("tr-1", "sp-1");
     });
 
+    it("opens a hand-off's trace at the span it was made in", () => {
+      const onOpenTrace = vi.fn();
+      const traced = { ...handoff, trace_id: "tr-1", span_id: "sp-handoff" };
+      result = {
+        data: timeline({
+          events: [traced],
+          steps: [
+            handOffStep(1, { worker_id: traced.worker_id, handoff: traced }),
+          ],
+        }),
+        isLoading: false,
+        isError: false,
+      };
+      render(
+        <CallWorkersPanel
+          callExecutionId="c1"
+          onOpenTrace={onOpenTrace}
+          traceIds={["tr-1"]}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /^Show raw data for Order-lookup worker/,
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open in Traces" }));
+      expect(onOpenTrace).toHaveBeenCalledWith("tr-1", "sp-handoff");
+    });
+
     it("offers no Open in Traces for a trace the Traces tab does not list", () => {
       result = tracedCall();
       render(

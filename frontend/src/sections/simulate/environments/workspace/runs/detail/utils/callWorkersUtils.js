@@ -139,6 +139,7 @@ const handOffEvent = (block, names) => ({
   type: block.transfer ? C.controlPassStep : C.handOffStep,
   unknown: block.relationship === "unknown",
   traceId: block.delegated.trace_id,
+  spanId: block.delegated.span_id,
   depth: block.depth - 1,
   to: names.ofBlock(block),
   parallel: block.parallel,
