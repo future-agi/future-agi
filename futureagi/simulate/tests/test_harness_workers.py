@@ -1997,6 +1997,12 @@ def test_time_alone_matches_a_row_and_a_span_that_are_each_others_only_candidate
     assert len(_searches(spans, [_search_row(None, 8)])) == 2
 
 
+def test_rows_and_spans_with_no_input_are_not_taken_for_alike_calls():
+    # Two spans and two rows, none with an input, all in the same seconds: time alone can't pair them.
+    spans = [*_RESEARCH, _search_span("a1", None, 2), _search_span("a2", None, 2)]
+    assert len(_searches(spans, [_search_row(None, 2), _search_row(None, 2)])) == 4
+
+
 def test_a_row_that_cannot_be_told_apart_is_kept_rather_than_dropped():
     spans = [*_RESEARCH, _search_span("a", "a", 2), _search_span("b", "b", 3)]
     # No id, input or time: it could be either span's call, or a third one.
@@ -2162,6 +2168,29 @@ def test_a_later_read_keeps_every_event_either_read_found():
         kept_record(stored, _record("unavailable", [], spans=False))["collection"]
         == "complete"
     )
+
+
+def test_a_merged_record_keeps_the_payload_bound_of_one_read():
+    from simulate.services import harness_workers
+    from simulate.services.harness_workers import kept_record
+
+    big = "y" * 1500
+
+    def heavy(prefix):
+        record = _record("complete", [f"{prefix}{n}" for n in range(30)])
+        for one in record["events"]:
+            one["input"] = big
+        return record
+
+    kept = kept_record(heavy("a"), heavy("b"))
+    assert len(kept["events"]) == 60
+    spent = sum(
+        len(json.dumps(one["input"]))
+        for one in kept["events"]
+        if one["input"] is not None
+    )
+    assert spent <= harness_workers._PAYLOAD_BUDGET
+    assert any(one.get("input_omitted") for one in kept["events"])
 
 
 def test_a_later_read_keeps_every_worker_either_read_observed():

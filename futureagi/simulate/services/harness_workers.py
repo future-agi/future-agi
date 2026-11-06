@@ -864,7 +864,6 @@ def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
     ]
 
 
-# How much a record says, best first. A record from before the field was kept was a successful read.
 # How far a read got, best first. A record without the field says nothing about its read, so it ranks with a failed one.
 _COLLECTION_RANK = {
     "complete": 3,
@@ -925,9 +924,9 @@ def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
     omitted = max(
         int(best.get("events_omitted") or 0), int(other.get("events_omitted") or 0)
     )
-    if len(events) > _MAX_EVENTS:
-        omitted += len(events) - _MAX_EVENTS
-        events = events[:_MAX_EVENTS]
+    # The merged record keeps the same bounds as one read: as many events, and as much payload.
+    events, cut = _bounded(events)
+    omitted += cut
     workers = [dict(one) for one in best.get("workers") or []]
     by_id = {one["worker_id"]: one for one in workers}
     for one in other.get("workers") or []:
