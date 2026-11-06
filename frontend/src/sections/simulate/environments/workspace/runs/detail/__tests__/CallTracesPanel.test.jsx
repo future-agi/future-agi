@@ -88,6 +88,20 @@ describe("CallTracesPanel", () => {
     });
   });
 
+  it("opens the asked-for trace at the step's span when it has one", () => {
+    renderPanel({
+      testExecutionId: "run-1",
+      openTraceId: "trace-1",
+      openSpanId: "span-7",
+    });
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
+      traceId: "trace-1",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+      spanId: "span-7",
+    });
+  });
+
   it("does not reopen the asked-for trace when the call's traces refresh", () => {
     const { rerender } = renderPanel({
       testExecutionId: "run-1",

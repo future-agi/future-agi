@@ -41,6 +41,20 @@ describe("LLMTracingTraceDetailDrawer read-only", () => {
       readOnly: true,
       traceId: "trace-1",
       projectId: "project-1",
+      initialSpanId: null,
+    });
+  });
+
+  it("opens on the span the trace was asked for at", () => {
+    mocks.store.traceDetailDrawerOpen = {
+      traceId: "trace-1",
+      projectId: "project-1",
+      spanId: "span-7",
+    };
+    render(<LLMTracingTraceDetailDrawer readOnly />);
+    expect(mocks.drawerProps.mock.lastCall[0]).toMatchObject({
+      traceId: "trace-1",
+      initialSpanId: "span-7",
     });
   });
 });

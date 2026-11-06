@@ -131,6 +131,7 @@ const toolEvent = (event, depth, names, relationship) => ({
   key: `call-${event.seq}`,
   unknown: relationship === "unknown",
   traceId: event.trace_id,
+  spanId: event.span_id,
   at: event.at,
   actor:
     event.attribution === "unattributed"

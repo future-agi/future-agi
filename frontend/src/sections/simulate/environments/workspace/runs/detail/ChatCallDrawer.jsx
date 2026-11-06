@@ -100,9 +100,9 @@ export default function ChatCallDrawer({
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
   const [chosenArtifact, setChosenArtifact] = useState("transcript");
-  const [openTraceId, setOpenTraceId] = useState(null);
-  const openTrace = (traceId) => {
-    setOpenTraceId(traceId);
+  const [openStep, setOpenStep] = useState(null);
+  const openTrace = (traceId, spanId) => {
+    setOpenStep({ traceId, spanId });
     setChosenArtifact("traces");
   };
   const hasWorkers = useHasWorkers(task.id, task.completedAt);
@@ -193,7 +193,7 @@ export default function ChatCallDrawer({
           <CustomTabs
             value={artifact}
             onChange={(_, value) => {
-              setOpenTraceId(null);
+              setOpenStep(null);
               setChosenArtifact(value);
             }}
             sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
@@ -207,7 +207,12 @@ export default function ChatCallDrawer({
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
             {artifact === "workers" ? (
-              <CallWorkersPanel key={task.id} callExecutionId={task.id} onOpenTrace={openTrace} />
+              <CallWorkersPanel
+                key={task.id}
+                callExecutionId={task.id}
+                onOpenTrace={openTrace}
+                traceIds={callTraces.traces.map((trace) => trace.traceId)}
+              />
             ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
@@ -216,7 +221,8 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
-                  openTraceId={openTraceId}
+                  openTraceId={openStep?.traceId ?? null}
+                  openSpanId={openStep?.spanId ?? null}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (

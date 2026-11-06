@@ -24,6 +24,7 @@ export default function CallTracesPanel({
   isError = false,
   onMountedChange,
   openTraceId = null,
+  openSpanId = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -66,10 +67,13 @@ export default function CallTracesPanel({
         traceId: openTraceId,
         projectId,
         testExecutionId,
+        // The step's own span, so the trace opens on it rather than at its root.
+        ...(openSpanId ? { spanId: openSpanId } : {}),
       });
     }
   }, [
     openTraceId,
+    openSpanId,
     traces,
     projectId,
     testExecutionId,
@@ -132,6 +136,7 @@ CallTracesPanel.propTypes = {
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
   openTraceId: PropTypes.string,
+  openSpanId: PropTypes.string,
 };
 
 function TraceRow({ trace, onOpen }) {

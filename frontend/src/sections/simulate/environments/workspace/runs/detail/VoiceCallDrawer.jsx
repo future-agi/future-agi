@@ -105,12 +105,12 @@ export default function VoiceCallDrawer({
   const hasWorkers = useHasWorkers(task.id, task.completedAt);
   // Held here because the panel unmounts while the next call's detail loads.
   const [chosenTab, setChosenTab] = useState("transcript");
-  const [openTraceId, setOpenTraceId] = useState(null);
+  const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, so stepping to it and back does not reopen the trace.
   const [traceCallId, setTraceCallId] = useState(task.id);
   if (traceCallId !== task.id) {
     setTraceCallId(task.id);
-    setOpenTraceId(null);
+    setOpenStep(null);
   }
   // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
   const showWorkers =
@@ -128,7 +128,8 @@ export default function VoiceCallDrawer({
             testExecutionId={executionId}
             isError={callTraces.isError}
             onMountedChange={onTracePanelMountedChange}
-            openTraceId={openTraceId}
+            openTraceId={openStep?.traceId ?? null}
+            openSpanId={openStep?.spanId ?? null}
           />
         ),
       },
@@ -143,8 +144,9 @@ export default function VoiceCallDrawer({
                   <CallWorkersPanel
                     key={task.id}
                     callExecutionId={task.id}
-                    onOpenTrace={(traceId) => {
-                      setOpenTraceId(traceId);
+                    traceIds={callTraces.traces.map((trace) => trace.traceId)}
+                    onOpenTrace={(traceId, spanId) => {
+                      setOpenStep({ traceId, spanId });
                       setChosenTab("traces");
                     }}
                   />
@@ -162,7 +164,7 @@ export default function VoiceCallDrawer({
       callTraces.traces,
       executionId,
       onTracePanelMountedChange,
-      openTraceId,
+      openStep,
     ],
   );
 
@@ -207,7 +209,7 @@ export default function VoiceCallDrawer({
         leftPanelTabs={leftPanelTabs}
         leftPanelTab={chosenTab}
         onLeftPanelTabChange={(value) => {
-          setOpenTraceId(null);
+          setOpenStep(null);
           setChosenTab(value);
         }}
         // The product header defaults both arrows to enabled, so always pass

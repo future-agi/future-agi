@@ -569,9 +569,7 @@ describe("CallWorkersPanel", () => {
       );
     });
 
-    it("opens a step's trace in Traces when the step was read from one", () => {
-      const onOpenTrace = vi.fn();
-      result = {
+    const tracedCall = () => ({
         data: {
           ...TIMELINE,
           steps: [
@@ -581,7 +579,7 @@ describe("CallWorkersPanel", () => {
               parent: null,
               depth: 0,
               worker_id: call.worker_id,
-              call: { ...call, trace_id: "tr-1" },
+              call: { ...call, trace_id: "tr-1", span_id: "sp-1" },
               turn: 1,
               order: 1,
               relationship: "observed",
@@ -593,12 +591,32 @@ describe("CallWorkersPanel", () => {
         },
         isLoading: false,
         isError: false,
-      };
+    });
+
+    it("opens a step's trace in Traces, at the step's own span", () => {
+      const onOpenTrace = vi.fn();
+      result = tracedCall();
       render(
-        <CallWorkersPanel callExecutionId="c1" onOpenTrace={onOpenTrace} />,
+        <CallWorkersPanel
+          callExecutionId="c1"
+          onOpenTrace={onOpenTrace}
+          traceIds={["tr-1"]}
+        />,
       );
       fireEvent.click(screen.getByRole("button", { name: "Open in Traces" }));
-      expect(onOpenTrace).toHaveBeenCalledWith("tr-1");
+      expect(onOpenTrace).toHaveBeenCalledWith("tr-1", "sp-1");
+    });
+
+    it("offers no Open in Traces for a trace the Traces tab does not list", () => {
+      result = tracedCall();
+      render(
+        <CallWorkersPanel
+          callExecutionId="c1"
+          onOpenTrace={vi.fn()}
+          traceIds={["tr-other"]}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "Open in Traces" })).toBeNull();
     });
 
     it("says when nothing was recorded for the participants", () => {

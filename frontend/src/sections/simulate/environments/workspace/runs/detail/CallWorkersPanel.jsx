@@ -48,6 +48,7 @@ const NO_IMAGES = ["img"];
 const MAX_ROW_INDENT = 3;
 // A call with more tool calls than this opens with their JSON closed, so a long record stays quick to draw.
 const MAX_OPEN_CALLS = 20;
+const NO_TRACES = [];
 
 const MOTION_MS = 180;
 const NO_MOTION_SX = {
@@ -322,7 +323,7 @@ function UnknownParent({ sx }) {
 UnknownParent.propTypes = { sx: PropTypes.object };
 
 // One line of the raw list: the time, who, what kind of step, then its text or tool call.
-function EventRow({ event, start, openJson, onOpenTrace }) {
+function EventRow({ event, start, openJson, onOpenTrace, traceIds }) {
   const [open, setOpen] = useState(openJson);
   const call = event.call;
   const failed = call?.status === "error";
@@ -374,11 +375,12 @@ function EventRow({ event, start, openJson, onOpenTrace }) {
             </Typography>
           ) : null}
           {event.unknown ? <UnknownParent /> : null}
-          {event.traceId && onOpenTrace ? (
+          {/* Traces opens only a trace it lists. */}
+          {onOpenTrace && traceIds.includes(event.traceId) ? (
             <Button
               size="small"
               variant="text"
-              onClick={() => onOpenTrace(event.traceId)}
+              onClick={() => onOpenTrace(event.traceId, event.spanId)}
               sx={{ ...JSON_BUTTON_SX, ml: "auto" }}
             >
               {C.openInTraces}
@@ -466,9 +468,17 @@ EventRow.propTypes = {
   start: PropTypes.string,
   openJson: PropTypes.bool,
   onOpenTrace: PropTypes.func,
+  traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
-function EventList({ events, start, openJson, bordered, onOpenTrace }) {
+function EventList({
+  events,
+  start,
+  openJson,
+  bordered,
+  onOpenTrace,
+  traceIds,
+}) {
   return (
     <Box
       data-testid="raw-events"
@@ -490,6 +500,7 @@ function EventList({ events, start, openJson, bordered, onOpenTrace }) {
           start={start}
           openJson={openJson(event)}
           onOpenTrace={onOpenTrace}
+          traceIds={traceIds}
         />
       ))}
     </Box>
@@ -501,6 +512,7 @@ EventList.propTypes = {
   openJson: PropTypes.func.isRequired,
   bordered: PropTypes.bool,
   onOpenTrace: PropTypes.func,
+  traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
 // Answers come as markdown; in a cell they run on as one clamped passage, with the whole of it in the row's raw data.
@@ -522,7 +534,7 @@ const CLAMPED_CELL_SX = {
 };
 
 // One hand-off as a table row. Its raw data opens below it, as wide as the table, since JSON won't fit in a cell.
-function WorkerRow({ block, names, start, cutOff, onOpenTrace }) {
+function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
   const [open, setOpen] = useState(false);
   const name = names.ofBlock(block);
   const worker = names.workerOf(block.worker_id);
@@ -662,6 +674,7 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace }) {
                 start={start}
                 openJson={(event) => event.call?.status === "error"}
                 onOpenTrace={onOpenTrace}
+                traceIds={traceIds}
               />
             </Box>
           </Reveal>
@@ -676,9 +689,10 @@ WorkerRow.propTypes = {
   start: PropTypes.string,
   cutOff: PropTypes.bool,
   onOpenTrace: PropTypes.func,
+  traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
-function WorkersTable({ rows, names, start, cutOff, onOpenTrace }) {
+function WorkersTable({ rows, names, start, cutOff, onOpenTrace, traceIds }) {
   return (
     <Box
       sx={{
@@ -705,6 +719,7 @@ function WorkersTable({ rows, names, start, cutOff, onOpenTrace }) {
               start={start}
               cutOff={cutOff}
               onOpenTrace={onOpenTrace}
+              traceIds={traceIds}
             />
           ))}
         </TableBody>
@@ -718,10 +733,15 @@ WorkersTable.propTypes = {
   start: PropTypes.string,
   cutOff: PropTypes.bool,
   onOpenTrace: PropTypes.func,
+  traceIds: PropTypes.arrayOf(PropTypes.string).isRequired,
 };
 
 /** One call of a multi-agent app: a table of its hand-offs first, every step in order on request. */
-export default function CallWorkersPanel({ callExecutionId, onOpenTrace }) {
+export default function CallWorkersPanel({
+  callExecutionId,
+  onOpenTrace,
+  traceIds = NO_TRACES,
+}) {
   const { data, isError } = useCallWorkers(callExecutionId);
   const [rawEvents, setRawEvents] = useState(false);
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
@@ -810,6 +830,7 @@ export default function CallWorkersPanel({ callExecutionId, onOpenTrace }) {
           start={start}
           openJson={() => openAll}
           onOpenTrace={onOpenTrace}
+          traceIds={traceIds}
         />
       ) : (
         tree.rounds.map((round) => {
@@ -833,6 +854,7 @@ export default function CallWorkersPanel({ callExecutionId, onOpenTrace }) {
                   start={start}
                   cutOff={cutOff}
                   onOpenTrace={onOpenTrace}
+                  traceIds={traceIds}
                 />
               ) : null}
               {callsOutside ? (
@@ -874,6 +896,8 @@ export default function CallWorkersPanel({ callExecutionId, onOpenTrace }) {
 
 CallWorkersPanel.propTypes = {
   callExecutionId: PropTypes.string,
-  // Opens one of the call's traces in its Traces tab.
+  // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
+  // The traces that tab lists: a step offers to open only one of these.
+  traceIds: PropTypes.arrayOf(PropTypes.string),
 };
