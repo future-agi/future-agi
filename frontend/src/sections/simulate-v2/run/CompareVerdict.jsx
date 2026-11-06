@@ -79,9 +79,7 @@ export default function CompareVerdict({
   promote = null,
   onImprove = null,
 }) {
-  const [pinsOpen, setPinsOpen] = useState(
-    () => (held?.differs || []).length > 0,
-  );
+  const [pinsOpen, setPinsOpen] = useState(false);
   if (!read) return null;
   const { counts, interval: iv, fixes, warnings, trend, band } = read;
   const label = verdictWithMustPass(read.label, mustPass);
@@ -124,7 +122,8 @@ export default function CompareVerdict({
       }}
     >
       {/* What each run pinned — first, so differing inputs are read before
-          any delta (runs §2 Compare selection); open when something differs. */}
+          any delta (runs §2 Compare selection). The closed line already names
+          what differs; opened, it lists only those, the rest on one line. */}
       {held && (
         <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
           <Stack
@@ -171,50 +170,42 @@ export default function CompareVerdict({
             </Typography>
           </Stack>
           <Collapse in={pinsOpen} unmountOnExit>
-            <Box
-              sx={{
-                px: 2,
-                pb: 1.5,
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-                columnGap: 2.5,
-                rowGap: 1,
-              }}
+            <Tooltip
+              arrow
+              placement="bottom-start"
+              title={`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
             >
-              {held.rows.map((r) => (
-                <Box key={r.id} minWidth={0}>
+              <Box sx={{ px: 2, pb: 1, pl: 4.25 }}>
+                {held.rows
+                  .filter((r) => !r.same)
+                  .map((r) => (
+                    <Typography
+                      key={r.id}
+                      noWrap
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      <Box
+                        component="span"
+                        sx={{ fontWeight: 600, color: "text.primary" }}
+                      >
+                        {pinLabel(r)}
+                      </Box>
+                      {` ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`}
+                    </Typography>
+                  ))}
+                {held.rows.some((r) => r.same) && (
                   <Typography
                     noWrap
                     sx={{ typography: "s3", color: "text.tertiary" }}
                   >
-                    {pinLabel(r)}
+                    {`Same: ${held.rows
+                      .filter((r) => r.same)
+                      .map((r) => pinLabel(r).toLowerCase())
+                      .join(", ")}`}
                   </Typography>
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s2",
-                      fontWeight: r.same ? 500 : 600,
-                      minWidth: 0,
-                    }}
-                  >
-                    {pinValue(r)}
-                  </Typography>
-                  {!r.same && PIN_EFFECT[r.id] && (
-                    <Typography
-                      noWrap
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      {PIN_EFFECT[r.id]}
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Box>
-            <Typography
-              sx={{ px: 2, pb: 1.5, typography: "s3", color: "text.tertiary" }}
-            >
-              {`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
-            </Typography>
+                )}
+              </Box>
+            </Tooltip>
           </Collapse>
         </Box>
       )}
@@ -301,207 +292,241 @@ export default function CompareVerdict({
       {/* The verdict in one line: the label, the change, what it's over. The
           interval, the no-change band, the simulator's own noise and the
           environment both runs sat on are one hover away. */}
-      <Box sx={{ px: 2, py: 1.5 }}>
-        {side ? (
-          <>
-            <Typography
-              sx={{ typography: "s1", fontWeight: 600 }}
-            >{`${read.total} scenarios side by side`}</Typography>
-            <Typography
-              sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
-            >
-              {label.note}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ px: 2, py: 1.25 }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          {side ? (
+            <>
+              <Typography
+                sx={{ typography: "s1", fontWeight: 600 }}
+              >{`${read.total} scenarios side by side`}</Typography>
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+              >
+                {label.note}
+              </Typography>
+            </>
+          ) : floor ? (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              <Box
+                component="span"
+                sx={{ fontWeight: 600, color: "text.primary" }}
+              >{`Only ${iv.n} comparable pair${iv.n === 1 ? "" : "s"}.`}</Box>
+              {` Below ${PAIR_FLOOR} there's no aggregate — read the rows below, regressions first.`}
             </Typography>
-          </>
-        ) : floor ? (
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            <Box
-              component="span"
-              sx={{ fontWeight: 600, color: "text.primary" }}
-            >{`Only ${iv.n} comparable pair${iv.n === 1 ? "" : "s"}.`}</Box>
-            {` Below ${PAIR_FLOOR} there's no aggregate — read the rows below, regressions first.`}
-          </Typography>
-        ) : (
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.25}
-            sx={{ flexWrap: "wrap", rowGap: 0.75 }}
-          >
-            <Tooltip
-              arrow
-              title={`${label.note} Improved or Regressed when the 95% interval excludes zero${band && band.source !== "estimate" && band.source !== "default" ? " and the change beats the noise" : ""}; No meaningful change when it sits inside the noise; Inconclusive otherwise. ${noiseBandText(band) || ""}`}
+          ) : (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.25}
+              sx={{ flexWrap: "wrap", rowGap: 0.75 }}
             >
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.5}
+              <Tooltip
+                arrow
+                title={`${label.note} Improved or Regressed when the 95% interval excludes zero${band && band.source !== "estimate" && band.source !== "default" ? " and the change beats the noise" : ""}; No meaningful change when it sits inside the noise; Inconclusive otherwise. ${noiseBandText(band) || ""}`}
+              >
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{
+                    px: 0.875,
+                    py: 0.25,
+                    borderRadius: "4px",
+                    border: "1px solid",
+                    cursor: "default",
+                    borderColor: (t) =>
+                      label.id === "regressed"
+                        ? "status.danger.border"
+                        : t.palette.divider,
+                    bgcolor: (t) =>
+                      label.id === "regressed"
+                        ? t.palette.status.danger.bg
+                        : "transparent",
+                  }}
+                >
+                  <Iconify
+                    icon={
+                      {
+                        improved: "solar:arrow-up-linear",
+                        regressed: "solar:arrow-down-linear",
+                        same: "solar:minus-circle-linear",
+                      }[label.id] || "solar:question-circle-linear"
+                    }
+                    width={14}
+                    sx={{
+                      color:
+                        label.id === "regressed"
+                          ? "status.danger.fg"
+                          : "text.secondary",
+                    }}
+                  />
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      color:
+                        label.id === "regressed"
+                          ? "status.danger.fg"
+                          : "text.primary",
+                    }}
+                  >
+                    {label.label}
+                  </Typography>
+                </Stack>
+              </Tooltip>
+              <Typography
                 sx={{
-                  px: 0.875,
-                  py: 0.25,
-                  borderRadius: "4px",
-                  border: "1px solid",
-                  cursor: "default",
-                  borderColor: (t) =>
+                  typography: "s1",
+                  fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
+                  color:
                     label.id === "regressed"
-                      ? "status.danger.border"
-                      : t.palette.divider,
-                  bgcolor: (t) =>
-                    label.id === "regressed"
-                      ? t.palette.status.danger.bg
-                      : "transparent",
+                      ? "status.danger.fg"
+                      : "text.primary",
                 }}
               >
-                <Iconify
-                  icon={
-                    {
-                      improved: "solar:arrow-up-linear",
-                      regressed: "solar:arrow-down-linear",
-                      same: "solar:minus-circle-linear",
-                    }[label.id] || "solar:question-circle-linear"
-                  }
-                  width={14}
-                  sx={{
-                    color:
-                      label.id === "regressed"
-                        ? "status.danger.fg"
-                        : "text.secondary",
-                  }}
-                />
+                {`${signed(iv.delta)} pts`}
+              </Typography>
+              <Tooltip
+                arrow
+                title={[
+                  `95% interval ${signed(iv.lo)} to ${signed(iv.hi)} pts${measuredNote}${unmeasured > 0 ? ` · ${unmeasured} not measured` : ""}.`,
+                  `${head}${rest.length ? ` · ${rest.join(" · ")}` : ""}.`,
+                  envHeadline?.text ? `${envHeadline.text}.` : null,
+                  band
+                    ? `${noiseBandText(band)} This change is ${Math.abs(iv.delta) > band.points ? "outside" : "inside"} it.`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
                 <Typography
                   sx={{
                     typography: "s2",
-                    fontWeight: 600,
-                    color:
-                      label.id === "regressed"
-                        ? "status.danger.fg"
-                        : "text.primary",
+                    color: "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
+                    cursor: "default",
+                    borderBottom: "1px dotted",
+                    borderColor: "text.disabled",
                   }}
                 >
-                  {label.label}
+                  {`pass rate, on ${iv.n} of ${read.total} scenarios${band ? ` · noise ±${band.points}` : ""}`}
                 </Typography>
-              </Stack>
-            </Tooltip>
-            <Typography
-              sx={{
-                typography: "s1",
-                fontWeight: 600,
-                fontVariantNumeric: "tabular-nums",
-                color:
-                  label.id === "regressed"
-                    ? "status.danger.fg"
-                    : "text.primary",
-              }}
-            >
-              {`${signed(iv.delta)} pts`}
-            </Typography>
-            <Tooltip
-              arrow
-              title={[
-                `95% interval ${signed(iv.lo)} to ${signed(iv.hi)} pts${measuredNote}${unmeasured > 0 ? ` · ${unmeasured} not measured` : ""}.`,
-                `${head}${rest.length ? ` · ${rest.join(" · ")}` : ""}.`,
-                envHeadline?.text ? `${envHeadline.text}.` : null,
-                band
-                  ? `${noiseBandText(band)} This change is ${Math.abs(iv.delta) > band.points ? "outside" : "inside"} it.`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  fontVariantNumeric: "tabular-nums",
-                  cursor: "default",
-                  borderBottom: "1px dotted",
-                  borderColor: "text.disabled",
-                }}
-              >
-                {`pass rate, on ${iv.n} of ${read.total} scenarios${band ? ` · noise ±${band.points}` : ""}`}
-              </Typography>
-            </Tooltip>
-            <Box flex={1} />
-            {counts.rechecked > 0 && (
-              <Tooltip
-                arrow
-                title="Rechecked pairs count in the delta, badged: the world changed, so it may mix agent and world effects."
-              >
-                <FormControlLabel
-                  sx={{
-                    m: 0,
-                    "& .MuiFormControlLabel-label": {
-                      typography: "s3",
-                      color: "text.secondary",
-                    },
-                  }}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={!read.excludeRechecked}
-                      onChange={(e) => onExcludeRechecked(!e.target.checked)}
-                      sx={{ p: 0.5, mr: 0.25, ...neutralCheckboxSx }}
-                    />
-                  }
-                  label={`Include ${counts.rechecked} rechecked`}
-                />
               </Tooltip>
-            )}
-          </Stack>
-        )}
-
-        {/* Undecided: the cheapest way to tell them apart, priced; nothing runs until clicked. */}
-        {cheapest && (
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            alignItems={{ sm: "center" }}
-            spacing={1}
-            sx={{ mt: 1 }}
-          >
-            <Tooltip
-              arrow
-              title={`${cheapest.line}.${others.map((f) => ` Or ${f.line.charAt(0).toLowerCase()}${f.line.slice(1)}.`).join("")}`}
-            >
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  flex: 1,
-                  minWidth: 0,
-                  cursor: "default",
-                }}
-              >
-                Not enough evidence to tell these runs apart yet.
-              </Typography>
-            </Tooltip>
-            <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
-              {[cheapest, ...others]
-                .filter((f) => f.can)
-                .map((f) => (
-                  <Button
-                    key={f.id}
-                    size="small"
-                    variant="outlined"
-                    onClick={() => onFix(f)}
-                    startIcon={
-                      <Iconify
-                        icon={
-                          f.kind === "raise-k"
-                            ? "solar:repeat-linear"
-                            : "solar:play-linear"
-                        }
-                        width={14}
+              <Box flex={1} />
+              {counts.rechecked > 0 && (
+                <Tooltip
+                  arrow
+                  title="Rechecked pairs count in the delta, badged: the world changed, so it may mix agent and world effects."
+                >
+                  <FormControlLabel
+                    sx={{
+                      m: 0,
+                      "& .MuiFormControlLabel-label": {
+                        typography: "s3",
+                        color: "text.secondary",
+                      },
+                    }}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={!read.excludeRechecked}
+                        onChange={(e) => onExcludeRechecked(!e.target.checked)}
+                        sx={{ p: 0.5, mr: 0.25, ...neutralCheckboxSx }}
                       />
                     }
-                    sx={OUTLINE_SX}
-                  >
-                    {`${f.label} · ${f.calls} calls`}
-                  </Button>
-                ))}
+                    label={`Include ${counts.rechecked} rechecked`}
+                  />
+                </Tooltip>
+              )}
             </Stack>
-          </Stack>
+          )}
+
+          {/* Undecided: the cheapest way to tell them apart, priced; nothing runs until clicked. */}
+          {cheapest && (
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              alignItems={{ sm: "center" }}
+              spacing={1}
+              sx={{ mt: 1 }}
+            >
+              <Tooltip
+                arrow
+                title={`${cheapest.line}.${others.map((f) => ` Or ${f.line.charAt(0).toLowerCase()}${f.line.slice(1)}.`).join("")}`}
+              >
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    flex: 1,
+                    minWidth: 0,
+                    cursor: "default",
+                  }}
+                >
+                  Not enough evidence to tell these runs apart yet.
+                </Typography>
+              </Tooltip>
+              <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
+                {[cheapest, ...others]
+                  .filter((f) => f.can)
+                  .map((f) => (
+                    <Button
+                      key={f.id}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => onFix(f)}
+                      startIcon={
+                        <Iconify
+                          icon={
+                            f.kind === "raise-k"
+                              ? "solar:repeat-linear"
+                              : "solar:play-linear"
+                          }
+                          width={14}
+                        />
+                      }
+                      sx={OUTLINE_SX}
+                    >
+                      {`${f.label} · ${f.calls} calls`}
+                    </Button>
+                  ))}
+              </Stack>
+            </Stack>
+          )}
+        </Box>
+        {/* Choosing the winner is its own reviewed step — comparing deploys
+            nothing; that note is on hover. */}
+        {promote && (
+          <Tooltip
+            arrow
+            title={
+              promote.disabled ||
+              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}.`
+            }
+          >
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={!!promote.disabled}
+                onClick={promote.onClick}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
+                {`Make ${promote.candidate} active…`}
+              </Button>
+            </span>
+          </Tooltip>
         )}
-      </Box>
+      </Stack>
 
       {/* Run-level mismatches — said, with the offer that resolves them. */}
       {(warnings.length > 0 || questions.length > 0 || criteria.length > 0) && (
@@ -639,41 +664,6 @@ export default function CompareVerdict({
           </Box>
           {` ${held.drift.text}`}
         </Typography>
-      )}
-
-      {/* Choosing the winner is its own reviewed step — comparing deploys nothing. */}
-      {promote && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}
-        >
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            {promote.disabled ||
-              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}.`}
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={!!promote.disabled}
-            onClick={promote.onClick}
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              flexShrink: 0,
-            }}
-          >
-            {`Make ${promote.candidate} active…`}
-          </Button>
-        </Stack>
       )}
     </Box>
   );
