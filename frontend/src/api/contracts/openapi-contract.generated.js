@@ -101418,13 +101418,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           description:
-            "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
+            "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
           type: "string",
           enum: [
             "not_run",
             "validating",
             "ready",
             "failed",
+            "check_unavailable",
             "retry",
             "unavailable",
           ],
