@@ -572,6 +572,7 @@ def test_metrics_only_migration_reverses_and_reapplies():
             for table in native_tables
         }
     executor = MigrationExecutor(connection)
+    restore_targets = executor.loader.graph.leaf_nodes()
     try:
         executor.migrate([("tracer", "0128_base_list_current_stores")])
         assert (
@@ -582,7 +583,7 @@ def test_metrics_only_migration_reverses_and_reapplies():
         )
     finally:
         executor = MigrationExecutor(connection)
-        executor.migrate([("tracer", "0129_metric_pg_response_revisions")])
+        executor.migrate(restore_targets)
     with connection.cursor() as cursor:
         after = {
             table: connection.introspection.get_table_description(cursor, table)

@@ -34,6 +34,20 @@ class SourceTestConfig(AppConfig):
 
 
 def configure():
+    if os.environ.get("A01_FULL_APP") == "1":
+        # Integration runner uses the migrated real application, including in
+        # the crash subprocess. Original isolated assertions remain unchanged.
+        import django
+        django.setup()
+        settings.FI_SESSIONS_SOURCE_INTENTS_ENABLED = True
+        settings.FI_SESSIONS_SOURCE_INTENT_LANE = "direct-local-mergetree-v1"
+        settings.CLICKHOUSE_V2 = {
+            **settings.CLICKHOUSE_V2,
+            "CH25_HOST": "127.0.0.1",
+            "CH25_HTTP_PORT": int(os.environ.get("A01_HTTP_PORT", "8123")),
+            "CH25_DATABASE": os.environ.get("A01_DATABASE", "a01"),
+        }
+        return
     if not settings.configured:
         settings.configure(
             INSTALLED_APPS=["tracer.tests.source_intent_cloud.SourceTestConfig"],
@@ -71,37 +85,39 @@ class SourceIntentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         configure()
-        from django.db import connection
-        from django.db.migrations.state import ProjectState, ModelState
-        from django.db.migrations.autodetector import MigrationAutodetector
-        from django.db.migrations.questioner import NonInteractiveMigrationQuestioner
-        from tracer.models.metric_source_intent import (
-            MetricSourceScope, MetricSourceIntent, MetricSourcePage, MetricSourceDelivery,
-        )
-        migration = importlib.import_module("tracer.migrations.0129_metric_source_intent").Migration("0129", "tracer")
-        before, after = ProjectState(), ProjectState()
-        migration.mutate_state(after, preserve=False)
-        with connection.schema_editor() as editor:
-            migration.apply(before, editor)
-        # Exercise rollback BEFORE any pending operation exists; never erase an
-        # uncertain operation to make a test pass.
-        with connection.schema_editor() as editor:
-            migration.unapply(ProjectState(), editor)
-        with connection.schema_editor() as editor:
-            migration.apply(ProjectState(), editor)
-        live = ProjectState()
-        for Model in (MetricSourceScope, MetricSourceIntent, MetricSourcePage, MetricSourceDelivery):
-            live.add_model(ModelState.from_model(Model))
-        diff = MigrationAutodetector(after, live, NonInteractiveMigrationQuestioner())._detect_changes()
-        if diff:
-            raise AssertionError("migration/model drift: " + str(diff))
+        if os.environ.get("A01_FULL_APP") != "1":
+            from django.db import connection
+            from django.db.migrations.state import ProjectState, ModelState
+            from django.db.migrations.autodetector import MigrationAutodetector
+            from django.db.migrations.questioner import NonInteractiveMigrationQuestioner
+            from tracer.models.metric_source_intent import (
+                MetricSourceScope, MetricSourceIntent, MetricSourcePage, MetricSourceDelivery,
+            )
+            migration = importlib.import_module("tracer.migrations.0129_metric_source_intent").Migration("0129", "tracer")
+            before, after = ProjectState(), ProjectState()
+            migration.mutate_state(after, preserve=False)
+            with connection.schema_editor() as editor:
+                migration.apply(before, editor)
+            # Exercise rollback BEFORE any pending operation exists; never erase an
+            # uncertain operation to make a test pass.
+            with connection.schema_editor() as editor:
+                migration.unapply(ProjectState(), editor)
+            with connection.schema_editor() as editor:
+                migration.apply(ProjectState(), editor)
+            live = ProjectState()
+            for Model in (MetricSourceScope, MetricSourceIntent, MetricSourcePage, MetricSourceDelivery):
+                live.add_model(ModelState.from_model(Model))
+            diff = MigrationAutodetector(after, live, NonInteractiveMigrationQuestioner())._detect_changes()
+            if diff:
+                raise AssertionError("migration/model drift: " + str(diff))
         import clickhouse_connect
         cls.clients = []
         schema = Path(__file__).parents[1] / "services/clickhouse/v2/schema/015_traces_and_trace_dict.sql"
         create = schema.read_text().split("CREATE TABLE IF NOT EXISTS traces", 1)[1]
         create = create.split("SETTINGS index_granularity = 8192;", 1)[0] + "SETTINGS index_granularity = 8192"
         database = os.environ.get("A01_DATABASE", "a01")
-        for port in (8123, 8124):
+        for port in (int(os.environ.get("A01_HTTP_PORT", "8123")),
+                     int(os.environ.get("A01_SECOND_HTTP_PORT", "8124"))):
             client = clickhouse_connect.get_client(host="127.0.0.1", port=port)
             client.command("CREATE DATABASE " + database)
             client.close()
@@ -171,7 +187,7 @@ class SourceIntentTests(unittest.TestCase):
         from tracer.services.derived_metrics.base_list_current_source import begin_source_intent, source_progress
         from django.test import override_settings
         scope, rows, pages, first = fixture()
-        second_config = {**settings.CLICKHOUSE_V2, "CH25_HTTP_PORT": 8124}
+        second_config = {**settings.CLICKHOUSE_V2, "CH25_HTTP_PORT": int(os.environ.get("A01_SECOND_HTTP_PORT", "8124"))}
         with override_settings(CLICKHOUSE_V2=second_config):
             second = trace_writer.inspect_trace_source_store(trace_writer.trace_rows_sha256(rows))
         token = begin_source_intent(scope, uuid4(), pages, expected_stores=(first, second))

@@ -144,7 +144,15 @@ class MetricsReadTransport:
             bound = sql % escape_params(params, context)
         else:
             bound = sql
-        query = {"database": self.database, "default_format": "JSONCompact", **settings}
+        query = {
+            "database": self.database,
+            "default_format": "JSONCompact",
+            # This envelope is consumed by Python, not a JavaScript number
+            # parser. Keep Int64/UInt64 exact without converting numeric-looking
+            # String values or Bool values to integers after decoding.
+            "output_format_json_quote_64bit_integers": 0,
+            **settings,
+        }
         if receipt:
             query["query_id"] = receipt.query_id
         host = f"[{self.host}]" if ":" in self.host else self.host
@@ -216,6 +224,12 @@ class MetricsReadTransport:
             if node.args.get("settings") or node.args.get("format"):
                 raise IncapableReadLane("metrics settings and format are reader-owned")
         for function in tree.find_all(exp.Func):
+            # SQLGlot models boolean connectors as Func nodes too. These are
+            # structural predicates in the compiler's tenant/generation filter,
+            # not callable functions. Their children are still visited below:
+            # AND/OR cannot hide an unqualified function or nonlocal source.
+            if isinstance(function, (exp.And, exp.Or)):
+                continue
             name = (
                 function.name
                 if isinstance(function, exp.Anonymous)

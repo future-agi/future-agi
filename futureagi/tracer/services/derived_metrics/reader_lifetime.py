@@ -139,6 +139,9 @@ class PinCapture:
     database: dict
     project_id: str
     metric_id: str | None = None
+    # Compiler-owned, PG-only plan construction under the real capture. Returning
+    # plain SQL/params also avoids pickling ORM objects into an uninitialized app.
+    query_compiler: Callable | None = None
 
     def __call__(self, receipt: ReadReceipt, budget: ReadBudget) -> object:
         from datetime import timedelta
@@ -171,6 +174,8 @@ class PinCapture:
                     ttl=timedelta(seconds=min(budget.total_s, 24 * 60 * 60)),
                     metric_id=self.metric_id,
                 )
+                if self.query_compiler is not None:
+                    return self.query_compiler(pin.manifest, pin.definition_version)
                 return pin.manifest, pin.definition_version
 
             return prepare_capture(db, receipt, budget, capture)
@@ -429,6 +434,10 @@ def bounded_read(
             raise ReadAcquisitionTimeout(
                 "pin acquisition failed or exceeded its budget"
             )
+        if isinstance(capture, PinCapture) and capture.query_compiler is not None:
+            # The real pin's plan was built inside the bounded PG capture stage.
+            # Supplied SQL cannot override that immutable generation selection.
+            sql, params = _snapshot
         if cancel is not None and cancel.is_set():
             raise ReadCancelled("read cancelled before submission")
         # Set BEFORE spawn: any failure after this point can be an uncertain send.

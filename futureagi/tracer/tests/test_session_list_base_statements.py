@@ -16,8 +16,10 @@ from tracer.services.derived_metrics.publication import (
     physical_table,
 )
 from tracer.services.derived_metrics.storage import (
+    LIST_CURRENT_MEMBERS,
     LIST_CURRENT_ROOTS,
     LIST_CURRENT_TABLES,
+    LIST_USER_ACTIVITY,
 )
 from tracer.tests._base_list_parity import (
     FixtureAuthority,
@@ -186,8 +188,64 @@ def test_qualified_count_has_no_limit_or_mutable_predicate_before_collapse():
     for table in LIST_CURRENT_TABLES:
         assert physical_table(table, checkpoint=True) == table
         assert "canonical_session_id" not in table.logical_key
-        assert "canonical_user_id" not in table.logical_key
         assert "unit_start" not in table.logical_key
+        if table in (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS):
+            assert "canonical_user_id" not in table.logical_key
+        else:
+            # The activity index replaces BOTH keys on a user move; roots and
+            # members instead collapse on the native physical span identity.
+            assert table == LIST_USER_ACTIVITY
+            assert "canonical_user_id" in table.logical_key
+        source, _ = committed_rows_select(
+            table,
+            qualified_read().manifest,
+            org_id=UUID(int=5),
+            project_id=PROJECT,
+        )
+        assert "unit_start >=" not in source
+        assert "is_deleted = 0" not in source
+        assert "LIMIT %(limit)" not in source
+        assert "ORDER BY generation DESC, _version DESC LIMIT 1 BY" in source
+
+
+def test_current_fact_table_roles_and_keys_are_exhaustive():
+    # Independent contract, not derived from LIST_CURRENT_KEY: the two physical
+    # fact tables must collapse corrections without keeping a stale user/session
+    # key. The per-user index deliberately adds the user, so its publisher must
+    # atomically retract the old key (covered by the real reassignment test).
+    physical_key = (
+        "org_id",
+        "project_id",
+        "observation_type",
+        "service_name",
+        "start_hour",
+        "trace_id",
+        "span_id",
+    )
+    activity_key = (
+        "org_id",
+        "project_id",
+        "canonical_user_id",
+        "observation_type",
+        "service_name",
+        "start_hour",
+        "trace_id",
+        "span_id",
+    )
+    roles = {
+        "list_current_root_facts": (LIST_CURRENT_ROOTS, physical_key),
+        "list_current_members": (LIST_CURRENT_MEMBERS, physical_key),
+        "list_current_user_activity": (LIST_USER_ACTIVITY, activity_key),
+    }
+    assert len(LIST_CURRENT_TABLES) == len(roles)
+    assert {table.name for table in LIST_CURRENT_TABLES} == set(roles)
+    for table in LIST_CURRENT_TABLES:
+        expected_table, expected_key = roles[table.name]
+        assert table == expected_table
+        assert table.logical_key == expected_key
+        assert table.order_by == (*expected_key, "generation", "attempt_id")
+        assert physical_table(table, checkpoint=False) == table
+        assert physical_table(table, checkpoint=True) == table
 
 
 def test_float_parity_is_separate_and_exact():

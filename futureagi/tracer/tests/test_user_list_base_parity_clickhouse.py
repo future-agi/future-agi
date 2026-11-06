@@ -241,6 +241,16 @@ def test_user_key_moves_retractions_remap_only_and_compaction(user_facts):
         params,
     )
     assert rows == [(str(USERS[0]), 1), (str(USERS[8]), 0)]
+    # Both sides must be written by THIS publication, not a stale live old-user
+    # row plus a new-user insertion from another attempt/generation.
+    assert writer.store.execute(
+        f"SELECT canonical_user_id, is_deleted, generation, attempt_id FROM ({sql}) "
+        "WHERE span_id = 'late' ORDER BY canonical_user_id",
+        params,
+    ) == [
+        (str(USERS[0]), 1, second.generation, second.published_by_id),
+        (str(USERS[8]), 0, second.generation, second.published_by_id),
+    ]
     client = writer.store.client
     client.execute(
         "INSERT INTO end_user_id_remap (old_id,new_id) VALUES", [(USERS[2], USERS[3])]
@@ -251,6 +261,22 @@ def test_user_key_moves_retractions_remap_only_and_compaction(user_facts):
         as_of=END + timedelta(days=1),
     )
     assert third.id != second.id != first.id
+    remapped_sql, remapped_params = committed_rows_select(
+        LIST_USER_ACTIVITY,
+        third,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    # A remap-only move uses the same old-key/new-key publication contract.
+    # The canonical survivor is the smaller UUID, even when it is the old_id.
+    assert writer.store.execute(
+        f"SELECT canonical_user_id, is_deleted, generation, attempt_id FROM ({remapped_sql}) "
+        "WHERE span_id = 'null-b' ORDER BY canonical_user_id",
+        remapped_params,
+    ) == [
+        (str(USERS[2]), 0, third.generation, third.published_by_id),
+        (str(USERS[3]), 1, third.generation, third.published_by_id),
+    ]
     # Native and current fold the remap identically; no insert-only user state.
     old, new = builders(writer, limit=25)
     with user_fixture_pin(writer, authority) as read:

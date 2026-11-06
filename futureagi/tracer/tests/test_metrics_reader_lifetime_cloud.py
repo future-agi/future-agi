@@ -228,7 +228,8 @@ def test_budget_refuses_unbounded_values(budget, field, value):
 
 def test_normal_native_and_http_read_release_protection(lane, guards, budget):
     rows = invoke(lane, guards, budget)
-    assert [int(row[0]) for row in rows] == [1, 2]
+    assert [row[0] for row in rows] == [1, 2]
+    assert all(type(row[0]) is int for row in rows)
     assert progress_available()
 
 
@@ -244,6 +245,59 @@ def test_native_and_http_bind_typed_parameters(lane, guards, budget):
     )
     assert list(rows[0]) == ["2026-11-05 00:00:00", "synthetic ' quote"]
     assert progress_available()
+
+
+def test_result_types_order_and_limit_match_native(lane, guards, budget):
+    rows = invoke(
+        lane,
+        guards,
+        budget,
+        sql=(
+            "SELECT CAST(number AS UInt64), "
+            "CAST(-9223372036854775808 AS Int64), "
+            "CAST(18446744073709551615 AS UInt64), "
+            "CAST(number = 1 AS Bool), '1', "
+            "CAST(NULL AS Nullable(Int64)) "
+            "FROM numbers(3) ORDER BY number DESC LIMIT 2"
+        ),
+    )
+    assert [list(row) for row in rows] == [
+        [2, -(2**63), 2**64 - 1, False, "1", None],
+        [1, -(2**63), 2**64 - 1, True, "1", None],
+    ]
+    # Equality alone would accept True == 1. Do not coerce numeric strings or
+    # booleans and accidentally hide a native/HTTP representation regression.
+    assert [[type(value) for value in row] for row in rows] == [
+        [int, int, int, bool, str, type(None)],
+        [int, int, int, bool, str, type(None)],
+    ]
+    assert progress_available()
+
+
+def test_compiler_boolean_predicates_preserve_admission(lane, guards, budget):
+    rows = invoke(
+        lane,
+        guards,
+        budget,
+        sql=(
+            "SELECT value FROM metrics_reader_local "
+            "WHERE value >= %(lower)s AND (value = 1 OR value = 2) ORDER BY value"
+        ),
+        params={"lower": 2},
+    )
+    assert [int(row[0]) for row in rows] == [2]
+    assert progress_available()
+    # Structural connectors must not mask an otherwise forbidden descendant.
+    with pytest.raises(IncapableReadLane):
+        lane._check_local_sql(
+            "SELECT 1 WHERE 1 = 1 AND (1 = 0 OR dictGet('remote', 'value', 1) = 1)",
+            budget,
+        )
+    with pytest.raises(IncapableReadLane):
+        lane._check_local_sql(
+            "SELECT 1 WHERE 1 = 1 AND 1 IN (SELECT number FROM system.numbers)",
+            budget,
+        )
 
 
 def test_blocked_pg_acquisition_is_bounded_and_never_submits(lane, guards, budget):
@@ -430,7 +484,8 @@ def test_inherited_log_filters_cannot_strand_successful_read(
             budget,
             capture=SyntheticCapture(str(receipt_file)),
         )
-        assert [int(row[0]) for row in rows] == [1, 2]
+        assert [row[0] for row in rows] == [1, 2]
+        assert all(type(row[0]) is int for row in rows)
         assert progress_available()
         # Do not flush logs: ordinary bounded cleanup must find the receipt.
         assert (
