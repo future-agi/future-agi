@@ -2329,19 +2329,19 @@
 1. ingest one trace through the collector into a uniquely named project and wait until it is listed
 2. open the project trace grid and use Display to show Trace Name and Tags
 3. open Add tags on the seeded row, enter a unique tag and press Enter
-4. see Tags updated, close the popover and read the tag on the refreshed row
+4. see Tags updated, close the popover, reload the grid and read the tag on the row
 5. read the project tag definitions through the authenticated API
 
 **Backend state verified:**
 
 - PATCH /tracer/trace/<traceId>/tags/ accepts an object tag without project_id for a trace absent from Postgres and returns its assigned name
-- the refreshed trace-list response and ClickHouse traces FINAL contain exactly the new tag on the seeded trace
+- the reloaded trace-list response (tags as an array) and ClickHouse traces FINAL contain exactly the new tag on the seeded trace
 - GET /tracer/project/<projectId>/tag-definitions/ lists the unique tag with its submitted #RRGGBB colour and usage_count >= 1
 
 **Browser observations:**
 
 - saving the tag shows the Tags updated snackbar
-- closing the popover refreshes the grid and the seeded row displays exactly the tag name
+- after Reload the seeded row displays exactly the tag name
 
 ## prompts
 
