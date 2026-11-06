@@ -105,6 +105,7 @@ describe("BuilderConsole", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    expect(screen.getByText(CONSOLE_COPY.stopping)).toBeInTheDocument();
   });
 
   describe("scrolling", () => {

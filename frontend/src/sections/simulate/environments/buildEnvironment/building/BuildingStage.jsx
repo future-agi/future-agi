@@ -37,6 +37,7 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
           onStop={console_.stop}
           canStop={console_.inFlight}
           working={console_.working}
+          stopping={console_.stopping}
           frozen={console_.frozen}
           frozenReason={console_.frozenReason}
           onCollapse={collapse}

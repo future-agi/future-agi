@@ -96,4 +96,37 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
     expect(screen.getAllByText("Strict").length).toBeGreaterThan(0);
   });
+
+  it.each([
+    "Send it to <reservation_id> at the <front desk>?",
+    "Use _private_field or __init__ here? Also 2*3*4 and C:\\temp\\new.",
+    "# of rooms to hold back?",
+    "1. Should we keep this rule?",
+  ])("shows a plain question exactly as written: %s", (prompt) => {
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+  });
+
+  it("keeps raw angle brackets inside a markdown question", () => {
+    const prompt = "Approve this?\n\n- send it to the <front desk>";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expect(screen.getByRole("listitem")).toHaveTextContent("send it to the <front desk>");
+  });
+
+  it("renders a question's markdown, both open and answered", () => {
+    const prompt = "Approve this design?\n\n### Tools\n\n- **check_availability** reads rooms";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    const expectRendered = () => {
+      expect(screen.getByRole("heading", { name: "Tools" })).toBeInTheDocument();
+      expect(screen.getByRole("listitem")).toHaveTextContent("check_availability reads rooms");
+      expect(screen.queryByText(/###|\*\*/)).toBeNull();
+    };
+    const { rerender } = render(<Turn turn={builder([{ id: "a1", kind: "ask", question, onSubmit: vi.fn() }])} />);
+    expectRendered();
+
+    rerender(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expectRendered();
+  });
 });

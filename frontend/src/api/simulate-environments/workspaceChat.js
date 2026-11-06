@@ -33,6 +33,7 @@ import { useNudgeActions } from "./nudgeActions";
 import {
   projectConversation,
   conversationInFlight,
+  conversationStopping,
   conversationWaiting,
   draftsBlocked,
   turnAwaitingAnswer,
@@ -412,8 +413,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     // The working indicator: a turn in flight or a running rebuild, not one
     // that only waits.
     working: (inFlight && !awaiting) || activeRunning,
-    // A Stop for the rebuild is on its way.
-    stopping: nudgeActions.stopping,
+    // A Stop is on its way, for the rebuild or for the builder's turn.
+    stopping: nudgeActions.stopping || conversationStopping(conversation),
     // A queued or running rebuild holds the drafts' Save and Discard.
     rebuildHold: Boolean(active),
     // A question or confirmation is open and the user can still answer it. A

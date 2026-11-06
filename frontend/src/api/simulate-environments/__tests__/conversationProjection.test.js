@@ -3,6 +3,7 @@ import {
   projectConversation,
   conversationInFlight,
   conversationWaiting,
+  conversationStopping,
 } from "../conversationProjection";
 
 const msg = (over = {}) => ({
@@ -191,6 +192,15 @@ describe("projectConversation", () => {
     expect(turns).toHaveLength(2);
     expect(turns[0].steps[0]).toMatchObject({ kind: "tool", state: "completed", result: "42 lines" });
     expect(turns[1]).toMatchObject({ title: "Background run activity" });
+  });
+
+  it("counts a Stop as on its way only until the server settles it", () => {
+    const stop = (state) => ({ messages: [msg({ state, payload: { command_kind: "interrupt" } })] });
+    expect(conversationStopping(stop("queued"))).toBe(true);
+    expect(conversationStopping(stop("delivered"))).toBe(true);
+    expect(conversationStopping(stop("completed"))).toBe(false);
+    expect(conversationStopping(stop("failed"))).toBe(false);
+    expect(conversationStopping({ messages: [msg({ state: "queued" })] })).toBe(false);
   });
 
   it("omits interrupt/cancel control messages from the transcript", () => {

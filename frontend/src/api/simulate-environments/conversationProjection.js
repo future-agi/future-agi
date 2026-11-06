@@ -296,6 +296,15 @@ export function conversationInFlight(conversation) {
   return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
 }
 
+// A Stop the builder has not acted on yet. The server settles it when the turn
+// ends, or fails it when the runtime died.
+export function conversationStopping(conversation) {
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  return messages.some(
+    (m) => m.payload?.command_kind === "interrupt" && IN_FLIGHT_MESSAGE_STATES.has(m.state),
+  );
+}
+
 // Whether the builder is waiting on the user — a question or confirmation that
 // no message answers yet. Not "in flight", so callers that signal activity
 // (the collapsed chat's rail dot) need this too, or they go quiet exactly when

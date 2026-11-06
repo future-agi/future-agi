@@ -180,7 +180,13 @@ export default function BuilderConsole({
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
-            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+            {frozen
+              ? reason
+              : stopping
+                ? CONSOLE_COPY.stopping
+                : busy
+                  ? CONSOLE_COPY.working
+                  : CONSOLE_COPY.idle}
           </Typography>
         </Box>
         {onCollapse && (
