@@ -332,3 +332,52 @@ def test_safe_fetch_strips_authorization_on_cross_origin_redirect(monkeypatch):
     assert captured_headers[0].get("Authorization") == "Bearer secret"
     assert "Authorization" not in captured_headers[1]
     assert "Cookie" not in captured_headers[1]
+
+
+def test_document_link_fetch_strips_sensitive_headers_on_scheme_change(monkeypatch):
+    """A scheme or port change is cross-origin even when the hostname matches."""
+    monkeypatch.setattr(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
+    )
+    redirect_response = _fake_urllib3_response(
+        302, {"Location": "https://origin.example.com/final"}
+    )
+    final_response = _fake_urllib3_response(200, {"Content-Type": "text/plain"})
+    captured_headers = []
+
+    def fake_request(method, path, headers, redirect, preload_content):
+        captured_headers.append(dict(headers))
+        return redirect_response if len(captured_headers) == 1 else final_response
+
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as http_pool, patch(
+        "tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool"
+    ) as https_pool:
+        http_pool.return_value.request.side_effect = fake_request
+        https_pool.return_value.request.side_effect = fake_request
+        safe_fetch(
+            "http://origin.example.com/x",
+            headers={"AUTHORIZATION": "Bearer secret", "Cookie": "session=abc"},
+            strict_redirect_origins=True,
+        )
+
+    assert captured_headers[0].get("AUTHORIZATION") == "Bearer secret"
+    assert "AUTHORIZATION" not in captured_headers[1]
+    assert "Cookie" not in captured_headers[1]
+
+
+def test_document_link_fetch_rejects_https_to_http_redirect(monkeypatch):
+    monkeypatch.setattr(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
+    )
+    redirect_response = _fake_urllib3_response(
+        302, {"Location": "http://origin.example.com/insecure"}
+    )
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool") as pool_cls:
+        pool_cls.return_value.request.return_value = redirect_response
+        with pytest.raises(ValueError, match="HTTPS.*HTTP"):
+            safe_fetch(
+                "https://origin.example.com/start",
+                strict_redirect_origins=True,
+            )
