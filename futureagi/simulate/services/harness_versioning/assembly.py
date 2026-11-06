@@ -1159,6 +1159,7 @@ def mark_failed(
     from simulate.services.harness_versioning.validation import (
         FAILURE_SOURCE,
         certify_only,
+        platform_failure,
     )
 
     assembly = _assembly(job)
@@ -1171,6 +1172,9 @@ def mark_failed(
             **_RESET, updated_at=timezone.now()
         )
         outcome = "reset"
+    elif certify_only(job) and platform_failure(message, failed_actions):
+        # A check that failed on our side settles as unavailable, never failed.
+        return
     elif assembly.get("outcome") == "miss":
         error: dict[str, Any] = {
             "code": "authoring_runtime_validation_failed",

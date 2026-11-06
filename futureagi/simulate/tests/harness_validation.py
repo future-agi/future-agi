@@ -19,7 +19,7 @@ def running_validations(environment: Any = None) -> list[HostedHarnessJob]:
 
 def settle_validations(environment: Any = None, *, passed: bool = True) -> list[str]:
     """End every running validation (of ``environment`` when given): its pairing
-    certified, its bundle stored, when ``passed``; else its check failed. Then each
+    certified, its bundle stored, when ``passed``; else the agent failed its check. Then each
     acts on its outcome, as a waiting move does; a validation that starts another is
     settled too. Returns the outcomes in order."""
     outcomes: list[str] = []
@@ -46,8 +46,8 @@ def settle_validations(environment: Any = None, *, passed: bool = True) -> list[
                 HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
                     state=HostedHarnessJob.State.FAILED,
                     failure={
-                        "code": "certify_incomplete",
-                        "message": "certify_incomplete",
+                        "code": "authoring_runtime_validation_failed",
+                        "message": "the agent did not start",
                     },
                 )
             outcomes.append(validation.finish_validation(job.id))

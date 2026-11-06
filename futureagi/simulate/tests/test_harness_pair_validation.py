@@ -369,7 +369,7 @@ class TestReconcile:
         assert done.state == "completed"
         assert _job_metadata(job)["validation_outcome"] == "ready"
 
-    def test_exit_0_not_ready_is_certify_incomplete(
+    def test_exit_0_not_ready_is_an_unavailable_check_not_a_failed_pair(
         self,
         user,
         workspace,
@@ -388,8 +388,9 @@ class TestReconcile:
 
         assert (done.state, done.failure["code"]) == ("failed", "certify_incomplete")
         row = _row(environment)
-        assert row.state == "failed"
-        assert row.error["source"] == "validation"
+        assert row.state == "pending"
+        assert row.error["last_attempt"]["code"] == "check_unavailable"
+        assert _job_metadata(job)["validation_outcome"] == "unavailable"
 
     def test_exit_78_records_failed_actions_for_every_miss(
         self, user, workspace, storage, gateway, monkeypatch
@@ -526,7 +527,10 @@ class TestTerminalPaths:
         environment = _pending(user, workspace, storage, "pv-once")
         job = _start(environment).job
 
-        assert _end(job, state="failed", code="certify_incomplete") == "failed"
+        assert (
+            _end(job, state="failed", code="authoring_runtime_validation_failed")
+            == "failed"
+        )
         assert validation.finish_validation(job.id) is None
 
 
@@ -798,7 +802,10 @@ class TestAgentMoves:
         _activate_on(environment.id, a2, explicit=True, user=user)
         job = _move_job(environment, a2)
 
-        assert _end(job, state="failed", code="certify_incomplete") == "failed"
+        assert (
+            _end(job, state="failed", code="authoring_runtime_validation_failed")
+            == "failed"
+        )
 
         environment.refresh_from_db()
         assert environment.agent_version_id == a1.id
@@ -1300,7 +1307,7 @@ class TestCheckLogs:
         _age(job, 3)
 
         with capture_logs() as logs:
-            _end(job, state="failed", code="certify_incomplete")
+            _end(job, state="failed", code="authoring_runtime_validation_failed")
 
         finished = next(
             one for one in logs if one["event"] == "harness_pair_validation_finished"
@@ -1313,3 +1320,125 @@ class TestCheckLogs:
         assert finished["assembly_key"] == _row(environment).assembly_key
         assert finished["outcome"] == "failed"
         assert finished["duration_seconds"] >= 180
+
+
+WORLD_SEED_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair: "
+    "seed/seed_failed (world-db): canonical World IR could not be compiled or applied: "
+    "source_model_fingerprint_mismatch"
+)
+
+
+class TestCheckUnavailable:
+    @pytest.mark.parametrize(
+        ("message", "failed_actions", "cause"),
+        [
+            (WORLD_SEED_FAILED, None, "seed_failed"),
+            (
+                "...: render/store_statement_failed: insert refused",
+                None,
+                "store_statement_failed",
+            ),
+            ("...: spawn/spawn_failed (world-api): exited 1", None, "spawn_failed"),
+            ("...: spawn/spawn_failed (agent): ModuleNotFoundError", None, None),
+            ("...: build/build_failed (agent): pip failed", None, None),
+            (WORLD_SEED_FAILED, [{"action": "issue_refund"}], None),
+            ("the agent did not answer the test message", None, None),
+            ("", None, None),
+        ],
+    )
+    def test_only_a_test_world_failure_is_ours(self, message, failed_actions, cause):
+        assert validation.platform_failure(message, failed_actions) == cause
+
+    def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
+        self, user, workspace, storage
+    ):
+        from structlog.testing import capture_logs
+
+        from simulate.services import harness_readiness
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _pending(user, workspace, storage, "pv-ours")
+        job = _start(environment).job
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed",
+            failure={
+                "code": "authoring_runtime_validation_failed",
+                "message": WORLD_SEED_FAILED,
+            },
+        )
+
+        with capture_logs() as logs:
+            assert validation.finish_validation(job.id) == "unavailable"
+
+        row = _row(environment)
+        assert row.state == "pending"
+        assert row.error["last_attempt"]["cause"] == "seed_failed"
+        view = harness_readiness.readiness_report(
+            harness_readiness.resolve_pairing(environment)
+        )["validation"]
+        assert view["state"] == "check_unavailable"
+        assert view["error"]["reason"] == validation.UNAVAILABLE_REASON
+        assert "source_model" not in str(view)
+        assert any(
+            one["event"] == "harness_pair_check_unavailable"
+            and one["cause"] == "seed_failed"
+            and one["environment_id"] == str(environment.id)
+            for one in logs
+        )
+        assert _run(environment, key="after-ours").id
+
+    def test_the_gateway_never_marks_a_test_world_failure_failed(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-ours-mark")
+        job = _start(environment).job
+        payload = dict(job.payload)
+        payload["metadata"]["assembly"]["outcome"] = "miss"
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+        job.refresh_from_db()
+
+        assembly.mark_failed(job, WORLD_SEED_FAILED)
+
+        assert _row(environment).state == "pending"
+        assembly.mark_failed(job, "the agent did not answer the test message")
+        assert _row(environment).state == "failed"
+
+    def test_an_agent_failure_still_fails_the_pair_and_refuses_runs(
+        self, user, workspace, storage
+    ):
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _pending(user, workspace, storage, "pv-agent")
+        job = _start(environment).job
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed",
+            failure={
+                "code": "authoring_runtime_validation_failed",
+                "message": "...: spawn/spawn_failed (agent): ModuleNotFoundError",
+            },
+        )
+
+        assert validation.finish_validation(job.id) == "failed"
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, key="after-agent")
+        assert refused.value.code == "pair_failed"
+
+    def test_a_move_whose_check_was_unavailable_lands_as_before_checks(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-ours-move")
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        job = _move_job(environment, a2)
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed",
+            failure={
+                "code": "authoring_runtime_validation_failed",
+                "message": WORLD_SEED_FAILED,
+            },
+        )
+
+        assert validation.finish_validation(job.id) == "unavailable"
+
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a2.id

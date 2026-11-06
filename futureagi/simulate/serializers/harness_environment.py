@@ -657,11 +657,20 @@ class HarnessPairValidationSerializer(serializers.Serializer):
     """An agent, environment and suite pairing's validation."""
 
     state = serializers.ChoiceField(
-        choices=["not_run", "validating", "ready", "failed", "retry", "unavailable"],
+        choices=[
+            "not_run",
+            "validating",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "retry",
+            "unavailable",
+        ],
         help_text=(
-            "ready: certified together; failed: a validation's check failed, so runs"
-            " are refused; retry: the last validation ended before its check did, or"
-            " a run failed the pairing."
+            "ready: certified together; failed: the agent failed a validation's check,"
+            " so runs are refused; check_unavailable: the check failed on our side, so"
+            " runs are not held for it; retry: the last validation ended before its"
+            " check did, or a run failed the pairing."
         ),
     )
     job_id = serializers.UUIDField(allow_null=True)

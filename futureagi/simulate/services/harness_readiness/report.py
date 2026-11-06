@@ -173,6 +173,8 @@ def _validation(
         state = "retry"
     elif bundle is not None and validation.live_validation(bundle.id) is not None:
         state = "validating"
+    elif (error.get("last_attempt") or {}).get("code") == validation.CHECK_UNAVAILABLE:
+        state = "check_unavailable"
     elif pairing.agent_version is None or not validation.can_validate(
         pairing.environment, pairing.agent_version.id
     ):
@@ -186,6 +188,11 @@ def _validation(
         shown = {"code": error.get("code"), "reason": validation.failed_reason(error)}
         if "failed_actions" in error:
             shown["failed_actions"] = error["failed_actions"]
+    elif state == "check_unavailable":
+        shown = {
+            "code": validation.CHECK_UNAVAILABLE,
+            "reason": validation.UNAVAILABLE_REASON,
+        }
     elif state == "retry":
         shown = {
             "code": (error.get("last_attempt") or {}).get("code", error.get("code"))
