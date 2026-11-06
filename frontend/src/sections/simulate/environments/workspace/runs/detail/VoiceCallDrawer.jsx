@@ -106,6 +106,12 @@ export default function VoiceCallDrawer({
   // Held here because the panel unmounts while the next call's detail loads.
   const [chosenTab, setChosenTab] = useState("transcript");
   const [openTraceId, setOpenTraceId] = useState(null);
+  // Forgotten on another call, so stepping to it and back does not reopen the trace.
+  const [traceCallId, setTraceCallId] = useState(task.id);
+  if (traceCallId !== task.id) {
+    setTraceCallId(task.id);
+    setOpenTraceId(null);
+  }
   // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
   const showWorkers =
     hasWorkers || (hasWorkers === undefined && chosenTab === "workers");

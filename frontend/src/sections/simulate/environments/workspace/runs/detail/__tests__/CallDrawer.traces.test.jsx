@@ -20,10 +20,11 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
     useHasWorkers: () => mocks.hasWorkers,
-    useCallExecutionV3Detail: () => ({
-      data: { id: "voice-1", transcript: [] },
-      isPending: false,
-    }),
+    // A call not read yet is pending, as the next call is while its detail loads.
+    useCallExecutionV3Detail: (id) =>
+      id === "voice-1"
+        ? { data: { id: "voice-1", transcript: [] }, isPending: false }
+        : { data: undefined, isPending: true },
     useCallTraces: () => mocks.traces,
   };
 });
@@ -317,5 +318,34 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
 
     expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
     expect(urlHasTrace()).toBe(true);
+  });
+
+  it("does not reopen the trace on a voice call after stepping to the next call and back", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderVoice({ hasPrev: true, hasNext: true });
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("trace-drawer")).not.toBeInTheDocument();
+
+    const step = (task) =>
+      rerender(
+        <CallDrawer
+          task={task}
+          executionId="run-1"
+          agentType="voice"
+          onClose={() => {}}
+          hasPrev
+          hasNext
+        />,
+      );
+    // The next call lists none of this one's traces; the panel unmounts while its detail loads.
+    mocks.traces = { projectId: "hidden-project", traces: [], isError: false };
+    step({ id: "voice-2", simulationCallType: "voice" });
+    mocks.traces = { projectId: "hidden-project", traces: ROWS, isError: false };
+    step(voiceTask);
+
+    expect(screen.queryByTestId("trace-drawer")).not.toBeInTheDocument();
+    expect(urlHasTrace()).toBe(false);
   });
 });
