@@ -67,6 +67,7 @@ class ActorRules(TypedDict, total=False):
     situation_before: str
     evaluator_only: dict[str, list[str]]
     private_to_actor: list[str]
+    actor_models: list[str]
 
 
 class WorldAction(TypedDict):
