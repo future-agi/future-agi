@@ -3944,6 +3944,52 @@ class TestLiteralTTSScriptRoutes:
         speech.assert_not_called()
         upload.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("user_text", "expected"),
+        [
+            ("{{Recording}}", None),
+            ("Please listen. {{Recording}}", "Please listen. "),
+        ],
+    )
+    def test_preview_audio_variable_label_is_not_spoken(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        user_text,
+        expected,
+    ):
+        speech, upload = speech_boundary
+        recording = Column.objects.create(
+            name="Recording",
+            dataset=dataset,
+            data_type=DataTypeChoices.AUDIO.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        dataset.column_order.append(str(recording.id))
+        dataset.save()
+        Cell.objects.create(
+            dataset=dataset,
+            column=recording,
+            row=row,
+            value="https://media.example/recording.mp3",
+        )
+
+        with patch("model_hub.views.run_prompt.safe_fetch") as fetch:
+            fetch.return_value = MagicMock(content=b"ID3 fake recording bytes")
+            response = self._preview(auth_client, dataset, user_text)
+
+        assert response.status_code == status.HTTP_200_OK
+        if expected is None:
+            assert response.json()["result"]["responses"] == [TTS_EMPTY_SCRIPT_ERROR]
+            speech.assert_not_called()
+            upload.assert_not_called()
+        else:
+            assert response.json()["result"]["responses"] == [TTS_AUDIO_URL]
+            assert speech.call_args.kwargs["input"] == expected
+
     def test_preview_of_other_org_dataset_is_denied_before_provider_call(
         self, auth_client, openai_provider_key, speech_boundary
     ):
