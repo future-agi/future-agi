@@ -441,6 +441,45 @@ def test_provider_import_authoring_gets_only_the_matching_target_key():
     }
 
 
+@pytest.mark.parametrize(
+    ("connector", "secret_name"),
+    [
+        ("vapi", "VAPI_API_KEY"),
+        ("retell", "RETELL_API_KEY"),
+        ("retell_chat", "RETELL_API_KEY"),
+    ],
+)
+def test_connect_only_provider_authoring_gets_the_inspection_key(
+    connector, secret_name
+):
+    payload = {"agent": {"connector": connector, "mode": "connect_only"}}
+    with patch(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        return_value={secret_name: "target-secret", "UNRELATED_AGENT_SECRET": "x"},
+    ):
+        material, resolved_connector = _provider_import_authoring_material(
+            SimpleNamespace(), payload
+        )
+
+    assert resolved_connector == connector
+    assert material == {secret_name: "target-secret"}
+
+
+@pytest.mark.parametrize("connector", ["phone", "livekit"])
+def test_connect_only_non_provider_authoring_gets_no_key(connector):
+    payload = {"agent": {"connector": connector, "mode": "connect_only"}}
+    with patch(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        return_value={"VAPI_API_KEY": "v", "RETELL_API_KEY": "r"},
+    ) as resolve:
+        material, resolved_connector = _provider_import_authoring_material(
+            SimpleNamespace(), payload
+        )
+
+    assert (material, resolved_connector) == ({}, connector)
+    resolve.assert_not_called()
+
+
 def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     settings, monkeypatch, tmp_path
 ):
@@ -2120,6 +2159,52 @@ def test_unified_provider_import_authoring_receives_one_shot_target_key(
         not in client.sandbox.fs.uploads[one_shot_path].decode()
     )
     assert one_shot_path in client.sandbox.process.exec_calls[0]
+
+
+@pytest.mark.django_db
+def test_connect_only_vapi_authoring_carries_the_provider_profile_cache(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["agent"] = {
+        "connector": "vapi",
+        "mode": "connect_only",
+        "config": {"assistant_id": "customer-vapi-assistant"},
+        "secret_refs": {"VAPI_API_KEY": {}},
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="connect-only-vapi-authoring"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        lambda _self, _job: {"VAPI_API_KEY": "vapi-target-secret"},
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: {},
+    )
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    one_shot_path = "/run/futureagi/authoring-target-secrets.json"
+    assert json.loads(client.sandbox.fs.uploads[one_shot_path]) == {
+        "VAPI_API_KEY": "vapi-target-secret"
+    }
+    command = client.sandbox.process.session_request.command
+    assert f"--target-secrets {one_shot_path}" in command
+    assert "--provider-profile-cache /work/provider-import-profile.json" in command
+    assert "vapi-target-secret" not in command
 
 
 @pytest.mark.django_db
