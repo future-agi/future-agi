@@ -1,9 +1,14 @@
 import uuid
 
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
 
 from accounts.models import Organization, User, Workspace
+from tfc.temporal.agent_playground.types import (
+    DEFAULT_MAX_CONCURRENT_NODES,
+    MAX_CONCURRENT_NODES_ERROR,
+)
 from tfc.utils.base_model import BaseModel
 
 
@@ -36,6 +41,11 @@ class Graph(BaseModel):
     name = models.CharField(max_length=255, help_text="Display name")
     description = models.TextField(null=True, blank=True)
     is_template = models.BooleanField(default=False)
+    max_concurrent_nodes = models.PositiveIntegerField(
+        default=DEFAULT_MAX_CONCURRENT_NODES,
+        validators=[MinValueValidator(1)],
+        help_text="Maximum number of this agent's nodes that may run at the same time.",
+    )
 
     created_by = models.ForeignKey(
         User,
@@ -63,6 +73,8 @@ class Graph(BaseModel):
 
     def clean(self):
         super().clean()
+        if self.max_concurrent_nodes is not None and self.max_concurrent_nodes < 1:
+            raise ValidationError({"max_concurrent_nodes": MAX_CONCURRENT_NODES_ERROR})
         if self.is_template:
             if self.organization_id or self.workspace_id or self.created_by_id:
                 raise ValidationError(
