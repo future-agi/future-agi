@@ -302,7 +302,7 @@ class TestCodingAgentPush:
             organization=user.organization,
             workspace=workspace,
             type="coding_agent",
-            user=user,
+            minted_by=user,
             simulation_environment_id=environment.id,
         )
 

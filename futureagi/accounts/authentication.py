@@ -204,7 +204,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         try:
             org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
+                "organization", "workspace", "minted_by"
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
@@ -242,8 +242,13 @@ class APIKeyAuthentication(BaseAuthentication):
                     .order_by("created_at")
                     .first()
                 )
+            elif org_api_key.type == "coding_agent":
+                # Its user is null, so an older build refuses it; its minter acts.
+                user = org_api_key.minted_by
             else:
                 user = org_api_key.user
+            if user is None:
+                raise AuthenticationFailed("No user found for API key")
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key

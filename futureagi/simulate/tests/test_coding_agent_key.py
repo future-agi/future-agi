@@ -20,6 +20,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 
 from accounts.authentication import LangfuseBasicAuthentication, is_coding_agent_key
 from accounts.models.user import OrgApiKey
+from accounts.models.workspace import Workspace
 from simulate.authentication import CODING_AGENT_ROUTES, refuse_coding_agent_request
 from simulate.models import (
     AgentDefinition,
@@ -159,7 +160,7 @@ def coding_key(environment, user, workspace):
         organization=workspace.organization,
         workspace=workspace,
         type="coding_agent",
-        user=user,
+        minted_by=user,
         simulation_environment_id=environment.id,
     )
 
@@ -214,7 +215,7 @@ def _request(view_name, method, path=None, **kwargs):
 @pytest.mark.django_db
 class TestMinting:
     def test_a_coding_agent_key_names_an_environment_the_caller_sees(
-        self, auth_client, environment, workspace
+        self, auth_client, environment, workspace, user
     ):
         response = auth_client.post(
             MINT_URL,
@@ -231,6 +232,8 @@ class TestMinting:
         assert key.type == "coding_agent"
         assert key.simulation_environment_id == environment.id
         assert key.workspace_id == workspace.id
+        # It acts as its minter but names no user, so an older build refuses it.
+        assert (key.user_id, key.minted_by_id) == (None, user.id)
 
     @pytest.mark.parametrize(
         "body",
@@ -287,20 +290,76 @@ class TestMinting:
         assert _code(response) == "coding_agent_needs_suite_version"
         assert not OrgApiKey.no_workspace_objects.filter(name="fixer").exists()
 
-    def test_a_plain_mint_still_makes_a_user_key(self, auth_client):
+    def test_a_plain_mint_still_makes_a_user_key(self, auth_client, user):
         response = auth_client.post(MINT_URL, {"key_name": "person"}, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         key = OrgApiKey.no_workspace_objects.get(id=response.json()["result"]["key_id"])
         assert (key.type, key.simulation_environment_id) == ("user", None)
+        assert (key.user_id, key.minted_by_id) == (user.id, None)
 
-    def test_the_database_refuses_a_coding_agent_key_without_an_environment(
-        self, user, workspace
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"minted_by": "user"},
+            {"minted_by": "user", "user": "user", "environment": True},
+            {"environment": True},
+        ],
+        ids=["no_environment", "a_user", "no_minter"],
+    )
+    def test_the_database_refuses_a_malformed_coding_agent_key(
+        self, user, workspace, environment, fields
     ):
         with pytest.raises(IntegrityError), transaction.atomic():
             OrgApiKey.no_workspace_objects.create(
-                organization=workspace.organization, type="coding_agent", user=user
+                organization=workspace.organization,
+                type="coding_agent",
+                user=user if fields.get("user") else None,
+                minted_by=user if fields.get("minted_by") else None,
+                simulation_environment_id=(
+                    environment.id if fields.get("environment") else None
+                ),
             )
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestRevocation:
+    """A coding agent key is bound to its environment's workspace, but a member
+    finds, disables and deletes it from any workspace of the organization."""
+
+    @pytest.fixture
+    def elsewhere(self, coding_key, user, workspace):
+        other = Workspace.no_workspace_objects.create(
+            name="Elsewhere",
+            organization=workspace.organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        OrgApiKey.no_workspace_objects.filter(id=coding_key.id).update(workspace=other)
+        return coding_key
+
+    def test_it_is_listed_disabled_and_deleted_from_the_default_workspace(
+        self, auth_client, elsewhere, user
+    ):
+        listed = auth_client.get("/accounts/key/get_secret_keys/")
+        disabled = auth_client.post(
+            "/accounts/key/disable_key/", {"key_id": str(elsewhere.id)}, format="json"
+        )
+        deleted = auth_client.delete(
+            "/accounts/key/delete_secret_key/",
+            {"key_id": str(elsewhere.id)},
+            format="json",
+        )
+
+        rows = {row["id"]: row for row in listed.json()["result"]["table"]}
+        assert str(elsewhere.id) in rows, listed.content
+        assert rows[str(elsewhere.id)]["created_by"] == user.name
+        assert disabled.status_code == status.HTTP_200_OK, disabled.content
+        assert deleted.status_code == status.HTTP_200_OK, deleted.content
+        elsewhere.refresh_from_db()
+        assert elsewhere.deleted and not elsewhere.enabled
 
 
 @pytest.mark.integration

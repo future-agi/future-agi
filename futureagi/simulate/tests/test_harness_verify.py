@@ -102,7 +102,7 @@ def _api_key(user, workspace, kind, environment=None):
         organization=user.organization,
         workspace=workspace,
         type=kind,
-        user=user,
+        **({"minted_by": user} if kind == "coding_agent" else {"user": user}),
         simulation_environment_id=environment.id if environment else None,
     )
 

@@ -339,14 +339,30 @@ class OrgApiKey(BaseModel):
     # The one simulation environment a ``coding_agent`` key may act on; plain for
     # the same reason.
     simulation_environment_id = models.UUIDField(null=True, blank=True)
+    # Who made a ``coding_agent`` key, which acts as them. Its ``user`` stays null,
+    # so a build that predates these keys cannot authenticate one as a person.
+    minted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="minted_api_keys",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         constraints = [
             models.CheckConstraint(
                 condition=~models.Q(type="coding_agent")
-                | models.Q(simulation_environment_id__isnull=False),
+                | models.Q(
+                    simulation_environment_id__isnull=False,
+                    user__isnull=True,
+                    minted_by__isnull=False,
+                ),
                 name="coding_agent_api_key_names_an_environment",
-                violation_error_message="A coding agent key must name its environment.",
+                violation_error_message=(
+                    "A coding agent key must name its environment and its minter,"
+                    " and no user."
+                ),
             ),
             models.UniqueConstraint(
                 fields=["organization", "type"],
