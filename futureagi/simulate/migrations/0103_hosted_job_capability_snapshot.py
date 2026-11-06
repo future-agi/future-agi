@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('simulate', '0102_merge_sub_actors_and_agent_fix_candidate_override'),
+        ('simulate', '0101_agent_fix_candidate_override'),
     ]
 
     operations = [
