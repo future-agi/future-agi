@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
@@ -231,6 +232,21 @@ class RunCallsSummarySerializer(RunSummarySerializer):
         ref_name = "SimulateRunV3CallsSummary"
 
 
+class RunResumeEntrySerializer(serializers.Serializer):
+    at = serializers.DateTimeField()
+    by = serializers.UUIDField(allow_null=True)
+    calls = serializers.IntegerField()
+
+
+class RunResumeSerializer(serializers.Serializer):
+    # True when the run's job stopped or failed with a call left unfinished.
+    resumable = serializers.BooleanField()
+    # Calls that finished and calls that did not; null unless the run can resume.
+    finished = serializers.IntegerField(allow_null=True)
+    unfinished = serializers.IntegerField(allow_null=True)
+    history = RunResumeEntrySerializer(many=True)
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -255,6 +271,7 @@ class RunExecutionSerializer(serializers.Serializer):
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
     agent_type = serializers.CharField(allow_null=True)
+    resume = RunResumeSerializer()
     summary = RunSummarySerializer()
 
 
@@ -636,6 +653,7 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
+        "resume": asdict(resume_state(execution)),
         "summary": summary,
     }
 
