@@ -6,10 +6,7 @@ User-level metrics have conversation fields but deliberately no bucket rows.
 """
 
 from tracer.services.derived_metrics.formula import compile_formula
-from tracer.services.derived_metrics.parts import (
-    SCALAR_PART_COLUMNS,
-    stratum_parts_select,
-)
+from tracer.services.derived_metrics.parts import stratum_parts_select
 from tracer.services.derived_metrics.storage import BUCKET_STAT_SCHEMA
 from tracer.services.derived_metrics.support import SUPPORT_REDUCERS
 from tracer.services.derived_metrics.unit_reads import field_recipe
@@ -68,29 +65,24 @@ def live_parts_select(definition, field_sql):
         toDate(unit_start, 'UTC') AS day, bucket_start,
         mapUpdate(inputs, map('sketch_present', if(status = 'ok', 1., NULL))) AS input_values,
         sample_probability AS probability, invalid_probability, sampling_scope,
-        sampling_stratum, sampling_design, population_size
+        sampling_stratum, sampling_design, population_size,
+        status, value_number, value_text, value_bool
         FROM ({field_sql}) WHERE is_deleted = 0 AND status != 'open'"""
-    scalar = stratum_parts_select(
-        source, formula, rollup="cohort", bucket_column="bucket_start"
+    parts = stratum_parts_select(
+        source,
+        formula,
+        rollup="cohort",
+        bucket_column="bucket_start",
+        sketch_value=recipe.value_column,
     )
-    value = recipe.value_column
-    sketches = f"""SELECT bucket_start, group_key, sampling_scope AS scope_key,
-        sampling_stratum AS stratum_key,
-        uniqCombined64StateIf(ifNull(toString({value}), ''), status = 'ok') AS uniq_state,
-        quantileTDigestStateIf(ifNull(value_number, 0), status = 'ok' AND isNotNull(value_number)) AS quantile_state
-        FROM ({field_sql}) WHERE is_deleted = 0 AND status != 'open'
-        GROUP BY {", ".join(KEYS)}"""
-    scalar_columns = ["s." + c for c in KEYS]
-    scalar_columns += [
-        f"CAST(s.{name}, '{kind}') AS {name}"
+    columns = [*KEYS]
+    columns += [
+        name
+        if kind.startswith("AggregateFunction(")
+        else f"CAST({name}, '{kind}') AS {name}"
         for name, kind in BUCKET_STAT_SCHEMA
-        if name in SCALAR_PART_COLUMNS
     ]
-    return (
-        f"SELECT {', '.join(scalar_columns)}, "
-        f"k.uniq_state, k.quantile_state FROM ({scalar}) s "
-        f"INNER JOIN ({sketches}) k USING ({', '.join(KEYS)})"
-    )
+    return f"SELECT {', '.join(columns)} FROM ({parts})"
 
 
 def rebuilt_parts_select(definition, field_sql, retired_sql, *, fold_groups=True):

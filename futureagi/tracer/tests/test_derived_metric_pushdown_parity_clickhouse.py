@@ -8,6 +8,7 @@ retirement, grouped-backfill or all-proposal lifecycle redesign.
 import json
 import random
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from time import sleep
 from types import SimpleNamespace
@@ -1670,7 +1671,9 @@ def test_bucket_window_raw_history_parity_and_writer_paths(
 
     # Exercise the actual writer entry, including the no-collapse complete overlay
     # and retired-override path, rather than testing only the helper's SQL.
-    writer = RefreshWriter(SimpleNamespace(project_id=project), store, org_id=org)
+    writer = RefreshWriter(
+        SimpleNamespace(project_id=project, keepalive=lambda: None), store, org_id=org
+    )
     attempt = SimpleNamespace(
         ledger_chunks=SimpleNamespace(
             filter=lambda **_: [
@@ -1681,14 +1684,21 @@ def test_bucket_window_raw_history_parity_and_writer_paths(
     definition = SimpleNamespace(metric_id=metric, version=1)
     captured = []
 
+    @contextmanager
     def capture(_attempt, _definition, fields, retired, params):
         captured.append(
             _result(
-                store.execute(f"SELECT {', '.join(projection)} FROM ({fields})", params)
+                [
+                    row
+                    for page, bound in fields.scan(store)
+                    for row in store.execute(
+                        f"SELECT {', '.join(projection)} FROM ({page})", bound
+                    )
+                ]
             )
         )
         assert store.execute(f"SELECT count() FROM ({retired})", params) == [(0,)]
-        return "SELECT * FROM metric_bucket_totals WHERE 0"
+        yield "SELECT * FROM metric_bucket_totals WHERE 0"
 
     monkeypatch.setattr(writer, "_anonymous_bucket_parts", capture)
     monkeypatch.setattr(writer, "append", lambda *a, **k: None)
