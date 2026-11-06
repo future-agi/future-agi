@@ -31717,6 +31717,37 @@ export interface RootSpansResponseApi {
   result: RootSpansResponseApiResult;
 }
 
+/**
+ * String or JSON object.
+ */
+export type SpanTagsUpdateRequestApiTagsItem =
+  | string
+  | { [key: string]: unknown };
+
+export interface SpanTagsUpdateRequestApi {
+  /** Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one. */
+  tags: SpanTagsUpdateRequestApiTagsItem[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  span_id: string;
+  /** The span's project. Optional; needed only when the span id exists in more than one project you can access. */
+  project_id?: string;
+}
+
+export interface TagAssignmentResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** The names now assigned. */
+  tags: string[];
+}
+
+export interface TagAssignmentResponseApi {
+  status: boolean;
+  result: TagAssignmentResultApi;
+}
+
 export type ObservationSpanDetailResultApiObservationSpan = {
   [key: string]: { [key: string]: unknown };
 };
@@ -32247,6 +32278,65 @@ export interface ProjectDetailResultApi {
 export interface ProjectDetailResponseApi {
   status?: boolean;
   result: ProjectDetailResultApi;
+}
+
+export interface ProjectTagDefinitionApi {
+  /** @minLength 1 */
+  name: string;
+  /** "#RRGGBB", or "" when no colour is set. */
+  color: string;
+  /** Rows in this project carrying the name: spans, or trace rows when more traces than spans carry it (a trace tag is on both its trace row and its root span and counts once). */
+  usage_count: number;
+}
+
+export interface ProjectTagDefinitionListResultApi {
+  tags: ProjectTagDefinitionApi[];
+}
+
+export interface ProjectTagDefinitionListResponseApi {
+  status: boolean;
+  result: ProjectTagDefinitionListResultApi;
+}
+
+export interface ProjectTagDefinitionUpdateRequestApi {
+  /**
+   * The tag to change.
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * Rename. Rewrites every assignment in the project; renaming onto an existing tag merges into it.
+   * @minLength 1
+   * @maxLength 255
+   */
+  new_name?: string;
+  /**
+   * Recolour. "#RRGGBB", or "" when no colour is set. Assignments are not touched.
+   * @maxLength 7
+   */
+  color?: string;
+}
+
+export interface ProjectTagDefinitionResultApi {
+  /** @minLength 1 */
+  name: string;
+  /** "#RRGGBB", or "" when no colour is set. */
+  color: string;
+}
+
+export interface ProjectTagDefinitionUpdateResponseApi {
+  status: boolean;
+  result: ProjectTagDefinitionResultApi;
+}
+
+export interface ProjectTagDefinitionDeleteResultApi {
+  deleted: boolean;
+}
+
+export interface ProjectTagDefinitionDeleteResponseApi {
+  status: boolean;
+  result: ProjectTagDefinitionDeleteResultApi;
 }
 
 export type ReplaySessionListApiReplayType =
@@ -34253,8 +34343,14 @@ export interface TraceVoiceCallDetailResponseApi {
   result: TraceVoiceCallDetailResultApi;
 }
 
+/**
+ * String or JSON object.
+ */
+export type TraceTagsUpdateApiTagsItem = string | { [key: string]: unknown };
+
 export interface TraceTagsUpdateApi {
-  tags: string[];
+  /** Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one. */
+  tags: TraceTagsUpdateApiTagsItem[];
 }
 
 export type UserAlertMonitorLogApiType =
@@ -35636,6 +35732,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =
@@ -40771,6 +40870,15 @@ export type TracerProjectProjectSdkCode200 = {
   next?: string;
   previous?: string;
   results: ProjectApi[];
+};
+
+export type TracerProjectTagDefinitionsDeleteParams = {
+  /**
+   * The tag to delete. It is also removed from every assignment.
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
 };
 
 export type TracerSavedViewsListParams = {

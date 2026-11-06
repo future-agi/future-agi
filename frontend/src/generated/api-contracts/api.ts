@@ -1007,6 +1007,10 @@ import type {
   ProjectGraphDataResponseApi,
   ProjectIdListResponseApi,
   ProjectListResponseApi,
+  ProjectTagDefinitionDeleteResponseApi,
+  ProjectTagDefinitionListResponseApi,
+  ProjectTagDefinitionUpdateRequestApi,
+  ProjectTagDefinitionUpdateResponseApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserGraphDataResponseApi,
   ProjectUserMetricsRequestApi,
@@ -1270,6 +1274,7 @@ import type {
   SpanObserveListQueryApi,
   SpanObserveListResponseApi,
   SpanPrototypeListResponseApi,
+  SpanTagsUpdateRequestApi,
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
@@ -1298,6 +1303,7 @@ import type {
   TOTPDisableResponseApi,
   TOTPSetupResponseApi,
   TTSVoiceApi,
+  TagAssignmentResponseApi,
   TeamCreateErrorResponseApi,
   TeamCreateRequestApi,
   TeamCreateResponseApi,
@@ -1430,6 +1436,7 @@ import type {
   TracerProjectListProjectsParams,
   TracerProjectProjectSdkCode200,
   TracerProjectProjectSdkCodeParams,
+  TracerProjectTagDefinitionsDeleteParams,
   TracerProjectVersionGetProjectVersionIds200,
   TracerProjectVersionGetProjectVersionIdsParams,
   TracerProjectVersionGetRunInsights200,
@@ -80056,24 +80063,37 @@ export const tracerObservationSpanSubmitFeedbackActionType = async (
   );
 };
 
-export type tracerObservationSpanUpdateTagsResponse201 = {
-  data: ObservationSpanApi;
-  status: 201;
+export type tracerObservationSpanUpdateTagsResponse200 = {
+  data: TagAssignmentResponseApi;
+  status: 200;
+};
+
+export type tracerObservationSpanUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerObservationSpanUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerObservationSpanUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
 };
 
 export type tracerObservationSpanUpdateTagsResponseSuccess =
-  tracerObservationSpanUpdateTagsResponse201 & {
+  tracerObservationSpanUpdateTagsResponse200 & {
     headers: Headers;
   };
-export type tracerObservationSpanUpdateTagsResponseError =
-  tracerObservationSpanUpdateTagsResponseDefault & {
-    headers: Headers;
-  };
+export type tracerObservationSpanUpdateTagsResponseError = (
+  | tracerObservationSpanUpdateTagsResponse400
+  | tracerObservationSpanUpdateTagsResponse503
+  | tracerObservationSpanUpdateTagsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerObservationSpanUpdateTagsResponse =
   | tracerObservationSpanUpdateTagsResponseSuccess
@@ -80084,10 +80104,12 @@ export const getTracerObservationSpanUpdateTagsUrl = () => {
 };
 
 /**
- * Update tags for an observation span.
+ * ``project_id`` is optional. Without it the span is looked up in the
+projects the caller can access. Only that span's row changes.
+ * @summary Replace one span's tags, including a span only ClickHouse has.
  */
 export const tracerObservationSpanUpdateTags = async (
-  observationSpanApi: NonReadonly<ObservationSpanApi>,
+  spanTagsUpdateRequestApi: SpanTagsUpdateRequestApi,
   options?: RequestInit,
 ): Promise<tracerObservationSpanUpdateTagsResponse> => {
   return apiMutator<tracerObservationSpanUpdateTagsResponse>(
@@ -80096,7 +80118,7 @@ export const tracerObservationSpanUpdateTags = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observationSpanApi),
+      body: JSON.stringify(spanTagsUpdateRequestApi),
     },
   );
 };
@@ -81882,6 +81904,197 @@ export const tracerProjectDelete = async (
 ): Promise<tracerProjectDeleteResponse> => {
   return apiMutator<tracerProjectDeleteResponse>(
     getTracerProjectDeleteUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsReadResponse200 = {
+  data: ProjectTagDefinitionListResponseApi;
+  status: 200;
+};
+
+export type tracerProjectTagDefinitionsReadResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectTagDefinitionsReadResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerProjectTagDefinitionsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+};
+
+export type tracerProjectTagDefinitionsReadResponseSuccess =
+  tracerProjectTagDefinitionsReadResponse200 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsReadResponseError = (
+  | tracerProjectTagDefinitionsReadResponse400
+  | tracerProjectTagDefinitionsReadResponse503
+  | tracerProjectTagDefinitionsReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerProjectTagDefinitionsReadResponse =
+  | tracerProjectTagDefinitionsReadResponseSuccess
+  | tracerProjectTagDefinitionsReadResponseError;
+
+export const getTracerProjectTagDefinitionsReadUrl = (id: string) => {
+  return `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * List the project's tags: stored definitions plus every name assigned to a span or trace, including names only an SDK set.
+ */
+export const tracerProjectTagDefinitionsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsReadResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsReadResponse>(
+    getTracerProjectTagDefinitionsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse200 = {
+  data: ProjectTagDefinitionUpdateResponseApi;
+  status: 200;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponseSuccess =
+  tracerProjectTagDefinitionsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsPartialUpdateResponseError = (
+  | tracerProjectTagDefinitionsPartialUpdateResponse400
+  | tracerProjectTagDefinitionsPartialUpdateResponse503
+  | tracerProjectTagDefinitionsPartialUpdateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse =
+  | tracerProjectTagDefinitionsPartialUpdateResponseSuccess
+  | tracerProjectTagDefinitionsPartialUpdateResponseError;
+
+export const getTracerProjectTagDefinitionsPartialUpdateUrl = (id: string) => {
+  return `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * Recolour and/or rename a project tag. A rename rewrites the name in every assignment in the project and merges into an existing tag of the new name, e.g. {"name": "prod", "new_name": "production"}.
+ */
+export const tracerProjectTagDefinitionsPartialUpdate = async (
+  id: string,
+  projectTagDefinitionUpdateRequestApi: ProjectTagDefinitionUpdateRequestApi,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsPartialUpdateResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsPartialUpdateResponse>(
+    getTracerProjectTagDefinitionsPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(projectTagDefinitionUpdateRequestApi),
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsDeleteResponse200 = {
+  data: ProjectTagDefinitionDeleteResponseApi;
+  status: 200;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponseSuccess =
+  tracerProjectTagDefinitionsDeleteResponse200 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsDeleteResponseError = (
+  | tracerProjectTagDefinitionsDeleteResponse400
+  | tracerProjectTagDefinitionsDeleteResponse503
+  | tracerProjectTagDefinitionsDeleteResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponse =
+  | tracerProjectTagDefinitionsDeleteResponseSuccess
+  | tracerProjectTagDefinitionsDeleteResponseError;
+
+export const getTracerProjectTagDefinitionsDeleteUrl = (
+  id: string,
+  params: TracerProjectTagDefinitionsDeleteParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/project/${id}/tag-definitions/?${stringifiedParams}`
+    : `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * Delete a project tag and remove the name from every assignment in the project, e.g. DELETE /tracer/project/{id}/tag-definitions/?name=prod.
+ */
+export const tracerProjectTagDefinitionsDelete = async (
+  id: string,
+  params: TracerProjectTagDefinitionsDeleteParams,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsDeleteResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsDeleteResponse>(
+    getTracerProjectTagDefinitionsDeleteUrl(id, params),
     {
       ...options,
       method: "DELETE",
@@ -85887,23 +86100,36 @@ export const tracerTraceDelete = async (
 };
 
 export type tracerTraceUpdateTagsResponse200 = {
-  data: TraceTagsUpdateApi;
+  data: TagAssignmentResponseApi;
   status: 200;
+};
+
+export type tracerTraceUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerTraceUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
 };
 
 export type tracerTraceUpdateTagsResponseSuccess =
   tracerTraceUpdateTagsResponse200 & {
     headers: Headers;
   };
-export type tracerTraceUpdateTagsResponseError =
-  tracerTraceUpdateTagsResponseDefault & {
-    headers: Headers;
-  };
+export type tracerTraceUpdateTagsResponseError = (
+  | tracerTraceUpdateTagsResponse400
+  | tracerTraceUpdateTagsResponse503
+  | tracerTraceUpdateTagsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerTraceUpdateTagsResponse =
   | tracerTraceUpdateTagsResponseSuccess
@@ -85914,7 +86140,10 @@ export const getTracerTraceUpdateTagsUrl = (id: string) => {
 };
 
 /**
- * Update tags for a trace.
+ * ``?project_id=`` is optional. Without it the trace is looked up in the
+projects the caller can access. Colours are saved on the project tag;
+the response lists the assigned names.
+ * @summary Replace a trace's tags, including a trace only ClickHouse has.
  */
 export const tracerTraceUpdateTags = async (
   id: string,
@@ -92121,6 +92350,12 @@ export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
   return `/usage/update-auto-reload-settings/`;
 };
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
 export const usageUpdateAutoReloadSettingsCreate = async (
   autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi,
   options?: RequestInit,
