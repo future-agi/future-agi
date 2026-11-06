@@ -38,14 +38,17 @@ export const asShown = (text) => {
 };
 
 /**
- * The API's steps (reading order, each naming the hand-off it sits under) as the nested rows the panel draws.
- * Grouping only: which hand-off owns what, which turn it happened in, spans, depth and parallel runs all come from
- * the API.
+ * The API's steps (reading order, each naming the hand-off it sits under) as the nested rows the panel draws, and
+ * each turn with the top-level rows that happened in it. Grouping only: which hand-off owns what, which turn it
+ * happened in, spans, depth and parallel runs all come from the API.
  */
 export const nest = (data) => {
   const byKey = {};
   const items = [];
-  const top = {};
+  const rounds = (data.turns || []).map((round) => ({ ...round, items: [] }));
+  const roundOf = Object.fromEntries(
+    rounds.map((round) => [round.turn, round]),
+  );
   for (const step of data.steps || []) {
     const row =
       step.kind === "handoff"
@@ -68,27 +71,12 @@ export const nest = (data) => {
             relationship: step.relationship,
           };
     if (row.kind === "handoff") byKey[step.key] = row;
-    if (step.parent === null) top[step.key] = row;
-    (step.parent === null ? items : byKey[step.parent]?.items || items).push(
-      row,
-    );
+    if (step.parent === null) {
+      items.push(row);
+      roundOf[step.turn].items.push(row);
+    } else (byKey[step.parent]?.items || items).push(row);
   }
-  // One block per turn the API returned, each with the top-level rows that happened in it.
-  const rounds = (data.turns || []).map((round) => ({ ...round, items: [] }));
-  const roundOf = Object.fromEntries(
-    rounds.map((round) => [round.turn, round]),
-  );
-  for (const step of data.steps || []) {
-    if (step.parent === null) roundOf[step.turn].items.push(top[step.key]);
-  }
-  return {
-    items,
-    rounds,
-    depth: data.depth ?? 0,
-    parallel: data.parallel ?? 0,
-    overlapUnknown: Boolean(data.overlap_unknown),
-    depthOf: data.worker_depths || {},
-  };
+  return { items, rounds };
 };
 
 /** Every hand-off in a nested tree, each followed by the ones it made. */

@@ -130,12 +130,6 @@ describe("nest", () => {
     });
     expect(helper.items.map((item) => item.event.tool)).toEqual(["t"]);
     expect(reply).toMatchObject({ kind: "call", key: 6 });
-    expect(tree).toMatchObject({
-      depth: 2,
-      parallel: 1,
-      overlapUnknown: true,
-      depthOf: { lead: 1, helper: 2 },
-    });
   });
 
   it("puts each top-level step in its turn, with what it holds, and a step in no recorded turn apart", () => {
@@ -181,14 +175,7 @@ describe("nest", () => {
   });
 
   it("reads a record with no steps as an empty tree", () => {
-    expect(nest({})).toEqual({
-      items: [],
-      rounds: [],
-      depth: 0,
-      parallel: 0,
-      overlapUnknown: false,
-      depthOf: {},
-    });
+    expect(nest({})).toEqual({ items: [], rounds: [] });
   });
 });
 
