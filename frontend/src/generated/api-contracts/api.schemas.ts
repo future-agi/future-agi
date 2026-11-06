@@ -32300,7 +32300,7 @@ export interface ProjectTagDefinitionListResponseApi {
 
 export interface ProjectTagDefinitionUpdateRequestApi {
   /**
-   * The tag to change.
+   * The tag to change, exactly as listed (not trimmed).
    * @minLength 1
    * @maxLength 255
    */
@@ -40874,7 +40874,7 @@ export type TracerProjectProjectSdkCode200 = {
 
 export type TracerProjectTagDefinitionsDeleteParams = {
   /**
-   * The tag to delete. It is also removed from every assignment.
+   * The tag to delete, exactly as listed (not trimmed). It is also removed from every assignment.
    * @minLength 1
    * @maxLength 255
    */
@@ -41359,6 +41359,13 @@ export type TracerTraceReadParams = {
   call_execution_id?: string;
   /**
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
+};
+
+export type TracerTraceUpdateTagsParams = {
+  /**
+   * The trace's project. Optional; needed only when the trace id exists in more than one project you can access.
    */
   project_id?: string;
 };

@@ -42543,7 +42543,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: {
           $ref: "#/definitions/TraceTagsUpdate",
         },
-        queryParameters: {},
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/TagAssignmentResponse",
@@ -78566,7 +78574,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         name: {
           title: "Name",
-          description: "The tag to change.",
+          description: "The tag to change, exactly as listed (not trimmed).",
           type: "string",
           maxLength: 255,
           minLength: 1,

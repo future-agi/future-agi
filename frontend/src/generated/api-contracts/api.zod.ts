@@ -70116,7 +70116,7 @@ export const TracerProjectTagDefinitionsPartialUpdateBody = zod.object({
     .string()
     .min(1)
     .max(tracerProjectTagDefinitionsPartialUpdateBodyNameMax)
-    .describe("The tag to change."),
+    .describe("The tag to change, exactly as listed (not trimmed)."),
   new_name: zod
     .string()
     .min(1)
@@ -70156,7 +70156,9 @@ export const TracerProjectTagDefinitionsDeleteQueryParams = zod.object({
     .string()
     .min(1)
     .max(tracerProjectTagDefinitionsDeleteQueryNameMax)
-    .describe("The tag to delete. It is also removed from every assignment."),
+    .describe(
+      "The tag to delete, exactly as listed (not trimmed). It is also removed from every assignment.",
+    ),
 });
 
 export const TracerProjectTagDefinitionsDeleteResponse = zod.object({
@@ -75137,6 +75139,16 @@ the response lists the assigned names.
  */
 export const TracerTraceUpdateTagsParams = zod.object({
   id: zod.string(),
+});
+
+export const TracerTraceUpdateTagsQueryParams = zod.object({
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "The trace's project. Optional; needed only when the trace id exists in more than one project you can access.",
+    ),
 });
 
 export const TracerTraceUpdateTagsBody = zod.object({

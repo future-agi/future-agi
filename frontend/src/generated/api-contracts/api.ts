@@ -1470,6 +1470,7 @@ import type {
   TracerTraceSessionListParams,
   TracerTraceSessionListSessionsParams,
   TracerTraceSessionQueryParams,
+  TracerTraceUpdateTagsParams,
   TracerTraceVoiceCallDetailParams,
   TracerUserAlertLogsList200,
   TracerUserAlertLogsListAll200,
@@ -86135,8 +86136,27 @@ export type tracerTraceUpdateTagsResponse =
   | tracerTraceUpdateTagsResponseSuccess
   | tracerTraceUpdateTagsResponseError;
 
-export const getTracerTraceUpdateTagsUrl = (id: string) => {
-  return `/tracer/trace/${id}/tags/`;
+export const getTracerTraceUpdateTagsUrl = (
+  id: string,
+  params?: TracerTraceUpdateTagsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/trace/${id}/tags/?${stringifiedParams}`
+    : `/tracer/trace/${id}/tags/`;
 };
 
 /**
@@ -86148,10 +86168,11 @@ the response lists the assigned names.
 export const tracerTraceUpdateTags = async (
   id: string,
   traceTagsUpdateApi: TraceTagsUpdateApi,
+  params?: TracerTraceUpdateTagsParams,
   options?: RequestInit,
 ): Promise<tracerTraceUpdateTagsResponse> => {
   return apiMutator<tracerTraceUpdateTagsResponse>(
-    getTracerTraceUpdateTagsUrl(id),
+    getTracerTraceUpdateTagsUrl(id, params),
     {
       ...options,
       method: "PATCH",
