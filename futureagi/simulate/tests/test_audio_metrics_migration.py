@@ -9,8 +9,8 @@ from django.db.migrations.executor import MigrationExecutor
 
 @pytest.mark.django_db(transaction=True)
 def test_migration_forward_backward_populated_db():
-    before = ("simulate", "0097_merge_selected_runs_environment_v3")
-    after = ("simulate", "0098_callexecution_audio_metrics")
+    before = ("simulate", "0102_agent_fix_engine_notes")
+    after = ("simulate", "0103_callexecution_audio_metrics")
     executor = MigrationExecutor(connection)
     leaves = executor.loader.graph.leaf_nodes()
     try:

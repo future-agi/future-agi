@@ -281,7 +281,7 @@ class CallExecution(BaseModel):
     # Internal source manifest and versioned public analysis envelope.
     audio_metrics = models.JSONField(null=True, blank=True)
     audio_provenance = models.JSONField(null=True, blank=True)
-    audio_analysis_generation = models.PositiveIntegerField(default=0)
+    audio_analysis_generation = models.IntegerField(default=0, db_default=0)
 
     monitor_call_data = models.JSONField(
         null=True, blank=True, help_text="Monitor call data from API"
