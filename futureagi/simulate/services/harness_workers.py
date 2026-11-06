@@ -820,6 +820,55 @@ def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[CallTurn]:
     ]
 
 
+# How much a record says, best first. A record from before the field was kept was a successful read.
+_COLLECTION_RANK = {
+    "complete": 3,
+    None: 3,
+    "partial": 2,
+    "unavailable": 1,
+    "no_evidence": 0,
+}
+
+
+def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
+    """What a call keeps after another read: never less evidence than it already had.
+
+    The record that says the most stays (how complete its read was, then how many events it has); a worker the other
+    record observed stays observed.
+    """
+    if not isinstance(stored, Mapping) or not (
+        stored.get("events") or stored.get("workers")
+    ):
+        return read
+
+    def weight(one: Mapping[str, Any]) -> tuple[int, int]:
+        return (
+            _COLLECTION_RANK.get(one.get("collection"), 0),
+            len(one.get("events") or []),
+        )
+
+    best, other = (read, stored) if weight(read) >= weight(stored) else (stored, read)
+    workers = [dict(one) for one in best.get("workers") or []]
+    by_id = {one["worker_id"]: one for one in workers}
+    for one in other.get("workers") or []:
+        if not one.get("observed"):
+            continue
+        mine = by_id.get(one["worker_id"])
+        if mine is None:
+            workers.append(dict(one))
+        elif not mine.get("observed"):
+            mine["observed"] = True
+            mine["instance_ids"] = list(
+                dict.fromkeys(
+                    [
+                        *(mine.get("instance_ids") or []),
+                        *(one.get("instance_ids") or []),
+                    ]
+                )
+            )
+    return cast(WorkerTimeline, {**best, "workers": workers})
+
+
 def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
     from django.utils import timezone
@@ -908,9 +957,13 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
     ):
         return None
 
+    kept: list[WorkerTimeline] = []
+
     def keep(metadata: dict) -> bool:
-        metadata[WORKERS_KEY] = timeline
+        # A later read adds what it found, and never takes away what an earlier one kept.
+        kept.append(kept_record(metadata.get(WORKERS_KEY), timeline))
+        metadata[WORKERS_KEY] = kept[-1]
         return True
 
     locked_call_metadata_update(call.id, keep)
-    return timeline
+    return kept[-1] if kept else timeline

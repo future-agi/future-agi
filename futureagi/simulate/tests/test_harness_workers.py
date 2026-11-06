@@ -216,6 +216,19 @@ class _Reader:
         pass
 
 
+def _forget(call):
+    """Drop a call's stored record, so the next read is judged alone rather than against the one before it."""
+    from simulate.services.harness_workers import WORKERS_KEY
+
+    call.refresh_from_db()
+    call.call_metadata = {
+        key: value
+        for key, value in (call.call_metadata or {}).items()
+        if key != WORKERS_KEY
+    }
+    call.save(update_fields=["call_metadata"])
+
+
 def _traced(project_id="p1"):
     from simulate.services.run_traces_v3 import RunTrace, RunTraces
 
@@ -271,6 +284,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
     assert stored["collection"] == "complete"
 
     # More spans than the bound: the earliest are kept and the timeline says it is partial.
+    _forget(call)
     with (
         patch(
             "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
@@ -283,6 +297,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
         )
 
     # A read that fails or runs out of time is kept as unavailable and returned, not raised into three reads.
+    _forget(call)
     with (
         patch(
             "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
@@ -304,6 +319,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
 
     # A declared multi-agent call with no spans and no attributed rows is still recorded: every declared worker
     # reads not observed, so the later read runs and the API never answers 204.
+    _forget(call)
     with patch(
         "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
     ):
@@ -327,6 +343,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
         }
     }
     call.save(update_fields=["provider_call_data"])
+    _forget(call)
     with (
         patch(
             "simulate.services.run_traces_v3.list_run_traces",
@@ -358,6 +375,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
         }
     }
     call.save(update_fields=["provider_call_data"])
+    _forget(call)
     with (
         patch(
             "simulate.services.run_traces_v3.list_run_traces",
@@ -1892,3 +1910,90 @@ def test_a_sealed_hand_off_the_spans_did_not_show_is_kept_whatever_order_the_row
         events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
         tasks = sorted(one["task"] for one in events if one["type"] == "delegated")
         assert tasks == ["find a", "find b"]
+
+
+@pytest.mark.django_db
+def test_a_later_read_never_replaces_a_complete_record_with_less(
+    user, workspace, storage, settings
+):
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution, HarnessEnvironmentVersion
+    from simulate.services import harness_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    environment = _environment(user, workspace, "workers-late-read", storage)
+    version = environment.environment_version
+    HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+        documents={
+            **(version.documents or {}),
+            "contract": {
+                **(version.documents or {}).get("contract", {}),
+                "workers": DECLARED,
+            },
+        }
+    )
+    run = _create(environment, key="l")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+
+    def read(reader=None, project_id="p1"):
+        with (
+            patch(
+                "simulate.services.run_traces_v3.list_run_traces",
+                return_value=_traced(project_id),
+            ),
+            patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        ):
+            harness_workers.record_call_workers(str(call.id))
+        call.refresh_from_db()
+        return call.call_metadata[harness_workers.WORKERS_KEY]
+
+    first = read(_Reader(SPANS))
+    assert first["collection"] == "complete"
+    observed = {one["id"] for one in first["workers"] if one["observed"]}
+    assert observed
+
+    # The planned second read times out: the complete record stays as it was.
+    assert read(_Reader(SPANS, fail=TimeoutError("read cap"))) == first
+    # Nor does a read that finds nothing at all, or only part of the spans, take its place.
+    assert read(project_id=None) == first
+    with patch.object(harness_workers, "MAX_SPANS", 2):
+        assert read(_Reader(SPANS)) == first
+
+
+def test_a_later_read_keeps_the_record_that_says_more_and_every_worker_either_observed():
+    from simulate.services.harness_workers import kept_record
+
+    def record(collection, events, observed):
+        return {
+            "collection": collection,
+            "events": [{"type": "tool_call", "seq": n} for n in range(events)],
+            "workers": [
+                {
+                    "worker_id": name,
+                    "observed": name in observed,
+                    "instance_ids": [name],
+                }
+                for name in ("a", "b")
+            ],
+        }
+
+    stored = record("complete", 3, {"a"})
+    # As many events, but from a read that failed: the complete record stays.
+    assert (
+        kept_record(stored, record("unavailable", 3, set()))["collection"] == "complete"
+    )
+    # A fuller read replaces a partial one.
+    assert kept_record(record("partial", 1, {"a"}), stored)["collection"] == "complete"
+    # The record kept still marks every worker either read observed.
+    kept = kept_record(stored, record("complete", 4, {"b"}))
+    assert len(kept["events"]) == 4
+    assert {one["worker_id"] for one in kept["workers"] if one["observed"]} == {
+        "a",
+        "b",
+    }
+    # Nothing stored yet: the read is kept as it is.
+    read = record("no_evidence", 0, set())
+    assert kept_record(None, read) is read
