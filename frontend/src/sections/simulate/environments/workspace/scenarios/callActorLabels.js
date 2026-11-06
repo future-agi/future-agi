@@ -1,4 +1,4 @@
-// When a scenario's actor comes in, in Nikhil's five modes, as the harness runs it: one meaning on every runtime.
+// When a scenario's actor comes in, in the five ways the harness runs: one meaning on every runtime.
 // A phone menu answers the call before anyone speaks.
 
 // Someone who takes the phone waits until the person has it: never before the agent's second turn.

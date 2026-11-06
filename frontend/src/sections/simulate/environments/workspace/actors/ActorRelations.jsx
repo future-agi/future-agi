@@ -26,7 +26,7 @@ export const contactsOf = (actor, cast) => {
 };
 
 /**
- * Who can contact whom, each actor's role and when it comes in (Nikhil: "the relationship view"). Read-only, drawn
+ * The relationship view: who can contact whom, each actor's role and when it comes in. Read-only, drawn
  * from the records themselves.
  */
 export default function ActorRelations({ cast }) {

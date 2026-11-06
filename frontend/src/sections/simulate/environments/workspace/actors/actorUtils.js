@@ -93,7 +93,7 @@ const VOICE_FIELDS = ["gender", "age_group", "accent"];
 // The "Comes in" choice for a trigger the form can't make itself (a chance, a later call): kept as it is.
 export const KEPT_TRIGGER = "__kept__";
 
-// Nikhil's five ways an actor comes in, as each runtime can evaluate them: someone who speaks runs on the agent's
+// The five ways an actor comes in, as each runtime can evaluate them: someone who speaks runs on the agent's
 // turns and words; someone acting through the world on its actions, contacts and time.
 export const MODES = {
   speaking: ["always", "on_tool", "on_keyword", "mid_journey", "conditional"],

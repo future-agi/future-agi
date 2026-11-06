@@ -432,7 +432,7 @@ def test_an_actor_who_speaks_takes_the_whole_contract_in_the_one_actor_list(
     user, workspace, storage, auth_client
 ):
     """TH-8927 done-when with the one actor type: a Manager who joins the call is read back with its permissions and
-    its view, and no field is refused because it speaks (Rishav #221-1 / #3698-1)."""
+    its view, and no field is refused because it speaks."""
     from simulate.services.harness_versioning.drafts import edit_sides, fresh_draft
 
     environment = _built(user, workspace, "actors-actor")
