@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -20,16 +19,12 @@ export default function ChipCard({ icon, logo, label, on, onClick, comingSoon })
         cursor: comingSoon ? "default" : "pointer",
         opacity: comingSoon ? 0.6 : 1,
         border: "1px solid",
-        borderColor: (th) => on
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.4) : th.palette.primary.main)
-          : th.palette.divider,
-        bgcolor: (th) => on
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.06) : alpha(th.palette.primary.main, 0.05))
-          : "background.paper",
+        borderColor: on ? "text.primary" : "divider",
+        bgcolor: on ? "action.selected" : "background.paper",
       }}
     >
-      {logo || (icon && <Iconify icon={icon} width={13} sx={{ color: on ? "primary.main" : "text.subtitle" }} />)}
-      {label != null && <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{label}</Typography>}
+      {logo || (icon && <Iconify icon={icon} width={13} sx={{ color: on ? "text.primary" : "text.subtitle" }} />)}
+      {label != null && <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>{label}</Typography>}
     </Stack>
   );
   if (comingSoon) {

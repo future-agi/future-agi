@@ -12,7 +12,15 @@ from __future__ import annotations
 _PENDING_STATUS = "pending"
 _SKIPPED_STATUS = "skipped"
 _FAILED_STATUS = "Failed"
-_NON_SEALING_STATUSES = {_PENDING_STATUS, _SKIPPED_STATUS, _FAILED_STATUS}
+# Written by the scoring sweeper when a job never delivered; a later grading
+# must be free to replace it.
+_TIMED_OUT_STATUS = "timed_out"
+_NON_SEALING_STATUSES = {
+    _PENDING_STATUS,
+    _SKIPPED_STATUS,
+    _FAILED_STATUS,
+    _TIMED_OUT_STATUS,
+}
 
 
 def has_stored_verdict(call_execution, eval_config_id) -> bool:
@@ -23,8 +31,8 @@ def has_stored_verdict(call_execution, eval_config_id) -> bool:
     and the matching loop-skip and no-transcript guards in
     ``xl.py::_run_evaluations_standalone``.
 
-    Only a pending placeholder, a skipped payload, or a ``Failed`` grading
-    counts as unsealed -- any other non-empty row seals, not only a
+    Only a pending placeholder, a skipped payload, a ``Failed`` grading, or a
+    ``timed_out`` entry counts as unsealed -- any other non-empty row seals, not only a
     ``"Completed"`` one. That's deliberate: ``xl.py::_run_single_evaluation``
     writes no ``status`` key at all on a successful grade, so requiring an
     exact ``"Completed"`` match would treat a real verdict as unsealed and

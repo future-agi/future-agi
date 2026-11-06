@@ -8,29 +8,34 @@
 
 import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 
-// Table row height, as the toolbar's picker names it: how many lines a text
+// Table row height, as the Display menu names it: how many lines a text
 // cell shows and how many sub-goals are listed. 0 lines and Infinity show all.
 export const ROW_HEIGHTS = {
   Short: { lines: 3, subTasks: 3 },
   Medium: { lines: 5, subTasks: 5 },
   Large: { lines: 8, subTasks: 8 },
-  "Extra Large": { lines: 0, subTasks: Infinity },
+  "Extra large": { lines: 0, subTasks: Infinity },
 };
 
+// Toolbar buttons are the theme's small secondary buttons; this only keeps a
+// label on one line and the button from shrinking.
+export const scenarioToolbarButtonSx = { whiteSpace: "nowrap", flexShrink: 0 };
+
 export const SCENARIOS_COPY = {
-  heading: "Scenarios",
-  subtitle:
-    "Each scenario is one task your agent has to complete, and carries its own persona.",
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
+  addShortLabel: "Add",
   addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
+  openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
   clearLabel: "Clear",
   rowHeight: "Row height",
   groupByLabel: "Group by",
+  displayLabel: "Display",
+  viewLabel: "View",
   hideGroup: "Hide this group",
   showAll: "Show all",
   allHidden: "Every group is hidden. Click Show all to bring them back.",
@@ -40,6 +45,28 @@ export const SCENARIOS_COPY = {
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
 };
+
+// A row the unsaved changes add or change; an added one can't be picked for a
+// run yet.
+export const hasUnsavedChange = (row) =>
+  row?.draftChange === "added" || row?.draftChange === "changed";
+export const isUnsavedAddition = (row) => row?.draftChange === "added";
+// The ids a header checkbox selects: every row but the unsaved additions.
+export const selectableRowIds = (rows) =>
+  rows
+    .filter((r) => !isUnsavedAddition(r))
+    .map((r) => r.id)
+    .filter(Boolean);
+// The id of an added row's visible "Save to run" reason, for its checkbox.
+export const unsavedReasonId = (row) => `unsaved-${row.id}`;
+// An added row's checkbox: off, and described by its "Save to run" reason.
+export const unsavedCheckboxProps = (row) =>
+  isUnsavedAddition(row)
+    ? {
+        disabled: true,
+        inputProps: { "aria-describedby": unsavedReasonId(row) },
+      }
+    : {};
 
 // The three axes a reader scans scenarios by. The trace table on the run view
 // uses the same three, so a scenarios-tab "Persona" bucket matches the trace

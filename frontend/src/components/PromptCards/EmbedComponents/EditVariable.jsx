@@ -16,7 +16,7 @@ const EditVariable = ({ openVariableEditor, fromBlock = false }) => {
           style={{
             color: "var(--mention-invalid-color)",
             fontWeight: "500",
-            fontSize: "15px",
+            fontSize: "13px",
             backgroundColor: "var(--mention-invalid-bg)",
           }}
         >{`}`}</span>

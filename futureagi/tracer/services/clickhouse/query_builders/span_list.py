@@ -16,6 +16,7 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,9 +24,11 @@ from typing import Any
 from django.conf import settings
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -323,6 +326,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         bounded_anchor_probe: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -345,6 +349,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self.end_user_id = end_user_id
         self.project_version_id = project_version_id
         self._bounded_internal_scan = bool(bounded_internal_scan)
@@ -1291,6 +1296,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             if necessary_leaf is None or _unindexed_positive_micro_seed:
                 raise ValueError("span annotation candidate seed is unavailable")
             relation = self._FILTER_BUILDER_CLS(
+                eval_count_mode=self.eval_count_mode,
                 table=self.TABLE,
                 query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                 project_id=self.project_id,
@@ -1609,6 +1615,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     branch_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                         annotation_label_ids=branch_label_ids,
@@ -1672,6 +1679,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     for item in residual_filters
                 )
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                     annotation_label_ids=self.annotation_label_ids,
@@ -1845,6 +1853,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2078,6 +2087,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2212,6 +2222,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if error_code := self.bounded_filter_degraded_error_code():
             raise ValueError(f"unsafe legacy filtered span count blocked: {error_code}")
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2298,6 +2309,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of span IDs.
 
@@ -2387,40 +2399,26 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
         # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
         # the comparison NULL-safe.
-        query = f"""
-        SELECT
-            {trace_select}
-            observation_span_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
-            ) AS error_count,
-            countIf(status = 'skipped') AS skipped_count,
-            countIf(status = 'running') AS running_count,
-            countIf(status = 'pending') AS pending_count,
-            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
-            count() AS eval_count,
-            groupArrayIf(
-                output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists
-        -- Candidate-scoped latest replay. Live/tombstone predicates are
-        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
-        -- cannot resurrect an older score.
-        FROM (
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Only the Observe span list opts into exact tile counts.  The
+            # non-Observe list continues to use its percentage pivot below.
+            count_projection = """
+            , countIf(
+                if(isNull(output_bool), output_float >= 0.5, output_bool = 1) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                if(isNull(output_bool), output_float < 0.5, output_bool = 0) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = (
+                ",\n                id,\n                created_at,"
+                "\n                target_type"
+            )
+
+        collapsed = f"""(
             SELECT
                 {trace_inner_select}
                 observation_span_id,
@@ -2432,7 +2430,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE observation_span_id IN %(span_ids)s
               {entity_fragment}
@@ -2440,8 +2438,54 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               {created_fragment}
             ORDER BY {eval_version_col} DESC
             LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        )"""
+        if count_mode:
+            # A tile shows the span's newest completed result, the row the
+            # trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                f"{trace_group}observation_span_id, custom_eval_config_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
+
+        query = f"""
+        SELECT
+            {trace_select}
+            observation_span_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
+            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
+            ) AS error_count,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array() if count_mode else "output_str_list"},
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists
+            {count_projection}
+        -- Candidate-scoped latest replay. Live/tombstone predicates are
+        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
+        -- cannot resurrect an older score.
+        FROM {eval_source}
         GROUP BY {trace_group}observation_span_id, custom_eval_config_id
         SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
@@ -2545,6 +2589,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         eval_rows: list[dict],
         *,
         key_by_trace: bool = False,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
@@ -2560,6 +2607,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         import json as _json
 
         result: dict[Any, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         for row in eval_rows:
             span_id = str(row.get("observation_span_id", ""))
             trace_id = str(row.get("trace_id") or "")
@@ -2579,6 +2628,59 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(span_key, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        result.setdefault(span_key, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(span_key, {})[config_id] = {
+                        "pass": row.get("pass_count", 0) or 0,
+                        "fail": row.get("fail_count", 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(span_key, {})[config_id] = counts
+                    continue
+
+                if (
+                    isinstance(avg_score, (int, float))
+                    and not isinstance(avg_score, bool)
+                    and math.isfinite(avg_score)
+                ):
+                    result.setdefault(span_key, {})[config_id] = round(
+                        avg_score * 100, 2
+                    )
+                else:
+                    result.setdefault(span_key, {})[config_id] = None
                 continue
 
             # CHOICES eval: compute per-choice percentage across all

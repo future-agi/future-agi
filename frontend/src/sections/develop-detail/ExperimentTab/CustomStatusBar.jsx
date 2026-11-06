@@ -79,7 +79,6 @@ const CustomStatusBar = ({ api }) => {
                   sx={{ color: "error.main" }}
                 />
               }
-              sx={{ fontWeight: 400 }}
               onClick={() => setConfirmDeleteOpen(true)}
             >
               Delete

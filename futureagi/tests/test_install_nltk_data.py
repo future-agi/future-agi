@@ -57,7 +57,9 @@ def test_nltk_archives_are_revision_and_checksum_pinned() -> None:
         "taggers/averaged_perceptron_tagger_eng",
         "taggers/averaged_perceptron_tagger",
         "corpora/wordnet",
+        # Both omw packages: nltk<3.10 reads omw-1.4, nltk>=3.10 omw-2.0.
         "corpora/omw-1.4",
+        "corpora/omw-2.0",
     }
 
     for _, expected_sha256 in install_nltk_data.PACKAGES.values():
@@ -100,6 +102,28 @@ def test_full_profile_is_the_default_and_selects_everything(
     assert install_nltk_data.selected_packages("full") == dict.fromkeys(
         install_nltk_data.PACKAGES
     )
+
+
+def test_full_profile_carries_the_omw_the_installed_nltk_resolves() -> None:
+    """The `full` profile's multilingual verification must have its corpus.
+
+    WordNetCorpusReader's omw reader moved from omw-1.4 to omw-2.0 in nltk 3.10
+    (nltk/corpus/__init__.py), so a lang!="eng" lookup raises LookupError
+    without it — which failed the image build, not the test suite, because the
+    verification only runs under the `full` profile.
+    """
+    from nltk.corpus import wordnet as wordnet_module
+
+    # wordnet_module._omw_reader forces nltk to fully construct the real
+    # WordNetCorpusReader, which requires the wordnet corpus already present
+    # on disk -- exactly the install this test is supposed to verify, not
+    # assume. The omw reader name is a static constant nltk wires in via an
+    # unloaded LazyCorpusLoader (nltk/corpus/__init__.py); read that directly
+    # so this test doesn't depend on another test (or the local machine)
+    # having already pulled the corpus down.
+    omw_loader = wordnet_module._LazyCorpusLoader__args[0]
+    omw_name = omw_loader.__name__
+    assert f"corpora/{omw_name}" in install_nltk_data.selected_packages("full")
 
 
 def test_unknown_profile_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

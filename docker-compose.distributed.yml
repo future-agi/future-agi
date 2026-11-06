@@ -61,7 +61,7 @@ x-backend-env: &backend-env
   FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
   FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
   FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
-  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/data/telemetry}
   # The next three are forwarded so staging/test installs can redirect the
   # sender at an alternate receiver and tune cadence/timeout without rebuilding
   # the image. Defaults match the sender so leaving them unset is identical to
@@ -80,6 +80,7 @@ x-backend-env: &backend-env
   HARNESS_MAX_ARTIFACT_BYTES: ${HARNESS_MAX_ARTIFACT_BYTES:-1073741824}
   HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
   ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
+  ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS:-}
   ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
   ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
   ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
@@ -368,6 +369,8 @@ services:
       # starts fast and we don't want a slow boot to block backend.
       fi-collector:
         condition: service_started
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker:
@@ -393,6 +396,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker-default:
@@ -840,6 +845,12 @@ services:
       FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN: ${FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN:-256}
       FI_ERROR_FEED_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_ERROR_FEED_KAFKA_TOPIC: ${ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
+      # OTLP ingest limits; empty leaves the collector's defaults, derived from
+      # its memory limit (mem_limit above, with no GOMEMLIMIT set).
+      FI_INGEST_BUDGET_MIB: ${FI_INGEST_BUDGET_MIB:-}
+      FI_OTLP_MAX_BODY_MIB: ${FI_OTLP_MAX_BODY_MIB:-}
+      FI_GRPC_MAX_RECV_MIB: ${FI_GRPC_MAX_RECV_MIB:-}
+      FI_OTLP_MAX_CONNECTIONS: ${FI_OTLP_MAX_CONNECTIONS:-}
       # Point at the same ClickHouse the backend uses (HTTP port 8123).
       FI_CH_URL: http://clickhouse:8123
       FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
@@ -1233,6 +1244,7 @@ services:
         condition: service_healthy
 
 volumes:
+  telemetry-data:
   postgres-data:
   clickhouse-data:
   redis-data:
