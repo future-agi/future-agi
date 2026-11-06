@@ -8,6 +8,7 @@ import {
   readable,
   seenValue,
   toRecord,
+  triggerProblem,
 } from "../actorUtils";
 
 const CONTEXT = { others: [], loudness: { channels: ["audio_mix"] } };
@@ -383,5 +384,47 @@ describe("toRecord knowledge picks", () => {
       { knowledgeSources: sources },
     );
     expect(record.knowledge).toBe(knowledge);
+  });
+});
+
+describe("triggerProblem", () => {
+  const reader = (fields) => (name) => fields[name] ?? "";
+  it.each([
+    [
+      { mode: "on_tool" },
+      { triggerTool: "Pick the action that brings them in" },
+    ],
+    [{ mode: "on_tool", triggerTool: "crm.update" }, {}],
+    [
+      { mode: "on_keyword", triggerWords: " , " },
+      { triggerWords: "Type at least one word" },
+    ],
+    [{ mode: "on_keyword", triggerWords: "refund" }, {}],
+    [
+      { mode: "conditional" },
+      { triggerCollection: "Pick the records that bring them in" },
+    ],
+    [
+      {
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: "{status: pending}",
+      },
+      {
+        triggerWhere:
+          'an object of field values, such as {"status": "pending"}',
+      },
+    ],
+    [
+      {
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: '{"status": "pending"}',
+      },
+      {},
+    ],
+    [{ mode: "always" }, {}],
+  ])("says what %o still needs", (fields, expected) => {
+    expect(triggerProblem(reader(fields))).toEqual(expected);
   });
 });

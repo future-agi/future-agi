@@ -663,6 +663,20 @@ describe("WorldActorsPanel", () => {
     expect(save).toBeDisabled();
   });
 
+  it("keeps Save off while the way an actor comes in is missing what it needs, and says what", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    choose("Comes in", "When the agent calls an action");
+    expect(save).toBeDisabled();
+    expect(
+      screen.getByText("Pick the action that brings them in"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    choose("The action", "crm.approve_discount");
+    expect(save).not.toBeDisabled();
+  });
+
   it("shows a record's value even when its select doesn't list it, and an empty value by its own word", () => {
     actorsData = cast([
       {

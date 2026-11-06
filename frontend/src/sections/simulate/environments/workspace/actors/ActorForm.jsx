@@ -28,7 +28,7 @@ import {
   modesFor,
   recordKey,
   toRecord,
-  whereProblem,
+  triggerProblem,
 } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
@@ -144,6 +144,9 @@ export default function ActorForm({
   const ruleText = idRuleText(context.records);
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
   const nameMissing = !value("name").trim();
+  // What the chosen way of coming in still needs, by field: shown under the field and keeping Save off.
+  const comesIn = triggerProblem(value);
+  const comesInIncomplete = Object.keys(comesIn).length > 0;
   // The record schema this actor is checked against, as its environment's rules declare it.
   const schema = context.records["actors.json"] || {};
   // An actor who speaks in the conversation needs a role when the sealed schema says so (its `then`).
@@ -475,11 +478,16 @@ export default function ActorForm({
                   "triggerTool",
                   F.triggerTool,
                   actionIds.map((id) => [id, id]),
-                  { startLabel: initial.triggerTool },
+                  {
+                    startLabel: initial.triggerTool,
+                    error: Boolean(comesIn.triggerTool),
+                    helperText: comesIn.triggerTool,
+                  },
                 )}
               {value("mode") === "on_keyword" &&
                 text("triggerWords", F.triggerWords, {
-                  helperText: F.triggerWordsHelp,
+                  error: Boolean(comesIn.triggerWords),
+                  helperText: comesIn.triggerWords || F.triggerWordsHelp,
                 })}
               {value("mode") === "mid_journey" &&
                 text("triggerTurn", F.triggerTurn, {
@@ -500,12 +508,15 @@ export default function ActorForm({
                       one.collection,
                       one.collection,
                     ]),
-                    { startLabel: initial.triggerCollection },
+                    {
+                      startLabel: initial.triggerCollection,
+                      error: Boolean(comesIn.triggerCollection),
+                      helperText: comesIn.triggerCollection,
+                    },
                   )}
                   {text("triggerWhere", F.triggerWhere, {
-                    error: Boolean(whereProblem(value("triggerWhere"))),
-                    helperText:
-                      whereProblem(value("triggerWhere")) || F.triggerWhereHelp,
+                    error: Boolean(comesIn.triggerWhere),
+                    helperText: comesIn.triggerWhere || F.triggerWhereHelp,
                   })}
                 </>
               )}
@@ -614,7 +625,8 @@ export default function ActorForm({
                 Boolean(takenBy) ||
                 idInvalid ||
                 nameMissing ||
-                roleMissing
+                roleMissing ||
+                comesInIncomplete
               }
               onClick={() => onSave(toRecord(actor, fields, context))}
             >

@@ -214,6 +214,11 @@ export const ACTORS_COPY = {
       triggerWhere: "Matching (optional)",
       triggerWhereHelp:
         'Field values the record holds, such as {"status": "pending"}',
+      triggerNeeds: {
+        tool: "Pick the action that brings them in",
+        words: "Type at least one word",
+        collection: "Pick the records that bring them in",
+      },
       takesAction: (action) => `${action} is taken for them`,
       model: "Model they are played on",
       environmentModel: "The environment's model",

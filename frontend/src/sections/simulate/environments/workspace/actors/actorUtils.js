@@ -1,5 +1,6 @@
 import { slugify } from "../../helpers/slugify";
 import { genderLabel } from "../scenarios/personaLabels";
+import { ACTORS_COPY } from "./actors.constants";
 
 // A world actor's id rule; the server applies it to every actor.
 const ID_SOURCE = "actors.json";
@@ -153,19 +154,13 @@ export const triggerOf = (read) => {
         kind: "after_seconds",
         seconds: Number(read("triggerSeconds")) || 0,
       };
-    case "conditional": {
-      let where = {};
-      try {
-        where = read("triggerWhere") ? JSON.parse(read("triggerWhere")) : {};
-      } catch {
-        where = {};
-      }
+    case "conditional":
+      // Only read once `triggerProblem` has nothing to say, so the text is a JSON object here.
       return {
         kind: "conditional",
         collection: read("triggerCollection"),
-        where,
+        where: read("triggerWhere") ? JSON.parse(read("triggerWhere")) : {},
       };
-    }
     default:
       return null;
   }
@@ -181,6 +176,31 @@ export const whereProblem = (text) => {
       : "an object of field values";
   } catch {
     return 'an object of field values, such as {"status": "pending"}';
+  }
+};
+
+// What a chosen way of coming in still needs before it can be saved, by field; nothing when it is complete.
+export const triggerProblem = (read) => {
+  const words = ACTORS_COPY.worldActors.form.triggerNeeds;
+  switch (read("mode")) {
+    case "on_tool":
+      return read("triggerTool") ? {} : { triggerTool: words.tool };
+    case "on_keyword":
+      return String(read("triggerWords") || "")
+        .split(",")
+        .some((one) => one.trim())
+        ? {}
+        : { triggerWords: words.words };
+    case "conditional": {
+      const problems = {};
+      if (!read("triggerCollection"))
+        problems.triggerCollection = words.collection;
+      const where = whereProblem(read("triggerWhere"));
+      if (where) problems.triggerWhere = where;
+      return problems;
+    }
+    default:
+      return {};
   }
 };
 
