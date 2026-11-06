@@ -120,6 +120,87 @@ def _payload(value: Any) -> Any:
     return text[:_PAYLOAD_CHARS].rstrip() + "…"
 
 
+# Two records of one call can be stamped by different clocks; further apart than this, they are different calls.
+_SAME_CALL_SECONDS = 5.0
+
+
+def _moment(at: Any) -> float | None:
+    if not isinstance(at, str) or not at:
+        return None
+    try:
+        moment = datetime.fromisoformat(at)
+    except ValueError:
+        return None
+    return (moment if moment.tzinfo else moment.replace(tzinfo=UTC)).timestamp()
+
+
+def _digest(value: Any) -> str | None:
+    payload = _payload(value)
+    return None if payload is None else json.dumps(payload, sort_keys=True, default=str)
+
+
+class _ShownBySpans:
+    """The calls and hand-offs the spans showed, each standing for at most one sealed row of the same call.
+
+    A row is that call when it names the span's id. A row without one is that call only when its input or time says so
+    and no other span could be it; a row that can't be told apart is kept, never dropped.
+    """
+
+    def __init__(self, events: list[WorkerEvent]) -> None:
+        self._open = [
+            one for one in events if one["type"] in ("tool_call", "delegated")
+        ]
+
+    def take(
+        self,
+        kind: str,
+        worker_id: str | None,
+        *,
+        ids: set[str],
+        tool: str | None = None,
+        task: str | None = None,
+        payload: str | None = None,
+        at: str | None = None,
+    ) -> bool:
+        exact = [
+            one for one in self._open if one.get("span_id") and one["span_id"] in ids
+        ]
+        if exact:
+            self._open.remove(exact[0])
+            return True
+
+        def says(one: WorkerEvent) -> tuple[bool, bool]:
+            # (nothing says it is another call, something says it is this one)
+            checks = []
+            if kind == "tool_call":
+                theirs = _digest(one.get("input"))
+                if theirs is not None and payload is not None:
+                    checks.append(theirs == payload)
+            elif one.get("task") and task:
+                checks.append(one["task"] == task)
+            mine, theirs_at = _moment(at), _moment(one.get("at"))
+            if mine is not None and theirs_at is not None:
+                checks.append(abs(mine - theirs_at) <= _SAME_CALL_SECONDS)
+            return all(checks), any(checks)
+
+        matches = [
+            one
+            for one in self._open
+            if one["type"] == kind
+            and one.get("worker_id") == worker_id
+            and (kind != "tool_call" or one.get("tool") == tool)
+            and says(one) == (True, True)
+        ]
+        alike = {
+            (_digest(one.get("input")) if kind == "tool_call" else one.get("task"))
+            for one in matches
+        }
+        if not matches or len(alike) > 1:
+            return False
+        self._open.remove(matches[0])
+        return True
+
+
 def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
     """The events a record keeps, and how many it left out."""
     kept = events[:_MAX_EVENTS]
@@ -336,12 +417,7 @@ def worker_timeline(
             entry["model"] = ", ".join([*used, model])
         entry["tokens"] = int(entry.get("tokens") or 0) + int(span.get("tokens") or 0)
     # A sealed call or hand-off a span already showed is not repeated.
-    shown = Counter(
-        (one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call"
-    )
-    shown_delegations = Counter(
-        one["worker_id"] for one in events if one["type"] == "delegated"
-    )
+    shown = _ShownBySpans(events)
     rows = [call for call in traced_calls if isinstance(call, Mapping)]
 
     def by_of(row: Mapping[str, Any]) -> str:
@@ -434,6 +510,17 @@ def worker_timeline(
             {"parent_delegation_id": parent} if parent else {"relationship": "observed"}
         )
 
+    def ids_of(row: Mapping[str, Any]) -> set[str]:
+        # The ids a runtime gave this call: its span, and its own event id.
+        return {
+            str(one)
+            for one in (
+                row.get("span_id"),
+                (row.get("runtime_ids") or {}).get("event_id"),
+            )
+            if one
+        }
+
     def own_id(row: Mapping[str, Any], index: int) -> str:
         return str(
             row.get("span_id")
@@ -473,23 +560,27 @@ def worker_timeline(
         if target:
             # A hand-off: the call that gave the work, and its result when the worker returned.
             handed_to = traced_worker(target, target)
-            if shown_delegations[handed_to]:
-                shown_delegations[handed_to] -= 1
+            arguments = call.get("arguments")
+            task = _summary(
+                json.dumps(arguments) if isinstance(arguments, dict) else arguments,
+                argument=True,
+            )
+            if shown.take(
+                "delegated",
+                handed_to,
+                ids=ids_of(call),
+                task=task,
+                at=started(call),
+            ):
                 continue
             delegation_id = own_id(call, index)
-            arguments = call.get("arguments")
             events.append(
                 {
                     "type": "delegated",
                     "worker_id": handed_to,
                     "by": worker_id,
                     "delegation_id": delegation_id,
-                    "task": _summary(
-                        json.dumps(arguments)
-                        if isinstance(arguments, dict)
-                        else arguments,
-                        argument=True,
-                    ),
+                    "task": task,
                     "at": started(call),
                     "attribution": "reported",
                     **placed_in(call),
@@ -509,8 +600,14 @@ def worker_timeline(
                 )
             continue
         tool = str(call.get("name") or "")
-        if shown[(worker_id, tool)]:
-            shown[(worker_id, tool)] -= 1
+        if shown.take(
+            "tool_call",
+            worker_id,
+            ids=ids_of(call),
+            tool=tool,
+            payload=_digest(call.get("arguments")),
+            at=started(call) or when(call.get("ended_at")),
+        ):
             continue
         event: WorkerEvent = {
             "type": "tool_call",
@@ -799,11 +896,11 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         "collection": (
             "unavailable"
             if unavailable
-            else "partial"
-            if partial
-            else "complete"
-            if (spans or traced_calls)
-            else "no_evidence"
+            else (
+                "partial"
+                if partial
+                else "complete" if (spans or traced_calls) else "no_evidence"
+            )
         ),
     }
     if not timeline["workers"] and not any(

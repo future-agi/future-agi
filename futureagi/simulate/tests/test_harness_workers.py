@@ -733,12 +733,18 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
         and first["attribution"] == "reported"
     )
 
-    # The same call seen in the worker's spans is shown once.
+    # The same call seen in the worker's spans, named by its span id, is shown once.
     both = worker_timeline(
         SPANS,
         DECLARED,
         run_key=RUN,
-        traced_calls=[{"name": "get_order", "worker_label": "Order-lookup worker"}],
+        traced_calls=[
+            {
+                "name": "get_order",
+                "worker_label": "Order-lookup worker",
+                "span_id": "s4",
+            }
+        ],
     )
     assert [one.get("tool") for one in both["events"]].count("get_order") == 1
 
@@ -1785,3 +1791,104 @@ def test_a_hand_off_read_from_spans_keeps_the_span_it_was_made_in():
     events = worker_timeline(spans, [], run_key=RUN)["events"]
     handed = {e["worker_id"]: e["span_id"] for e in events if e["type"] == "delegated"}
     assert handed == {"run-1/planner": "lt", "run-1/searcher": "c"}
+
+
+# A coordinator handing work to a researcher that called `search` with q=a; the sandbox sealed two searches, B then A.
+_SEARCH_SPANS = [
+    _span("c", None, "agent", "coordinator", "t1", "t9"),
+    _span("cl", "c", "llm", "route", "t1", "t1"),
+    _span("r", "c", "agent", "researcher", "t2", "t8"),
+    _span("ra", "r", "tool", "search", "t3", "t3", input='{"q": "a"}'),
+]
+
+
+def _sealed_search(q, at):
+    return {
+        "name": "search",
+        "ok": True,
+        "at": at,
+        "worker_label": "researcher",
+        "arguments": {"q": q},
+    }
+
+
+def test_a_sealed_call_the_spans_did_not_show_is_kept_whatever_order_the_rows_come_in():
+    for rows in (
+        [_sealed_search("b", 1730454601.0), _sealed_search("a", 1730454602.0)],
+        [_sealed_search("a", 1730454602.0), _sealed_search("b", 1730454601.0)],
+    ):
+        events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=rows)[
+            "events"
+        ]
+        searches = sorted(
+            json.dumps(one["input"], sort_keys=True)
+            for one in events
+            if one["type"] == "tool_call" and one["tool"] == "search"
+        )
+        assert searches == ['{"q": "a"}', '{"q": "b"}']
+
+
+def test_a_sealed_call_is_matched_to_its_span_by_id_first():
+    # Nothing but the id says which call it is.
+    row = {"name": "search", "ok": True, "worker_label": "researcher", "span_id": "ra"}
+    events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=[row])[
+        "events"
+    ]
+    assert [one["type"] for one in events].count("tool_call") == 1
+
+
+def test_a_sealed_call_that_cannot_be_told_from_the_spans_is_kept_rather_than_dropped():
+    spans = [
+        *_SEARCH_SPANS,
+        _span("rb", "r", "tool", "search", "t4", "t4", input='{"q": "b"}'),
+    ]
+    # No id, input or time: it could be either span's call, or a third one.
+    row = {"name": "search", "ok": True, "worker_label": "researcher"}
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=[row])["events"]
+    assert [one["type"] for one in events].count("tool_call") == 3
+    # Nor when only its time is known and two different calls fit it.
+    timed = [
+        *_SEARCH_SPANS[:3],
+        _span("ra", "r", "tool", "search", "2024-11-01T09:50:00", input='{"q": "a"}'),
+        _span("rb", "r", "tool", "search", "2024-11-01T09:50:01", input='{"q": "b"}'),
+    ]
+    at_only = {**row, "at": 1730454600.5}
+    events = worker_timeline(timed, [], run_key=RUN, traced_calls=[at_only])["events"]
+    assert [one["type"] for one in events].count("tool_call") == 3
+    # Nor is it taken to be the only span's call when nothing says so.
+    events = worker_timeline(_SEARCH_SPANS, [], run_key=RUN, traced_calls=[row])[
+        "events"
+    ]
+    assert [one["type"] for one in events].count("tool_call") == 2
+
+
+def test_a_sealed_hand_off_the_spans_did_not_show_is_kept_whatever_order_the_rows_come_in():
+    spans = [
+        _span("c", None, "agent", "coordinator", "t1", "t9"),
+        _span("cl", "c", "llm", "route", "t1", "t1"),
+        _span(
+            "h1", "c", "tool", "ask_researcher", "t2", "t5", input='{"input": "find a"}'
+        ),
+        _span("r1", "h1", "agent", "researcher", "t2", "t5"),
+        _span("r1l", "r1", "llm", "think", "t3", "t3"),
+    ]
+
+    def handed(task, at):
+        return {
+            "name": "ask_researcher",
+            "ok": True,
+            "at": at,
+            "ended_at": at + 1,
+            "worker_label": "coordinator",
+            "delegated_to": "researcher",
+            "arguments": {"input": task},
+            "result": f"found {task}",
+        }
+
+    for rows in (
+        [handed("find b", 1730454601.0), handed("find a", 1730454603.0)],
+        [handed("find a", 1730454603.0), handed("find b", 1730454601.0)],
+    ):
+        events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+        tasks = sorted(one["task"] for one in events if one["type"] == "delegated")
+        assert tasks == ["find a", "find b"]
