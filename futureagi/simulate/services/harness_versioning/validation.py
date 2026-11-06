@@ -9,6 +9,7 @@ A newer move of the environment's default agent replaces any move still waiting.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, TypedDict
@@ -49,15 +50,47 @@ Caller = Literal["activation", "hand", "no_change", "land"]
 CHECK_DEADLINE = timedelta(minutes=45)
 CHECK_TIMED_OUT = "validation_timed_out"
 # The endings that are a check's verdict on the pairing; any other one is retried.
-CHECK_FAILURES = frozenset(
-    {"authoring_runtime_validation_failed", "certify_incomplete", CHECK_TIMED_OUT}
-)
+CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed", CHECK_TIMED_OUT})
+# A check that ended on our side, not the agent's: runs are not held for it.
+CHECK_UNAVAILABLE = "check_unavailable"
 # What a run refused after a failed check is told, by the check's ending.
 _FAILED_REASONS = {
     "authoring_runtime_validation_failed": "the agent did not pass this environment's checks",
-    "certify_incomplete": "the check finished but its result was not kept",
     CHECK_TIMED_OUT: "the check did not finish within 45 minutes",
 }
+UNAVAILABLE_REASON = (
+    "the check could not prepare this environment's test world on our side; runs go"
+    " ahead without it"
+)
+# The runtime failures of the test world itself, not of the agent (ALK's process
+# runtime codes whose failure domain is the environment or infrastructure).
+_PLATFORM_CODES = frozenset(
+    {
+        "seed_failed",
+        "store_statement_failed",
+        "depends_on_timeout",
+        "resource_capacity_unknown",
+        "resource_capacity_unavailable",
+    }
+)
+_RUNTIME_CAUSE = re.compile(r"(?:^|: )([a-z_]+)/([a-z_]+)(?: \(([^)]+)\))?:")
+
+
+def platform_failure(message: str, failed_actions: Any = None) -> str | None:
+    """The runtime code of a failed check that ended on our side, or ``None`` when the
+    agent failed it: a failed action probe, or anything but a test-world process
+    failing (``stage/code (process)`` as the guest reports it)."""
+    if failed_actions:
+        return None
+    match = _RUNTIME_CAUSE.search(message or "")
+    if match is None:
+        return None
+    code, process = match.group(2), match.group(3) or ""
+    if code in _PLATFORM_CODES or process.startswith("world-"):
+        return code
+    return None
+
+
 FAILURE_SOURCE = "validation"
 # A move whose validation ended before a check did is validated this many times more.
 MOVE_RESTARTS = 1
@@ -471,9 +504,10 @@ def _check_log(job: HostedHarnessJob) -> dict[str, Any]:
 def finish_validation(job_id: Any) -> str | None:
     """Settle the pairing a terminal validation job checked, then act on the outcome.
 
-    Returns ``ready``, ``failed`` (a check failed: the pairing is failed) or ``retry``
-    (it ended before a check did: the pairing stays pending), or ``None`` when the job
-    is not terminal or was settled before.
+    Returns ``ready``, ``failed`` (the agent failed a check: the pairing is failed),
+    ``unavailable`` (the check failed on our side: the pairing stays pending and holds
+    nothing back) or ``retry`` (it ended before a check did: the pairing stays pending),
+    or ``None`` when the job is not terminal or was settled before.
     """
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
@@ -516,6 +550,35 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
     if job.cancel_reason == CHECK_TIMED_OUT:
         code = CHECK_TIMED_OUT
         failure = {"message": _FAILED_REASONS[CHECK_TIMED_OUT]}
+    cause = (
+        code
+        if code == "certify_incomplete"
+        else (
+            platform_failure(
+                str(failure.get("message") or ""),
+                (bundle.error or {}).get("failed_actions"),
+            )
+            if code == "authoring_runtime_validation_failed"
+            else None
+        )
+    )
+    if cause is not None:
+        mine = (bundle.error or {}).get("run_id") == str(job.id)
+        if bundle.state == HarnessAssembledBundle.State.PENDING or (
+            bundle.state == HarnessAssembledBundle.State.FAILED and mine
+        ):
+            bundle.state = HarnessAssembledBundle.State.PENDING
+            bundle.error = {
+                "last_attempt": {
+                    "code": CHECK_UNAVAILABLE,
+                    "cause": cause,
+                    "at": timezone.now().isoformat(),
+                    "job_id": str(job.id),
+                }
+            }
+            bundle.save(update_fields=["state", "error", "updated_at"])
+        logger.warning("harness_pair_check_unavailable", **_check_log(job), cause=cause)
+        return "unavailable"
     if code in CHECK_FAILURES:
         if bundle.state == HarnessAssembledBundle.State.PENDING:
             bundle.state = HarnessAssembledBundle.State.FAILED
@@ -547,7 +610,8 @@ def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) 
     ).first()
     if environment is None:
         result = "environment_gone"
-    elif outcome == "ready":
+    elif outcome in ("ready", "unavailable"):
+        # A check that ended on our side holds no move back, as before checks.
         try:
             result = complete_move(
                 environment,
