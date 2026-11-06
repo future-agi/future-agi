@@ -216,6 +216,12 @@ class MetricsReadTransport:
             if node.args.get("settings") or node.args.get("format"):
                 raise IncapableReadLane("metrics settings and format are reader-owned")
         for function in tree.find_all(exp.Func):
+            # SQLGlot models boolean connectors as Func nodes too. These are
+            # structural predicates in the compiler's tenant/generation filter,
+            # not callable functions. Their children are still visited below:
+            # AND/OR cannot hide an unqualified function or nonlocal source.
+            if isinstance(function, (exp.And, exp.Or)):
+                continue
             name = (
                 function.name
                 if isinstance(function, exp.Anonymous)

@@ -246,6 +246,32 @@ def test_native_and_http_bind_typed_parameters(lane, guards, budget):
     assert progress_available()
 
 
+def test_compiler_boolean_predicates_preserve_admission(lane, guards, budget):
+    rows = invoke(
+        lane,
+        guards,
+        budget,
+        sql=(
+            "SELECT value FROM metrics_reader_local "
+            "WHERE value >= %(lower)s AND (value = 1 OR value = 2) ORDER BY value"
+        ),
+        params={"lower": 2},
+    )
+    assert [int(row[0]) for row in rows] == [2]
+    assert progress_available()
+    # Structural connectors must not mask an otherwise forbidden descendant.
+    with pytest.raises(IncapableReadLane):
+        lane._check_local_sql(
+            "SELECT 1 WHERE 1 = 1 AND (1 = 0 OR dictGet('remote', 'value', 1) = 1)",
+            budget,
+        )
+    with pytest.raises(IncapableReadLane):
+        lane._check_local_sql(
+            "SELECT 1 WHERE 1 = 1 AND 1 IN (SELECT number FROM system.numbers)",
+            budget,
+        )
+
+
 def test_blocked_pg_acquisition_is_bounded_and_never_submits(lane, guards, budget):
     with pg() as blocker:
         with blocker.transaction():
