@@ -1239,8 +1239,12 @@ class TestConsequence:
             source_kind="provider"
         )
         _certify(environment, storage, agent=a2)
-        assert _rows(_report(environment, a2))["reset"]["consequence"] == (
+        rows = _rows(_report(environment, a2))
+        assert rows["reset"]["consequence"] == (
             "The world resets between trials; the agent may carry its own memory"
+        )
+        assert rows["start"]["consequence"] == (
+            "The agent answers on its own side, so every case can begin"
         )
 
         _certify(
