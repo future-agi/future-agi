@@ -2,6 +2,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import MetricProjectSelect from "../MetricProjectSelect";
 import MetricList from "../MetricList";
 import MetricDefinitionEditor from "../metric_definition_editor";
@@ -120,7 +121,7 @@ it("a recovered project's changing catalog cannot overwrite the search being typ
   ).not.toBeInTheDocument();
 });
 
-it("matches the sibling search field, default 44px rows, project ellipsis/tooltip and exact terminal range", async () => {
+it("matches the sibling search field, shared default rows, project ellipsis/tooltip and exact terminal range", async () => {
   mountList();
   const search = screen.getByRole("textbox", {
     name: "Search metrics on this page",
@@ -131,9 +132,13 @@ it("matches the sibling search field, default 44px rows, project ellipsis/toolti
   });
   expect(screen.queryByText("Search this page")).not.toBeInTheDocument();
   const name = await screen.findByRole("button", { name: metric.name });
+  // MetricList uses DataTable's single-line default, not a metrics-only size.
+  // sizes.js delegates to dsSize.row.default; pin that app contract as well as
+  // its rendered use so changing the shared token cannot make this self-pass.
+  expect(ROW_HEIGHT.default).toBe(36);
   expect(name.closest('[role="row"]')).toHaveStyle({
-    minHeight: "44px",
-    maxHeight: "44px",
+    minHeight: `${ROW_HEIGHT.default}px`,
+    maxHeight: `${ROW_HEIGHT.default}px`,
   });
   const project = await screen.findByText(projectName);
   expect(project).toHaveStyle({
