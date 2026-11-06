@@ -603,8 +603,7 @@ def test_user_first_batch_never_stops_at_the_wall_and_no_refill_follows():
             "start",
             side_effect=lambda total_ms, **kwargs: (
                 expired
-                if total_ms == users_list_manager.USER_LIST_PAGE_WALL_MS
-                and not kwargs
+                if total_ms == users_list_manager.USER_LIST_PAGE_WALL_MS and not kwargs
                 else real_start(total_ms, **kwargs)
             ),
         ),
