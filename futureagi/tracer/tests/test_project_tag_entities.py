@@ -373,7 +373,6 @@ class TestTraceAndSpanTagWrites:
         original = ["first"] if untouched == first_trace else ["second"]
         assert after[untouched] == [original]
 
-
     def test_trace_with_no_traces_row_gets_one_for_the_grid(
         self, auth_client, observe_project, ch_seed
     ):
