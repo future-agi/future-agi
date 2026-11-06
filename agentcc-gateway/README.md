@@ -17,7 +17,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.25-00ADD8?style=flat-square&logo=go" alt="Go 1.25"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
@@ -276,14 +276,19 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-<details><summary><b>Run from source (Go 1.23+)</b></summary>
+<details><summary><b>Run from source (Go 1.25+)</b></summary>
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
-go run ./cmd/server
+# Set OPENAI_API_KEY in your environment, or configure another provider in config.yaml.
+go run ./cmd/agentcc --config config.yaml
 ```
+
+The `--config` flag explicitly loads the file you just copied. Alternatively,
+set `AGENTCC_CONFIG_FILE` to its path. Once the server starts, the example
+configuration listens on `http://localhost:8080`.
 
 </details>
 
