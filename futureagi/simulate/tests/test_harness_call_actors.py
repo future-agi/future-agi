@@ -538,8 +538,9 @@ def test_stored_call_actor_shapes_keep_only_well_formed_entries():
     from simulate.services.harness_scenarios import call_actor_entries
     from simulate.services.hosted_harness_ingestion import _call_actor_record
 
+    # A trigger that is not a record stays missing, so the actor's own activation applies.
     assert call_actor_entries([{"id": "friend", "trigger": "soon"}, "x"]) == [
-        {"id": "friend", "instruction": "", "trigger": {}}
+        {"id": "friend", "instruction": ""}
     ]
     assert call_actor_entries({"id": "friend"}) is None
     assert _call_actor_record(
