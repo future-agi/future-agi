@@ -7,7 +7,8 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const HuggingFaceDetailDrawer = ({
   show,
-  reset,
+  getValues,
+  setValue,
   control,
   huggingFaceDetail,
   watch,
@@ -21,22 +22,41 @@ const HuggingFaceDetailDrawer = ({
 }) => {
   useEffect(() => {
     if (!show) return;
-    if (show && showNameField && huggingFaceDetail?.name) {
-      const defaultValues = { name: huggingFaceDetail.name };
-      if (subsetOptions?.length > 0) {
-        defaultValues.huggingface_dataset_config = subsetOptions[0].value;
-      }
-      if (splitOptions?.length > 0) {
-        defaultValues.huggingface_dataset_split = splitOptions[0].value;
-      }
-      defaultValues.num_rows = 1;
-      reset(defaultValues);
+
+    if (showNameField && huggingFaceDetail?.name && !getValues("name")) {
+      setValue("name", huggingFaceDetail.name);
+    }
+
+    const currentSubset = getValues("huggingface_dataset_config");
+    if (
+      subsetOptions?.length > 0 &&
+      !subsetOptions.some(({ value }) => value === currentSubset)
+    ) {
+      setValue("huggingface_dataset_config", subsetOptions[0].value);
+    }
+
+    const currentSplit = getValues("huggingface_dataset_split");
+    if (
+      splitOptions?.length > 0 &&
+      !splitOptions.some(({ value }) => value === currentSplit)
+    ) {
+      setValue("huggingface_dataset_split", splitOptions[0].value);
+    }
+
+    const currentRowCount = getValues("num_rows");
+    if (
+      currentRowCount === undefined ||
+      currentRowCount === null ||
+      currentRowCount === ""
+    ) {
+      setValue("num_rows", 1);
     }
   }, [
     show,
     showNameField,
     huggingFaceDetail?.name,
-    reset,
+    getValues,
+    setValue,
     subsetOptions,
     splitOptions,
   ]);
@@ -80,7 +100,8 @@ const HuggingFaceDetailDrawer = ({
 HuggingFaceDetailDrawer.propTypes = {
   show: PropTypes.bool.isRequired,
   setShow: PropTypes.func.isRequired,
-  reset: PropTypes.func.isRequired,
+  getValues: PropTypes.func.isRequired,
+  setValue: PropTypes.func.isRequired,
   control: PropTypes.object.isRequired,
   huggingFaceDetail: PropTypes.object,
   watch: PropTypes.func.isRequired,
