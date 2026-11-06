@@ -67,7 +67,7 @@ CATALOGUE: tuple[Capability, ...] = (
     ),
     Capability("reset", "World resets between cases", "reset", True, "state"),
     Capability("resume", "Resumes an interrupted case", "reset", False),
-    Capability("cancel", "Stops cleanly when cancelled", "cancellation", False),
+    Capability("cancel", "Stops cleanly when cancelled", "cancellation", True),
     Capability("cost", "Run cost", None, False),
 )
 AREAS = ("start_and_message", "tool_binding", "evidence", "reset", "cancellation")
@@ -168,6 +168,8 @@ class Reading:
     reason: str | None = None
     targets: list[Target] = field(default_factory=list)
     evidence: list[EvidenceCheck] = field(default_factory=list)
+    # When it was observed, for a row not read from the certificate.
+    checked_at: str | None = None
 
 
 def targets(kind: str, names: list[str], result: str) -> list[Target]:
