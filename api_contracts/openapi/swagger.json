@@ -71417,7 +71417,7 @@
                     {
                         "name": "name",
                         "in": "query",
-                        "description": "The tag to delete. It is also removed from every assignment.",
+                        "description": "The tag to delete, exactly as listed (not trimmed). It is also removed from every assignment.",
                         "required": true,
                         "type": "string",
                         "maxLength": 255,
@@ -75145,6 +75145,14 @@
                         "schema": {
                             "$ref": "#/definitions/TraceTagsUpdate"
                         }
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "The trace's project. Optional; needed only when the trace id exists in more than one project you can access.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -171267,7 +171275,7 @@
             "properties": {
                 "name": {
                     "title": "Name",
-                    "description": "The tag to change.",
+                    "description": "The tag to change, exactly as listed (not trimmed).",
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
