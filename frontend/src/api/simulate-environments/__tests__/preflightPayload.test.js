@@ -29,6 +29,8 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
       RETELL_CHAT: "retell_chat",
       LIVEKIT: "livekit",
       PHONE: "phone",
+      COPILOT_STUDIO: "copilot_studio",
+      FOUNDRY: "foundry",
     });
   });
 
@@ -39,7 +41,63 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
       retell_chat: "retell_chat",
       livekit: "livekit",
       other: "phone",
+      copilot_studio: "copilot_studio",
+      foundry: "foundry",
     });
+  });
+});
+
+describe("draftToPreflightPayload — Microsoft agents", () => {
+  const microsoftDraft = (provider, providerConfig) => ({
+    kind: "platform",
+    agentType: "chat",
+    provider,
+    agentId: providerConfig.agent_id || providerConfig.agent_name,
+    providerConfig,
+  });
+  const copilot = microsoftDraft("copilot_studio", {
+    tenant_id: " tenant-1 ",
+    client_id: "client-1",
+    dataverse_url: "https://org123.crm.dynamics.com",
+    agent_id: "11111111-2222-3333-4444-555555555555",
+  });
+  const foundry = microsoftDraft("foundry", {
+    tenant_id: "tenant-1",
+    client_id: "client-1",
+    project_endpoint: "https://acme.services.ai.azure.com/api/projects/support",
+    agent_name: "order-assistant",
+  });
+
+  it("sends the public settings as connect-only config, trimmed, with no call fields", () => {
+    const { payload, skipped } = draftToPreflightPayload(copilot);
+    expect(skipped).toBeUndefined();
+    expect(payload.agent).toStrictEqual({
+      connector: "copilot_studio",
+      mode: "connect_only",
+      config: {
+        tenant_id: "tenant-1",
+        client_id: "client-1",
+        dataverse_url: "https://org123.crm.dynamics.com",
+        agent_id: "11111111-2222-3333-4444-555555555555",
+      },
+      secret_refs: {},
+    });
+    expect(payload.metadata.name).toBe("11111111-2222-3333-4444-555555555555");
+  });
+
+  it.each([
+    ["create", "/simulate/api/harness-jobs/"],
+    ["preflight", "/simulate/api/harness-jobs/preflight/"],
+  ])("passes the %s request contract for both connectors", (_name, template) => {
+    for (const draft of [copilot, foundry]) {
+      const result = validateContractedRequestConfig({
+        url: apiPath(template),
+        method: "post",
+        data: draftToPreflightPayload(draft).payload,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.ok).toBe(true);
+    }
   });
 });
 
