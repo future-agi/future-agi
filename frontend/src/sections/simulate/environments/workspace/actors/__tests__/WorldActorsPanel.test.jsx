@@ -232,6 +232,29 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     expect(screen.queryByText(/changed elsewhere/)).toBeNull();
   });
 
+  it.each([
+    [
+      {
+        error: "upload_invalid",
+        message: "notes.pdf: the format is one of .md, .txt, .json, .csv",
+        statusCode: 400,
+      },
+      "notes.pdf: the format is one of .md, .txt, .json, .csv",
+    ],
+    [{ message: "Network Error" }, "The document could not be uploaded"],
+  ])(
+    "says why an upload was refused in the platform's words, never a transport message",
+    async (failure, shown) => {
+      axios.post.mockReset();
+      axios.post.mockRejectedValueOnce(failure);
+      await openEdit();
+      fireEvent.change(document.querySelector('input[type="file"]'), {
+        target: { files: [new File(["x"], "notes.pdf")] },
+      });
+      expect(await screen.findByText(shown)).toBeInTheDocument();
+    },
+  );
+
   it("says so and won't save when the actor was removed elsewhere", async () => {
     await openEdit();
     axios.put.mockRejectedValueOnce(DRAFT_CHANGED);

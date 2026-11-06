@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
+import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
 import {
   KEPT_TRIGGER,
@@ -369,7 +370,7 @@ export default function ActorForm({
                               ...new Set([...value("files"), path]),
                             ]);
                         } catch (failure) {
-                          setUploadError(failure?.message || F.uploadFailed);
+                          setUploadError(refusalText(failure, F.uploadFailed));
                         } finally {
                           setUploading(false);
                         }
