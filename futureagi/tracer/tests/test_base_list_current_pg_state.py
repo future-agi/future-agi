@@ -1,6 +1,7 @@
 """A03 real PostgreSQL adapter tests; no CH/source qualification is claimed."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from threading import Event
 from unittest.mock import patch
 from uuid import uuid4
@@ -562,27 +563,69 @@ def test_persistent_incarnation_survives_native_project_recreate(enrolled):
     assert after.projects[0].token.revision > before.projects[0].token.revision
 
 
-def test_metrics_only_migration_reverses_and_reapplies():
+@contextmanager
+def _before_pg_revision_migration():
     from django.db.migrations.executor import MigrationExecutor
 
+    executor = MigrationExecutor(connection)
+    original_targets = executor.loader.graph.leaf_nodes()
+    try:
+        executor.migrate([("tracer", "0128_base_list_current_stores")])
+        yield
+    finally:
+        # A historical target is not the integrated graph: restore every app's
+        # original leaves, even if a rollback assertion fails. Reload applied state.
+        MigrationExecutor(connection).migrate(original_targets)
+
+
+def _assert_integrated_metric_schema():
+    from django.db.migrations.executor import MigrationExecutor
+
+    executor = MigrationExecutor(connection)
+    assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
+    assert {
+        "metric_pg_response_revision",
+        "metric_pg_identity_revision",
+        "tracer_metriccompactionrange",
+        "tracer_metricattemptbatch",
+        "tracer_metricsourcescope",
+        "tracer_metricsourceintent",
+        "tracer_metricsourcepage",
+        "tracer_metricsourcedelivery",
+    } <= set(connection.introspection.table_names())
+    # User activity lives in CH, not a PG user-activity table. The PG receipt and
+    # range ledgers must both admit its store through real, validated CHECKs.
+    with connection.cursor() as cursor:
+        for table, constraint in (
+            ("tracer_metricattemptbatch", "metric_batch_table"),
+            ("tracer_metriccompactionrange", "metric_range_table"),
+        ):
+            cursor.execute(
+                "SELECT contype, convalidated, pg_get_constraintdef(oid) "
+                "FROM pg_constraint WHERE conrelid = %s::regclass AND conname = %s",
+                [table, constraint],
+            )
+            rows = cursor.fetchall()
+            assert len(rows) == 1
+            kind, validated, definition = rows[0]
+            assert kind == "c" and validated
+            assert "'list_current_user_activity'" in definition
+
+
+def test_metrics_only_migration_reverses_and_reapplies():
     native_tables = [Project._meta.db_table, Score._meta.db_table, User._meta.db_table]
     with connection.cursor() as cursor:
         before = {
             table: connection.introspection.get_table_description(cursor, table)
             for table in native_tables
         }
-    executor = MigrationExecutor(connection)
-    try:
-        executor.migrate([("tracer", "0128_base_list_current_stores")])
+    with _before_pg_revision_migration():
         assert (
             "metric_pg_response_revision" not in connection.introspection.table_names()
         )
         assert (
             "metric_pg_identity_revision" not in connection.introspection.table_names()
         )
-    finally:
-        executor = MigrationExecutor(connection)
-        executor.migrate([("tracer", "0129_metric_pg_response_revisions")])
     with connection.cursor() as cursor:
         after = {
             table: connection.introspection.get_table_description(cursor, table)
@@ -591,6 +634,18 @@ def test_metrics_only_migration_reverses_and_reapplies():
     assert after == before
     assert not MetricPgResponseRevision.objects.exists()
     assert not MetricPgIdentityRevision.objects.exists()
+    _assert_integrated_metric_schema()
+
+
+def test_metrics_migration_restores_integrated_schema_after_assertion_error():
+    with pytest.raises(AssertionError, match="synthetic historical assertion"):
+        with _before_pg_revision_migration():
+            assert (
+                "metric_pg_response_revision"
+                not in connection.introspection.table_names()
+            )
+            raise AssertionError("synthetic historical assertion")
+    _assert_integrated_metric_schema()
 
 
 @pytest.mark.parametrize("operation", ["score_update", "overlay_delete"])

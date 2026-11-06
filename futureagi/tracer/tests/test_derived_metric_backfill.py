@@ -33,13 +33,15 @@ class EmptyPolicyRecorder(Recorder):
     def __init__(self):
         super().__init__()
         self.checkpoint_projects = set()
+        self.checkpoint_calls = []
 
-    def consolidate_checkpoint(self, project_id):
+    def consolidate_checkpoint(self, project_id, *, deadline=None):
         # Empty physical ranges need no layout work. Still enforce the scope of
         # the real store's post-publication consolidation callback.
         assert not self.checkpoint_projects or self.checkpoint_projects == {
             str(project_id)
         }
+        self.checkpoint_calls.append((str(project_id), deadline))
 
     def execute(self, query, params=None):
         if query.startswith("SELECT count()"):
@@ -75,8 +77,43 @@ def test_empty_policy_recorder_consolidates_only_its_nominated_project():
     recorder = EmptyPolicyRecorder()
     recorder.checkpoint_projects.add("owned-project")
     recorder.consolidate_checkpoint("owned-project")
+    assert recorder.checkpoint_calls == [("owned-project", None)]
     with pytest.raises(AssertionError):
-        recorder.consolidate_checkpoint("foreign-project")
+        recorder.consolidate_checkpoint("foreign-project", deadline=1234.5)
+    assert recorder.checkpoint_calls == [("owned-project", None)]
+
+
+def test_empty_policy_recorder_rejects_unsupported_callback_arguments():
+    recorder = EmptyPolicyRecorder()
+    with pytest.raises(TypeError):
+        recorder.consolidate_checkpoint("owned-project", 1234.5)
+    with pytest.raises(TypeError):
+        recorder.consolidate_checkpoint("owned-project", unsupported=True)
+    assert recorder.checkpoint_calls == []
+
+
+@pytest.mark.django_db
+def test_checkpoint_consolidation_forwards_deadline_and_defaults_on_replay(
+    setup_runner, observe_project, monkeypatch
+):
+    from tracer.services.derived_metrics import refresh
+
+    runner, _ = setup_runner
+    writer = runner.writer
+    initial = writer.begin()
+    writer.seal(initial)
+    writer.stage_and_publish(initial)
+    assert writer.store.checkpoint_calls == []
+    monkeypatch.setattr(refresh, "monotonic", lambda: 1234.5)
+    head = writer.compact()
+    assert writer.store.checkpoint_calls == [(str(observe_project.id), 1834.5)]
+    # The temporary compaction budget must not leak into a later replay. This
+    # calls the real publication path again, not the recorder directly.
+    assert writer.stage_and_publish(head.published_by).id == head.id
+    assert writer.store.checkpoint_calls == [
+        (str(observe_project.id), 1834.5),
+        (str(observe_project.id), None),
+    ]
 
 
 def scrubbed(original):
