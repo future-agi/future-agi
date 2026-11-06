@@ -725,6 +725,21 @@ describe("WorldActorsPanel", () => {
     expect(save).not.toBeDisabled();
   });
 
+  it("keeps Save off for a cap that is not a whole number, and saves the number as typed", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    const cap = screen.getByLabelText("Most turns in a call (optional)");
+    fireEvent.change(cap, { target: { value: "2.7" } });
+    expect(save).toBeDisabled();
+    expect(
+      screen.getByText("A whole number above 0, or empty for no limit"),
+    ).toBeInTheDocument();
+    fireEvent.change(cap, { target: { value: "3" } });
+    fireEvent.click(save);
+    expect(mutate.mock.calls[0][0].actor.max_turns).toBe(3);
+  });
+
   it("shows a record's value even when its select doesn't list it, and an empty value by its own word", () => {
     actorsData = cast([
       {

@@ -225,6 +225,7 @@ export const ACTORS_COPY = {
       maxTurns: "Most turns in a call (optional)",
       maxLines: "Most lines in a call (optional)",
       noLimitHelp: "Empty is no limit of their own",
+      wholeNumber: "A whole number above 0, or empty for no limit",
       timeout: "Waits, in seconds (optional)",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",

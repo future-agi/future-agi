@@ -21,6 +21,7 @@ import { ACTORS_COPY } from "./actors.constants";
 import {
   KEPT_TRIGGER,
   actorId,
+  capProblem,
   hasEdits,
   idFrom,
   idRule,
@@ -203,6 +204,8 @@ export default function ActorForm({
     actions.find((one) => one.action === id)?.description || "";
   const channel = value("channel");
   const timingKind = value("timing");
+  const capName = channel ? "max_lines" : "max_turns";
+  const capWrong = capProblem(value(capName));
 
   return (
     <SideDrawer
@@ -550,15 +553,12 @@ export default function ActorForm({
                   ],
                   { helperText: F.modelHelp, startLabel: initial.model },
                 )}
-              {text(
-                channel ? "max_lines" : "max_turns",
-                channel ? F.maxLines : F.maxTurns,
-                {
-                  type: "number",
-                  helperText: F.noLimitHelp,
-                  inputProps: { min: 1 },
-                },
-              )}
+              {text(capName, channel ? F.maxLines : F.maxTurns, {
+                type: "number",
+                error: Boolean(capWrong),
+                helperText: capWrong || F.noLimitHelp,
+                inputProps: { min: 1, step: 1 },
+              })}
               {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
               <Button
                 size="small"
@@ -627,7 +627,8 @@ export default function ActorForm({
                 idInvalid ||
                 nameMissing ||
                 roleMissing ||
-                comesInIncomplete
+                comesInIncomplete ||
+                Boolean(capWrong)
               }
               onClick={() => onSave(toRecord(actor, fields, context))}
             >

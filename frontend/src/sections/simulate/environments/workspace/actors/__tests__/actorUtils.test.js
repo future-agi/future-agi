@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   KEPT_TRIGGER,
+  capProblem,
   hasEdits,
   hidden,
   idFrom,
@@ -384,6 +385,20 @@ describe("toRecord knowledge picks", () => {
       { knowledgeSources: sources },
     );
     expect(record.knowledge).toBe(knowledge);
+  });
+});
+
+describe("capProblem", () => {
+  it.each([
+    ["", null],
+    ["  ", null],
+    ["3", null],
+    ["2.7", "A whole number above 0, or empty for no limit"],
+    ["0", "A whole number above 0, or empty for no limit"],
+    ["-1", "A whole number above 0, or empty for no limit"],
+    ["e", "A whole number above 0, or empty for no limit"],
+  ])("a typed cap of %j: %s", (typed, expected) => {
+    expect(capProblem(typed)).toBe(expected);
   });
 });
 

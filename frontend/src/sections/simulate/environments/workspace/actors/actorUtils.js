@@ -179,6 +179,16 @@ export const whereProblem = (text) => {
   }
 };
 
+// Why a typed per-actor cap cannot be saved, or nothing: empty is no limit, anything else is a whole number above 0.
+export const capProblem = (typed) => {
+  const text = String(typed ?? "").trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isInteger(number) && number > 0
+    ? null
+    : ACTORS_COPY.worldActors.form.wholeNumber;
+};
+
 // What a chosen way of coming in still needs before it can be saved, by field; nothing when it is complete.
 export const triggerProblem = (read) => {
   const words = ACTORS_COPY.worldActors.form.triggerNeeds;
@@ -431,7 +441,7 @@ export const toRecord = (actor, fields, context) => {
   for (const name of ["max_turns", "max_lines"]) {
     if (!edited(name)) continue;
     const value = Number(read(name));
-    if (read(name) !== "" && value > 0) record[name] = Math.floor(value);
+    if (read(name) !== "" && value > 0) record[name] = value;
     else delete record[name];
   }
   return record;
