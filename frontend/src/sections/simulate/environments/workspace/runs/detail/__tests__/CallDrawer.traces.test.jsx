@@ -55,14 +55,15 @@ vi.mock("src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer", async ()
   };
 });
 
-// A Participants step asks for its trace, as the real panel's Open in Traces does.
+// A Participants step asks for its trace at its own span, as the real panel's Open in Traces does, and offers it
+// only when the drawer lists that trace.
 vi.mock("../CallWorkersPanel", () => ({
-  default: function WorkersStub({ onOpenTrace }) {
-    return (
-      <button type="button" onClick={() => onOpenTrace("trace-1")}>
+  default: function WorkersStub({ onOpenTrace, traceIds = [] }) {
+    return traceIds.includes("trace-1") ? (
+      <button type="button" onClick={() => onOpenTrace("trace-1", "span-7")}>
         open step trace
       </button>
-    );
+    ) : null;
   },
 }));
 
@@ -306,6 +307,7 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
     expect(urlHasTrace()).toBe(true);
     expect(useLLMTracingStore.getState().traceDetailDrawerOpen).toMatchObject({
       traceId: "trace-1",
+      spanId: "span-7",
     });
   });
 
@@ -318,6 +320,31 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
 
     expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
     expect(urlHasTrace()).toBe(true);
+    expect(useLLMTracingStore.getState().traceDetailDrawerOpen).toMatchObject({
+      traceId: "trace-1",
+      spanId: "span-7",
+    });
+  });
+
+  it("offers no Open in Traces for a trace the call does not list, on chat and voice", async () => {
+    const user = userEvent.setup();
+    mocks.traces = {
+      projectId: "hidden-project",
+      traces: [{ traceId: "trace-9", name: "other" }],
+      isError: false,
+    };
+    const chat = renderChat();
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    expect(
+      screen.queryByRole("button", { name: "open step trace" }),
+    ).toBeNull();
+    chat.unmount();
+
+    renderVoice();
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    expect(
+      screen.queryByRole("button", { name: "open step trace" }),
+    ).toBeNull();
   });
 
   it("does not reopen the trace on a voice call after stepping to the next call and back", async () => {
@@ -342,7 +369,11 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
     // The next call lists none of this one's traces; the panel unmounts while its detail loads.
     mocks.traces = { projectId: "hidden-project", traces: [], isError: false };
     step({ id: "voice-2", simulationCallType: "voice" });
-    mocks.traces = { projectId: "hidden-project", traces: ROWS, isError: false };
+    mocks.traces = {
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    };
     step(voiceTask);
 
     expect(screen.queryByTestId("trace-drawer")).not.toBeInTheDocument();
