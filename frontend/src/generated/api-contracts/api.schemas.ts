@@ -19410,7 +19410,7 @@ export interface HarnessCapabilityPairingApi {
 }
 
 /**
- * ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.
+ * ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.
  */
 export type HarnessPairValidationApiState =
   (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
@@ -19420,6 +19420,7 @@ export const HarnessPairValidationApiState = {
   validating: "validating",
   ready: "ready",
   failed: "failed",
+  check_unavailable: "check_unavailable",
   retry: "retry",
   unavailable: "unavailable",
 } as const;
@@ -19435,7 +19436,7 @@ export const HarnessPairValidationApiPurpose = {
 export type HarnessPairValidationApiError = { [key: string]: string };
 
 export interface HarnessPairValidationApi {
-  /** ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing. */
+  /** ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing. */
   state: HarnessPairValidationApiState;
   job_id: string;
   purpose: HarnessPairValidationApiPurpose;
