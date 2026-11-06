@@ -19,7 +19,6 @@ from uuid import UUID
 from django.apps import apps
 from django.conf import settings
 from django.db import models, router
-
 from tfc.utils.base_model import (
     AllObjectsManager,
     BaseModelManager,
@@ -86,11 +85,27 @@ def _scopes_for(model, rows, *, using):
         project_ids = [row.pk for row in rows]
     else:
         project_ids = [row.project_id for row in rows]
-    return {
-        PgProjectScope(value if isinstance(value, UUID) else UUID(str(value)))
+    project_ids = {
+        value if isinstance(value, UUID) else UUID(str(value))
         for value in project_ids
         if value is not None
     }
+    project_model = apps.get_model("tracer", "Project")
+    projects = _raw_rows(project_model, using).filter(pk__in=project_ids)
+    if name == "tracer.project":
+        # Bulk inputs may not exist yet: only persisted visible Projects enroll.
+        project_ids = projects.filter(simulation_agent_id__isnull=True).values_list(
+            "pk", flat=True
+        )
+    else:
+        # Exclude known hidden owners, not deleted/workspace-filtered owners or
+        # soft IDs whose Project was hard-deleted. Their fences outlive sources.
+        project_ids.difference_update(
+            projects.filter(simulation_agent_id__isnull=False).values_list(
+                "pk", flat=True
+            )
+        )
+    return {PgProjectScope(value) for value in project_ids}
 
 
 def _locked_rows(model, ids, *, using):

@@ -14,8 +14,8 @@ count on their own), or of a module-level template, that matches
 ``READS_A_TABLE`` or builds the hourly rollup source. A file is never filed as
 a whole: one file mixes readers of several kinds.
 
-The scan only reads source files. The one case that counts Postgres rows is the
-only one that opens a connection, and it replaces the exporter boundary.
+The scan only reads source files. The row-inventory cases use real Postgres;
+the simulated-run scenario replaces only the exporter boundary.
 """
 
 from __future__ import annotations
@@ -1856,6 +1856,336 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "layer_a_counts": _MIGRATION_PARITY_CHECK,
         "layer_b_deep_equal": _MIGRATION_PARITY_CHECK,
     },
+    "tracer.services.derived_metrics.backfill": {
+        "_committed_keyset_start": filed(
+            NO_SPAN_TABLE,
+            why="repair cursor dating reads committed dependency or field anchors",
+            table=(
+                "metric_source_dependencies, metric_field_values and "
+                "metric_field_values_checkpoint"
+            ),
+        ),
+        "day_page": filed(
+            ROW_DRIVEN,
+            why=(
+                "BackfillRunner nominates retained source keys for its refresh row's "
+                "project. Lease fencing is not visibility: hidden-row admission in "
+                "admission.eligible_projects remains a separate required repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "version_coverage_page": filed(
+            ROW_DRIVEN,
+            why=(
+                "BackfillRunner catches up a saved version through its refresh row; "
+                "source dates nominate keys, not authorization. Depends on the "
+                "separate hidden-project admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.base_list_current_clickhouse": {
+        "source_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "freeze_changes supplies its writer's refresh-row project and finite "
+                "physical keys. That writer helper is not enrolled in production "
+                "at this pin; neither its explicit scope nor its lease proves "
+                "visibility. Enrollment requires the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.base_list_current_pg_state": {
+        "read_pg_response_vector": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "primary PG revision-vector read, not a telemetry read; it neither "
+                "initializes revision rows nor authorizes projects. Hidden revision "
+                "creation is guarded separately by the enabled-hook regressions"
+            ),
+            table="MetricPgResponseRevision and MetricPgIdentityRevision",
+        ),
+    },
+    "tracer.services.derived_metrics.bounded_reads": {
+        "committed_branches": filed(
+            ROW_DRIVEN,
+            why=(
+                "exact manifest attempts for a refresh-row project, including "
+                "current-list copies of physical span facts; not a no-span exemption. "
+                "Manifest/project agreement does not replace the pending visibility "
+                "admission repair or the caller's request authorization"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "windowed_rows_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "wraps committed_branches and a writer-frozen overlay for the "
+                "refresh-row project, then applies the window after collapse. "
+                "Inherits the same separate visibility-admission dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.changes": {
+        "_committed_page": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "reconciliation_page enumerates attempt-qualified dependency or "
+                "lifecycle keys; source span rereads are filed separately"
+            ),
+            table="metric_source_dependencies and metric_unit_state",
+        ),
+        "_latest_membership": filed(
+            ROW_DRIVEN,
+            why=(
+                "change batches reread finite source identities for the refresh "
+                "row's project and organization; immutable collapse is not "
+                "visibility admission. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_source_days": filed(
+            ROW_DRIVEN,
+            why=(
+                "reconciliation_page discovers source dates for the refresh-row "
+                "project; the project predicate alone is not authorization. "
+                "Depends on the hidden-project admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_source_page": filed(
+            ROW_DRIVEN,
+            why=(
+                "reconciliation_page nominates source identities by day for the "
+                "refresh-row project; depends on the hidden-project admission "
+                "repair before the scheduler can safely reach it"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.compaction_ranges": {
+        "destination_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "verifies the refresh attempt's bounded checkpoint range, including "
+                "current-list span facts. Its generation/lease fences do not "
+                "authorize a hidden project; admission is a separate dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.frozen_relations": {
+        "FrozenRelations._measure": filed(
+            NO_SPAN_TABLE,
+            why="hashes connection-local anonymous bucket-part captures",
+            table="metric_frozen_",
+        ),
+        "FrozenRelations.materialize": filed(
+            ROW_DRIVEN,
+            why=(
+                "the refresh row's span_values_select flows through live_parts_select "
+                "into the executed INSERT SELECT; aggregate output does not remove "
+                "the raw span input. Depends on the continuous-admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "FrozenRelations.select": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "returns only a registry-owned anonymous bucket-part capture after "
+                "checking its connection, scope and content digest"
+            ),
+            table="metric_frozen_",
+        ),
+    },
+    "tracer.services.derived_metrics.list_values": {
+        "page_lifecycle_select": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "hydrate_metric_list_values reads lifecycle arrivals for explicit "
+                "page units through its pinned manifest; caller authorization is "
+                "required separately from the manifest/project consistency check"
+            ),
+            table="metric_unit_state",
+        ),
+    },
+    "tracer.services.derived_metrics.predicates": {
+        "MetricFilterCandidates.condition": filed(
+            PROJECT_SET,
+            why=(
+                "native-list candidate relation fragment, not a physical-table "
+                "choice. build_metric_membership is called by the list filter "
+                "builder, which requires its single project to match the pin. "
+                "Current production callers supply no candidate planner and fail "
+                "closed; a future planner must preserve the list's manager scope"
+            ),
+        ),
+        "MetricFilterCandidates.expired_unit_ids": filed(
+            PROJECT_SET,
+            why=(
+                "retention branch over the same native-list canonical candidates; "
+                "a pin and project-id comparison are not authorization. Current "
+                "list calls have no candidate planner and reject metric filters; "
+                "enrollment must retain the enclosing list's manager scope"
+            ),
+        ),
+    },
+    "tracer.services.derived_metrics.publication": {
+        "ClickHousePublicationStore.verify": filed(
+            ROW_DRIVEN,
+            why=(
+                "RefreshWriter verifies frozen attempt bytes for its refresh-row "
+                "project, including current-list span facts. The attempt fence is "
+                "not a hidden-project gate; depends on visibility admission"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "committed_rows_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "collapses exact committed_branches for a refresh-row manifest; "
+                "TABLES includes current-list span facts, not only aggregates. "
+                "Callers must authorize requests and scheduler admission must "
+                "exclude hidden projects independently of attempt visibility"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.refresh": {
+        "RefreshWriter._span_dirty_keys": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh nominates old/new bucket starts from finite physical "
+                "identities for its refresh-row project; hidden-project admission "
+                "is a separate pending repair, not supplied by the lease"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "RefreshWriter.recover_dependencies": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh reconstructs frozen preimages for the refresh-row project "
+                "with a source ceiling and tenant predicate. Recovery fencing "
+                "does not replace the required visibility-admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "payload_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "decodes writer-frozen RowBinary, or returns an empty typed table "
+                "source, for a refresh attempt. Payloads can include current-list "
+                "span facts; their freezing depends on separate project admission"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.retention": {
+        "_expired_physical_payload": filed(
+            ROW_DRIVEN,
+            why=(
+                "probes unreachable attempt namespaces of the refresh-row project, "
+                "including current-list facts, to trigger privacy cleanup; the "
+                "scheduler's hidden-project admission remains a separate dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "finish_pending_expiry": filed(
+            ROW_DRIVEN,
+            why=(
+                "verifies scrubs for durable erasure obligations under the refresh "
+                "row's project lease; current-list payloads are included. This "
+                "cleanup protocol is not authorization to admit hidden work"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "retirement_plan": filed(
+            ROW_DRIVEN,
+            why=(
+                "builds a privacy checkpoint for the refresh-row project, including "
+                "span_values_select recomputation for expiring span buckets. "
+                "Depends on the same separate hidden-project admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.service": {
+        "_preview_evaluated": filed(
+            PROJECT_SET,
+            why=(
+                "preview materializes scoped reduced evidence in a leased temporary "
+                "table; both HTTP preview actions resolve their project through "
+                "project_queryset_for_request and MetricWorkspacePermission"
+            ),
+        ),
+        "preview": filed(
+            PROJECT_SET,
+            why=(
+                "saved and draft preview actions use the visible, organization/"
+                "workspace-scoped project queryset before building Scope; the "
+                "service's concurrency admission and explicit project id do not "
+                "authorize access themselves"
+            ),
+        ),
+    },
+    "tracer.services.derived_metrics.span_two_step": {
+        "diagnostic_span_closure": filed(
+            NOT_A_USER_READ,
+            why=(
+                "no live caller: an uninstalled diagnostic SQL alternative; no "
+                "production module imports or calls diagnostic_span_closure"
+            ),
+        ),
+    },
+    "tracer.services.derived_metrics.unit_reads": {
+        "_authority_ctes": filed(
+            ROW_DRIVEN,
+            why=(
+                "unit_values_select compiles live conversation facts for the "
+                "refresh-row project after source nomination; authority means "
+                "membership, not authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_committed_rows_sql": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "reads exact committed field attempts for a scope and unit set; "
+                "pinned readers and refresh supply separate visibility admission"
+            ),
+            table="metric_field_values and metric_field_values_checkpoint",
+        ),
+        "_field_projection": filed(
+            ROW_DRIVEN,
+            why=(
+                "wraps the source_join built by unit_values_select or "
+                "span_values_select, which can read spans for the refresh row's "
+                "project. This template is not a no-span false positive; its "
+                "source path depends on the separate admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_source_plan": filed(
+            ROW_DRIVEN,
+            why=(
+                "unit_values_select nominates raw and committed-preimage identities "
+                "for requested units of the refresh-row project. Neither unit ids "
+                "nor the scope parameter replace the pending admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "span_values_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh and retention recompute complete dirty span buckets for "
+                "the refresh-row project, collapsing immutable keys before mutable "
+                "windows. Hidden-project admission remains a separate dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+    },
     "tracer.services.derived_metrics.queries": {
         "snapshot_select": filed(
             PROJECT_SET,
@@ -3169,12 +3499,22 @@ TRACE_STORE_ROW = "trace store row: none on this deployment"
 USER_MADE = "needs a user-made object the pickers cannot offer"
 JOB_THROUGH_MANAGERS = "job that visits projects through the managers"
 OTHER_PROJECTS_ROW = "the agent's observability row, which belongs to the other project"
-ROW_REASONS = (TRACE_STORE_ROW, USER_MADE, JOB_THROUGH_MANAGERS, OTHER_PROJECTS_ROW)
+METRIC_LIFECYCLE_ROW = (
+    "explicit metric lifecycle; requires separate visibility admission"
+)
+ROW_REASONS = (
+    TRACE_STORE_ROW,
+    USER_MADE,
+    JOB_THROUGH_MANAGERS,
+    OTHER_PROJECTS_ROW,
+    METRIC_LIFECYCLE_ROW,
+)
 
-# Every reverse relation of a project, as ``app.Model.field``, and why a
-# simulated run cannot leave a row behind it. A new model with a foreign key to a
-# project fails the case below before any row is looked at: its author has to
-# decide whether a simulated run can create one.
+# Every VISIBLE reverse relation, as ``app.Model.field``, and its writer family.
+# Classification is not an exemption: every listed field is counted below.
+# In particular, metric fencing is NOT project-visibility admission. The stored
+# hidden-project scheduler regression in test_derived_metric_simulation_scope.py
+# must pass independently; a complete name inventory cannot establish isolation.
 ROW_TYPES = {
     "integrations.IntegrationConnection.project": USER_MADE,
     "model_hub.AnnotationQueue.project": USER_MADE,
@@ -3199,6 +3539,17 @@ ROW_TYPES = {
     "tracer.InsightConfig.project": USER_MADE,
     "tracer.InsightRun.project": USER_MADE,
     "tracer.InstantEvalRun.project": USER_MADE,
+    # capture_pin requires a committed head/active definition, not a visible
+    # Project manager. Its caller must supply authorized project scope.
+    "tracer.MetricGenerationPin.project": METRIC_LIFECYCLE_ROW,
+    # save_definition seeds pending_backfill after HTTP project authorization;
+    # for_project/take_lease also accept an explicit ID. Continuous admission
+    # therefore needs its own hidden-project check, unlike legacy execute_run.
+    "tracer.MetricProjectRefresh.project": METRIC_LIFECYCLE_ROW,
+    # publish copies the verified attempt's project under its lease fence.
+    "tracer.MetricReadManifest.project": METRIC_LIFECYCLE_ROW,
+    # prepare allocates from the fenced refresh row, not Project.objects.
+    "tracer.MetricRefreshAttempt.project": METRIC_LIFECYCLE_ROW,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,
@@ -3234,13 +3585,22 @@ ROW_TYPES = {
 #
 # The scan reaches only that name rule. A soft project id under another name (a
 # field called ``project`` or ``tracer_project``, an array field called
-# ``project_ids``) or kept inside a JSON field is not found. Every model checked
-# today has the two below and nothing else of the kind: ``applied_projects`` of a
-# guardrail policy holds ids of the gateway's own projects, and ``project_key``
-# and ``external_project_name`` are not ids.
+# ``project_ids``) or kept inside a JSON field is not found. This is not an
+# exhaustive identity scanner. In particular MetricErasureRequest.project_key
+# IS a durable UUID project ID; it is covered explicitly below, together with
+# its hidden related_name='+' navigation FK. The guardrail applied_projects
+# array instead names gateway projects, not tracer.Project identities.
 SOFT_PROJECT_COLUMNS = {
     "model_hub.Score.tracer_project_id": (
         "the project of a trace or span a user scores; written by the score views"
+    ),
+    "tracer.MetricPgResponseRevision.project_id": (
+        "pg_response_save/queryset hooks bump old/new project scopes when enabled; "
+        "the enabled no-hidden-row case must prove simulation exclusion"
+    ),
+    "tracer.MetricSourceScope.project_id": (
+        "begin_source_intent accepts explicit producer scope; no production "
+        "simulation caller is enrolled at this pin, not proof of producer coverage"
     ),
     "tracer.TraceSessionOverlay.project_id": (
         "the project of a session a user bookmarks or renames; written by the "
@@ -3256,6 +3616,94 @@ def _soft_project_columns(apps):
         for field in model._meta.get_fields()
         if not field.is_relation and field.name.endswith("project_id")
     }
+
+
+# _intent writes project_key without navigation FKs so cleanup survives parent
+# deletion. Neither field is found by the two scanners above. Count BOTH; a
+# null navigation FK must never make durable hidden-project work invisible.
+EXPLICIT_PROJECT_COLUMNS = {
+    "tracer.MetricErasureRequest.project": "hidden nullable cleanup navigation FK",
+    "tracer.MetricErasureRequest.project_key": "durable cleanup project UUID",
+}
+
+
+def _assert_project_row_inventory(apps, Project):
+    declared = {
+        f"{relation.related_model._meta.label}.{relation.field.name}"
+        for relation in Project._meta.related_objects
+    }
+    changed = sorted(declared ^ set(ROW_TYPES))
+    assert declared == set(ROW_TYPES), (
+        "the models that point at a project changed; decide whether a simulated "
+        f"run can leave a row in each and pin it in ROW_TYPES: {changed}"
+    )
+    assert set(ROW_TYPES.values()) <= set(ROW_REASONS)
+    soft = _soft_project_columns(apps)
+    assert soft == set(SOFT_PROJECT_COLUMNS), (
+        "the models that name a project by a plain id changed; decide whether a "
+        "simulated run can leave a row in each and pin it in "
+        f"SOFT_PROJECT_COLUMNS: {sorted(soft ^ set(SOFT_PROJECT_COLUMNS))}"
+    )
+    assert all(reason.strip() for reason in SOFT_PROJECT_COLUMNS.values())
+    erasure = apps.get_model("tracer.MetricErasureRequest")
+    navigation = erasure._meta.get_field("project")
+    assert navigation.remote_field.model is Project
+    assert navigation.remote_field.hidden
+    assert erasure._meta.get_field("project_key").get_internal_type() == "UUIDField"
+    assert not set(EXPLICIT_PROJECT_COLUMNS) & (declared | soft)
+
+
+def _assert_no_hidden_project_rows(apps, hidden):
+    named = {}
+    for label in [*ROW_TYPES, *SOFT_PROJECT_COLUMNS, *EXPLICIT_PROJECT_COLUMNS]:
+        model_label, field = label.rsplit(".", 1)
+        model = apps.get_model(model_label)
+        count = model._base_manager.filter(**{field: hidden.pk}).count()
+        if count:
+            named[label] = count
+    assert not named, f"rows name the hidden project after a simulated run: {named}"
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_project_row_inventory_rejects_an_omitted_relation(monkeypatch):
+    from django.apps import apps
+
+    from tracer.models.project import Project
+
+    _assert_project_row_inventory(apps, Project)
+    with monkeypatch.context() as omission:
+        omission.delitem(ROW_TYPES, "tracer.MetricProjectRefresh.project")
+        with pytest.raises(AssertionError, match="MetricProjectRefresh.project"):
+            _assert_project_row_inventory(apps, Project)
+    _assert_project_row_inventory(apps, Project)
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_hidden_project_counter_catches_durable_erasure_without_navigation_fk(
+    organization, workspace
+):
+    from django.apps import apps
+
+    from tracer.services.derived_metrics.deletion_protocol import _intent
+    from tracer.services.simulation_project import ensure_simulation_project
+
+    agent = _agent_without_context(organization, workspace, "Erasure control")
+    hidden = ensure_simulation_project(agent)
+    _assert_no_hidden_project_rows(apps, hidden)
+    # Deliberately inject forbidden durable work through the real outbox writer.
+    # This is a negative control of the oracle, NOT an allowed simulation path.
+    request = _intent(
+        organization_id=organization.pk,
+        project_id=hidden.pk,
+        scope="project",
+    )
+    request.refresh_from_db()
+    assert request.project_id is None
+    assert request.project_key == hidden.pk
+    with pytest.raises(AssertionError, match="MetricErasureRequest.project_key"):
+        _assert_no_hidden_project_rows(apps, hidden)
 
 
 class _Recorder:
@@ -3429,34 +3877,26 @@ SIMULATED_RUN_PATHS = [
 
 @pytest.mark.integration
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "pg_revisions_enabled", [False, True], ids=["hooks-off", "hooks-on"]
+)
 def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
-    organization, workspace, monkeypatch
+    organization,
+    workspace,
+    monkeypatch,
+    settings,
+    pg_revisions_enabled,
+    record_property,
 ):
     from django.apps import apps
-
     from simulate.models.run_test import RunTest
     from simulate.models.test_execution import CallExecution, TestExecution
+
     from tracer.models.project import Project
     from tracer.services.simulation_project import ensure_simulation_project
 
-    declared = {
-        f"{relation.related_model._meta.label}.{relation.field.name}"
-        for relation in Project._meta.related_objects
-    }
-    changed = sorted(declared ^ set(ROW_TYPES))
-    assert declared == set(ROW_TYPES), (
-        "the models that point at a project changed; decide whether a simulated "
-        f"run can leave a row in each and pin it in ROW_TYPES: {changed}"
-    )
-    assert set(ROW_TYPES.values()) <= set(ROW_REASONS)
-    soft = _soft_project_columns(apps)
-    assert soft == set(SOFT_PROJECT_COLUMNS), (
-        "the models that name a project by a plain id changed; decide whether a "
-        "simulated run can leave a row in each and pin it in "
-        f"SOFT_PROJECT_COLUMNS: {sorted(soft ^ set(SOFT_PROJECT_COLUMNS))}"
-    )
-    assert all(reason.strip() for reason in SOFT_PROJECT_COLUMNS.values())
-
+    _assert_project_row_inventory(apps, Project)
+    settings.FI_SESSIONS_PG_REVISIONS_ENABLED = pg_revisions_enabled
     recorder = _install_recorder(monkeypatch)
     agent = _agent_without_context(organization, workspace, "Inventory agent")
     hidden = ensure_simulation_project(agent)
@@ -3484,11 +3924,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
     assert CallExecution.objects.filter(pk=call.pk).exists()
     assert Project.with_simulation.filter(pk=hidden.pk).exists()
 
-    named = {}
-    for label in [*ROW_TYPES, *SOFT_PROJECT_COLUMNS]:
-        model_label, field = label.rsplit(".", 1)
-        model = apps.get_model(model_label)
-        count = model._base_manager.filter(**{field: hidden.pk}).count()
-        if count:
-            named[label] = count
-    assert not named, f"rows name the hidden project after a simulated run: {named}"
+    record_property("completed_simulated_paths", len(SIMULATED_RUN_PATHS))
+    record_property("visible_relation_count", len(ROW_TYPES))
+    record_property("soft_column_count", len(SOFT_PROJECT_COLUMNS))
+    record_property("explicit_column_count", len(EXPLICIT_PROJECT_COLUMNS))
+    record_property("hooks_enabled", pg_revisions_enabled)
+    _assert_no_hidden_project_rows(apps, hidden)
