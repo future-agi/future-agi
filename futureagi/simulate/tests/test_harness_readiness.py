@@ -210,8 +210,13 @@ class TestRows:
             "tool_routing",
             "state",
             "reset",
+            "cancel",
         ]
-        assert {statuses[one] for one in measured} == {"supported"}
+        assert {statuses[one] for one in measured[:-1]} == {"supported"}
+        assert (statuses["cancel"], _rows(report)["cancel"]["reason_code"]) == (
+            "untested",
+            "stop_not_observed",
+        )
         assert report["pairing"]["evidence"] == "pair_certificate"
         assert report["answer"] == {
             "kind": "ready",
@@ -504,9 +509,11 @@ class TestPairs:
         fresh = _report(environment, a2)
 
         assert fresh["pairing"]["evidence"] == "pair_certificate"
-        assert {row["status"] for row in fresh["rows"] if row["measured"]} == {
-            "supported"
-        }
+        assert {
+            row["status"]
+            for row in fresh["rows"]
+            if row["measured"] and row["id"] != "cancel"
+        } == {"supported"}
 
     def test_build_with_unknown_agent_is_untested(self, user, workspace, storage):
         environment, a2 = _with_a2(user, workspace, storage, "rd-unknown-agent")
@@ -1252,3 +1259,152 @@ class TestConsequence:
         assert reset["consequence"] == (
             "No seeded world of ours to reset for this connection"
         )
+
+
+def _stopped(
+    environment, *, key, verified=True, agent=None, certify_only=False, sandbox=True
+):
+    """A run of the defaults (or a validation job) that was stopped after its sandbox
+    started; ``verified`` when our cleanup saw the sandbox gone."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessAttempt
+    from simulate.services.hosted_harness import register_attempt
+
+    job = _run(environment, key=key)
+    payload = dict(job.payload)
+    if certify_only:
+        payload["metadata"] = {**(payload.get("metadata") or {}), "certify_only": True}
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        agent_version=agent or environment.agent_version,
+        payload=payload,
+        cancel_requested_at=timezone.now(),
+        cancel_reason="user_canceled",
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        provider_ref=f"sandbox-{key}" if sandbox else "",
+        cleanup_verified_at=timezone.now() if verified else None,
+    )
+    return job
+
+
+class TestCancel:
+    def test_a_sandboxed_agent_stopped_and_cleaned_up_is_supported(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-cancel-sandbox")
+        _certify(environment, storage)
+        _stopped(environment, key="stop")
+
+        cancel = _rows(_report(environment))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == ("supported", None)
+        assert [one["check"] for one in cancel["evidence"]] == [
+            "stop_requested",
+            "sandbox_absent",
+        ]
+        assert cancel["checked_at"] and cancel["fix"] is None
+        assert cancel["consequence"].startswith("A Stop ends the agent")
+
+    @pytest.mark.parametrize(
+        ("access", "where"),
+        [({"source_access": {"kind": "remote"}}, "remote"), (None, "provider")],
+    )
+    def test_an_agent_outside_our_sandbox_stays_partial_after_a_stop(
+        self, user, workspace, storage, access, where
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, f"rd-cancel-{where}")
+        if access is None:
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version=a2
+            ).update(source_kind="provider")
+        else:
+            runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+                agent_version=a2
+            )
+            runtime.agent_payload = {**(runtime.agent_payload or {}), **access}
+            runtime.save(update_fields=["agent_payload"])
+        _certify(environment, storage, agent=a2)
+        _stopped(environment, key="stop", agent=a2)
+
+        report = _report(environment, a2)
+        cancel = _rows(report)["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == (
+            "partial",
+            "stop_unconfirmed",
+        )
+        expected = {
+            "remote": "Stopping ends our side; the agent may keep running on its own side",
+            "provider": "Stopping ends our side of the call; the provider may keep the"
+            " call open and charge for it",
+        }[where]
+        assert cancel["consequence"] == expected
+        assert report["answer"]["kind"] == "ready"
+        assert report["answer"]["worst"] == "partial"
+
+    def test_no_stop_yet_is_untested_with_the_connection_consequence(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-cancel-none")
+        _certify(environment, storage)
+
+        report = _report(environment)
+        cancel = _rows(report)["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == (
+            "untested",
+            "stop_not_observed",
+        )
+        assert cancel["consequence"].startswith("Stopping ends the agent with its test")
+        assert report["answer"] == {
+            "kind": "ready",
+            "worst": "supported",
+            "reason_code": None,
+        }
+
+    def test_a_stop_still_cleaning_up_is_partial_never_supported(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-cancel-pending")
+        _certify(environment, storage)
+        _stopped(environment, key="stop", verified=False)
+
+        cancel = _rows(_report(environment))["cancel"]
+
+        assert (cancel["status"], cancel["reason_code"]) == (
+            "partial",
+            "stop_unconfirmed",
+        )
+
+    def test_a_validation_stop_and_another_versions_stop_are_ignored(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-cancel-ignored")
+        _certify(environment, storage)
+        _stopped(environment, key="other", agent=a2)
+        _stopped(environment, key="check", certify_only=True)
+
+        cancel = _rows(_report(environment))["cancel"]
+
+        assert cancel["status"] == "untested"
+
+    def test_a_stop_before_any_sandbox_proves_nothing(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "rd-cancel-early")
+        _certify(environment, storage)
+        _stopped(environment, key="early", sandbox=False)
+
+        assert _rows(_report(environment))["cancel"]["status"] == "untested"
+
+    def test_cancel_is_needed_by_no_case(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "rd-cancel-needs")
+        _certify(environment, storage)
+
+        report = harness_readiness.selection_report(
+            _pairing(environment), keys=None, trials=1
+        )
+
+        assert _rows(report)["cancel"]["needed_by"] == 0

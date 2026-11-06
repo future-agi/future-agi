@@ -21,7 +21,11 @@ from simulate.services.harness_readiness.catalogue import (
     Status,
     targets,
 )
-from simulate.services.harness_readiness.evidence import Evidence, readings
+from simulate.services.harness_readiness.evidence import (
+    Evidence,
+    connection,
+    readings,
+)
 from simulate.services.harness_readiness.findings import (
     preflight_findings,
     structural_findings,
@@ -117,6 +121,19 @@ def rows(
                 reason=preflight.reason,
                 checked_at=pairing.runtime.updated_at.isoformat(),
             )
+        elif capability.id == "cancel":
+            # Read from the agent's runs, not the certificate: never Stale or gated.
+            status, code, reason = _status(reading)
+            if reading.finding == "not_run":
+                code, reason = reading.reason_code, reading.reason
+            row = _row(
+                capability,
+                status,
+                reading=reading,
+                reason_code=code,
+                reason=reason,
+                checked_at=reading.checked_at,
+            )
         elif capability.id == "tool_routing" and named:
             names = [one["action"] for one in named]
             failed = Reading(
@@ -170,7 +187,7 @@ def rows(
         statuses[capability.id] = row["status"]
         fresh.setdefault(capability.id, row["status"])
         row["fix"] = _fix(pairing, row, certified=evidence.source == "pair_certificate")
-        row["consequence"] = consequence(row)
+        row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
     return rows
 
@@ -305,15 +322,31 @@ _SHARED_CONSEQUENCES: dict[Status, str] = {
     "stale": "Checked with another agent version; check again before trusting cases"
     " that need this",
 }
+# What a Stop ends, by where the agent runs, until a Stop is confirmed.
+_CANCEL_BY_CONNECTION = {
+    "sandbox": "Stopping ends the agent with its test sandbox; this is confirmed once a"
+    " run of this agent is stopped",
+    "remote": "Stopping ends our side; the agent may keep running on its own side",
+    "provider": "Stopping ends our side of the call; the provider may keep the call"
+    " open and charge for it",
+}
+_CANCEL_CONFIRMED = (
+    "A Stop ends the agent with its test sandbox, so a stopped run spends nothing more"
+)
 _UNMEASURED = (
     "No check measures this yet; results that depend on it are not verified either way"
 )
 
 
-def consequence(row: RowView) -> str:
-    """What ``row``'s status means for the cases, in plain words."""
+def consequence(row: RowView, where: str | None = None) -> str:
+    """What ``row``'s status means for the cases, in plain words; ``where`` is the
+    agent's connection, which decides what a Stop can end."""
     if not row["measured"]:
         return _UNMEASURED
+    if row["id"] == "cancel":
+        if row["status"] == "supported":
+            return _CANCEL_CONFIRMED
+        return _CANCEL_BY_CONNECTION.get(where or "", _CANCEL_BY_CONNECTION["provider"])
     own = _CONSEQUENCES.get(row["id"], {})
     status = row["status"]
     text = (
@@ -334,6 +367,9 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     did not run there is fixed like a failed one.
     """
     if not row["measured"] or row["status"] not in ("blocked", "stale", "untested"):
+        return None
+    if row["id"] == "cancel":
+        # Proved by stopping a run, never by checking the pairing again.
         return None
     environment_id = pairing.environment.id
     pair: FixRecheck | None = (
@@ -427,7 +463,13 @@ def answer(
 ) -> AnswerView:
     """Read from the measured rows: unmeasured ones hold no case back. A failed pair
     whose failure names no action blocks the answer without blocking a row."""
-    lowest = worst(row["status"] for row in rows if row["measured"])
+    lowest = worst(
+        row["status"]
+        for row in rows
+        # A Stop not seen yet is no fault of the pairing: it never lowers the answer.
+        if row["measured"]
+        and not (row["id"] == "cancel" and row["status"] == "untested")
+    )
     pair_failed = failed and not named
     if validating:
         kind = "validating"

@@ -14,11 +14,13 @@ from typing import Any
 
 import structlog
 from django.core.cache import cache
+from django.db.models import F
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HostedHarnessAttempt,
 )
 from simulate.models.harness_versioning import ArchiveLayout
 from simulate.services.harness_readiness.catalogue import (
@@ -325,10 +327,80 @@ def _started_in_sandbox(runtime: HarnessAgentVersionRuntime) -> bool:
     return _payload_source(runtime)["kind"] in _SANDBOX_SOURCES
 
 
+def connection(runtime: HarnessAgentVersionRuntime | None) -> str | None:
+    """Where the agent runs: ``sandbox`` (ours), ``remote`` (its own URL) or
+    ``provider`` (a voice or chat provider); ``None`` without a side row."""
+    if runtime is None:
+        return None
+    if _started_in_sandbox(runtime):
+        return "sandbox"
+    from simulate.services.harness_agent_versions import _payload_source
+
+    return "remote" if _payload_source(runtime)["kind"] == "remote" else "provider"
+
+
+def _cancel(pairing: Pairing) -> Reading:
+    """The agent version's latest Stop of a run whose sandbox existed, as the cancel
+    path recorded it. Only a sandbox the agent ran in, verified gone, confirms the
+    agent stopped; an agent outside it is confirmed by its own side, not ours."""
+    if pairing.agent_version is None:
+        return Reading(
+            "not_run", "stop_not_observed", "No run of this agent stopped yet"
+        )
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job__agent_version_id=pairing.agent_version.id,
+            job__cancel_requested_at__isnull=False,
+            attempt_number=F("job__current_attempt_number"),
+            # A validation job never started the agent; its key is set only on them.
+            job__payload__metadata__certify_only__isnull=True,
+        )
+        .exclude(provider_ref="")
+        .exclude(provider_ref__startswith="pending:")
+        .select_related("job")
+        .order_by("-job__cancel_requested_at")
+        .first()
+    )
+    if attempt is None:
+        return Reading(
+            "not_run", "stop_not_observed", "No run of this agent stopped yet"
+        )
+    seen: list[EvidenceCheck] = [
+        {
+            "check": "stop_requested",
+            "result": attempt.job.cancel_requested_at.isoformat(),
+        }
+    ]
+    if attempt.cleanup_verified_at is None:
+        return Reading(
+            "limited",
+            "stop_unconfirmed",
+            "The last Stop was asked for; our cleanup is not confirmed yet",
+            evidence=seen,
+            checked_at=attempt.job.cancel_requested_at.isoformat(),
+        )
+    seen.append(
+        {"check": "sandbox_absent", "result": attempt.cleanup_verified_at.isoformat()}
+    )
+    if connection(pairing.runtime) != "sandbox":
+        return Reading(
+            "limited",
+            "stop_unconfirmed",
+            "The last Stop ended our side; the agent's own side did not confirm it",
+            evidence=seen,
+            checked_at=attempt.cleanup_verified_at.isoformat(),
+        )
+    return Reading(
+        "passed", evidence=seen, checked_at=attempt.cleanup_verified_at.isoformat()
+    )
+
+
 def readings(pairing: Pairing, evidence: Evidence) -> dict[str, Reading]:
-    """What the certificate says about each measured row."""
+    """What the certificate says about each measured row; ``cancel`` reads the agent
+    version's last Stop instead."""
     checks = evidence.checks
     return {
+        "cancel": _cancel(pairing),
         "start": _start(evidence),
         "message": _single(checks, "chat_ingress", "message_failed"),
         "tool_discovery": _tool_discovery(evidence),
