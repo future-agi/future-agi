@@ -4,8 +4,9 @@ Lives under model_hub/tests so the backend CI shards collect it:
 futureagi/pytest.ini does not recurse into agentic_eval. Does not stub
 structlog or other shared modules: a collection-time stub leaked into the
 rest of the suite and broke CI (`NoneType` has no attribute `debug`).
-Provider I/O and the audio upload are patched per test; the extractor,
-handlers, adapter and provider request builders are the real ones.
+Provider I/O and AudioProcessor.format_audio_output (upload, duration and
+metadata) are patched per test; the extractor, handlers, adapter and
+provider request builders are the real ones.
 """
 
 import base64
@@ -68,7 +69,10 @@ def tts_context(model, messages, provider="openai", run_prompt_config=None):
 
 @pytest.fixture
 def upload():
-    """Stand in for the S3 upload; records the script used for metadata."""
+    """Stub AudioProcessor.format_audio_output (upload and metadata).
+
+    Records the input_text the handler passes for metadata.
+    """
     with patch.object(
         AudioProcessor,
         "format_audio_output",
@@ -340,6 +344,7 @@ class TestStandardSpeechBoundary:
 
 
 ALIAS = "openai/gpt-4o-audio-preview"
+GEMINI_TTS = "vertex_ai/gemini-2.5-flash-preview-tts"
 SYSTEM_ONLY = [
     {"role": "system", "content": "Greet the caller warmly."},
     {"role": "user", "content": ""},
@@ -460,6 +465,47 @@ class TestAudioPreviewUnchanged:
         assert roles == ["system", "developer", "assistant", "tool", "user"]
         assert json.dumps(sent).count(PHRASE) == 1
         assert result.failure
+
+    def test_vertex_gemini_tts_keeps_every_role_through_completion(self, upload):
+        context = tts_context(
+            GEMINI_TTS, copy.deepcopy(SYSTEM_ONLY), provider="vertex_ai"
+        )
+
+        with (
+            patch("litellm.speech") as speech,
+            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+        ):
+            result = TTSHandler(context).execute_sync()
+
+        assert result.failure is None, result.failure
+        assert result.response == AUDIO_URL
+        speech.assert_not_called()
+        kwargs = completion.call_args.kwargs
+        assert kwargs["messages"] == [
+            {"role": "system", "content": "Greet the caller warmly."},
+            {"role": "user", "content": ""},
+        ]
+        assert kwargs["modalities"] == ["audio"]
+        assert upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+
+    async def test_vertex_gemini_tts_async_keeps_every_role_through_completion(
+        self, upload
+    ):
+        context = tts_context(GEMINI_TTS, control_and_user(), provider="vertex_ai")
+
+        with (
+            patch("litellm.aspeech", new_callable=AsyncMock) as aspeech,
+            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+        ):
+            result = await TTSHandler(context).execute_async()
+
+        assert result.failure is None, result.failure
+        aspeech.assert_not_called()
+        completion.assert_called_once()
+        sent = completion.call_args.kwargs["messages"]
+        assert [m["role"] for m in sent] == ["system", "developer", "assistant", "tool", "user"]
+        for text in CONTROL_TEXTS + [SCRIPT]:
+            assert text in upload.call_args.kwargs["input_text"]
 
 
 # ---------------------------------------------------------------------------

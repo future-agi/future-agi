@@ -3882,7 +3882,11 @@ def openai_provider_key(db, organization):
 
 @pytest.fixture
 def speech_boundary():
-    """Patch only the provider call and the audio upload."""
+    """Patch the provider call and AudioProcessor.format_audio_output.
+
+    The formatter stub replaces the upload and the duration, cost and
+    metadata steps; the storage-failure tests keep the real formatter.
+    """
     from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor import (
         AudioProcessor,
     )
@@ -3900,7 +3904,7 @@ def speech_boundary():
 
 @pytest.mark.django_db
 class TestLiteralTTSScriptRoutes:
-    """Real routes, persistence and auth; provider call and upload patched."""
+    """Real routes and persistence; provider call and audio formatter patched."""
 
     def _preview(self, client, dataset, user_text):
         return client.post(
