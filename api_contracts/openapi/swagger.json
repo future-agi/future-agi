@@ -136165,6 +136165,21 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "lost_models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 50
+                },
+                "last_error": {
+                    "title": "Last error",
+                    "type": "string",
+                    "x-nullable": true
                 }
             }
         },
@@ -153055,7 +153070,9 @@
                 "value": {
                     "title": "Value",
                     "type": "object",
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "score": {
                     "title": "Score",
@@ -155605,6 +155622,25 @@
                 }
             }
         },
+        "RunFixRun": {
+            "required": [
+                "id",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
         "RunExecution": {
             "required": [
                 "id",
@@ -155702,6 +155738,9 @@
                 },
                 "summary": {
                     "$ref": "#/definitions/RunSummary"
+                },
+                "fix_run": {
+                    "$ref": "#/definitions/RunFixRun"
                 }
             }
         },
@@ -155987,13 +156026,11 @@
                 "ended_reason": {
                     "title": "Ended reason",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "error_message": {
                     "title": "Error message",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "evaluations": {

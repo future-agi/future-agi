@@ -363,6 +363,24 @@ def test_only_a_started_engine_uses_up_an_attempt(fix_run, provider, monkeypatch
     assert fix_run.sandbox_attempt == 1
 
 
+def test_a_launch_forgets_the_models_lost_over_an_hour_ago(fix_run, provider):
+    recent = (timezone.now() - timedelta(minutes=10)).isoformat()
+    old = (timezone.now() - timedelta(minutes=61)).isoformat()
+    _running(
+        fix_run,
+        engine_notes={
+            "lost_models": {"deepseek/flash": old, "luna/coder": recent},
+            "last_error": None,
+        },
+    )
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    # A model it loses again gets a new time instead of the expired one.
+    assert fix_run.engine_notes["lost_models"] == {"luna/coder": recent}
+
+
 def test_launch_after_the_last_sandbox_closes_the_run_as_engine_died(fix_run, provider):
     _running(fix_run, sandbox_attempt=2)
 
@@ -634,3 +652,37 @@ def test_release_deletes_the_sandbox_once(fix_run, provider):
     fix_run.refresh_from_db()
     assert provider.deleted == ["sandbox-1"]
     assert fix_run.sandbox_ref == ""
+
+
+def test_the_engine_s_last_error_reaches_the_failure_message_unchanged(
+    fix_run, provider
+):
+    # One of the engine's fixed sentences: the failure message shows it as sent.
+    last_error = "A model call kept failing or timing out, so the fix could not finish."
+    _running(
+        fix_run,
+        sandbox_attempt=2,
+        engine_notes={"lost_models": {}, "last_error": last_error},
+    )
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure == {
+        "code": "fix_engine_died",
+        "message": "the improvement engine stopped 2 times before it finished; "
+        f"last error: {last_error}",
+    }
+
+
+def test_an_engine_that_stopped_without_an_error_keeps_the_plain_message(
+    fix_run, provider
+):
+    _running(fix_run, sandbox_attempt=2)
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure["message"] == (
+        "the improvement engine stopped 2 times before it finished"
+    )
