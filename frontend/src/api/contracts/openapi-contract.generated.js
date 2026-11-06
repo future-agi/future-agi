@@ -56023,6 +56023,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        unfinished_only: {
+          title: "Unfinished only",
+          description:
+            "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
+          type: "boolean",
+          default: false,
+        },
         environment_values: {
           title: "Environment values",
           description:
@@ -110699,6 +110706,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ordinal",
         "agent_version",
         "agent_type",
+        "resume",
         "summary",
       ],
       type: "object",
@@ -110778,6 +110786,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+        resume: {
+          $ref: "#/definitions/RunResume",
         },
         summary: {
           $ref: "#/definitions/RunSummary",
@@ -125619,6 +125630,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunResume: {
+      required: ["resumable", "finished", "unfinished", "history"],
+      type: "object",
+      properties: {
+        resumable: {
+          title: "Resumable",
+          type: "boolean",
+        },
+        finished: {
+          title: "Finished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        unfinished: {
+          title: "Unfinished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        history: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunResumeEntry",
+          },
+        },
+      },
+    },
     RunSummary: {
       required: [
         "total",
@@ -130263,6 +130300,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    RunResumeEntry: {
+      required: ["at", "by", "calls"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+        },
+        by: {
+          title: "By",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        calls: {
+          title: "Calls",
+          type: "integer",
         },
       },
     },
