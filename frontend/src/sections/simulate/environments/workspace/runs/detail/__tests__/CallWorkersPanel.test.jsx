@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 
-import { withSteps } from "./workerSteps.fixture";
-
 let result;
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
   ...(await importOriginal()),
-  useCallWorkers: () => result && { ...result, data: withSteps(result.data) },
+  useCallWorkers: () => result,
 }));
 
 const { default: CallWorkersPanel } = await import("../CallWorkersPanel");
@@ -19,69 +17,134 @@ const renderSteps = (ui) => {
   return view;
 };
 
-const TIMELINE = {
+// The API's rows, written as it sends them: simulate/services/harness_worker_steps.py arranges a call's events
+// into these, and is tested there.
+const handOffStep = (
+  key,
+  {
+    parent = null,
+    depth = 1,
+    worker_id,
+    handoff = null,
+    returned = null,
+    parallel = false,
+    relationship = "observed",
+  },
+) => ({
+  kind: "handoff",
+  key,
+  parent,
+  depth,
+  worker_id,
+  transfer: handoff?.type === "transferred",
+  handoff,
+  returned,
+  parallel,
+  turn: 1,
+  order: key,
+  relationship,
+});
+const callStep = (call, { parent = null, depth = 0 } = {}) => ({
+  kind: "tool_call",
+  key: call.seq,
+  parent,
+  depth,
+  worker_id: call.worker_id,
+  call,
+  turn: 1,
+  order: call.seq,
+  relationship: "observed",
+});
+const oneTurn = (request, response) => [{ turn: 1, request, response }];
+
+const WORKERS = [
+  {
+    worker_id: "r/order_lookup",
+    id: "order_lookup",
+    name: "Order-lookup worker",
+    observed: true,
+    undeclared: false,
+    instance_ids: ["s3"],
+  },
+  {
+    worker_id: "r/audit",
+    id: "audit",
+    name: "Audit worker",
+    observed: false,
+    undeclared: false,
+    instance_ids: [],
+  },
+];
+const REQUEST = { text: "Please refund order 1042", at: "2026-10-31T11:59:54" };
+const RESPONSE = {
+  text: "Your refund is on its way",
+  at: "2026-10-31T12:00:10",
+};
+const DELEGATED = {
+  seq: 1,
+  type: "delegated",
+  worker_id: "r/order_lookup",
+  delegation_id: "d1",
+  task: "inspect order 1042",
+  at: "2026-10-31T11:59:55.900",
+  attribution: "reported",
+};
+const LOOKUP = {
+  seq: 2,
+  type: "tool_call",
+  worker_id: "r/order_lookup",
+  delegation_id: "d1",
+  tool: "get_order",
+  status: "error",
+  input: { order_id: "1042" },
+  output: "store unavailable",
+  at: "2026-10-31T11:59:57",
+  attribution: "reported",
+};
+const RETURNED = {
+  seq: 3,
+  type: "returned",
+  worker_id: "r/order_lookup",
+  delegation_id: "d1",
+  result: "eligible",
+  at: "2026-10-31T11:59:59",
+  attribution: "reported",
+};
+const REPLY_CALL = {
+  seq: 4,
+  type: "tool_call",
+  worker_id: null,
+  tool: "send_reply",
+  status: "ok",
+  at: "2026-10-31T12:00:09",
+  attribution: "reported",
+};
+
+// One hand-off with a failed tool call and its return, then a call of the coordinator's own.
+const timeline = ({
+  returned = RETURNED,
+  request = REQUEST,
+  response = RESPONSE,
+  ...rest
+} = {}) => ({
   collected_at: "2026-10-31T12:00:00Z",
   started_at: "2026-10-31T11:59:50",
   coordinator: { name: "Returns coordinator" },
-  request: { text: "Please refund order 1042", at: "2026-10-31T11:59:54" },
-  response: { text: "Your refund is on its way", at: "2026-10-31T12:00:10" },
-  workers: [
-    {
+  workers: WORKERS,
+  events: [DELEGATED, LOOKUP, returned, REPLY_CALL].filter(Boolean),
+  steps: [
+    handOffStep(1, {
       worker_id: "r/order_lookup",
-      id: "order_lookup",
-      name: "Order-lookup worker",
-      observed: true,
-      undeclared: false,
-      instance_ids: ["s3"],
-    },
-    {
-      worker_id: "r/audit",
-      id: "audit",
-      name: "Audit worker",
-      observed: false,
-      undeclared: false,
-      instance_ids: [],
-    },
+      handoff: DELEGATED,
+      returned,
+    }),
+    callStep(LOOKUP, { parent: 1, depth: 1 }),
+    callStep(REPLY_CALL),
   ],
-  events: [
-    {
-      seq: 1,
-      type: "delegated",
-      worker_id: "r/order_lookup",
-      task: "inspect order 1042",
-      at: "2026-10-31T11:59:55.900",
-      attribution: "reported",
-    },
-    {
-      seq: 2,
-      type: "tool_call",
-      worker_id: "r/order_lookup",
-      tool: "get_order",
-      status: "error",
-      input: { order_id: "1042" },
-      output: "store unavailable",
-      at: "2026-10-31T11:59:57",
-      attribution: "reported",
-    },
-    {
-      seq: 3,
-      type: "returned",
-      worker_id: "r/order_lookup",
-      result: "eligible",
-      at: "2026-10-31T11:59:59",
-      attribution: "reported",
-    },
-    {
-      seq: 4,
-      type: "tool_call",
-      worker_id: null,
-      tool: "send_reply",
-      status: "ok",
-      at: "2026-10-31T12:00:09",
-      attribution: "reported",
-    },
-  ],
-};
+  turns: oneTurn(request, response),
+  ...rest,
+});
+const TIMELINE = timeline();
 
 describe("CallWorkersPanel", () => {
   beforeEach(() => {
@@ -131,14 +194,12 @@ describe("CallWorkersPanel", () => {
 
   it("shows an answer returned as data as code, kept as it came", () => {
     result = {
-      data: {
-        ...TIMELINE,
-        events: TIMELINE.events.map((one) =>
-          one.type === "returned"
-            ? { ...one, result: "{'valid': False, 'feedback': 'Too_short'}" }
-            : one,
-        ),
-      },
+      data: timeline({
+        returned: {
+          ...RETURNED,
+          result: "{'valid': False, 'feedback': 'Too_short'}",
+        },
+      }),
       isLoading: false,
       isError: false,
     };
@@ -157,12 +218,7 @@ describe("CallWorkersPanel", () => {
       (_, index) => `line ${index + 1}`,
     ).join("\n\n");
     result = {
-      data: {
-        ...TIMELINE,
-        events: TIMELINE.events.map((one) =>
-          one.type === "returned" ? { ...one, result: answer } : one,
-        ),
-      },
+      data: timeline({ returned: { ...RETURNED, result: answer } }),
       isLoading: false,
       isError: false,
     };
@@ -181,11 +237,11 @@ describe("CallWorkersPanel", () => {
 
   it("marks declared workers that sent nothing, with no request or reply when nothing was handed out", () => {
     result = {
-      data: {
-        ...TIMELINE,
-        workers: TIMELINE.workers.slice(1),
-        events: [TIMELINE.events[3]],
-      },
+      data: timeline({
+        workers: WORKERS.slice(1),
+        events: [REPLY_CALL],
+        steps: [callStep(REPLY_CALL)],
+      }),
       isLoading: false,
       isError: false,
     };
@@ -213,13 +269,12 @@ describe("CallWorkersPanel", () => {
 
   it("says what is missing for a request, reply, coordinator or return that was not seen", () => {
     result = {
-      data: {
-        ...TIMELINE,
+      data: timeline({
         coordinator: null,
         request: null,
-        response: undefined,
-        events: TIMELINE.events.filter((one) => one.type !== "returned"),
-      },
+        response: null,
+        returned: null,
+      }),
       isLoading: false,
       isError: false,
     };
@@ -235,20 +290,23 @@ describe("CallWorkersPanel", () => {
   });
 
   it("shows what a worker returned as formatted text, not raw markdown", () => {
+    // A return whose hand-off the record never saw stands alone, its place unknown.
+    const orphan = {
+      ...RETURNED,
+      seq: 1,
+      result: "**Order 1042**\n- Delivered\n- Inside the window",
+    };
     result = {
-      data: {
-        ...TIMELINE,
-        events: [
-          {
-            seq: 1,
-            type: "returned",
+      data: timeline({
+        events: [orphan],
+        steps: [
+          handOffStep(1, {
             worker_id: "r/order_lookup",
-            result: "**Order 1042**\n- Delivered\n- Inside the window",
-            at: "t1",
-            attribution: "reported",
-          },
+            returned: orphan,
+            relationship: "unknown",
+          }),
         ],
-      },
+      }),
       isLoading: false,
       isError: false,
     };
@@ -262,14 +320,9 @@ describe("CallWorkersPanel", () => {
 
   it("doesn't load an image a worker's text points at", () => {
     result = {
-      data: {
-        ...TIMELINE,
-        events: TIMELINE.events.map((one) =>
-          one.type === "returned"
-            ? { ...one, result: "Done ![](https://host/x?d=secret)" }
-            : one,
-        ),
-      },
+      data: timeline({
+        returned: { ...RETURNED, result: "Done ![](https://host/x?d=secret)" },
+      }),
       isLoading: false,
       isError: false,
     };
@@ -279,21 +332,20 @@ describe("CallWorkersPanel", () => {
   });
 
   it("says a call no agent can be named for is unknown, not the coordinator's", () => {
+    const unattributed = {
+      seq: 1,
+      type: "tool_call",
+      worker_id: null,
+      tool: "get_order",
+      status: "ok",
+      at: "t1",
+      attribution: "unattributed",
+    };
     result = {
-      data: {
-        ...TIMELINE,
-        events: [
-          {
-            seq: 1,
-            type: "tool_call",
-            worker_id: null,
-            tool: "get_order",
-            status: "ok",
-            at: "t1",
-            attribution: "unattributed",
-          },
-        ],
-      },
+      data: timeline({
+        events: [unattributed],
+        steps: [callStep(unattributed)],
+      }),
       isLoading: false,
       isError: false,
     };
@@ -335,43 +387,49 @@ describe("CallWorkersPanel", () => {
     });
     const at = (second) =>
       `2026-10-31T12:00:${String(second).padStart(2, "0")}`;
-    const timeline = (workers, events) => ({
-      data: {
-        ...TIMELINE,
-        workers,
-        events: events.map((one, index) => ({
-          attribution: "reported",
-          ...one,
-          seq: index + 1,
-        })),
-      },
+    const event = (seq, type, id, extra) => ({
+      seq,
+      type,
+      worker_id: `r/${id}`,
+      attribution: "reported",
+      ...extra,
+    });
+    const record = (workers, events, steps) => ({
+      data: timeline({ workers, events, steps }),
       isLoading: false,
       isError: false,
     });
 
     it("credits a nested hand-off to the agent that made it, and keeps a control pass with no answer", () => {
-      result = timeline(
+      const pass = event(1, "transferred", "inspiration", {
+        by: null,
+        delegation_id: "d1",
+        at: at(1),
+      });
+      const handOff = event(2, "delegated", "place", {
+        by: "r/inspiration",
+        delegation_id: "d2",
+        parent_delegation_id: "d1",
+        task: "find places",
+        at: at(2),
+      });
+      const back = event(3, "returned", "place", {
+        delegation_id: "d2",
+        result: "places",
+        at: at(5),
+      });
+      result = record(
         [worker("inspiration"), worker("place")],
+        [pass, handOff, back],
         [
-          {
-            type: "transferred",
-            worker_id: "r/inspiration",
-            by: null,
-            at: at(1),
-          },
-          {
-            type: "delegated",
+          handOffStep(1, { worker_id: "r/inspiration", handoff: pass }),
+          handOffStep(2, {
+            parent: 1,
+            depth: 2,
             worker_id: "r/place",
-            by: "r/inspiration",
-            task: "find places",
-            at: at(2),
-          },
-          {
-            type: "returned",
-            worker_id: "r/place",
-            result: "places",
-            at: at(5),
-          },
+            handoff: handOff,
+            returned: back,
+          }),
         ],
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
@@ -382,37 +440,54 @@ describe("CallWorkersPanel", () => {
         "Answer",
         "Reply",
       ]);
-      const [, pass, handOff] = screen.getAllByTestId("raw-event");
-      expect(pass).toHaveTextContent("→ inspiration worker");
-      expect(handOff).toHaveTextContent("inspiration worker");
-      expect(handOff).toHaveTextContent("→ place worker");
+      const [, passRow, handOffRow] = screen.getAllByTestId("raw-event");
+      expect(passRow).toHaveTextContent("→ inspiration worker");
+      expect(handOffRow).toHaveTextContent("inspiration worker");
+      expect(handOffRow).toHaveTextContent("→ place worker");
     });
 
-    it("marks sibling hand-offs whose spans overlap as in parallel", () => {
-      result = timeline(
+    it("marks the hand-offs the API says ran in parallel", () => {
+      const out = (seq, id, task, second) =>
+        event(seq, "delegated", id, {
+          delegation_id: `d${seq}`,
+          task,
+          at: at(second),
+        });
+      const back = (seq, id, delegation, text, second) =>
+        event(seq, "returned", id, {
+          delegation_id: `d${delegation}`,
+          result: text,
+          at: at(second),
+        });
+      const events = [
+        out(1, "research", "read", 1),
+        out(2, "code", "write", 2),
+        back(3, "research", 1, "notes", 5),
+        back(4, "code", 2, "patch", 6),
+        out(5, "review", "check", 7),
+        back(6, "review", 5, "ok", 8),
+      ];
+      result = record(
         [worker("research"), worker("code"), worker("review")],
+        events,
         [
-          {
-            type: "delegated",
+          handOffStep(1, {
             worker_id: "r/research",
-            task: "read",
-            at: at(1),
-          },
-          { type: "delegated", worker_id: "r/code", task: "write", at: at(2) },
-          {
-            type: "returned",
-            worker_id: "r/research",
-            result: "notes",
-            at: at(5),
-          },
-          { type: "returned", worker_id: "r/code", result: "patch", at: at(6) },
-          {
-            type: "delegated",
+            handoff: events[0],
+            returned: events[2],
+            parallel: true,
+          }),
+          handOffStep(2, {
+            worker_id: "r/code",
+            handoff: events[1],
+            returned: events[3],
+            parallel: true,
+          }),
+          handOffStep(5, {
             worker_id: "r/review",
-            task: "check",
-            at: at(7),
-          },
-          { type: "returned", worker_id: "r/review", result: "ok", at: at(8) },
+            handoff: events[4],
+            returned: events[5],
+          }),
         ],
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
@@ -420,23 +495,38 @@ describe("CallWorkersPanel", () => {
     });
 
     it("says why a step's payload, later steps or a return are missing when the record reached its limit", () => {
-      result = timeline(
+      const toB = event(1, "delegated", "b", {
+        delegation_id: "d1",
+        task: "two",
+        at: at(1),
+      });
+      const toA = event(2, "delegated", "a", {
+        delegation_id: "d2",
+        task: "one",
+        at: at(1),
+      });
+      const lookup = event(3, "tool_call", "a", {
+        delegation_id: "d2",
+        tool: "lookup",
+        status: "ok",
+        input: null,
+        output: null,
+        input_omitted: true,
+        output_omitted: true,
+        at: at(2),
+      });
+      const fromA = event(4, "returned", "a", {
+        delegation_id: "d2",
+        result: "x",
+        at: at(3),
+      });
+      result = record(
         [worker("a"), worker("b")],
+        [toB, toA, lookup, fromA],
         [
-          { type: "delegated", worker_id: "r/b", task: "two", at: at(1) },
-          { type: "delegated", worker_id: "r/a", task: "one", at: at(1) },
-          {
-            type: "tool_call",
-            worker_id: "r/a",
-            tool: "lookup",
-            status: "ok",
-            input: null,
-            output: null,
-            input_omitted: true,
-            output_omitted: true,
-            at: at(2),
-          },
-          { type: "returned", worker_id: "r/a", result: "x", at: at(3) },
+          handOffStep(1, { worker_id: "r/b", handoff: toB }),
+          handOffStep(2, { worker_id: "r/a", handoff: toA, returned: fromA }),
+          callStep(lookup, { parent: 2, depth: 1 }),
         ],
       );
       const uncut = result;
@@ -465,18 +555,26 @@ describe("CallWorkersPanel", () => {
     });
 
     it("keeps a long record's JSON closed, so it stays quick to draw", () => {
-      result = timeline(
+      const handOff = event(1, "delegated", "a", {
+        delegation_id: "d1",
+        task: "many",
+        at: at(1),
+      });
+      const calls = Array.from({ length: 21 }, (_, index) =>
+        event(index + 2, "tool_call", "a", {
+          delegation_id: "d1",
+          tool: `tool_${index}`,
+          status: "ok",
+          input: { n: index },
+          at: at(2),
+        }),
+      );
+      result = record(
         [worker("a")],
+        [handOff, ...calls],
         [
-          { type: "delegated", worker_id: "r/a", task: "many", at: at(1) },
-          ...Array.from({ length: 21 }, (_, index) => ({
-            type: "tool_call",
-            worker_id: "r/a",
-            tool: `tool_${index}`,
-            status: "ok",
-            input: { n: index },
-            at: at(2),
-          })),
+          handOffStep(1, { worker_id: "r/a", handoff: handOff }),
+          ...calls.map((one) => callStep(one, { parent: 1, depth: 1 })),
         ],
       );
       renderSteps(<CallWorkersPanel callExecutionId="c1" />);
@@ -488,9 +586,9 @@ describe("CallWorkersPanel", () => {
   });
 
   describe("turns, placement and usage", () => {
-    const handoff = TIMELINE.events[0];
-    const call = TIMELINE.events[1];
-    const reply = TIMELINE.events[2];
+    const handoff = DELEGATED;
+    const call = LOOKUP;
+    const reply = RETURNED;
     const step = (key, turn, order, extra) => ({
       key,
       kind: "handoff",
@@ -554,7 +652,7 @@ describe("CallWorkersPanel", () => {
       result = {
         data: {
           ...twoTurns(),
-          workers: TIMELINE.workers.map((one) =>
+          workers: WORKERS.map((one) =>
             one.worker_id === handoff.worker_id
               ? { ...one, model: "worker-model", tokens: 1200 }
               : one,
@@ -570,27 +668,25 @@ describe("CallWorkersPanel", () => {
     });
 
     const tracedCall = () => ({
-        data: {
-          ...TIMELINE,
-          steps: [
-            {
-              key: 9,
-              kind: "tool_call",
-              parent: null,
-              depth: 0,
-              worker_id: call.worker_id,
-              call: { ...call, trace_id: "tr-1", span_id: "sp-1" },
-              turn: 1,
-              order: 1,
-              relationship: "observed",
-            },
-          ],
-          turns: [
-            { turn: 1, request: TIMELINE.request, response: TIMELINE.response },
-          ],
-        },
-        isLoading: false,
-        isError: false,
+      data: {
+        ...TIMELINE,
+        steps: [
+          {
+            key: 9,
+            kind: "tool_call",
+            parent: null,
+            depth: 0,
+            worker_id: call.worker_id,
+            call: { ...call, trace_id: "tr-1", span_id: "sp-1" },
+            turn: 1,
+            order: 1,
+            relationship: "observed",
+          },
+        ],
+        turns: [{ turn: 1, request: REQUEST, response: RESPONSE }],
+      },
+      isLoading: false,
+      isError: false,
     });
 
     it("opens a step's trace in Traces, at the step's own span", () => {
@@ -616,7 +712,9 @@ describe("CallWorkersPanel", () => {
           traceIds={["tr-other"]}
         />,
       );
-      expect(screen.queryByRole("button", { name: "Open in Traces" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Open in Traces" }),
+      ).toBeNull();
     });
 
     it("says when nothing was recorded for the participants", () => {
@@ -627,7 +725,7 @@ describe("CallWorkersPanel", () => {
           steps: [],
           turns: [],
           collection: "no_evidence",
-          workers: TIMELINE.workers.map((one) => ({ ...one, observed: false })),
+          workers: WORKERS.map((one) => ({ ...one, observed: false })),
         },
         isLoading: false,
         isError: false,
@@ -704,25 +802,40 @@ describe("CallWorkersPanel", () => {
       at: "2026-10-31T11:59:58",
       attribution: "reported",
     });
-    const TABLE = {
-      ...TIMELINE,
+    const EVENTS = [
+      handOff(1, "r/lookup", "find order 1042"),
+      tool(2, "r/lookup", "get_order", { delegation_id: "d1" }),
+      returned(3, "r/lookup", "d1", "Order 1042 is eligible"),
+      handOff(4, "r/refund", "refund order 1042"),
+      tool(5, "r/refund", "issue_refund", {
+        delegation_id: "d4",
+        status: "error",
+        output: "gateway returned 503",
+      }),
+      returned(6, "r/refund", "d4", null, "error"),
+    ];
+    const TABLE = timeline({
       workers: [
         worker("r/lookup", "Lookup"),
         worker("r/refund", "Refund"),
         worker("r/audit", "Audit", false),
       ],
-      events: [
-        handOff(1, "r/lookup", "find order 1042"),
-        tool(2, "r/lookup", "get_order"),
-        returned(3, "r/lookup", "d1", "Order 1042 is eligible"),
-        handOff(4, "r/refund", "refund order 1042"),
-        tool(5, "r/refund", "issue_refund", {
-          status: "error",
-          output: "gateway returned 503",
+      events: EVENTS,
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/lookup",
+          handoff: EVENTS[0],
+          returned: EVENTS[2],
         }),
-        returned(6, "r/refund", "d4", null, "error"),
+        callStep(EVENTS[1], { parent: 1, depth: 1 }),
+        handOffStep(4, {
+          worker_id: "r/refund",
+          handoff: EVENTS[3],
+          returned: EVENTS[5],
+        }),
+        callStep(EVENTS[4], { parent: 4, depth: 1 }),
       ],
-    };
+    });
     const row = (name) =>
       screen
         .getAllByTestId("worker-row")
