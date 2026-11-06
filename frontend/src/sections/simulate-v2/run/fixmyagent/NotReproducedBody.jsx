@@ -14,7 +14,9 @@ import { scenarioTitle } from "../../_mock/scenarios";
 
   Read as: what happened, in a sentence; each scenario and its repeats, so
   "1 inconclusive" is something you can see; then the two reasons it can
-  happen, each with what to do about it.
+  happen, each with what to do about it. improve.md §3.1: a failed
+  reproduction offers source connection, data repair or a diagnostic-only
+  result — never a search on nothing reproduced.
 */
 const NUM = { fontVariantNumeric: "tabular-nums" };
 const head = {
@@ -37,7 +39,8 @@ export default function NotReproducedBody({
   envName,
   spent,
   onEdit,
-  onContinue,
+  onConnectSource,
+  onDiagnose,
   onOpenIssue,
 }) {
   const issueId = record.trigger?.issueId;
@@ -65,18 +68,25 @@ export default function NotReproducedBody({
       },
     },
     {
+      key: "source",
+      title: "The trigger is in data the environment doesn't have",
+      body: "Connect the source it comes from — the records or tool your production agent reads — then reproduce again.",
+      action: onConnectSource && {
+        label: "Connect a source",
+        onClick: onConnectSource,
+      },
+    },
+    {
       key: "fixed",
       title: `${version} no longer does it`,
       body: `Resolve ${issueId} on its page. If it comes back in production, the Error Feed reopens it.`,
       action: onOpenIssue && { label: `Open ${issueId}`, onClick: onOpenIssue },
     },
     {
-      key: "anyway",
-      title: "You want a fix anyway",
-      body: inconclusive
-        ? `Search with the unmeasured ${inconclusive === 1 ? "scenario" : "scenarios"} as the target. A gain may be noise.`
-        : "Search with nothing reproduced. Any gain may be noise.",
-      action: onContinue && { label: "Continue anyway", onClick: onContinue },
+      key: "diagnose",
+      title: "You want to know what's likely wrong",
+      body: "A diagnosis and a suggested change, with no candidates tried — nothing to ship until it reproduces.",
+      action: onDiagnose && { label: "Diagnose only", onClick: onDiagnose },
     },
   ];
 
@@ -271,6 +281,7 @@ NotReproducedBody.propTypes = {
   /* What reproducing cost, already formatted. */
   spent: PropTypes.string,
   onEdit: PropTypes.func,
-  onContinue: PropTypes.func,
+  onConnectSource: PropTypes.func,
+  onDiagnose: PropTypes.func,
   onOpenIssue: PropTypes.func,
 };

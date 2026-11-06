@@ -32,7 +32,7 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
       ? ["Static checks", `model, protected parts, areas, settings in range, judges untouched${r.repoTests ? `, ${r.repoTests} on code changes` : ""} — every run · ${(() => { const n = r.trials.filter((t) => t.static && t.static.pass === false).length; return n ? `${n} stopped there` : "all passed"; })()}`]
       : ["Static checks", `model, protected parts, judges untouched${r.repoTests ? `, ${r.repoTests} on code changes` : ""} — every run`],
     /* Only improvements stamped with the check (record.frozen.compatCheck) carry it. */
-    ...(r.compat ? [["Fits the environment", `entry point ${r.compat.entry}, build and start command checked against the sealed environment${envSnapshot ? ` ${envSnapshot}` : r.compat.envVersion ? ` ${r.compat.envVersion}` : ""} — every code change · ${(() => { const n = r.trials.filter((t) => t.compat && t.compat.pass === false).length; return n ? `${n} didn't fit, stopped there` : "all fit"; })()}`]] : []),
+    ...(r.compat ? [["Fits the environment", `entry point ${r.compat.entry}, build and start command checked against the simulated environment${envSnapshot ? ` ${envSnapshot}` : r.compat.envVersion ? ` ${r.compat.envVersion}` : ""} — every code change · ${(() => { const n = r.trials.filter((t) => t.compat && t.compat.pass === false).length; return n ? `${n} didn't fit, stopped there` : "all fit"; })()}`]] : []),
     ...(r.textSearch ? [["Searched in text", "runs as text conversations · finalists as real calls"]] : []),
     ...(r.winner ? [
       ["Finalists scored once", (r.finalists || []).length ? r.finalists.map((f) => `Run ${f.n} ${f.heldScore}%${f.winner ? " · winner" : ""}`).join(" · ") : `${r.heldBase}% → ${r.heldScore}%`],

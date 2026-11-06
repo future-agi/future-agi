@@ -40,7 +40,7 @@ export const candidatesOf = (record) => {
       eligible: !t.brokeBlocker && !t.cheats && !(t.repoTests && !t.repoTests.pass) && !unfit && !overCost && !overLatency && !noisy,
       repoFailed: !!t.repoTests && !t.repoTests.pass,
       ...(unfit && { unfit: true }),
-      why: t.cheats ? "failed a check" : t.brokeBlocker ? "a must-pass failure repeated" : unfit ? (t.static && t.static.pass === false ? "failed a static check" : "doesn't fit the sealed environment") : t.repoTests && !t.repoTests.pass ? "broke the repository's tests" : overCost ? "over the cost limit" : overLatency ? "over the latency limit" : noisy ? "held-back gain within run-to-run noise" : null,
+      why: t.cheats ? "failed a check" : t.brokeBlocker ? "a must-pass failure repeated" : unfit ? (t.static && t.static.pass === false ? "failed a static check" : "doesn't fit the simulated environment") : t.repoTests && !t.repoTests.pass ? "broke the repository's tests" : overCost ? "over the cost limit" : overLatency ? "over the latency limit" : noisy ? "held-back gain within run-to-run noise" : null,
     };
   });
 };

@@ -145,7 +145,7 @@ export const fixDepthOf = (agent) => {
 
 export const PROOF_KINDS = {
   sealed: {
-    label: "Sealed",
+    label: "Simulated",
     note: "Tool calls were answered by the seeded world inside our sandbox; sub-goals were checked against the world's end state and the agent's tool calls. Strongest proof.",
   },
   live: {
@@ -250,7 +250,7 @@ export const proofKindOf = (agent) => {
 export const runModeSwitchOf = (agent) => {
   if (!adapterOnly(agent)) return null;
   return proofKindOf(agent).kind === "live"
-    ? { to: "sealed", label: "Run sealed instead" }
+    ? { to: "sealed", label: "Run simulated instead" }
     : { to: "live", label: "Run live" };
 };
 

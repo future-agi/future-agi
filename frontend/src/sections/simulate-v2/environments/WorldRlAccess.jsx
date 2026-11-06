@@ -102,7 +102,7 @@ export default function WorldRlAccess({ world }) {
           <Row label="Source">{`${host.name} · runs here through a tested adapter`}</Row>
         )}
         <Row label="Release">
-          {`${entry.release.version} · locked · ${host ? "its own grader" : "scorer v1"}`}
+          {`${entry.release.version} · locked · ${host ? "its own grader" : `reward ${reward}`}`}
         </Row>
         <Row label="Splits">
           {`Train ${train}${validation ? ` · Validation ${validation}` : ""} · Test ${test} tasks (test answers and hidden checks stay hidden)`}

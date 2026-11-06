@@ -966,11 +966,12 @@ export default function BuildFromAgent() {
     if (!env?.id || !hydrated) return;
     if (evalsResetRef.current === env.id) return;
     evalsResetRef.current = env.id;
-    const preset = env.evalPreset || [];
+    /* evals.md: only evaluations someone selects run — a new build starts
+       with none; its suggestions wait on the Evaluations tab. */
     dispatch({
       type: "patchEnvState",
       envId: env.id,
-      patch: { evals: preset },
+      patch: { evals: [] },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env?.id, hydrated]);
@@ -1061,12 +1062,16 @@ export default function BuildFromAgent() {
         envId: env.id,
         patch: {
           agent: null,
+          /* Customized from a ready world with no agent (plan builder §1). */
+          ...(source?.request && { customizeRequest: source.request }),
           envVersions: [
             {
               id: `${env.id}-v1`,
               label: "v1",
               createdAt: now,
-              note: "First build.",
+              note: source?.request
+                ? `Copied from ${source.worldSource?.label || "a ready world"} to customize: ${source.request}`
+                : "First build.",
               scenarios: envState.scenarios?.length || 0,
               changed: ["contract", "seed"],
               tools: v1Tools,
@@ -1084,6 +1089,7 @@ export default function BuildFromAgent() {
       envId: env.id,
       patch: {
         agent,
+        ...(source?.request && { customizeRequest: source.request }),
         agentVersions: [
           {
             id: "agent-v1",

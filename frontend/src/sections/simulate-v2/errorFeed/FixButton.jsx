@@ -27,11 +27,11 @@ const IN_FLIGHT = {
   },
   ready: {
     label: "Review fix",
-    why: "The fix finished — review the verdict and ship it as a draft.",
+    why: "The fix finished — review the verdict, then open a pull request (a draft if it isn't Verified).",
   },
   review: {
     label: "View fix",
-    why: "The fix is shipped as a draft. Once deployed, mark it released.",
+    why: "The fix is shipped. Once deployed, mark it released.",
   },
   watching: {
     label: "View fix",

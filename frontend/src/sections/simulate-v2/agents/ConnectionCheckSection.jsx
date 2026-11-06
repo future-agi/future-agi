@@ -17,6 +17,8 @@ import Iconify from "src/components/iconify";
 import CodeBlock from "src/components/code-block";
 import SettingsSection from "./SettingsSection";
 import { foundValuesOf } from "./foundFacts";
+import { definitionOf } from "../_mock/agentRegistry";
+import { codeRefOf, isGitAgent } from "../_mock/codeRefs";
 import TestedVersionsMatrix from "../compat/TestedVersionsMatrix";
 import {
   checkSavedPatch,
@@ -137,19 +139,40 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
   const [draft, setDraft] = useState(spec);
   /* The fields for the method being shown — the draft's while editing. */
   const method = (editing ? draft : spec).method;
+  const CHECKS = checksFor(spec);
+  /* connect.md: request/reply mapping only when the adapter needs it — a
+     field detection couldn't fill, or one the check failed on. */
+  const mappingFailed = (agent.values?.connectionTest?.results || []).some(
+    (r) => r.state === "failed" && ["replies", "continuity"].includes(r.id),
+  );
+  const mappingNeeded = (f) =>
+    !f.http || !!editing || mappingFailed || !String(spec[f.id] || "").trim();
   const fields = FIELDS.filter(
     (f) =>
       (f.always || fromCode) &&
       !(f.http && method === "async") &&
-      !(f.async && method !== "async"),
+      !(f.async && method !== "async") &&
+      mappingNeeded(f),
   );
-  const CHECKS = checksFor(spec);
   const focusRef = useRef(null);
   const [testing, setTesting] = useState(-1);
   const timers = useRef([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
   const status = connectionStateOf(agent);
+  /* connect.md §4: the commit the check ran on. If the branch moved since,
+     ask — keep the checked commit or check the new one; never swap it. */
+  const headRef = isGitAgent(agent)
+    ? codeRefOf(agent, (agent.versions || []).slice(-1)[0])
+    : null;
+  const checkedSha = agent.values?.connectionTest?.commit || null;
+  const moved =
+    headRef &&
+    checkedSha &&
+    checkedSha !== headRef.sha &&
+    agent.values?.connectionKeptCommit !== headRef.sha
+      ? headRef
+      : null;
   const test = agent.values?.connectionTest || null;
   const shown =
     testing >= 0
@@ -195,10 +218,16 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
     timers.current.push(
       setTimeout(
         () => {
-          const out = runConnectionCheck(agent, spec, found.tools);
+          const out = {
+            ...runConnectionCheck(agent, spec, found.tools),
+            ...(headRef && { commit: headRef.sha, branch: headRef.branch }),
+          };
           setTesting(-1);
           onSaveValues(
-            checkSavedPatch(agent.values, out),
+            {
+              ...checkSavedPatch(agent.values, out),
+              connectionKeptCommit: null,
+            },
             out.passed
               ? "Connection ready — every check passed."
               : `${out.results.filter((r) => r.state === "failed").length} check${out.results.filter((r) => r.state === "failed").length === 1 ? "" : "s"} failed — the fix is next to each.`,
@@ -211,6 +240,32 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
   };
 
   const repair = (r) => {
+    if (r.repair.id === "replySuggest" && r.suggest)
+      return onSaveValues(
+        {
+          connection: { ...spec, ...r.suggest },
+          ...clearedCheckPatch(agent.values, "replies"),
+        },
+        `Reply read from ${r.suggest.replyField} — re-check to confirm.`,
+      );
+    if (r.repair.id === "secret") {
+      const fixes = agent.values?.foundCorrections || {};
+      const keys = definitionOf(agent)?.credentialKeys || [];
+      return onSaveValues(
+        {
+          foundCorrections: {
+            ...fixes,
+            credentialKeys: keys.map((k) =>
+              typeof k === "object" && k.unset
+                ? { name: k.name, ref: `vault://workspace/${k.name}` }
+                : k,
+            ),
+          },
+          ...clearedCheckPatch(agent.values, "starts"),
+        },
+        "Secret reference set — re-check to confirm it starts.",
+      );
+    }
     if (REPAIR_FIELD[r.repair.id]) return edit(REPAIR_FIELD[r.repair.id]);
     if (r.repair.id === "tools") {
       onSaveValues(
@@ -501,6 +556,52 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
                 : "Test connection"}
           </Button>
         </Stack>
+        {moved && testing < 0 && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+            }}
+          >
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              width={16}
+              sx={{ color: "status.warning.fg", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+              {`${moved.branch} moved to ${moved.sha} after the check ran on ${checkedSha}.`}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() =>
+                onSaveValues(
+                  { connectionKeptCommit: moved.sha },
+                  `Kept the checked commit ${checkedSha}.`,
+                )
+              }
+              sx={{ borderColor: "divider", flexShrink: 0 }}
+            >
+              {`Keep ${checkedSha}`}
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={runTest}
+              sx={{ borderColor: "divider", flexShrink: 0 }}
+            >
+              {`Check ${moved.sha}`}
+            </Button>
+          </Stack>
+        )}
         {shown && (
           <Box
             sx={{
@@ -556,6 +657,28 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
                       >
                         {r.detail}
                       </Typography>
+                    )}
+                    {/* The last lines it printed, values masked. */}
+                    {(r.log || r.probe) && (
+                      <Box
+                        component="pre"
+                        sx={{
+                          m: 0,
+                          mt: 0.75,
+                          px: 1.25,
+                          py: 0.75,
+                          borderRadius: "4px",
+                          bgcolor: "background.neutral",
+                          typography: "s3",
+                          fontFamily: MONO,
+                          whiteSpace: "pre-wrap",
+                          color: "text.secondary",
+                        }}
+                      >
+                        {r.log
+                          ? r.log.join("\n")
+                          : `Probe response (redacted)\n${JSON.stringify(r.probe, null, 2)}`}
+                      </Box>
                     )}
                   </Box>
                   {r.repair && testing < 0 && (
@@ -622,8 +745,8 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
           >
             The agent families our connection paths were tested with, the
             evidence, and what isn&apos;t covered. A family not listed, or
-            Untested, may still connect — its results just aren&apos;t
-            certified.
+            Untested, may still connect — we just haven&apos;t checked that path
+            ourselves.
           </Typography>
           <TestedVersionsMatrix />
         </DialogContent>

@@ -57,7 +57,7 @@ export const conditionSupportOf = (env, envState) => {
     ? {
         ok: false,
         reason:
-          "This environment's tools are live, so a failure can't be forced. Use a sealed copy of the environment to test it.",
+          "This environment's tools are live, so a failure can't be forced. Use a simulated copy of the environment to test it.",
       }
     : { ok: true, reason: null };
 };

@@ -8,6 +8,7 @@ import {
   Button,
   MenuItem,
   Select,
+  TextField,
   Tooltip,
 } from "@mui/material";
 import { paths } from "src/routes/paths";
@@ -16,6 +17,7 @@ import { getSurface } from "../_mock/surfaces";
 import { useConnectedAgents } from "../store";
 import { SectionCard } from "../components/primitives";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
+import ClosableDialog from "../components/ClosableDialog";
 import { HintLine } from "../agents/connect/replicationBits";
 import WorldAgentPicker from "./AgentChoice";
 import WorldFitReport from "./WorldFitReport";
@@ -61,11 +63,16 @@ export default function TemplateBuildPanel({
   const [agentId, setAgentId] = useState(null);
   const agent = agents.find((a) => a.id === agentId) || null;
   const [dialogOpen, setDialogOpen] = useState(false);
+  /* catalogue.md §3 Review adoption: the copy is confirmed on its own,
+     after the agent is chosen and before anything is copied or started. */
+  const [adopting, setAdopting] = useState(null);
   const build = useBuildForAgent();
   /* The tool binding the person reviewed; null until they change one. */
   const [binding, setBinding] = useState(null);
   /* Adapting writes scenarios for the agent: a fork that doesn't compare. */
   const [adapt, setAdapt] = useState(false);
+  /* What to change when customizing without an agent. */
+  const [changes, setChanges] = useState("");
   /* Mappings whose differences someone reviewed, and the measurable-only choice. */
   const [reviewed, setReviewed] = useState([]);
   const [measurableOk, setMeasurableOk] = useState(false);
@@ -142,7 +149,7 @@ export default function TemplateBuildPanel({
       )}
 
       <SectionCard
-        title="Build an agent's environment from this world"
+        title="Use it with your agent"
         subtitle="The world is the starting point; the agent is what's tested."
       >
         <Stack sx={{ p: 2.5 }} spacing={2}>
@@ -340,6 +347,55 @@ export default function TemplateBuildPanel({
         </Stack>
       </SectionCard>
 
+      {/* Customize a ready environment (plan builder §1, T02): no agent is
+          needed to design — a private copy with the changes asked for,
+          reviewed before it's built. */}
+      <SectionCard
+        title="Customize it first"
+        subtitle="No agent needed. Say what to change; you review the design before a private copy is built."
+      >
+        <Stack sx={{ p: 2.5 }} spacing={1.25}>
+          <TextField
+            multiline
+            minRows={2}
+            size="small"
+            placeholder="For example: add a loyalty tier table, and refunds over $500 need a supervisor"
+            value={changes}
+            onChange={(e) => setChanges(e.target.value)}
+            disabled={!!blocked}
+          />
+          <Stack direction="row" justifyContent="flex-end">
+            <Button
+              variant="outlined"
+              size="small"
+              color="inherit"
+              disabled={!!blocked || changes.trim().length < 5}
+              onClick={() =>
+                navigate(paths.dashboard.simulate.environmentBuild, {
+                  state: {
+                    presetSource: {
+                      worldSource: { ...templateWorldSource(template), pack },
+                      ...(entry && {
+                        release: entry.release.version,
+                        catalogueId: entry.id,
+                      }),
+                      scenarioCount,
+                      envName: `${template.name} · copy`,
+                      request: changes.trim(),
+                    },
+                  },
+                })
+              }
+              startIcon={
+                <Iconify icon="solar:pen-new-square-linear" width={16} />
+              }
+            >
+              Customize without an agent
+            </Button>
+          </Stack>
+        </Stack>
+      </SectionCard>
+
       <SectionCard title="What this world gives you">
         <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
           <Line label="World" value={`${rows.toLocaleString()} seeded rows`} />
@@ -399,9 +455,79 @@ export default function TemplateBuildPanel({
           defaultVersion={agent.production || agent.latest}
           onBuild={(choice) => {
             setDialogOpen(false);
-            startBuild(choice);
+            setAdopting(choice);
           }}
         />
+      )}
+      {adopting && (
+        <ClosableDialog
+          open
+          onClose={() => setAdopting(null)}
+          PaperProps={{ sx: { maxWidth: 480, width: "100%", p: 2.5 } }}
+        >
+          <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+            Review adoption
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.secondary",
+              mt: 0.25,
+              mb: 1.5,
+            }}
+          >
+            {`A private copy of ${template.name} for ${agent?.name || "your agent"}. The catalogue release stays unchanged.`}
+          </Typography>
+          <Stack spacing={0.75}>
+            <Line
+              label="Source"
+              value={
+                entry
+                  ? `${template.name} · release ${entry.release.version}`
+                  : template.name
+              }
+            />
+            <Line
+              label="Data copied"
+              value={`${(template.seed?.tables || []).length} tables · ${rows.toLocaleString()} rows`}
+            />
+            <Line
+              label="Scenarios copied"
+              value={`${scenarioCount} · ${picked.name}`}
+            />
+            <Line label="Visibility" value="Private to this workspace" />
+            <Line
+              label="Agent"
+              value={`${agent?.name || "—"} · ${adopting.version}`}
+            />
+          </Stack>
+          <Stack
+            direction="row"
+            justifyContent="flex-end"
+            spacing={1}
+            sx={{ mt: 2 }}
+          >
+            <Button
+              size="small"
+              onClick={() => setAdopting(null)}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={() => {
+                const choice = adopting;
+                setAdopting(null);
+                startBuild(choice);
+              }}
+            >
+              Create private copy
+            </Button>
+          </Stack>
+        </ClosableDialog>
       )}
     </Stack>
   );

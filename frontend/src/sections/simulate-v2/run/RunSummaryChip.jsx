@@ -48,7 +48,9 @@ const chipSx = (below) =>
  * The run summary, compact — for the run header, beside the status chip:
  * "pass^1 66% · pass^3 51%". Execution health sits in its own chip.
  */
-export default function RunSummaryChip({ summary }) {
+/* `subset` ({ ran, requested }): a rate read from part of what was asked
+   for says so (runs §4) — never a whole-suite rate from a subset. */
+export default function RunSummaryChip({ summary, subset = null }) {
   if (!summary) return null;
   const causes = causeCountsLine(summary);
   return (
@@ -104,6 +106,8 @@ export default function RunSummaryChip({ summary }) {
               {`${summary.pass1Pct}% passed`}
               {summary.k > 1 &&
                 ` · ${summary.passKPct}% all ${summary.k} repeats`}
+              {subset &&
+                ` · ${subset.ran.toLocaleString()} of ${subset.requested.toLocaleString()} requested`}
             </>
           )}
         </Typography>
@@ -124,7 +128,10 @@ export default function RunSummaryChip({ summary }) {
     </Tooltip>
   );
 }
-RunSummaryChip.propTypes = { summary: PropTypes.object };
+RunSummaryChip.propTypes = {
+  summary: PropTypes.object,
+  subset: PropTypes.object,
+};
 
 /**
  * Execution health — ours, not the agent's — said as what it cost: "11 not

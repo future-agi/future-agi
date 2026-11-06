@@ -188,6 +188,10 @@ export const agentContextOf = (agent, settings) => {
     skills,
     location,
     v: location === "library" ? saved?.v || 1 : null,
+    /* skills.md: agent contexts are versioned items with tags agents pull;
+       a repo-resident one is versioned by the agent's own commits. */
+    tag: location === "library" ? saved?.tag || "production" : null,
+    agentVersion: agent.production || agent.latest || null,
   };
 };
 
@@ -228,7 +232,10 @@ const withSkill = (settings, id, fn) =>
   libraryOf(settings).map((s) => (s.id === id ? fn(s) : s));
 
 /** A new skill, version 1, untested and untagged. */
-export const createSkill = (settings, { name, description, text }) => {
+export const createSkill = (
+  settings,
+  { name, description, text, files = [] },
+) => {
   const slug = String(name || "skill")
     .trim()
     .toLowerCase()
@@ -246,6 +253,8 @@ export const createSkill = (settings, { name, description, text }) => {
         by: currentUser()?.name || "You",
         note: "First version",
         text: text || md(slug, description || "", ""),
+        /* skills.md: a SKILL.md with optional supporting files. */
+        ...(files.length && { files }),
       },
     ],
     tags: {},

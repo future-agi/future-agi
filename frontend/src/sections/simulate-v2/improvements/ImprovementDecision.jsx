@@ -188,7 +188,14 @@ export default function ImprovementDecision({
                     : "Couldn't measure"
                 }
               />
-              <Line k="Latency" v={signed(outcome.effect.latency, "%")} />
+              <Line
+                k="Latency"
+                v={
+                  outcome.latencyKnown === false
+                    ? "Not measured"
+                    : signed(outcome.effect.latency, "%")
+                }
+              />
               <Line
                 k="Target scenarios broken"
                 v={`${shipped.broke ?? 0}`}

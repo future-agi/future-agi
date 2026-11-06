@@ -63,7 +63,6 @@ export const finishBuildPatch = (env, envState = {}, now = new Date()) => {
       scenarios,
       envVersions,
       ...(!envState.activeEnvVersion && { activeEnvVersion: "v1" }),
-      ...(!(envState.evals || []).length && env.evalPreset?.length && { evals: env.evalPreset }),
     },
   };
 };

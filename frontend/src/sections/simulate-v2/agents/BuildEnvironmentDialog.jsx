@@ -14,7 +14,9 @@ import {
 import Iconify from "src/components/iconify";
 import { useOptionalSimStore } from "../store";
 import { uniqueEnvName } from "../_mock/envNames";
-import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import { codeRefOf, isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import { definitionOf, sourceKindOf } from "../_mock/agentRegistry";
+import { checksConnection } from "../_mock/connectionCheck";
 import {
   PROVIDER_LABELS,
   agentNeedsRuntime,
@@ -37,14 +39,63 @@ const MAX_SCENARIOS = 1000;
 
 /* The checks a build needs before it starts: the agent can be reached, its
    keys resolve, a sandbox is free, and the parallel worlds are admitted. */
-const buildChecks = (agent, worlds) => {
+const buildChecks = (agent, worlds, version) => {
   const v = agent?.values || {};
+  /* builder.md "Build from an existing Agent version" §1: the stored source,
+     each credential by reference and a passed connection check — shown
+     before a build starts, never re-uploaded. */
+  const ver = (agent?.versions || []).find((x) => x.label === version);
+  const ref = isGitAgent(agent) && ver ? codeRefOf(agent, ver) : null;
+  const kind = sourceKindOf(agent);
+  const keys = (definitionOf(agent)?.credentialKeys || []).filter(
+    (k) => k && typeof k === "object" && k.name,
+  );
+  const sourceRows = [
+    ...(ref || kind === "upload"
+      ? [
+          factCheck({
+            id: "archive",
+            label: "Source archive",
+            ok: !!ver,
+            okText: ref
+              ? `${ref.branch} @ ${ref.sha} — stored with ${version}; nothing is uploaded again.`
+              : `The upload stored with ${version} — nothing is uploaded again.`,
+            failText:
+              "No stored source for this version — sync the agent first.",
+          }),
+        ]
+      : []),
+    ...keys.map((k) =>
+      factCheck({
+        id: `cred:${k.name}`,
+        label: k.name,
+        ok: !k.unset,
+        okText: k.ref
+          ? `By reference · ${k.ref}`
+          : "By reference, from the agent's connection.",
+        failText: "Not set — add it on the agent's Connections tab.",
+      }),
+    ),
+    ...(checksConnection(agent)
+      ? [
+          factCheck({
+            id: "connection",
+            label: "Connection checked",
+            ok: !!v.connectionTest?.passed,
+            okText: "Its connection check passed.",
+            failText:
+              "Its connection check hasn't passed — run it on the agent's Connections tab.",
+          }),
+        ]
+      : []),
+  ];
   const provider = PROVIDER_LABELS[v.provider] || null;
   const rt = runtimeOf(agent);
   const local = v.runLocation === "local";
   /* A provider's concurrency cap, when the connection recorded one. */
   const cap = Math.round(Number(v.maxConcurrency)) || PARALLEL_MAX;
   return [
+    ...sourceRows,
     factCheck({
       id: "reach",
       label: "Agent",
@@ -114,6 +165,8 @@ export default function BuildEnvironmentDialog({
   const creditBalance = useCreditBalance();
   const gates = useRoleGates();
   const [name, setName] = useState("");
+  /* builder.md: the behaviour to test — the proposal is built from it. */
+  const [request, setRequest] = useState("");
   const envs = useOptionalSimStore()?.state?.myEnvironments || [];
   const [version, setVersion] = useState(defaultVersion);
   /* Held as typed, so a half-typed number isn't snapped mid-edit. */
@@ -139,7 +192,7 @@ export default function BuildEnvironmentDialog({
   const worlds = startWorlds;
   /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
   const credits = countOk ? buildCreditsCheck(count, creditBalance) : null;
-  const preflight = usePreflight(buildChecks(agent, worlds), [
+  const preflight = usePreflight(buildChecks(agent, worlds, version), [
     open,
     version,
     worlds,
@@ -164,19 +217,22 @@ export default function BuildEnvironmentDialog({
         : agent.production || agent.latest,
     );
     setCountText("10");
+    setRequest("");
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const blocked = !name.trim()
     ? "Name it first"
-    : !countOk
-      ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
-      : credits && !credits.ok
-        ? "Over your AI credits — build fewer scenarios"
-        : !preflight.ready
-          ? preflight.status === "done"
-            ? "Fix what preflight found, then run it again"
-            : "Run preflight first"
-          : null;
+    : request.trim().length < 10
+      ? "Say what it should test"
+      : !countOk
+        ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+        : credits && !credits.ok
+          ? "Over your AI credits — build fewer scenarios"
+          : !preflight.ready
+            ? preflight.status === "done"
+              ? "Fix what preflight found, then run it again"
+              : "Run preflight first"
+            : null;
 
   return (
     <ClosableDialog
@@ -210,6 +266,19 @@ export default function BuildEnvironmentDialog({
             fullWidth
             value={name}
             onChange={(e) => setName(e.target.value)}
+            InputProps={{ sx: { typography: "s2" } }}
+          />
+        </Box>
+        <Box>
+          <Label>What should this environment test?</Label>
+          <TextField
+            size="small"
+            fullWidth
+            multiline
+            minRows={2}
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+            placeholder="e.g. Refunds inside and outside the 30-day window, and when a manager must approve"
             InputProps={{ sx: { typography: "s2" } }}
           />
         </Box>
@@ -394,17 +463,7 @@ export default function BuildEnvironmentDialog({
           </Typography>
         )}
         {/* The same build from code — what Build environment would start. */}
-        <CopyCommandButton
-          command={`fi sim env create --repo . --name ${(
-            name.trim() || `${agent?.name || "my"} environment`
-          )
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(
-              /^-|-$/g,
-              "",
-            )} \\\n  --agent "${agent?.name || "my-agent"}@${version}" \\\n  --request "Test it with ${count} scenarios" --budget 100`}
-        />
+        <CopyCommandButton command="fi sim env create --repo ." />
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
@@ -415,7 +474,13 @@ export default function BuildEnvironmentDialog({
           disabled={!!blocked}
           onClick={() =>
             gates.canRun
-              ? onBuild({ name: name.trim(), version, count, parallel: worlds })
+              ? onBuild({
+                  name: name.trim(),
+                  version,
+                  count,
+                  parallel: worlds,
+                  request: request.trim(),
+                })
               : enqueueSnackbar(gates.runReason, { variant: "info" })
           }
         >

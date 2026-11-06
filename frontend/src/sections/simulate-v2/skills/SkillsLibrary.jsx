@@ -324,8 +324,8 @@ export default function SkillsLibrary() {
                         sx={{ ...cell, color: "text.secondary" }}
                       >
                         {inRepo
-                          ? "In the repo · read-only here"
-                          : `In the library · v${c.v}`}
+                          ? `In the repo${c.agentVersion ? ` · with agent ${c.agentVersion}` : ""} · read-only here`
+                          : `In the library · v${c.v} · tagged ${c.tag}`}
                       </Box>
                       <Box component="td" sx={{ ...cell, textAlign: "right" }}>
                         {inRepo && (
@@ -893,6 +893,8 @@ function CreateSkillDialog({ onClose, onCreate }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
+  /* Supporting files — scripts, references, templates — beside SKILL.md. */
+  const [files, setFiles] = useState([]);
   const missing = !!name.trim() && !body.trim();
   return (
     <ConfirmDialog
@@ -948,6 +950,42 @@ function CreateSkillDialog({ onClose, onCreate }) {
                 }}
               />
             </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              component="label"
+              sx={{ color: "text.primary", borderColor: "divider", ml: 1 }}
+            >
+              Add supporting files
+              <input
+                hidden
+                multiple
+                type="file"
+                onChange={(e) => {
+                  const picked = [...(e.target.files || [])];
+                  Promise.all(
+                    picked.map((f) =>
+                      f.text().then((t) => ({ path: f.name, text: t })),
+                    ),
+                  ).then((next) =>
+                    setFiles((cur) => [
+                      ...cur.filter(
+                        (x) => !next.some((n) => n.path === x.path),
+                      ),
+                      ...next,
+                    ]),
+                  );
+                  e.target.value = "";
+                }}
+              />
+            </Button>
+            {files.length > 0 && (
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
+              >
+                {`Supporting files: ${files.map((f) => f.path).join(", ")}`}
+              </Typography>
+            )}
           </Box>
         </Stack>
       }
@@ -961,6 +999,7 @@ function CreateSkillDialog({ onClose, onCreate }) {
             onCreate({
               name,
               description,
+              files,
               text: body.trimStart().startsWith("---")
                 ? body
                 : `---\nname: ${name.trim()}\ndescription: ${description.trim()}\n---\n\n${body.trim()}\n`,

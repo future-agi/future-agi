@@ -320,6 +320,21 @@ const REPO_FOLDERS = {
     },
     { path: "bin/farecalc", binary: true, size: "4.1 MB" },
   ],
+  /* A plugin bundle: it adds executable tools (an MCP server), so it isn't
+     plain text — skills.md: it needs its own adapter and readiness check. */
+  "plugins/order-tools": [
+    {
+      path: "SKILL.md",
+      text: md(
+        "order-tools",
+        "Use when the caller asks about an order's shipping or returns.",
+        "Call the bundled order tools.",
+        "",
+      ),
+    },
+    { path: ".claude-plugin/plugin.json", text: '{ "name": "order-tools" }' },
+    { path: ".mcp.json", text: '{ "mcpServers": { "orders": {} } }' },
+  ],
 };
 export const REPO_EXAMPLES = Object.keys(REPO_FOLDERS);
 
@@ -364,6 +379,21 @@ export const readSkillFolder = ({ path, files: uploaded }, repairs = {}) => {
             : "Found: " + files.map((f) => f.path).join(", "),
         ],
         canUseReadme: files.some((f) => f.path === "README.md"),
+      },
+    };
+  const pluginFiles = files.filter((f) =>
+    /(^|\/)(plugin\.json|\.mcp\.json)$/.test(f.path),
+  );
+  if (pluginFiles.length)
+    return {
+      ok: false,
+      error: {
+        code: "plugin",
+        title: "A plugin bundle, not a plain skill",
+        lines: [
+          `${pluginFiles.map((f) => f.path).join(" and ")} add executable tools.`,
+          "A plugin bundle needs its own adapter and readiness check before an agent can use it — it can't be imported as text.",
+        ],
       },
     };
   const binaries = files.filter((f) => f.binary);

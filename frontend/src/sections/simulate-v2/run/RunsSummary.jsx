@@ -1820,7 +1820,7 @@ const runStatus = (r) => {
   /* The spending limit or the person stopped new scenarios starting. */
   if (r?.finishedAt && r?.budget?.stoppedBy) return "Stopped";
   /* Asked to stop, still finishing what had started. */
-  if (r?.stopping && !r?.finishedAt) return "Stopping…";
+  if (r?.stopping && !r?.finishedAt) return "Stop requested";
   /* Unfinished for over a day, or lost to infrastructure: Interrupted —
      not an agent failure; Retry interrupted picks it up. */
   if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r))
@@ -1839,7 +1839,7 @@ const runStatus = (r) => {
 const RUN_CHIP_STYLES = {
   ...statusStyles,
   Running: statusStyles.Pending,
-  "Stopping…": statusStyles.Pending,
+  "Stop requested": statusStyles.Pending,
   Queued: statusStyles.Running,
   Finished: statusStyles.Completed,
   Stopped: statusStyles.Inactive,

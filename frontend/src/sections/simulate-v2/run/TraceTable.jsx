@@ -382,11 +382,10 @@ const NO_MEMBERS = [];
 const groupOfTask = (t, mode, env, members = NO_MEMBERS, observed = true) => {
   if (mode === "member") {
     /* The member the conversation ended with — who held it when it passed
-       or failed. Without observed attribution the name is only declared. */
+       or failed. Without observed attribution it's Unknown, never a guess. */
+    if (!observed) return "Unknown member";
     const path = memberPathOf(t, members);
-    const name = path[path.length - 1]?.name;
-    if (!name) return "Unknown member";
-    return observed ? name : `${name} · Declared`;
+    return path[path.length - 1]?.name || "Unknown member";
   }
   if (mode === "useCase") {
     return deriveUseCaseLabel(t);

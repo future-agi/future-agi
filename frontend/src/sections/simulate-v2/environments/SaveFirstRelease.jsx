@@ -101,7 +101,9 @@ export default function SaveFirstRelease({
               minWidth: 0,
             }}
           >
-            {`Saving makes environment ${label}, private to this workspace. Connect your agent from Overview to run it.`}
+            {envState?.agent
+              ? `Saving makes environment ${label}, private to this workspace. Run setup then checks it's ready for ${envState.agent.name}; nothing runs until you start it.`
+              : `Saving makes environment ${label}, private to this workspace. Connect your agent from Overview to run it.`}
           </Typography>
           {onSaveAndConnect && (
             <Button

@@ -52,7 +52,13 @@ import {
   snapshotsEqual,
   newViewId,
 } from "../_mock/compareView";
-import { withPairs, bridgeOf, priceOf, priceLine } from "../_mock/pairs";
+import {
+  withPairs,
+  bridgeOf,
+  priceOf,
+  priceLine,
+  verdictWithMustPass,
+} from "../_mock/pairs";
 import { useEnvState, useSimStore } from "../store";
 import { mustPassRegressionsOf, promotePatch } from "../_mock/promote";
 import { useRoleGates } from "../_mock/previewRole";
@@ -1032,7 +1038,8 @@ export default function CompareRuns() {
           const last = comparison.runs[comparison.runs.length - 1];
           const candidate = last?.agentVersion || null;
           const baseline = first?.agentVersion || null;
-          const verdict = read?.label?.label || "No verdict";
+          const verdict =
+            verdictWithMustPass(read?.label, mustPass)?.label || "No verdict";
           return (
             <>
               <PromoteDialog

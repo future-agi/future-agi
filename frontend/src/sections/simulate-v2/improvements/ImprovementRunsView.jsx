@@ -597,12 +597,12 @@ export default function ImprovementRunsView({
             title={
               idCopied
                 ? "Copied"
-                : `Copy experiment ID · ${experimentId} — for fi api fix-runs results and the SDK`
+                : `Copy fix run ID · ${experimentId} — for fi api fix-runs get and the SDK`
             }
           >
             <IconButton
               size="small"
-              aria-label="Copy experiment ID"
+              aria-label="Copy fix run ID"
               onClick={copyId}
               sx={{
                 border: "1px solid",
@@ -622,10 +622,10 @@ export default function ImprovementRunsView({
           {/* The whole experiment as a file — baseline, scenarios, changes,
               trials, result and spend; no credentials. */}
           {!running && (
-            <Tooltip arrow title="Export experiment">
+            <Tooltip arrow title="Export fix run">
               <IconButton
                 size="small"
-                aria-label="Export experiment"
+                aria-label="Export fix run"
                 onClick={() => downloadExperiment(record, env)}
                 sx={{
                   border: "1px solid",
@@ -913,6 +913,7 @@ export default function ImprovementRunsView({
                 )}
                 budget={record.budget}
                 running={running}
+                reserved={record.reservedCredits}
               />
               <CostPartsTable
                 parts={improvementSpendParts(record, env?.surface)}
@@ -1641,7 +1642,7 @@ function Verdict({ outcome, result, targetNow }) {
     result?.winner &&
       effect && {
         k: "Cost · latency",
-        v: `${outcome.costKnown === false ? "—" : signedPct(effect.cost)} · ${signedPct(effect.latency)}`,
+        v: `${outcome.costKnown === false ? "—" : signedPct(effect.cost)} · ${outcome.latencyKnown === false ? "—" : signedPct(effect.latency)}`,
         sub:
           outcome.costKnown === false
             ? "cost not measured"
@@ -1922,14 +1923,15 @@ Verdict.propTypes = {
 
 /*
   The credit ledger: spent so far, reserved for work still running (released
-  when it ends), committed (spent plus reserved) and the budget.
+  when it ends), committed (spent plus reserved) and the budget. Reserved is
+  what the service reports — never budget minus spent.
 */
-function CreditLedger({ spent, budget, running }) {
-  const reserved = running && budget ? Math.max(0, budget - spent) : 0;
+function CreditLedger({ spent, budget, running, reserved: reported }) {
+  const reserved = running ? reported ?? null : 0;
   const cells = [
     { k: "Spent", v: spent },
     { k: "Reserved", v: reserved },
-    { k: "Committed", v: spent + reserved },
+    { k: "Committed", v: reserved == null ? null : spent + reserved },
     { k: "Budget", v: budget ?? null },
   ];
   return (
@@ -1967,6 +1969,7 @@ function CreditLedger({ spent, budget, running }) {
 }
 
 CreditLedger.propTypes = {
+  reserved: PropTypes.number,
   spent: PropTypes.number,
   budget: PropTypes.number,
   running: PropTypes.bool,

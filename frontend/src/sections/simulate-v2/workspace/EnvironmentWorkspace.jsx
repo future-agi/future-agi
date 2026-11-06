@@ -70,8 +70,6 @@ import {
   checksConnection,
   checksFor,
   connectionSpecOf,
-  inlineRepairOf,
-  inlineRepairPatch,
   runConnectionCheck,
 } from "../_mock/connectionCheck";
 import NextStepBanner from "./NextStepBanner";
@@ -836,24 +834,8 @@ export default function EnvironmentWorkspace() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /*
-    Heal legacy state whose `envState.evals` was seeded to [] before we
-    started auto-adding the env's preset at build time. Fires once per
-    env id and only when there's nothing in evals — user removals stay
-    removed. Without this the Overview page fires the "Add evaluations
-    to run" gap on any env built pre-fix, even though the eval tab would
-    auto-seed the moment it mounted. Once per environment (`evalsSeeded`), so
-    clearing them stays cleared and Run says it needs one. */
-  useEffect(() => {
-    if (!env?.id || envState?.evalsSeeded) return;
-    if ((envState?.evals?.length || 0) > 0) {
-      patch({ evalsSeeded: true });
-      return;
-    }
-    const preset = env?.evalPreset || [];
-    if (!preset.length) return;
-    patch({ evals: preset, evalsSeeded: true });
-  }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* evals.md "Cost consent": additional evaluation is an explicit action —
+     an environment's suggested evaluations are never added for you. */
 
   /* A build runs on the builder page. Left before its last stage, the
      environment would read "Building" forever — so opening it finishes the
@@ -1253,25 +1235,6 @@ export default function EnvironmentWorkspace() {
       450 * (checksFor(spec).length + 1),
     );
   };
-  /* A one-field repair, made in the run plan: saved on the agent like the
-     Connections tab saves it, then the check runs again right away. */
-  const capsSpec = () =>
-    connectionSpecOf(connectedAgent, foundValuesOf(connectedAgent));
-  const inlineFixOf = (row) =>
-    canCheckCaps && row?.fixId ? inlineRepairOf(capsSpec(), row.fixId) : null;
-  const applyInlineFix = (row, value) => {
-    const patch = inlineRepairPatch(
-      connectedAgent.values,
-      capsSpec(),
-      row.fixId,
-      value,
-    );
-    setAgentValues(agentKey, patch);
-    runCapsCheck({
-      ...connectedAgent,
-      values: { ...connectedAgent.values, ...patch },
-    });
-  };
   /* Run setup: this environment's agent first, then any other connected
      agent of the same type — each with whether it's ready to run here. */
   const runAgentChoices = (() => {
@@ -1332,11 +1295,11 @@ export default function EnvironmentWorkspace() {
           actionLabel: "Mark the tools",
           onAction: () => setSafetyOpen(true),
           ...(toSealed && {
-            secondaryLabel: "Run sealed instead",
+            secondaryLabel: "Run simulated instead",
             onSecondary: () => {
               setAgentValues(agentKey, { runMode: "sealed" });
               enqueueSnackbar(
-                `${agentName} runs sealed — its tool calls are answered by this environment's world.`,
+                `${agentName} runs simulated — its tool calls are answered by this environment's world.`,
                 { variant: "success" },
               );
             },
@@ -1579,7 +1542,13 @@ export default function EnvironmentWorkspace() {
      the env-version dropdown, versions, agent and world edits are locked, and
      Fork sits beside Run simulation. */
 
-  const chips = CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview;
+  /* A copy customized without an agent leads with the changes asked for. */
+  const chips = [
+    ...(envState?.customizeRequest && !envState?.customizeApplied
+      ? [`Apply the changes: ${envState.customizeRequest}`]
+      : []),
+    ...(CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview),
+  ];
   /* A source opened from a citation: World & tools, with it open. */
   const openSource = (id) =>
     navigate(
@@ -2092,7 +2061,7 @@ export default function EnvironmentWorkspace() {
                    reads Sealed whatever kind of agent it tests. */
                 const sandboxed = !!envState?.twinBacking?.services?.length;
                 const pk = sandboxed
-                  ? { kind: "sealed", label: "Sealed" }
+                  ? { kind: "sealed", label: "Simulated" }
                   : proofKindOf(envState.agent);
                 /* Sealed is the normal case (and the Overview's agent line says so);
                    only Live or Prompt only earns a header chip — they change what a run
@@ -2113,7 +2082,7 @@ export default function EnvironmentWorkspace() {
                       enqueueSnackbar(
                         modeSwitch.to === "live"
                           ? `${agentName} runs live — its real tools are called, except the ones marked never for real.`
-                          : `${agentName} runs sealed — its tool calls are answered by this environment's world.`,
+                          : `${agentName} runs simulated — its tool calls are answered by this environment's world.`,
                         { variant: "success" },
                       );
                     }
@@ -2137,14 +2106,14 @@ export default function EnvironmentWorkspace() {
                         : pk.kind === "live"
                           ? "Live — the agent runs in your account and its tools reach real systems. Only the starting state is checked."
                           : sandboxed
-                            ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs."
+                            ? "Simulated — the agent's calls to these apps land in sandboxed copies, reset between runs."
                             : modeSwitch
-                              ? "Sealed — your agent runs where serve() runs; its tool calls are routed to this environment's world."
+                              ? "Simulated — your agent runs where serve() runs; its tool calls are routed to this environment's world."
                               : env?.runsOn === "local" ||
                                   env?.builtFrom?.worldSource?.runsOn ===
                                     "local"
-                                ? "Sealed — tool calls are answered by this environment's world, running on your machine through the CLI."
-                                : "Sealed — tool calls are answered by this environment's world in our sandbox.",
+                                ? "Simulated — tool calls are answered by this environment's world, running on your machine through the CLI."
+                                : "Simulated — tool calls are answered by this environment's world in our sandbox.",
                     ...(modeSwitch && {
                       tipAction: `Click to ${modeSwitch.to === "live" ? "run live — real tools are called" : "run sealed — the world answers tools"}.`,
                     }),
@@ -3270,6 +3239,7 @@ export default function EnvironmentWorkspace() {
           onStart={startPlannedRun}
           env={env}
           envState={envState}
+          initialAgentKey={runPlanReq?.useAgent || null}
           agentChoices={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
               ? runAgentChoices
@@ -3341,8 +3311,6 @@ export default function EnvironmentWorkspace() {
           /* Fix on a capability opens its repair on the agent; otherwise its
              Capabilities tab for this world. */
           onCheckCompat={canCheckCaps ? () => runCapsCheck() : undefined}
-          inlineFixOf={inlineFixOf}
-          onInlineFix={applyInlineFix}
           checkingCompat={capsChecking}
           onRepairCompat={(row) => {
             /* A bigger repair is done on the agent; its back button returns
@@ -3350,7 +3318,7 @@ export default function EnvironmentWorkspace() {
             navigate(
               row?.fixId
                 ? `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections&fix=${encodeURIComponent(row.fixId)}`
-                : `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=compatibility&env=${encodeURIComponent(envId)}`,
+                : `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=${row?.repair === "agent" ? "definition" : "connections"}`,
               {
                 state: {
                   from: "environment",
@@ -3383,7 +3351,7 @@ export default function EnvironmentWorkspace() {
               : runPlanReq?.toolReplay
                 ? `Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === runPlanReq.toolReplay)?.ordinal ?? ""} — the agent runs again and every tool answers what it returned then.`
                 : runPlanReq?.snapshot
-                  ? "Re-runs the exact snapshot — a new run, charged as its own."
+                  ? "Runs again on the same versions — a new run, charged as its own."
                   : null
           }
         />
@@ -3603,26 +3571,33 @@ export default function EnvironmentWorkspace() {
                 patch: { releaseSavedAt: new Date().toISOString() },
               });
               enqueueSnackbar(
-                `Saved environment ${envState.activeEnvVersion || "v1"}. Connect your agent from Overview to run it.`,
+                envState.agent
+                  ? `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Run setup checks it's ready for ${envState.agent.name}.`
+                  : `Saved environment ${envState.activeEnvVersion || "v1"}. Connect your agent from Overview to run it.`,
                 { variant: "success" },
               );
             }}
-            /* Save, then the same Connect agent picker Overview's button opens. */
-            onSaveAndConnect={() => {
-              dispatch({
-                type: "patchEnvironment",
-                envId: env.id,
-                patch: { releaseSavedAt: new Date().toISOString() },
-              });
-              enqueueSnackbar(
-                `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent to run it.`,
-                { variant: "success" },
-              );
-              navigate(
-                `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
-              );
-              setConnectKey((k) => k + 1);
-            }}
+            /* Save, then the same Connect agent picker Overview's button opens.
+               Built from an agent, it's already bound — no connect step. */
+            onSaveAndConnect={
+              envState.agent
+                ? undefined
+                : () => {
+                    dispatch({
+                      type: "patchEnvironment",
+                      envId: env.id,
+                      patch: { releaseSavedAt: new Date().toISOString() },
+                    });
+                    enqueueSnackbar(
+                      `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent to run it.`,
+                      { variant: "success" },
+                    );
+                    navigate(
+                      `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
+                    );
+                    setConnectKey((k) => k + 1);
+                  }
+            }
           />
         )}
       <VersionBuildStrip

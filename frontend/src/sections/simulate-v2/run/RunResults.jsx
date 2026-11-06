@@ -94,6 +94,7 @@ import {
   runIdentityOf,
 } from "../_mock/runIdentity";
 import { isConnectOnly, runPinsOf } from "../_mock/envModel";
+import { envLabelOf } from "../_mock/envVersionKinds";
 import { REPLAY_HEADER, stubbedToolNames } from "../_mock/replay";
 import FromImprovement from "./FromImprovement";
 import { improvementPath } from "../improvements/improvementNav";
@@ -146,9 +147,8 @@ import {
   TrialArtifacts,
 } from "./TrialEvidence";
 import ProviderEvents from "./ProviderEvents";
-import { COMPAT_STATUS, isTextRehearsal } from "../_mock/compatibility";
+import { isTextRehearsal } from "../_mock/compatibility";
 
-import CapabilitySummary from "../compat/CapabilitySummary";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
@@ -667,29 +667,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     (id) => !retriedIds.includes(id),
   );
   const lastAttempt = attemptsOf(sourceRun).slice(-1)[0] || null;
-  /* The capability report as it stood when this run started — kept with it,
-     so a later check doesn't rewrite what this run ran under. */
-  const runCaps = sourceRun?.compat?.rows?.length ? sourceRun.compat : null;
-  /* The worst capability colours the run's Capabilities chip. */
-  const capsWorst = runCaps
-    ? runCaps.rows.reduce(
-        (w, r) =>
-          COMPAT_STATUS[r.status].rank > COMPAT_STATUS[w].rank ? r.status : w,
-        "supported",
-      )
-    : null;
-  /* The report opens over the page, so the header never grows. */
-  const [capsOpen, setCapsOpen] = useState(false);
-  const capsRef = useRef(null);
-  const capsLine = runCaps
-    ? Object.keys(COMPAT_STATUS)
-        .filter((k) => k !== "supported")
-        .sort((a, b) => COMPAT_STATUS[b].rank - COMPAT_STATUS[a].rank)
-        .map((k) => [k, runCaps.rows.filter((r) => r.status === k).length])
-        .filter(([, n]) => n)
-        .map(([k, n]) => `${n} ${COMPAT_STATUS[k].label.toLowerCase()}`)
-        .join(" · ") || "all supported"
-    : null;
   const canSnapshot = !!sourceRun?.finishedAt && !trialMeta;
   /* A snapshot re-run plays its source's pinned versions — say how many of
      those are older than today's text, so a diff against a fresh run isn't
@@ -1509,10 +1486,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               </Typography>
             </Tooltip>
             {/*
-              Failed means the run failed, not that something in it did. All
-              seven scenarios failing is a failed run; three of seven failing
-              is a completed run with findings, and calling that "Failed"
-              buries the three that passed.
+              How the run executed, never a verdict (plan runs §6: completed
+              does not mean passed). How the agent did is the summary chip
+              beside it.
             */}
             <StatusChip
               status={
@@ -1520,11 +1496,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   ? identity.budget.stoppedBy === "stopped"
                     ? "stopped_early"
                     : "stopped_limit"
-                  : stats.passed === 0
-                    ? "failed"
-                    : stats.failed === 0
-                      ? "passed"
-                      : "completed"
+                  : sourceRun?.status === "interrupted"
+                    ? "interrupted"
+                    : "completed"
               }
             />
             {issueResult && (
@@ -1547,41 +1521,18 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             )}
             {/* Two indicators, apart: how the agent did (a report — pass^1,
                 pass^k — never a gate), and did our harness do its job. */}
-            <RunSummaryChip summary={report.summary} />
+            <RunSummaryChip
+              summary={report.summary}
+              subset={(() => {
+                const requested = sourceRun?.requested;
+                const ran =
+                  (sourceRun?.scenarioIds?.length || tasks.length) *
+                  (identity?.repeats || sourceRun?.repeats || 1);
+                return requested > ran ? { ran, requested } : null;
+              })()}
+            />
             {/* Sealed · Live · Prompt only, as a mark — its words on hover. */}
             <ProofKindChip proof={report.summary?.proofKind} compact />
-            {/* The capability state the run ran under (TH-8877), as one chip —
-                its counts on hover, the report on click. */}
-            {sourceRun?.finishedAt && (
-              <Tooltip
-                arrow
-                title={
-                  runCaps
-                    ? `${capsLine} — click for the report as it was when the run started`
-                    : "No capability report was taken for this run"
-                }
-              >
-                <Box
-                  ref={capsRef}
-                  {...(runCaps &&
-                    clickable(() => setCapsOpen((v) => !v), {
-                      expanded: capsOpen,
-                    }))}
-                  sx={{
-                    display: "flex",
-                    flexShrink: 0,
-                    ...(runCaps && { ...focusRing, cursor: "pointer" }),
-                  }}
-                >
-                  <StatusBadge
-                    size="sm"
-                    status={COMPAT_STATUS[capsWorst || "untested"].dot}
-                    variant={runCaps ? "badge" : "dot"}
-                    label="Capabilities"
-                  />
-                </Box>
-              </Tooltip>
-            )}
             {/* A CI run's check result sits with the run's own status; where
                 it came from is on the line below. */}
             {sourceRun &&
@@ -1616,7 +1567,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {sourceRun?.snapshotOf && (
               <Tooltip
                 arrow
-                title="Re-ran the exact snapshot of an earlier run: the same scenario versions, environment version, pins and seed."
+                title="Ran again from an earlier run: the same scenario versions, environment version, pins and seed."
               >
                 <Typography
                   noWrap
@@ -1648,7 +1599,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {snapshotNote && (
               <Tooltip
                 arrow
-                title="These scenarios were edited after the source run. The snapshot replays the pinned versions; Run as configured now plays today's text."
+                title="These scenarios were edited after the source run. Run again replays the pinned versions; Run again with current versions plays today's text."
               >
                 <Typography
                   noWrap
@@ -1669,6 +1620,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 result on this page compares within. */}
             {env.name}
             {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
+            {(() => {
+              /* runs §2: agent, environment and suite versions together. */
+              const pins = runPinsOf(identity || sourceRun, env, envState);
+              return `${pins.env ? ` · environment ${envLabelOf(env, envState, pins.env)}` : ""} · suite ${pins.suite}`;
+            })()}
             {(() => {
               const line = runSkillsLineOf(
                 simState?.workspaceSettings,
@@ -1929,23 +1885,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               </Box>
             </Tooltip>
           </Typography>
-          {runCaps && (
-            <Popover
-              open={capsOpen}
-              anchorEl={capsRef.current}
-              onClose={() => setCapsOpen(false)}
-              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-              transformOrigin={{ vertical: "top", horizontal: "left" }}
-              PaperProps={{ sx: { width: 560, mt: 0.5 } }}
-            >
-              <CapabilitySummary
-                title="Capabilities when this run started"
-                rows={runCaps.rows}
-                requested={runCaps.requested}
-                testedAt={runCaps.testedAt || null}
-              />
-            </Popover>
-          )}
         </Box>
         <Tooltip arrow title={wideHeader ? "" : "Add evals"}>
           <Button
@@ -1977,7 +1916,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         {/* Started from code (CLI, Python, CI, MCP): run it again the same way. */}
         {!trialMeta && sourceRun && runViaOf(sourceRun).label !== "Console" && (
           <CopyCommandButton
-            command={`fi sim run --from-run ${sourceRun.id}`}
+            command={`fi sim run --env ${env.id} --agent-version ${sourceRun.agentVersion || "<agent-version-id>"} --suite ${sourceRun.suiteVersion || "all"} --trials ${sourceRun.repeats || 3} --wait`}
             label="Copy command"
           />
         )}
@@ -1985,7 +1924,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           <CopyIdButton
             id={runId}
             what="run ID"
-            usedBy="fi sim runs results / rerun / compare take it"
+            usedBy="fi sim runs status / results take it"
           />
         )}
         {/* Share replaces the old Export: a read-only link, or the report as PDF. */}
@@ -2754,7 +2693,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   >
                     {delegationEvidenceOf(envState?.agent).observed
                       ? `${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations.`
-                      : `Declared, not observed — ${envState?.agent?.name || "this agent"} sends no delegation events. Only the overall result counts.`}
+                      : `Not observed — ${envState?.agent?.name || "this agent"} sends no delegation events. Only the overall result counts.`}
                   </Typography>
                 )}
                 {groupableShown.length === 0 ? (
@@ -2817,6 +2756,20 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     gradingBasis={report.summary?.grading?.basis || null}
                   />
                 )}
+                {/* runs §2: interrupted trials stay rows of their own —
+                    an execution status, never a pass or a fail. */}
+                {sourceRun?.status === "interrupted" &&
+                  (sourceRun.budget?.notStarted || []).length > 0 && (
+                    <InterruptedRows
+                      ids={sourceRun.budget.notStarted}
+                      retried={retriedIds}
+                      repeats={identity?.repeats || sourceRun.repeats || 1}
+                      envState={envState}
+                      onRetry={
+                        retryLeft.length ? () => setRetryConfirm(true) : null
+                      }
+                    />
+                  )}
               </SectionCard>
             )}
 
@@ -3776,6 +3729,79 @@ RunResults.propTypes = {
   evals: PropTypes.array,
 };
 
+/* The trials an interruption kept from running: one row each, marked
+   Interrupted, with what happened to them since. */
+function InterruptedRows({ ids, retried, repeats, envState, onRetry }) {
+  const [all, setAll] = useState(false);
+  const shownIds = all ? ids : ids.slice(0, 10);
+  const titleOf = (id) =>
+    scenarioTitle(
+      (envState?.scenarios || []).find((s) => s.id === id)?.title || id,
+    );
+  return (
+    <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1, bgcolor: "background.neutral" }}
+      >
+        <Typography sx={{ typography: "s3", fontWeight: 600, flex: 1 }}>
+          {`Interrupted · ${ids.length} scenario${ids.length === 1 ? "" : "s"} · ${(ids.length * repeats).toLocaleString()} trials didn't run`}
+        </Typography>
+        {onRetry && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onRetry}
+            sx={{ color: "text.primary", borderColor: "divider" }}
+          >
+            Retry interrupted trials
+          </Button>
+        )}
+      </Stack>
+      {shownIds.map((id) => (
+        <Stack
+          key={id}
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{
+            px: 2,
+            py: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+            {titleOf(id)}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {retried.includes(id) ? "Retried as a new attempt" : "No result"}
+          </Typography>
+          <StatusChip status="interrupted" />
+        </Stack>
+      ))}
+      {ids.length > 10 && (
+        <Button
+          size="small"
+          onClick={() => setAll((v) => !v)}
+          sx={{ mx: 1.25, my: 0.5, color: "text.secondary" }}
+        >
+          {all ? "Show fewer" : `Show all ${ids.length}`}
+        </Button>
+      )}
+    </Box>
+  );
+}
+InterruptedRows.propTypes = {
+  ids: PropTypes.array.isRequired,
+  retried: PropTypes.array,
+  repeats: PropTypes.number,
+  envState: PropTypes.object,
+  onRetry: PropTypes.func,
+};
+
 /*
   The two re-run modes (PRD v7 §4.10.8, closes Q29). "Re-run exact snapshot"
   is the default for comparisons: the run's own scenario versions,
@@ -3813,7 +3839,7 @@ function RerunModes({ run, canSnapshot, envLabel, agents = [], onRun }) {
             <ListItemText
               primary={
                 <>
-                  Re-run exact snapshot
+                  Run again
                   <Box
                     component="span"
                     sx={{
@@ -3892,7 +3918,7 @@ function RerunModes({ run, canSnapshot, envLabel, agents = [], onRun }) {
           />
         </ListItemIcon>
         <ListItemText
-          primary="Run as configured now"
+          primary="Run again with current versions"
           secondary="Picks up every edit since, with a new seed. Compares only the pairs that still match."
           {...textProps}
         />

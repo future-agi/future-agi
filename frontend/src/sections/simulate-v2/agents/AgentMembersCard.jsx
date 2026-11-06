@@ -173,14 +173,19 @@ export default function AgentMembersCard({
                               .join(", ") || "none",
                           ],
                         ]
-                      : [["Declared", workerToolsOf(m).join(", ") || "none"]]
+                      : [
+                          [
+                            "Not enforced",
+                            workerToolsOf(m).join(", ") || "none",
+                          ],
+                        ]
                     ).map(([state, list]) => (
                       <Stack key={state} direction="row" spacing={1.5}>
                         <Typography
                           sx={{
                             typography: "s3",
                             color: "text.subtitle",
-                            width: 64,
+                            width: 84,
                             flexShrink: 0,
                           }}
                         >

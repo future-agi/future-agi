@@ -274,7 +274,7 @@ export const GRADING_RULES = {
 };
 
 export const GRADING_BASIS = {
-  sealed: { judged: false, label: "Checked against end state and tool calls", note: "Sealed: tool calls were answered by the seeded world, so each sub-goal was checked against the world's end state and the agent's tool calls. A sub-goal about what was said is judged from the conversation." },
+  sealed: { judged: false, label: "Checked against end state and tool calls", note: "Simulated: tool calls were answered by the seeded world, so each sub-goal was checked against the world's end state and the agent's tool calls. A sub-goal about what was said is judged from the conversation." },
   live: { judged: true, label: "Judged from the conversation", note: "Live: the agent's tools reached your real systems, so only the starting state was checked and a model judged each sub-goal from the conversation." },
   "prompt-only": { judged: true, label: "Judged from the conversation", note: "Prompt only: the agent's tools weren't part of the run, so a model judged each sub-goal from the conversation." },
 };

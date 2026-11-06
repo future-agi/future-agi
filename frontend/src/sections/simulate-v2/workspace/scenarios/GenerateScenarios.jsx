@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import {
   Box,
+  Chip,
   Stack,
   Typography,
   Button,
@@ -18,6 +19,7 @@ import { generatedSubGoals } from "../../_mock/scenarioSubGoals";
 import { clickable, focusRing } from "../../components/clickable";
 import { goalLabel } from "../../_mock/scenarios";
 import { scenarioPoolFor } from "../../_mock/scenarioPool";
+import { actorsOf, getActor } from "../../_mock/actors";
 import {
   RED_TEAM_PACKS,
   packCount,
@@ -96,6 +98,14 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
   const [depth, setDepth] = useState("standard");
   const [redTeam, setRedTeam] = useState(false);
   const [focus, setFocus] = useState("");
+  /* scenarios.md §1: pick the sources and actors the new cases draw on;
+     each draft records them. */
+  const sourceChoices = (envState?.sources || []).filter((x) => !x.archived);
+  const actorChoices = actorsOf(env, envState);
+  const [fromSources, setFromSources] = useState([]);
+  const [withActors, setWithActors] = useState([]);
+  const toggleIn = (list, set, id) =>
+    set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   const [packs, setPacks] = useState(["baseline"]);
   const togglePack = (id) => {
     const next = packs.includes(id)
@@ -194,6 +204,8 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
           "Agent completes the task under the sampled conditions.",
         ),
         source: "generated",
+        ...(fromSources.length && { fromSources }),
+        ...(withActors.length && { actors: withActors }),
         turns: 4,
         surface,
         critical: false,
@@ -396,6 +408,52 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
         placeholder="e.g. angry callers with payment failures — more of the new scenarios will lean this way"
         sx={{ mb: 3, "& .MuiInputBase-input": { typography: "s2" } }}
       />
+      {[
+        [
+          "Draw on sources (optional)",
+          sourceChoices.map((x) => [x.id, x.name]),
+          fromSources,
+          setFromSources,
+        ],
+        [
+          "Include actors (optional)",
+          actorChoices.map((id) => [id, getActor(id)?.name || id]),
+          withActors,
+          setWithActors,
+        ],
+      ]
+        .filter(([, opts]) => opts.length > 0)
+        .map(([label, opts, list, set]) => (
+          <Box key={label} sx={{ mb: 3 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.tertiary",
+                letterSpacing: 0.4,
+                mb: 1,
+              }}
+            >
+              {label}
+            </Typography>
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+              {opts.map(([id, name]) => (
+                <Chip
+                  key={id}
+                  size="small"
+                  label={name}
+                  variant={list.includes(id) ? "filled" : "outlined"}
+                  onClick={() => toggleIn(list, set, id)}
+                  icon={
+                    list.includes(id) ? (
+                      <Iconify icon="solar:check-read-linear" width={14} />
+                    ) : undefined
+                  }
+                />
+              ))}
+            </Stack>
+          </Box>
+        ))}
 
       {/* Red-team / safety suite (AC-9.8b) — a plain bordered block; only
           the shield carries colour, and the packs show while it's on. */}

@@ -1784,6 +1784,28 @@ function WorldChanges({ changes }) {
           ? "Before and after, read from this trial's committed writes"
           : "The agent only read from the world — no record changed."}
       </Typography>
+      {(changes.mismatches || []).map((m) => (
+        <Stack
+          key={m.id}
+          direction="row"
+          spacing={1}
+          alignItems="flex-start"
+          sx={{
+            px: 1.5,
+            py: 0.875,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+          }}
+        >
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={16}
+            sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
+          />
+          <Typography sx={{ typography: "s2" }}>{m.line}</Typography>
+        </Stack>
+      ))}
       {changes.changes.length > 0 && (
         <Box
           sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}

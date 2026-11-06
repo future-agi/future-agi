@@ -126,7 +126,7 @@ export const issueFocusOf = (trigger) =>
   Without `es` every scenario the run played is used, as before.
 */
 /*
-  What the sealed environment was built around — the entry point and the
+  What the simulated environment was built around — the entry point and the
   environment version — for the Fits the environment check on code
   candidates. Improvements recorded before the check existed (and the
   seeded ones) carry no `compatCheck` stamp and skip it.
@@ -468,7 +468,7 @@ export const planSearch = ({
       ...(issue ? { issue } : {}),
       /* The repository's own tests, a static check on code candidates. */
       ...(repoTestsOf(es?.agent) ? { repoTests: repoTestsOf(es?.agent) } : {}),
-      /* Fits the sealed environment — entry point, build, start command. */
+      /* Fits the simulated environment — entry point, build, start command. */
       ...(compatCheck ? { compat: compatFor(env, es) } : {}),
       /* Phase 2: a voice agent searched in text, finalists confirmed as real calls. */
       ...(env?.surface === "voice" &&
@@ -901,7 +901,7 @@ export const buildImprovement = ({
         protectedMembers: limits.protectedMembers,
       }),
       ...(result.repoTests && { repoTests: result.repoTests }),
-      /* Code candidates checked against the sealed environment (missing = skipped). */
+      /* Code candidates checked against the simulated environment (missing = skipped). */
       ...(result.compat && {
         compatCheck: COMPAT_CHECK,
         compat: result.compat,

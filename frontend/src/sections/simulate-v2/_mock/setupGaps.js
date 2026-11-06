@@ -502,13 +502,14 @@ export const setupGaps = (env, envState) => {
     envState?.agent?.seeded && {
       id: "template-agent",
       code: "gap_reachability",
-      severity: "optional",
-      auto: true,
+      /* We never provide the agent being tested (plan D02): runs wait for yours. */
+      severity: "blocking",
+      auto: false,
       area: "Agent",
-      title: "Runs test the template's agent",
+      title: "Connect your agent",
       confidence: "low",
-      why: "This environment came from a template, so the agent under test is the template's baseline — a placeholder. Runs work, but they tell you how the template does, not your agent. Connect yours from Overview.",
-      suggested: "Runs test the template's baseline agent.",
+      why: "This environment came from a template and has no agent of yours yet. Runs need your agent — connect it from Overview.",
+      suggested: "Runs wait until your agent is connected.",
       ask: { type: "link", label: "Open the Overview tab", to: "overview" },
     },
     tools.length > 0 && {

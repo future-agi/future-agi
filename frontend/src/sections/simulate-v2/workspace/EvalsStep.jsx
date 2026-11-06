@@ -136,33 +136,8 @@ export default function EvalsStep({
     );
   }, [env.evalPreset, envState?.twinBacking, appliedIds]);
 
-  /*
-    Auto-seed the env's suggested evals into Added on first empty mount.
-    The old flow had a separate "Suggested" card the user had to click
-    "Add all" on — but nobody ever wanted the suggestions to *not* be
-    scored, so the click was a formality. Preseed on empty and drop the
-    Suggested card entirely; the user can still remove any of them from
-    Added or open the library for more. Once per environment
-    (`evalsSeeded`), so clearing them stays cleared — and the run says
-    it needs one.
-    */
-  const seededRef = useRef(false);
-  useEffect(() => {
-    if (seededRef.current || envState?.evalsSeeded) return;
-    if (needsScenarios) return;
-    if (appliedEvals.length > 0) {
-      seededRef.current = true;
-      return;
-    }
-    if (suggested.length === 0) {
-      seededRef.current = true;
-      return;
-    }
-    seededRef.current = true;
-    add(suggested);
-    patch({ evalsSeeded: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsScenarios, suggested.length, appliedEvals.length]);
+  /* evals.md: run only selected evaluations — the suggestions below are
+     added by the user, one at a time or all at once, never on mount. */
 
   /* Removing an evaluation asks first; past scores stay either way. */
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -266,6 +241,72 @@ export default function EvalsStep({
           </span>
         </Tooltip>
       </Stack>
+
+      {/* ── suggested for this environment: added only when chosen ── */}
+      {suggested.length > 0 && !needsScenarios && (
+        <SectionCard
+          title={`Suggested for this environment (${suggested.length})`}
+          subtitle="Not added yet — only the evaluations you add score a run. The scenarios' own checks always run."
+          action={
+            !locked && (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={atCap}
+                onClick={() => add(suggested.slice(0, Math.max(0, slotsLeft)))}
+                sx={{ color: "text.primary", borderColor: "divider" }}
+              >
+                Add all
+              </Button>
+            )
+          }
+          sx={{ mb: 2 }}
+        >
+          {suggested.map((e) => (
+            <Stack
+              key={e.id}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 2.5,
+                py: 0.875,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                  {e.name}
+                </Typography>
+                {(e.blurb || e.description) && (
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {e.blurb || e.description}
+                  </Typography>
+                )}
+              </Box>
+              {!locked && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={atCap}
+                  onClick={() => add([e])}
+                  sx={{
+                    color: "text.primary",
+                    borderColor: "divider",
+                    flexShrink: 0,
+                  }}
+                >
+                  Add
+                </Button>
+              )}
+            </Stack>
+          ))}
+        </SectionCard>
+      )}
 
       {/* ── what will actually score the run ── */}
       <SectionCard

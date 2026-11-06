@@ -13,6 +13,7 @@ import {
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { runPlanHref } from "../_mock/runPlanLink";
 import { useConnectedAgents, useSimStore } from "../store";
 import AgentSyncDialog from "../components/AgentSyncDialog";
 import AgentRuntimeEditor from "../agents/AgentRuntimeEditor";
@@ -47,11 +48,7 @@ import AgentVersionCard, { ScenarioStepCard } from "./AgentVersionCard";
 import NudgeCard from "./NudgeCard";
 import ChangeAgentDrawer from "./agents/ChangeAgentDrawer";
 import ConnectNewAgentDrawer from "./agents/ConnectNewAgentDrawer";
-import {
-  COMPAT_STATUS,
-  compatibilityOf,
-  compatSummaryLine,
-} from "../_mock/compatibility";
+import { COMPAT_STATUS, compatibilityOf } from "../_mock/compatibility";
 import { StatusDot } from "../components/primitives";
 
 const outlined = {
@@ -219,11 +216,8 @@ export default function EnvAgentLine({
         : null,
     [agent, placeholder, env, envState, record],
   );
-  const viewCompat = () =>
-    navigate(
-      `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=compatibility&env=${encodeURIComponent(env.id)}`,
-      { state: { from: "environment", envId: env.id, envName: env.name } },
-    );
+  /* Readiness lives in Run setup (plan T06): this opens it. */
+  const viewCompat = () => navigate(runPlanHref(env.id));
   const viewAgent = () =>
     navigate(
       `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=environments&env=${encodeURIComponent(env.id)}`,
@@ -429,10 +423,10 @@ export default function EnvAgentLine({
               minWidth: 0,
             }}
           >
-            {`Capabilities · ${compatSummaryLine(compat)} · ${
+            {`Ready to run · ${
               compat.scope.blocked.length
-                ? `${compat.scope.blocked.length} of ${compat.scope.requested} cases blocked by this agent`
-                : "no case blocked by this agent"
+                ? `${compat.scope.blocked.length} of ${compat.scope.requested} scenarios blocked for this agent`
+                : "no scenario blocked for this agent"
             }`}
           </Typography>
           <Button
@@ -442,7 +436,7 @@ export default function EnvAgentLine({
             endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
             sx={{ color: "text.primary", flexShrink: 0 }}
           >
-            View report
+            Review in Run setup
           </Button>
         </Stack>
       )}

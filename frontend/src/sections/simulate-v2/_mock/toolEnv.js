@@ -110,12 +110,13 @@ export const sideEffectOf = (tool) => {
   return "write";
 };
 
-/* Story 5 Step 1: read-only → replay; mutating → stateful; real execution → live. */
+/* Simulated state is the default for every tool (plan world §1); Recorded
+   and Live are a person's explicit choice. */
 const DEFAULT_TIER = {
-  read: "replay",
-  fresh: "replay",
+  read: "stateful",
+  fresh: "stateful",
   write: "stateful",
-  real: "live",
+  real: "stateful",
 };
 
 /*

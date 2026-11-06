@@ -1,3 +1,4 @@
+import { HELD_SHARE } from "../_mock/optimizer";
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -58,6 +59,7 @@ import {
 import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import useCreditBalance from "../usage/useCreditBalance";
 import CostPartsTable from "../improvements/CostPartsTable";
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 import ImprovementConstraints, {
   ConstraintPicker,
 } from "../improvements/ImprovementConstraints";
@@ -516,7 +518,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       disabled={!!hardGate}
       onClick={openBuilding}
     >
-      Open environment
+      Go to environment
     </Button>
   ) : (
     <Button
@@ -1273,6 +1275,50 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       >{`+ ${regressionCount} must-pass from other environments`}</Typography>
                     )}
                   </SumRow>
+                  {/* improve.md §3: the same launch contract as Improve —
+                      held back, what may change, what stays locked. */}
+                  <SumRow k="Held back">
+                    <Typography sx={{ typography: "s2" }}>
+                      {`About ${Math.round(chosen.length * HELD_SHARE)} of the reproducing scenarios, plus fresh variations — set aside before the fix`}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      {Math.round(chosen.length * HELD_SHARE) < 4
+                        ? "Under 4 untouched, it can't be Verified and any pull request opens as a draft."
+                        : "4 or more untouched can verify the fix."}
+                    </Typography>
+                  </SumRow>
+                  <SumRow k="May change">
+                    <Typography sx={{ typography: "s2" }}>
+                      {(limits.allowed || [])
+                        .map(
+                          (x) =>
+                            ({
+                              prompt: "Instructions",
+                              tools: "Tools",
+                              skills: "Skills",
+                              settings: "Settings",
+                              code: "Code",
+                            })[x] || x,
+                        )
+                        .join(", ") ||
+                        "Nothing yet — set it in the agent's rules"}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      Evaluators, hidden cases and frozen world inputs are never
+                      editable.
+                    </Typography>
+                  </SumRow>
+                  <SumRow k="Locked">
+                    <Typography sx={{ typography: "s2" }}>
+                      {(limits.protected || []).length
+                        ? limits.protected.join(", ")
+                        : "No files locked"}
+                    </Typography>
+                  </SumRow>
                   <SumRow k="Budget">
                     {ready ? (
                       <>
@@ -1323,14 +1369,16 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}
-                        <Box sx={{ mt: 1.5 }}>
-                          <CostPartsTable
-                            parts={estimate.parts}
-                            totalLabel="Up to"
-                            totalUsd={estimate.likely}
-                            note={`At ${RATE_PLAN.name} · ${RATE_PLAN.version} rates. Stops at your budget and keeps the best found.`}
-                          />
-                        </Box>
+                        {SHOW_RUN_COST && (
+                          <Box sx={{ mt: 1.5 }}>
+                            <CostPartsTable
+                              parts={estimate.parts}
+                              totalLabel="Up to"
+                              totalUsd={estimate.likely}
+                              note={`At ${RATE_PLAN.name} · ${RATE_PLAN.version} rates. Stops at your budget and keeps the best found.`}
+                            />
+                          </Box>
+                        )}
                       </>
                     ) : (
                       <>

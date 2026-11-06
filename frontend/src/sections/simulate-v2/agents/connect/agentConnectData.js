@@ -9,9 +9,23 @@ import { FRAMEWORK_META } from "../../_mock/agentRegistry";
 import { CLOSED_PLATFORM_REACH } from "../../environments/connectOptions";
 import { CLOSED_PLATFORMS } from "../../_mock/rsiModel";
 
+/* Frameworks with a row in the qualification matrix (T43); the rest may
+   still connect but are marked Untested — never shown as supported. */
+const QUALIFIED_FRAMEWORKS = new Set([
+  "langgraph",
+  "openai-agents",
+  "crewai",
+  "claude-agent-sdk",
+  "livekit",
+  "pipecat",
+  "google-adk",
+  "pydantic-ai",
+]);
+
 const frameworkItems = Object.entries(FRAMEWORK_META).map(([id, f]) => ({
   id: `fw-${id}`,
   name: f.label,
+  ...(!QUALIFIED_FRAMEWORKS.has(id) && { untested: true }),
   icon: f.icon,
   ...(f.logo && { logo: f.logo }),
   need: `SDK adapter · ${f.structure.toLowerCase()}`,
@@ -215,6 +229,7 @@ export const AGENT_CONNECT_GROUPS = [
       {
         id: "browser",
         name: "Browser agent",
+        untested: true,
         fix: "Pull request",
         icon: "solar:window-frame-linear",
         need: "Its code in your repo · your model key",

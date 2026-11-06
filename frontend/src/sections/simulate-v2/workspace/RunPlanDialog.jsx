@@ -43,7 +43,8 @@ import {
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentEnvVersion } from "../_mock/versions";
-import CapabilitySummary from "../compat/CapabilitySummary";
+import ReadyToRun from "../compat/ReadyToRun";
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 import { waitingWordOf } from "../_mock/compatibility";
 import { platformPreviewOf } from "../_mock/platformPreview";
 import { assistantsFor } from "../_mock/connectAgent";
@@ -55,7 +56,6 @@ import ClosableDialog from "../components/ClosableDialog";
 import { startsFromCode } from "../_mock/connectionCheck";
 
 /* Pre-run cost and spending cap for simulations: hidden for now. */
-const SHOW_RUN_COST = false;
 
 /*
   The run plan: what a run will do and what it can cost, confirmed before
@@ -155,11 +155,12 @@ export default function RunPlanDialog({
   seedFrom = null,
   compat = null,
   onCheckCompat,
-  inlineFixOf,
-  onInlineFix,
   checkingCompat = false,
   onRepairCompat,
   agentChoices = [],
+  /* Another compatible agent to start with (Agent → Add to an existing
+     environment). */
+  initialAgentKey = null,
   suites = [],
   envLabel = null,
 }) {
@@ -184,7 +185,7 @@ export default function RunPlanDialog({
   const [moreVersions, setMoreVersions] = useState(false);
   /* Run setup: which agent (this environment's, or another compatible one)
      and which suite (every scenario, or a saved suite). */
-  const [agentKey, setAgentKey] = useState(null);
+  const [agentKey, setAgentKey] = useState(initialAgentKey);
   const [suiteId, setSuiteId] = useState("all");
   const otherAgent =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
@@ -222,9 +223,6 @@ export default function RunPlanDialog({
         ? "The agent could read the answers — observing can't make a pass mean anything."
         : null;
   /* A stop that can't be confirmed is said before a paid run (TH-8890). */
-  const cancelRow = (compat?.rows || []).find(
-    (r) => r.id === "cancel" && r.status === "partial",
-  );
   /* What the run takes once a choice is made: the reviewed eligible cases,
      or all of them observed. The requested count stays the denominator. */
   const runCount =
@@ -239,7 +237,7 @@ export default function RunPlanDialog({
       return m;
     }, {}),
   )
-    /* The count and the capability; which scenarios is on the Capabilities tab. */
+    /* The count and what blocks them; Ready to run names the scenarios. */
     .map(([by, list]) => `${list.length} that need ${by}`)
     .join(" · ");
 
@@ -253,7 +251,7 @@ export default function RunPlanDialog({
         : versionOptions.slice(0, 1).map((o) => o.label),
     );
     setMoreVersions(false);
-    setAgentKey(null);
+    setAgentKey(initialAgentKey);
     setSuiteId("all");
     setCandidate(null);
     setCapTouched(false);
@@ -442,20 +440,19 @@ export default function RunPlanDialog({
               {scopeLead}
             </Typography>
           )}
-          {/* ── capabilities: the agent's report on this world, above the
-              scenario picker — what it can't run here, before spending ── */}
+          {/* ── Ready to run (plan T06): this agent version on this
+              environment, before anything starts — six areas, each blocker
+              with its scenarios and fix ── */}
           {compat && (
-            <CapabilitySummary
-              rows={compat.rows}
-              requested={compat.scope.requested}
-              testedAt={compat.testedAt}
+            <ReadyToRun
+              report={compat}
+              scenarios={envState?.scenarios || []}
+              evalCount={(evals || []).length}
               onFix={onRepairCompat}
               onCheck={onCheckCompat}
-              inlineFixOf={inlineFixOf}
-              onInlineFix={onInlineFix}
               checking={checkingCompat}
             >
-              {(blockedN > 0 || cancelRow) && (
+              {blockedN > 0 && (
                 <Stack spacing={1}>
                   {blockedN > 0 && (
                     <>
@@ -463,88 +460,87 @@ export default function RunPlanDialog({
                         <Typography
                           sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
                         >
-                          {`${blockedN} of ${compat.scope.requested} cases can't run with this agent — choose how to go on`}
+                          {compat.scope.runnable || !observeWhy
+                            ? `${blockedN} of ${compat.scope.requested} can't run with this agent — how to go on`
+                            : `None of the ${compat.scope.requested} can run with this agent yet — fix the blockers above`}
                         </Typography>
-                        {/* The row's own Fix is right above when it fits inline. */}
-                        {onRepairCompat &&
-                          blockingRows[0] &&
-                          !inlineFixOf?.(blockingRows[0]) && (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => onRepairCompat(blockingRows[0])}
-                              sx={{
-                                color: "text.primary",
-                                borderColor: "divider",
-                              }}
-                            >
-                              Repair
-                            </Button>
-                          )}
                       </Stack>
                       {[
                         {
                           id: "eligible",
-                          label: `Run the ${compat.scope.runnable} reviewed eligible cases`,
+                          label: `Run the ${compat.scope.runnable} that can`,
+                          short: `· ${blockedN} recorded as not run`,
                           note: `Left out, recorded as not run — ${leftOut}. ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`,
                           disabled: !compat.scope.runnable,
                         },
                         {
                           id: "observe",
                           label: "Observation only",
+                          short: observeWhy
+                            ? "· not for a tool that reaches production"
+                            : "· all run, not graded on state",
                           note:
                             observeWhy ||
                             "Every case runs, but controlled state checks are unavailable — the result is labelled observed, not graded on state.",
                           disabled: !!observeWhy,
                         },
-                      ].map((o) => (
-                        <Stack
-                          key={o.id}
-                          direction="row"
-                          alignItems="flex-start"
-                          spacing={0.75}
-                          onClick={() => !o.disabled && setBlockedChoice(o.id)}
-                          sx={{
-                            cursor: o.disabled ? "default" : "pointer",
-                            opacity: o.disabled ? 0.6 : 1,
-                          }}
-                        >
-                          <Radio
-                            size="small"
-                            checked={blockedChoice === o.id}
-                            disabled={o.disabled}
-                            tabIndex={-1}
-                            sx={{ p: 0, mt: "1px" }}
-                            inputProps={{ "aria-label": o.label }}
-                          />
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography sx={{ typography: "s2" }}>
-                              {o.label}
-                            </Typography>
-                            <Typography
-                              sx={{ typography: "s3", color: "text.tertiary" }}
+                      ]
+                        /* Nothing eligible: that way on isn't offered. */
+                        .filter(
+                          (o) => o.id !== "eligible" || compat.scope.runnable,
+                        )
+                        .map((o) => (
+                          /* One line each; the full consequence on hover. */
+                          <Tooltip
+                            key={o.id}
+                            arrow
+                            placement="top-start"
+                            title={o.note}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              spacing={0.75}
+                              onClick={() =>
+                                !o.disabled && setBlockedChoice(o.id)
+                              }
+                              sx={{
+                                cursor: o.disabled ? "default" : "pointer",
+                                opacity: o.disabled ? 0.6 : 1,
+                              }}
                             >
-                              {o.note}
-                            </Typography>
-                          </Box>
-                        </Stack>
-                      ))}
+                              <Radio
+                                size="small"
+                                checked={blockedChoice === o.id}
+                                disabled={o.disabled}
+                                tabIndex={-1}
+                                sx={{ p: 0 }}
+                                inputProps={{ "aria-label": o.label }}
+                              />
+                              <Typography
+                                noWrap
+                                sx={{ typography: "s2", minWidth: 0 }}
+                              >
+                                {o.label}
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    color: "text.tertiary",
+                                    ml: 0.75,
+                                    typography: "s3",
+                                  }}
+                                >
+                                  {o.short}
+                                </Box>
+                              </Typography>
+                            </Stack>
+                          </Tooltip>
+                        ))}
                     </>
-                  )}
-                  {cancelRow && (
-                    <Typography
-                      sx={{ typography: "s3", color: "status.warning.fg" }}
-                    >
-                      <Tooltip arrow title={cancelRow.detail}>
-                        <span>
-                          Stop is partial for this agent — hover for why
-                        </span>
-                      </Tooltip>
-                    </Typography>
                   )}
                 </Stack>
               )}
-            </CapabilitySummary>
+            </ReadyToRun>
           )}
 
           {/* ── run setup: agent · environment · suite, read together ── */}
@@ -611,36 +607,49 @@ export default function RunPlanDialog({
                         note:
                           participantsEvidence?.source === "instrumented"
                             ? "Each worker's tools are enforced by the runtime; hand-offs are observed in this run."
-                            : "Workers' tools are declared, not enforced, and hand-offs aren't observed — only the overall result counts.",
+                            : "Workers' tools: Not enforced. Hand-offs aren't observed — only the overall result counts.",
                       },
                     ]
                   : []),
+                /* Environment and suite on one line: the version that runs,
+                   then which of its scenarios. */
                 {
                   k: "Environment",
-                  v: `${env?.name || "This environment"}${envLabel ? ` · ${envLabel}, saved` : ""}`,
-                },
-                {
-                  k: "Suite",
-                  v: suites.length ? (
-                    <TextField
-                      select
-                      size="small"
-                      value={suiteId}
-                      onChange={(e) => setSuiteId(e.target.value)}
-                      inputProps={{ "aria-label": "Suite" }}
-                      sx={{ minWidth: 220, ...fieldSx }}
+                  v: (
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={0.5}
+                      useFlexGap
+                      flexWrap="wrap"
                     >
-                      <MenuItem value="all">
-                        {`This scope · ${scenarioCount}`}
-                      </MenuItem>
-                      {suites.map((x) => (
-                        <MenuItem key={x.id} value={x.id}>
-                          {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  ) : (
-                    `This scope · ${scenarioCount}`
+                      <Box component="span">
+                        {`${env?.name || "This environment"}${envLabel ? ` · ${envLabel}, saved` : ""} ·`}
+                      </Box>
+                      {suites.length ? (
+                        <TextField
+                          select
+                          size="small"
+                          value={suiteId}
+                          onChange={(e) => setSuiteId(e.target.value)}
+                          inputProps={{ "aria-label": "Suite" }}
+                          sx={{ minWidth: 180, ...fieldSx }}
+                        >
+                          <MenuItem value="all">
+                            {`This scope · ${scenarioCount}`}
+                          </MenuItem>
+                          {suites.map((x) => (
+                            <MenuItem key={x.id} value={x.id}>
+                              {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      ) : (
+                        <Box component="span">
+                          {`this scope · ${scenarioCount}`}
+                        </Box>
+                      )}
+                    </Stack>
                   ),
                   note: suite
                     ? "A suite is frozen when the run starts: later edits to it don't change this run."
@@ -808,8 +817,9 @@ export default function RunPlanDialog({
             </Box>
           </Stack>
 
-          {/* ── what's in and out (TH-8880): selected · will run · blocked ── */}
-          {blockedN > 0 && !suite && (
+          {/* ── what's in and out (TH-8880): selected · will run · blocked —
+              once a way on is chosen; before that the panel above says it. ── */}
+          {blockedN > 0 && !suite && blockedChoice && (
             <Typography
               sx={{
                 typography: "s3",
@@ -1400,7 +1410,9 @@ export default function RunPlanDialog({
           arrow
           title={
             check.canStart
-              ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
+              ? SHOW_RUN_COST
+                ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
+                : `${estimate.trials} ${unit}s`
               : check.holds[0]?.title || ""
           }
         >
@@ -1433,7 +1445,8 @@ export default function RunPlanDialog({
                     : null,
                   suiteIds: suite ? suite.ids : null,
                   candidate: snapshotPick ? candidate : null,
-                  cap: effectiveCap,
+                  /* No cap is applied while pre-run cost is Later (costFlags). */
+                  cap: SHOW_RUN_COST ? effectiveCap : null,
                   alertAt,
                   estimate,
                   limits,
@@ -1481,6 +1494,7 @@ RunPlanDialog.propTypes = {
   /* Run setup: compatible agents { key, name, version, current, readiness },
      saved suites { id, name, ids }, and the saved environment version label. */
   agentChoices: PropTypes.array,
+  initialAgentKey: PropTypes.string,
   suites: PropTypes.array,
   envLabel: PropTypes.string,
   scopeNote: PropTypes.string,
@@ -1511,8 +1525,6 @@ RunPlanDialog.propTypes = {
   /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */
   compat: PropTypes.object,
   onCheckCompat: PropTypes.func,
-  inlineFixOf: PropTypes.func,
-  onInlineFix: PropTypes.func,
   checkingCompat: PropTypes.bool,
   onRepairCompat: PropTypes.func,
 };

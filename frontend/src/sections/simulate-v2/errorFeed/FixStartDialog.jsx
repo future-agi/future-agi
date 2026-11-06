@@ -23,6 +23,7 @@ import { useConnectedAgents, useSimStore } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
 import { proofKindOf } from "../_mock/rsiModel";
 import CostPartsTable from "../improvements/CostPartsTable";
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 import { ConstraintPicker } from "../improvements/ImprovementConstraints";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
@@ -724,7 +725,9 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                   >
-                    {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}
+                    {SHOW_RUN_COST
+                      ? `Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
+                      : `Up to ${estimate.runs} trials · ${estimate.minutes} min.`}
                   </Typography>
                 </Row>
               )}
@@ -737,11 +740,14 @@ export default function FixStartDialog({
                     borderColor: "divider",
                   }}
                 >
-                  <CostPartsTable
-                    parts={estimate.parts}
-                    totalLabel="Up to"
-                    totalUsd={estimate.likely}
-                  />
+                  {/* A cost breakdown before the fix starts is Later (plan improve §4). */}
+                  {SHOW_RUN_COST && (
+                    <CostPartsTable
+                      parts={estimate.parts}
+                      totalLabel="Up to"
+                      totalUsd={estimate.likely}
+                    />
+                  )}
                 </Box>
               )}
               {/* A live agent: consent is given here, then Start fix — never a page away. */}

@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_RUN_COST } from "../../_mock/costFlags";
 import { voiceFixOf } from "../../_mock/voiceFix";
 import { useEffect, useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
@@ -498,8 +499,11 @@ export default function ImprovementSetup({
     const def = agentDefinitionOf({ agent, env: main, envState: es });
     return def.model?.visible ? def.model.name : null;
   }, [agent, main, es]);
+  /* A locked release holds back its test split; the fix learns only from
+     the train split (plan D04, improve §4). */
+  const lockedTest = es?.lockedRelease?.splits?.test || null;
   const train = preview?.trainMeasured || 0;
-  const held = preview?.heldMeasured || 0;
+  const held = lockedTest ? lockedTest.length : preview?.heldMeasured || 0;
   /* Must-pass in the main environment, plus each other environment checked. */
   const mustPassMain =
     preview?.mustPassMeasured ?? preview?.mustPass?.total ?? 0;
@@ -675,6 +679,15 @@ export default function ImprovementSetup({
         {main && (
           <Box>
             <Typography sx={{ typography: "s2", mb: 1.5 }}>{review}</Typography>
+            {/* improve.md: user intent first — a goal-started fix leads with
+                its goal, then the tests it resolves to. */}
+            {preset?.fromGoal && (
+              <ConfirmRow k="Goal">
+                <Typography sx={{ typography: "s2" }}>
+                  {goalText(goalOf)}
+                </Typography>
+              </ConfirmRow>
+            )}
             {!agentField && (
               <ConfirmRow k="Agent">
                 <Typography sx={{ typography: "s2" }}>
@@ -685,10 +698,27 @@ export default function ImprovementSetup({
             <ConfirmRow k="Runs in">
               <Typography sx={{ typography: "s2" }}>{main.name}</Typography>
             </ConfirmRow>
+            {/* source_run_id: the actual failed run and its version. */}
+            <ConfirmRow k="From run">
+              <Typography sx={{ typography: "s2" }}>
+                {today
+                  ? "Today's version — measured first"
+                  : base?.id
+                    ? `${base.ordinal ? `Run ${base.ordinal}` : base.id}${base.agentVersion ? ` · agent ${base.agentVersion}` : ""}${base.envVersion ? ` · environment ${base.envVersion}` : ""}`
+                    : "No run yet — today's version is measured first"}
+              </Typography>
+            </ConfirmRow>
             <ConfirmRow k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
                 {`Targets ${train} · Protected ${mustPassAll} · Held back ${held}`}
               </Typography>
+              {lockedTest && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+                >
+                  {`Held back: release ${es.lockedRelease.version}'s test split. It learns only from the train split.`}
+                </Typography>
+              )}
               <HeldBackLine heldBack={heldBack} />
               {notCounted && (
                 <Typography
@@ -752,6 +782,12 @@ export default function ImprovementSetup({
                   );
                 })}
               </Stack>
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+              >
+                Evaluators, hidden cases and frozen world inputs are never
+                editable.
+              </Typography>
             </ConfirmRow>
             {(limits.allowed || []).includes("skills") && focusSkill && (
               <ConfirmRow k="Skill">
@@ -891,11 +927,15 @@ export default function ImprovementSetup({
                 </Box>
               </Stack>
             </ConfirmRow>
-            <ConfirmRow k="Cost">
+            <ConfirmRow k={SHOW_RUN_COST ? "Cost" : "Budget"}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {overBudget
-                  ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)}. The full plan needs about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
-                  : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}
+                {/* The budget is a limit the fix keeps to; an estimate before
+                    it starts is Later (plan improve §4, costFlags). */}
+                {!SHOW_RUN_COST
+                  ? `Up to ${trials} candidates · stops at ${creditsLabel(spend)} or ${estimate.minutes} min.`
+                  : overBudget
+                    ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)}. The full plan needs about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
+                    : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}
               </Typography>
             </ConfirmRow>
           </Box>
@@ -1424,10 +1464,12 @@ export default function ImprovementSetup({
               ? "Runs the environment on today's version first. A winner comes back as a new version."
               : "A winner comes back as a new version. You decide whether to make it the default."}
         </Typography>
-        {/* The same experiment from code — what Start improvement would make. */}
+        {/* The same fix run from code — what Start improvement would make.
+            Flags follow the API's fields (source run, target and protected
+            cases, surfaces, locked paths, credits, minutes). */}
         {main && (
           <CopyCommandButton
-            command={`fi api fix-runs create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow ${allowFlagOf(limits.allowed)} \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
+            command={`fi api fix-runs create --source-run-id ${base?.id || "<run-id>"} \\\n  --target-case-keys ${main.id}/target --protected-case-keys ${main.id}/must-pass \\\n  --surfaces ${allowFlagOf(limits.allowed)}${(limits.protected || []).length ? ` --locked-paths ${limits.protected.join(",")}` : ""} \\\n  --budget-credits ${creditsForUsd(spend)} --max-minutes ${limits.budget.minutes}`}
           />
         )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
@@ -1515,7 +1557,7 @@ function HeldBackLine({ heldBack }) {
         }}
       >
         {heldBack.tooFew
-          ? `Too few held-back scenarios: the result can only be Limited validation, never Verified. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
+          ? `Too few held-back scenarios: the result can only be Limited validation, never Verified, and any pull request opens as a draft. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
           : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
       </Typography>
     </Stack>

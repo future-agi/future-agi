@@ -261,5 +261,21 @@ export const worldChangesOf = (task, env, envState) => {
   stepWrites.forEach((s, i) =>
     record(`${task.id}-step-${i}`, s.tool, s.args, null),
   );
-  return { evidence, changes, notCommitted };
+  /* world.md §5: a successful action in one system isn't enough when a
+     second one disagrees — a refund paid while its ticket stays open. */
+  const ticketTable = tables.find((t) => /ticket|case/i.test(t));
+  const money = changes.find(
+    (c) =>
+      !c.lost && /refund|payment|charge|credit/i.test(`${c.tool} ${c.table}`),
+  );
+  const mismatches =
+    money && ticketTable && !changes.some((c) => c.table === ticketTable)
+      ? [
+          {
+            id: `${money.id}-mismatch`,
+            line: `${money.table} shows ${money.record} done, but ${ticketTable} still has it open — the two systems disagree.`,
+          },
+        ]
+      : [];
+  return { evidence, changes, notCommitted, mismatches };
 };

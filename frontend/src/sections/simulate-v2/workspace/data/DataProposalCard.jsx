@@ -14,7 +14,6 @@ import Iconify from "src/components/iconify";
 import { useEnvState } from "../../store";
 import { useRoleGates } from "../../_mock/previewRole";
 import {
-  acceptDataPatch,
   dataProposalOf,
   draftDataPatches,
   readFile,
@@ -25,7 +24,6 @@ import {
   personalChoicePatch,
   supplyRecordsPatch,
 } from "../../_mock/dataMapping";
-import { editsLandInPlace } from "../../_mock/versions";
 import { openReviewChanges } from "../reviewChangesBus";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
 import { personaFor } from "../../_mock/scenarios";
@@ -146,58 +144,42 @@ export default function DataProposalCard({
   const accept = () => {
     if (!gates.canEdit)
       return enqueueSnackbar(gates.editReason, { variant: "info" });
-    /* Once a run has pinned the version, a file's changes join the unsaved
-       changes and are reviewed and saved with the rest (Review changes). */
-    if (!editsLandInPlace(envState)) {
-      const { patches, failed } = draftDataPatches(
-        env,
-        envState,
-        proposal,
-        picked,
-        { conflictPick, scenarioRows, edits, cast },
-      );
-      patches.forEach((x) => patch(x));
-      if (failed.length)
-        patch({
-          failedEnvChanges: [...(envState.failedEnvChanges || []), ...failed],
-        });
-      const n = patches.length - 1;
-      enqueueSnackbar(
-        `Added ${n} change${n === 1 ? "" : "s"} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
-        {
-          variant: "success",
-          action: (key) =>
-            createElement(
-              Button,
-              {
-                size: "small",
-                color: "inherit",
-                onClick: () => {
-                  closeSnackbar(key);
-                  openReviewChanges();
-                },
+    /* data.md §3–4: accepted changes stay in the draft, and the version is
+       saved from Review changes once the affected scenario checks pass. */
+    const { patches, failed } = draftDataPatches(
+      env,
+      envState,
+      proposal,
+      picked,
+      { conflictPick, scenarioRows, edits, cast },
+    );
+    patches.forEach((x) => patch(x));
+    if (failed.length)
+      patch({
+        failedEnvChanges: [...(envState.failedEnvChanges || []), ...failed],
+      });
+    const n = patches.length - 1;
+    enqueueSnackbar(
+      `Added ${n} change${n === 1 ? "" : "s"} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
+      {
+        variant: "success",
+        action: (key) =>
+          createElement(
+            Button,
+            {
+              size: "small",
+              color: "inherit",
+              onClick: () => {
+                closeSnackbar(key);
+                openReviewChanges();
               },
-              "Review changes",
-            ),
-        },
-      );
-      if (onSaved) onSaved();
-      else setSaved({ label: next, rules: 0, draft: true });
-      return null;
-    }
-    const p = acceptDataPatch(env, envState, proposal, picked, {
-      shownLabel: next,
-      conflictPick,
-      scenarioRows,
-      edits,
-      cast,
-    });
-    const { ruleIds, ...rest } = p;
-    patch(rest);
-    /* In a popup, approving closes it: the page shows the new version
-       building. In the builder chat the answer stays in the thread. */
+            },
+            "Review changes",
+          ),
+      },
+    );
     if (onSaved) onSaved();
-    else setSaved({ label: next, rules: ruleIds.length });
+    else setSaved({ label: next, rules: 0, draft: true });
     return null;
   };
   const omitRows = (item) => {
@@ -362,6 +344,26 @@ export default function DataProposalCard({
               sx={{ mt: 0.75 }}
             />
           )}
+          {/* data.md §3: values the builder made up say so — never
+              attributed to an uploaded source. */}
+          {!i.cite && i.kind !== "conflict" && (
+            <Typography
+              sx={{ mt: 0.5, typography: "s3", color: "text.tertiary" }}
+            >
+              Generated — made by the builder, not from a file you added
+            </Typography>
+          )}
+          {i.kind === "table" &&
+            proposal.items.find(
+              (x) => x.kind === "personal" && x.sourceId === i.cite?.sourceId,
+            )?.choice === "replace" && (
+              <Typography
+                sx={{ mt: 0.5, typography: "s3", color: "text.tertiary" }}
+              >
+                Personal fields: Generated replacements, consistent across
+                tables
+              </Typography>
+            )}
           {i.cite && (
             <ButtonBase
               onClick={() => onOpenSource?.(i.cite.sourceId)}
@@ -548,7 +550,7 @@ export default function DataProposalCard({
             ? `Choose how to handle personal data in ${undecided.map((i) => i.cite.ref).join(", ")} first.`
             : proposal.items.some((i) => i.blocking)
               ? "Blocked items stay out until they're resolved; the rest can be saved now."
-              : `Saves environment ${next} with this data snapshot.`}
+              : `Adds them to the draft. Save environment ${next} from Review changes once the affected scenarios pass.`}
         </Typography>
         <Button
           variant="outlined"
@@ -566,11 +568,7 @@ export default function DataProposalCard({
             count ? accept() : onSaved ? onSaved() : setRejected(true)
           }
         >
-          {!count
-            ? "Done"
-            : editsLandInPlace(envState)
-              ? `Accept ${count} and save as ${next}`
-              : `Add ${count} to unsaved changes`}
+          {!count ? "Done" : `Add ${count} to unsaved changes`}
         </Button>
       </Stack>
       <AddSourceMenu

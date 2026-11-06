@@ -148,6 +148,8 @@ export const STATUS_META = {
      Deliberately not red: this is our failure, not the agent's. */
   unmeasured: { role: "neutral", label: "Couldn't measure" },
   completed: { role: "neutral", label: "Completed" },
+  /* A run whose worker or client stopped before every trial ran (runs §5). */
+  interrupted: { role: "warning", label: "Interrupted" },
   failed: { role: "danger", label: "Failed" },
   error: { role: "danger", label: "Error" },
   cancelled: { role: "neutral", label: "Cancelled" },

@@ -86,7 +86,23 @@ export default function DesignReview({
       )}
     </>
   );
+  /* Where each planned item came from (builder.md §2: the builder records
+     answers and sources). Generated values say so. */
+  const origin = scratch
+    ? "From your description"
+    : env?.builtFrom?.kind === "template" || env?.builtFrom?.worldSource
+      ? "From the ready world"
+      : "From the agent's code";
+  const tableSrc = (t) =>
+    t.fromFile || t.source ? `From ${t.fromFile || t.source}` : "Generated";
+  const ruleSrc = scratch
+    ? "From your description"
+    : origin === "From the agent's code"
+      ? "From the agent's prompt"
+      : origin;
+  const testRequest = env?.builtFrom?.testRequest || null;
   const rows = [
+    ...(testRequest ? [["Tests", testRequest]] : []),
     ...(canAdd || files.length ? [["Sources", sourcesValue]] : []),
     [
       "World",
@@ -101,7 +117,8 @@ export default function DesignReview({
       "People",
       `${(env?.actors || []).length ? `Caller + ${(env?.actors || []).length}` : "Caller only"}`,
     ],
-    ["Scenarios", `${draftCount} to write`],
+    /* The scenarios are saved as the first suite version, s1. */
+    ["Scenarios", `${draftCount} to write · suite s1`],
   ];
   const status = parked ? "Parked" : waiting ? "Awaiting approval" : "Approved";
   const tools = env?.tools || [];
@@ -386,7 +403,7 @@ export default function DesignReview({
                   <PlanRow label="Records">
                     {tables.length ? (
                       tables.map((t) => (
-                        <PlanLine key={t.name}>
+                        <PlanLine key={t.name} src={tableSrc(t)}>
                           <Box component="span" sx={{ fontWeight: 500 }}>
                             {t.name}
                           </Box>
@@ -409,6 +426,7 @@ export default function DesignReview({
                       tools.map((t) => (
                         <PlanLine
                           key={t.name}
+                          src={t.source || origin}
                           onRemove={onChange && (() => removeTool(t))}
                         >
                           <Box component="span" sx={{ fontWeight: 500 }}>
@@ -490,6 +508,7 @@ export default function DesignReview({
                         ) : (
                           <PlanLine
                             key={`${i}-${r}`}
+                            src={ruleSrc}
                             onEdit={
                               onChange &&
                               (() => {
@@ -526,6 +545,7 @@ export default function DesignReview({
                     {actors.map((id) => (
                       <PlanLine
                         key={id}
+                        src="Proposed for the scenarios"
                         onRemove={
                           onChange &&
                           (() =>
@@ -681,7 +701,7 @@ LineAction.propTypes = {
   onClick: PropTypes.func.isRequired,
 };
 
-function PlanLine({ children, onEdit, onRemove }) {
+function PlanLine({ children, onEdit, onRemove, src }) {
   return (
     <Stack
       direction="row"
@@ -695,6 +715,14 @@ function PlanLine({ children, onEdit, onRemove }) {
       >
         {children}
       </Typography>
+      {src && (
+        <Typography
+          noWrap
+          sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+        >
+          {src}
+        </Typography>
+      )}
       {onEdit && (
         <LineAction icon="solar:pen-linear" label="Edit" onClick={onEdit} />
       )}
@@ -713,6 +741,7 @@ PlanLine.propTypes = {
   empty: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  src: PropTypes.string,
 };
 DesignReview.propTypes = {
   env: PropTypes.object,

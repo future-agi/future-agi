@@ -9,8 +9,15 @@ import { takesSnapshot } from "./candidateSource";
 import { resolveEval } from "./evals";
 import { endStateSavedOf } from "./regrade";
 import { retriedIdsOf, attemptsOf } from "./runPlanLink";
+import { SHOW_RUN_COST } from "./costFlags";
 
+/* " · ≈ N credits" — empty while pre-run cost is off (costFlags). */
+const costTail = (...a) => {
+  const c = costOf(...a);
+  return c ? ` · ${c}` : "";
+};
 const costOf = (env, envState, run, n) => {
+  if (!SHOW_RUN_COST) return null;
   if (!n) return null;
   const e = estimateRunPlan({
     env,
@@ -76,12 +83,12 @@ export const repeatActionsOf = ({
             ? "Apply another evaluation to the stored traces and end states."
             : "Apply another evaluation to the stored traces."
       } The agent's run stays as it was, and the previous result is kept beside the new one.${stateSaved ? "" : " End state wasn't saved — only the conversation checks are re-graded."}`,
-      meta: `No new agent calls · ${regrade ? `≈ ${regrade.credits.toLocaleString()} credits` : "judges only"}`,
+      meta: `No new agent calls · ${SHOW_RUN_COST && regrade ? `≈ ${regrade.credits.toLocaleString()} credits` : "judges only"}`,
     },
     failures: {
       label: `Re-run ${failing.length} failing`,
       detail: `A new run of the scenarios that failed here, resolved from this run.${notCounted ? ` The ${notCounted} that weren't counted (inconclusive, test invalid or error) can be added in the run plan.` : ""}`,
-      meta: `New agent calls · world reset · ${costOf(env, envState, run, failing.length) || "—"}`,
+      meta: `New agent calls · world reset${costTail(env, envState, run, failing.length)}`,
       disabled: !failing.length ? "Nothing failed in this run." : null,
       ids: failing,
     },
@@ -89,7 +96,7 @@ export const repeatActionsOf = ({
       label: "Recorded-tool replay",
       detail:
         "Run the agent again, with every tool answering what it returned in this run. It can't show how the agent does against a world that changes.",
-      meta: `New agent calls · tools from the recording · ${costOf(env, envState, run, total) || "—"}`,
+      meta: `New agent calls · tools from the recording${costTail(env, envState, run, total)}`,
       disabled: "Coming later.",
     },
     resume: {
@@ -100,7 +107,7 @@ export const repeatActionsOf = ({
         ? `Continue under this run's saved configuration. The ${Math.max(0, total - notStarted.length)} that finished aren't repeated or charged again; unfinished trials restart from their seed.`
         : "Continue unfinished trials under the saved configuration.",
       meta: notStarted.length
-        ? `New agent calls · ${costOf(env, envState, run, notStarted.length) || "—"}`
+        ? `New agent calls${costTail(env, envState, run, notStarted.length)}`
         : null,
       disabled: notStarted.length
         ? null

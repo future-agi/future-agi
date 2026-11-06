@@ -701,7 +701,11 @@ function CatalogRow({
               </>
             ) : (
               sub ||
-              [showGroup && item.group?.title, item.next || item.need]
+              [
+                item.untested && "Untested",
+                showGroup && item.group?.title,
+                item.next || item.need,
+              ]
                 .filter(Boolean)
                 .join(" · ")
             )}

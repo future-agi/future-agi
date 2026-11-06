@@ -207,7 +207,7 @@ export default function GroupsBar({
           content={
             <Stack spacing={1.25}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {`${plan.run.length} of ${confirm.ids.length} scenario${confirm.ids.length === 1 ? "" : "s"} run, ${repeats}× each. The run keeps exactly these — a scenario added to the group later joins the next run, not this one.`}
+                {`${plan.run.length} of ${confirm.ids.length} scenario${confirm.ids.length === 1 ? "" : "s"} run, ${repeats}× each. The run keeps exactly these — a scenario added to the suite later joins the next run, not this one.`}
               </Typography>
               {plan.left.length > 0 && (
                 <Box>

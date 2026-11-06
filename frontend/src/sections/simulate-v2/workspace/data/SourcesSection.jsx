@@ -298,7 +298,9 @@ export default function SourcesSection({
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {`${s.kb ? `rev ${s.kb.revision}` : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
+                    {/* data.md §4: a KB source is a copied snapshot — said
+                        on the row, so a later KB edit can't pass for it. */}
+                    {`${s.kb ? `rev ${s.kb.revision} · copied snapshot` : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
                   </Typography>
                   <Typography
                     noWrap

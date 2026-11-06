@@ -245,6 +245,10 @@ function Details({ p, agent, task }) {
                 : "Not recorded — the app sent no worker events, so this shows how it's set up, not what happened."}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              Supported shape
+            </Typography>
+            <Typography sx={{ typography: "s2" }}>{p.topology}</Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
               Tool limits
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
@@ -875,6 +879,24 @@ function Turn({ t, p, multi, last, onOpen }) {
       ) : (
         <Quiet>{`${p.coordinator.name} handled this turn itself.`}</Quiet>
       )}
+      {/* multiagent §3: after a worker gives no answer, what the coordinator
+          did next — from the recorded events, never an invented return. */}
+      {(() => {
+        const i = t.workers.findIndex((w) => w.state === "timeout");
+        if (i < 0 || !p.observed) return null;
+        const w = t.workers[i];
+        const nextW = t.workers[i + 1];
+        return (
+          <Quiet>
+            {`After no answer from ${w.name}, ${p.coordinator.name} `}
+            {nextW
+              ? `handed the next task to ${nextW.name}.`
+              : t.reply
+                ? `replied without ${w.name}'s answer.`
+                : "did nothing more before the call ended."}
+          </Quiet>
+        );
+      })()}
       {t.reply ? (
         <Quote label={`${p.coordinator.name} replied`} text={t.reply} />
       ) : (

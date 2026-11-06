@@ -32,7 +32,8 @@ import {
   personaTypeFor,
   usesPersonaLibrary,
 } from "../../_mock/personaScenarios";
-import { subGoalsOfScenario } from "../../_mock/envModel";
+import { isConnectOnly, subGoalsOfScenario } from "../../_mock/envModel";
+import { proofKindOf } from "../../_mock/rsiModel";
 import {
   SUBGOAL_MAX,
   SUBGOAL_MIN,
@@ -360,6 +361,7 @@ export default function ScenarioEditor({
             env={env}
             envState={envState}
           />
+          <CheckEvidence draft={draft} env={env} envState={envState} />
 
           {/* ─── Persona ─── */}
           {/*
@@ -1058,6 +1060,80 @@ LibrarySettingsNote.propTypes = {
   of them, read from the contract, so it can be re-marked but not removed.
 */
 const goalText = (g) => (typeof g === "string" ? g : g?.text || g?.label || "");
+
+/* scenarios.md §2: each check with the evidence it needs. Evidence this
+   setup can't capture is said here — that check is Unmeasured until the
+   adapter or the world provides it. */
+const STATE_CHECK =
+  /^Call [a-z0-9_]+|^Holds the line|verify|confirm|check|refund|record|update|book/i;
+function CheckEvidence({ draft, env, envState }) {
+  const goals = subGoalsOfScenario(draft, env, envState);
+  if (!goals.length) return null;
+  const noWorld = isConnectOnly(env);
+  const promptOnly = proofKindOf(envState?.agent)?.kind === "prompt-only";
+  const rows = goals.map((g) => {
+    const text = typeof g === "string" ? g : g?.text || g?.label || "";
+    const needsState = STATE_CHECK.test(text);
+    const captured = !needsState || (!noWorld && !promptOnly);
+    return {
+      text,
+      evidence: needsState ? "End state and tool calls" : "The conversation",
+      captured,
+      why: noWorld
+        ? "this environment has no world to read"
+        : "the agent's tool calls aren't recorded",
+    };
+  });
+  return (
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+          px: 1.5,
+          pt: 1,
+          pb: 0.5,
+        }}
+      >
+        Evidence each check needs
+      </Typography>
+      {rows.map((r, i) => (
+        <Stack
+          key={`${i}-${r.text}`}
+          direction="row"
+          spacing={1.5}
+          sx={{
+            px: 1.5,
+            py: 0.625,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+            {r.text}
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: r.captured ? "text.secondary" : "status.warning.fg",
+              flexShrink: 0,
+            }}
+          >
+            {r.captured
+              ? r.evidence
+              : `${r.evidence} — not captured (${r.why}) → Unmeasured`}
+          </Typography>
+        </Stack>
+      ))}
+    </Box>
+  );
+}
+CheckEvidence.propTypes = {
+  draft: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 function SubGoalsEditor({ draft, setDraft, env, envState }) {
   const [adding, setAdding] = useState("");

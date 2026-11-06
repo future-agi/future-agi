@@ -103,10 +103,11 @@ export const lockPatch = (env, envState) => {
       id: `rl-${id}`,
       task: titleOf(id),
       split: "train",
-      status: i === 2 ? "Failed" : "Finished",
+      status: ["Complete", "Step limit", "Cancelled"][i],
       release: versionOf(env, envState),
       rewardVersion: "v1",
-      reward: [1, 0, 0.5][i],
+      reward: [1, 0, null][i],
+      ...(i === 2 && { rewardNote: "Not scored" }),
       credits: 12 + i * 3,
     })),
     ...test.slice(0, 1).map((id) => ({
@@ -145,6 +146,11 @@ export const lockPatch = (env, envState) => {
   };
 };
 
+/* How a session finished (rl.md: complete, step limit or cancelled, each
+   reported differently). Older saves said Finished / Failed. */
+const SESSION_STATUS = { Finished: "Complete", Failed: "Step limit" };
+export const sessionStatusOf = (s) => SESSION_STATUS[s?.status] || s?.status;
+
 /** Reward versions a trainer can pick; "reward r1" in older saves is v1. */
 export const REWARD_VERSIONS = ["v1", "v2"];
 export const rewardLabelOf = (v) => String(v || "v1").replace(/^reward r/, "v");
@@ -182,7 +188,7 @@ export const openSessionPatch = (envState, split, rewardVersion) => {
         id: `rl-${Date.now().toString(36)}`,
         task,
         split,
-        status: "Finished",
+        status: "Complete",
         release: envState?.lockedRelease?.version || "v1",
         rewardVersion,
         reward: rewardVersion === "v2" ? 0.75 : 1,

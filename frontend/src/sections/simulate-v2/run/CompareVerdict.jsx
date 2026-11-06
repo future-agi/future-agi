@@ -14,7 +14,7 @@ import {
 import Iconify from "src/components/iconify";
 import { neutralCheckboxSx } from "../components/primitives";
 import { textTone } from "../components/textTone";
-import { noiseBandText, PAIR_FLOOR } from "../_mock/pairs";
+import { noiseBandText, PAIR_FLOOR, verdictWithMustPass } from "../_mock/pairs";
 import { clickable, focusRing } from "../components/clickable";
 
 /* Red is for regressions only. Everything else stays neutral. */
@@ -79,9 +79,12 @@ export default function CompareVerdict({
   promote = null,
   onImprove = null,
 }) {
-  const [pinsOpen, setPinsOpen] = useState(false);
+  const [pinsOpen, setPinsOpen] = useState(
+    () => (held?.differs || []).length > 0,
+  );
   if (!read) return null;
-  const { counts, interval: iv, label, fixes, warnings, trend, band } = read;
+  const { counts, interval: iv, fixes, warnings, trend, band } = read;
+  const label = verdictWithMustPass(read.label, mustPass);
   const floor = label.id === "rows";
   const side = label.id === "side";
   const inconclusive = label.id === "inconclusive" || floor;
@@ -120,6 +123,101 @@ export default function CompareVerdict({
         overflow: "hidden",
       }}
     >
+      {/* What each run pinned — first, so differing inputs are read before
+          any delta (runs §2 Compare selection); open when something differs. */}
+      {held && (
+        <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            {...clickable(() => setPinsOpen((o) => !o), { expanded: pinsOpen })}
+            sx={{
+              px: 2,
+              py: 0.875,
+              cursor: "pointer",
+              "&:hover": { bgcolor: "action.hover" },
+              ...focusRing,
+            }}
+          >
+            <Iconify
+              icon={
+                pinsOpen
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
+              width={14}
+              sx={{ color: "text.tertiary" }}
+            />
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.secondary",
+              }}
+            >
+              What each run pinned
+            </Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {differs.length
+                ? `${differs.length} differ${differs.length === 1 ? "s" : ""}: ${differs.map((d) => pinLabel(d).toLowerCase()).join(", ")}`
+                : held.agents.length > 1
+                  ? "only the agent varies"
+                  : "everything matches"}
+              {` · ${held.agents.length > 1 ? held.agents.join(" → ") : `agent ${held.agents[0] || "—"}`}`}
+            </Typography>
+          </Stack>
+          <Collapse in={pinsOpen} unmountOnExit>
+            <Box
+              sx={{
+                px: 2,
+                pb: 1.5,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                columnGap: 2.5,
+                rowGap: 1,
+              }}
+            >
+              {held.rows.map((r) => (
+                <Box key={r.id} minWidth={0}>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {pinLabel(r)}
+                  </Typography>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: r.same ? 500 : 600,
+                      minWidth: 0,
+                    }}
+                  >
+                    {pinValue(r)}
+                  </Typography>
+                  {!r.same && PIN_EFFECT[r.id] && (
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {PIN_EFFECT[r.id]}
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            </Box>
+            <Typography
+              sx={{ px: 2, pb: 1.5, typography: "s3", color: "text.tertiary" }}
+            >
+              {`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
+            </Typography>
+          </Collapse>
+        </Box>
+      )}
       {/* A confirmed regression: improve the agent from these failures. */}
       {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
         <Stack
@@ -576,101 +674,6 @@ export default function CompareVerdict({
             {`Make ${promote.candidate} active…`}
           </Button>
         </Stack>
-      )}
-
-      {/* What each run pinned — the old held-fixed box, as a disclosure. */}
-      {held && (
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={0.75}
-            {...clickable(() => setPinsOpen((o) => !o), { expanded: pinsOpen })}
-            sx={{
-              px: 2,
-              py: 0.875,
-              cursor: "pointer",
-              "&:hover": { bgcolor: "action.hover" },
-              ...focusRing,
-            }}
-          >
-            <Iconify
-              icon={
-                pinsOpen
-                  ? "solar:alt-arrow-down-linear"
-                  : "solar:alt-arrow-right-linear"
-              }
-              width={14}
-              sx={{ color: "text.tertiary" }}
-            />
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.secondary",
-              }}
-            >
-              What each run pinned
-            </Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              {differs.length
-                ? `${differs.length} differ${differs.length === 1 ? "s" : ""}: ${differs.map((d) => pinLabel(d).toLowerCase()).join(", ")}`
-                : held.agents.length > 1
-                  ? "only the agent varies"
-                  : "everything matches"}
-              {` · ${held.agents.length > 1 ? held.agents.join(" → ") : `agent ${held.agents[0] || "—"}`}`}
-            </Typography>
-          </Stack>
-          <Collapse in={pinsOpen} unmountOnExit>
-            <Box
-              sx={{
-                px: 2,
-                pb: 1.5,
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-                columnGap: 2.5,
-                rowGap: 1,
-              }}
-            >
-              {held.rows.map((r) => (
-                <Box key={r.id} minWidth={0}>
-                  <Typography
-                    noWrap
-                    sx={{ typography: "s3", color: "text.tertiary" }}
-                  >
-                    {pinLabel(r)}
-                  </Typography>
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s2",
-                      fontWeight: r.same ? 500 : 600,
-                      minWidth: 0,
-                    }}
-                  >
-                    {pinValue(r)}
-                  </Typography>
-                  {!r.same && PIN_EFFECT[r.id] && (
-                    <Typography
-                      noWrap
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      {PIN_EFFECT[r.id]}
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Box>
-            <Typography
-              sx={{ px: 2, pb: 1.5, typography: "s3", color: "text.tertiary" }}
-            >
-              {`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
-            </Typography>
-          </Collapse>
-        </Box>
       )}
     </Box>
   );

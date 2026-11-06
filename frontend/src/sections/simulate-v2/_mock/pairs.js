@@ -984,6 +984,16 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
     };
   }
 
+  /* Different evaluations, not yet re-graded: no verdict (plan RU-2). */
+  const evalMismatch = warnings.some((w) => w.id === "eval" && !w.done);
+  const finalLabel =
+    evalMismatch && ["improved", "regressed", "same"].includes(label.id)
+      ? {
+          id: "inconclusive",
+          label: "Inconclusive",
+          note: "Graded under different evaluations — re-grade both to compare.",
+        }
+      : label;
   return {
     baselineId: a.id,
     targetId: b.id,
@@ -995,7 +1005,7 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
     total,
     sentence: countsSentence(counts, total),
     interval: iv,
-    label,
+    label: finalLabel,
     warnings,
     fixes,
     trend,
@@ -1353,3 +1363,16 @@ export const previewOf = (
     options,
   };
 };
+
+/**
+ * A must-pass regression blocks a positive verdict (plan T14): a better
+ * average doesn't make the comparison an improvement.
+ */
+export const verdictWithMustPass = (label, mustPass = []) =>
+  mustPass.length && ["improved", "same", "inconclusive"].includes(label?.id)
+    ? {
+        id: "regressed",
+        label: "Regressed on must-pass",
+        note: `${mustPass.length} must-pass scenario${mustPass.length === 1 ? "" : "s"} regressed — a better average doesn't make this an improvement.`,
+      }
+    : label;

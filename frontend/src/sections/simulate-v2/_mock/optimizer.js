@@ -1063,7 +1063,7 @@ const repeatsOnRerun = (key) => hashSeed(`${key}:rerun`) % 100 < 20;
 const repoTestsPass = (key) => hashSeed(`${key}:repo-tests`) % 9 !== 0;
 
 /*
-  Fits the environment — the sealed environment was built from one commit:
+  Fits the environment — the simulated environment was built from one commit:
   its image, its install steps, its entry point and its start command. A
   candidate that moves the entry point, changes the build (Dockerfile,
   lockfiles, a dependency that needs the image rebuilt) or changes how the
@@ -1100,7 +1100,7 @@ const compatOf = (key, candidate, { entry, envVersion, runtime } = {}) => {
   if (!own.length) return null;
   const from = String(entry || "agent/main.py").replace(/:.*$/, "");
   const node = runtime === "node" || /\.(t|j)s$/.test(from);
-  const sealed = `the sealed environment ${envVersion || "version"}`;
+  const sealed = `the simulated environment ${envVersion || "version"}`;
   const tail = `it no longer fits ${sealed}. Rebuild the environment from this commit to test it.`;
   /* A change that edits a build file itself. */
   const buildFile = own
@@ -1154,7 +1154,7 @@ const compatOf = (key, candidate, { entry, envVersion, runtime } = {}) => {
     note: `entry point ${from}, build and start command unchanged`,
   };
 };
-/** A candidate that doesn't fit the sealed environment. */
+/** A candidate that doesn't fit the simulated environment. */
 export const compatFailed = (t) => !!t?.compat && t.compat.pass === false;
 
 /** A candidate over the agent's cost or latency ceiling (new improvements). */
@@ -2381,7 +2381,7 @@ export const blockingVerdict = (result) => {
     const reasons = [
       broke ? "failed a must-pass scenario twice" : null,
       tests ? "broke the repository's tests" : null,
-      unfit ? "didn't fit the sealed environment" : null,
+      unfit ? "didn't fit the simulated environment" : null,
       stat ? "failed a static check" : null,
       over ? "went over the cost or latency limit" : null,
     ].filter(Boolean);
@@ -2392,7 +2392,7 @@ export const blockingVerdict = (result) => {
     return {
       tone: "#DC2626",
       title: `No eligible winner — every run ${why}`,
-      body: `Each run fixed something and was rejected — a must-pass failure that repeated on a re-run, ${unfit ? "the repository's own tests, or a change the sealed environment can't run (rebuild the environment from that commit to test it)" : "or the repository's own tests"}. Read what each run was rejected for before trying again.`,
+      body: `Each run fixed something and was rejected — a must-pass failure that repeated on a re-run, ${unfit ? "the repository's own tests, or a change the simulated environment can't run (rebuild the environment from that commit to test it)" : "or the repository's own tests"}. Read what each run was rejected for before trying again.`,
     };
   }
   if (result.heldBlockers?.length) {
@@ -2479,7 +2479,7 @@ export const rejectedFor = (t) => {
   if (staticFailed(t))
     return `failed static checks — ${t.static.reason.replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase())}`;
   if (compatFailed(t))
-    return `doesn't fit the sealed environment — ${t.compat.kind === "entry" ? `moves the entry point to ${t.compat.to}` : t.compat.kind === "run" ? "changes the start command" : `changes the build (${t.compat.dep ? `adds ${t.compat.dep} to ` : "edits "}${t.compat.file})`}`;
+    return `doesn't fit the simulated environment — ${t.compat.kind === "entry" ? `moves the entry point to ${t.compat.to}` : t.compat.kind === "run" ? "changes the start command" : `changes the build (${t.compat.dep ? `adds ${t.compat.dep} to ` : "edits "}${t.compat.file})`}`;
   if (t?.brokeBlocker)
     return "failed a must-pass scenario, and again on a re-run";
   if (t?.repoTests && !t.repoTests.pass)

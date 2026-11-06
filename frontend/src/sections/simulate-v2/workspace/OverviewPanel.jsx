@@ -2261,11 +2261,13 @@ function SourceToSandboxMap({ env, envState, progress }) {
   const connectOnly = isConnectOnly(env);
   const targetForTier = (tier) =>
     ({
-      stub: "stub · a canned response",
-      replay: "replay · a recorded response",
-      stateful: "stateful · reads and writes the world",
-      live: "live · the real tool, sandboxed",
-    })[tier] || "stateful · reads and writes the world";
+      /* The same words as the tool's dial (plan world: simulated, recorded
+         response, or an approved external connection). */
+      stub: "Fixed · a canned response",
+      replay: "Recorded · a recorded response",
+      stateful: "Simulated · reads and writes the world",
+      live: "Live · calls your real system",
+    })[tier] || "Simulated · reads and writes the world";
 
   /*
     Every tool renders with its tier — the side-effect default fills in the

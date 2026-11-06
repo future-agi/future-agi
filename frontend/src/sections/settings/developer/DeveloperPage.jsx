@@ -85,7 +85,7 @@ export default function DeveloperPage() {
     <Box>
       <PageHeader
         title="Developer"
-        description="Build, run and train environments, and run evals and tracing, from your terminal, your code, CI or your own agent."
+        description="Build and run environments, run evals and tracing, and reach RL endpoints, from your terminal, your code, CI or your own agent."
         actions={<GoButton href="https://docs.futureagi.com">Docs</GoButton>}
       />
       <Typography
@@ -135,10 +135,11 @@ export default function DeveloperPage() {
               "Installs the fi CLI. Check it with fi doctor."
             ) : (
               <>
-                The TypeScript SDK is coming soon. Until then, register a
-                TypeScript agent by its URL: fi agents push --repo . --type http
-                --url http://localhost:3000/chat, then fi run --env
-                &lt;environment&gt; --agent my-agent
+                The TypeScript SDK submits, watches, reads and stops runs — see
+                an environment&apos;s Code button. To test a TypeScript agent,
+                register it with fi agents push --repo . and run fi sim run
+                --env &lt;environment-id&gt; --agent-version
+                &lt;agent-version-id&gt;.
               </>
             )}
           </Note>
@@ -146,7 +147,7 @@ export default function DeveloperPage() {
 
         <Section
           title="CI"
-          description="Run an environment on every pull request and fail the check on a regression against the baseline."
+          description="Run an environment on every pull request and fail the check when the completed run is under your pass rate."
         >
           <CodeBlock
             code={`# .github/workflows/simulate.yml
@@ -157,11 +158,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install futureagi
+      - run: ${INSTALL_CMD.split(" && ")[0]}
+      # exit 5: the run completed and failed the gate · exit 6: infrastructure or result unavailable
       - run: |
-          fi sim run --env <environment-id> --suite must-pass --budget 100 --budget-unit credits --non-interactive --yes --output json > run.json
-          fi experiments compare <baseline-run> $(jq -r .run_id run.json) --scope identical --fail-on-regression
-          fi sim runs export $(jq -r .run_id run.json) --format junit --destination ./results.xml
+          fi sim run --env <environment-id> --agent-version <agent-version-id> --suite must-pass \\
+            --trials 3 --wait --fail-under 0.9 --json --no-input > run.json
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           FI_SECRET_KEY: \${{ secrets.FI_SECRET_KEY }}`}
@@ -170,8 +171,8 @@ jobs:
             Add the two keys above as repository secrets. Copy an
             environment&apos;s ID, or the whole command, from its Code button.
             Runs from CI show their commit and pull request on the run page. It
-            exits 6 on a real regression and 7 when the two runs can&apos;t be
-            compared.
+            exits 5 on a failed gate and 6 when the run couldn&apos;t finish — a
+            partial run never passes. Comparing with a baseline comes later.
           </Note>
         </Section>
 
@@ -193,7 +194,7 @@ jobs:
 
         <Section
           title="Build environments from code"
-          description="Define an environment next to your agent, run it, and push it when you want it here. The console builder works too; both make the same environments."
+          description="Define an environment next to your agent and run it from code. The console builder works too; both make the same environments."
           actions={
             <GoButton to={paths.dashboard.simulate.environments}>
               Environments

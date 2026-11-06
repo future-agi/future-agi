@@ -274,10 +274,16 @@ export default function OmegaHandoff({
       : `${included.length} changes: ${[...new Set(included.map((c) => c.kind.toLowerCase()))].join(", ")}`;
 
   const promptOnly = included.every((p) => p.kind === "System prompt");
+  /* Verified opens a normal pull request; anything else opens a draft
+     labelled with its validation (improve §3.5, §5). */
+  const prWord =
+    !validation || validation.key === "proven"
+      ? "a pull request"
+      : "a draft pull request";
   const intro = {
     pr: promptPart
-      ? `Opens a draft pull request on ${repo || "the agent's repository"} and saves the prompt changes as a draft version. Merging releases both.`
-      : `Opens a draft pull request on ${repo || "the agent's repository"}${included.some((p) => p.kind === "Architecture") ? ", with a rationale for the structural change" : ""}. Merging saves the next agent version.`,
+      ? `Opens ${prWord} on ${repo || "the agent's repository"} and saves the prompt changes as a draft version. Merging releases both.`
+      : `Opens ${prWord} on ${repo || "the agent's repository"}${included.some((p) => p.kind === "Architecture") ? ", with a rationale for the structural change" : ""}. Merging saves the next agent version.`,
     draft: platform
       ? `${platform.ships} on ${source.label}. ${platform.note} ${platform.released}`
       : `Creates an unpublished version on ${source.label}. Once it's live there, mark it released here.`,
@@ -597,6 +603,7 @@ export default function OmegaHandoff({
           ?.trigger?.issueId
       : null,
     releaseBranch: definitionOf(agent).ref || "main",
+    verified: !validation || validation.key === "proven",
   });
   /* Step 1 is done once this route's own hand-off exists — a seeded draft
      version alone doesn't mean a PR was opened. */
@@ -999,25 +1006,28 @@ export default function OmegaHandoff({
             {/* Supported uploads: the verified candidate becomes this
                 environment's default (clarified plan) — your choice, never automatic. */}
             <Stack direction="row" spacing={1} alignItems="center">
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={() =>
-                  markReleased(
-                    {
-                      origin: "candidate",
-                      note: `Verified candidate set as ${env?.name || "this environment"}'s default — ${summaryLine}`,
-                    },
-                    { draftSource: "upload" },
-                  )
-                }
-                startIcon={
-                  <Iconify icon="solar:check-circle-linear" width={16} />
-                }
-              >
-                Use as environment default
-              </Button>
+              {/* Only a Verified candidate can become the default (improve §3.5). */}
+              {(!validation || validation.key === "proven") && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={() =>
+                    markReleased(
+                      {
+                        origin: "candidate",
+                        note: `Verified candidate set as ${env?.name || "this environment"}'s default — ${summaryLine}`,
+                      },
+                      { draftSource: "upload" },
+                    )
+                  }
+                  startIcon={
+                    <Iconify icon="solar:check-circle-linear" width={16} />
+                  }
+                >
+                  Use as environment default
+                </Button>
+              )}
               <Button
                 variant="outlined"
                 size="small"
@@ -1029,7 +1039,9 @@ export default function OmegaHandoff({
             <Typography
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
             >
-              {`Runs in ${env?.name || "this environment"} now use the verified candidate.`}
+              {validation && validation.key !== "proven"
+                ? `${validation.label}: it can't become the default until it's Verified on at least 4 held-back scenarios.`
+                : `Runs in ${env?.name || "this environment"} now use the verified candidate.`}
             </Typography>
           </Box>
         ) : (
@@ -1359,6 +1371,7 @@ const shipStepsOf = ({
   suggestion,
   issueId,
   releaseBranch,
+  verified = true,
 }) => {
   const where = source.label;
   const watch = issueId
@@ -1367,7 +1380,7 @@ const shipStepsOf = ({
   if (route === "pr") {
     return [
       {
-        title: `Open a draft ${review.long}`,
+        title: `Open ${verified ? "a" : "a draft"} ${review.long}`,
         body: `On ${repo || "the agent's repository"}. Nothing changes until it's merged.`,
       },
       {

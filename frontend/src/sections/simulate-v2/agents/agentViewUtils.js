@@ -111,7 +111,7 @@ export const isFinishedRun = (r) =>
    the name, version, size and parallel worlds picked in BuildEnvironmentDialog. */
 export const buildPresetFor = (
   agent,
-  { name, version, count, parallel = null, channel = null },
+  { name, version, count, parallel = null, channel = null, request = "" },
 ) => ({
   ...sourceFromAgentRecord(agent),
   /* Built for one of its channels — the world is that channel's. */
@@ -123,6 +123,11 @@ export const buildPresetFor = (
   agentVersion: version || agent.latest,
   envName: name,
   agentName: agent.name,
+  /* What the environment should test (builder.md: Build from my agent). */
+  ...(request && { testRequest: request }),
+  /* builder.md §4: Save release → Run readiness — the build ends on a
+     release to save, never on a run. */
+  releaseStep: true,
 });
 
 /** "How deep a fix can go", in one line — said plainly for agents we can only call. */

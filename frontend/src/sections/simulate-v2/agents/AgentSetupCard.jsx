@@ -309,7 +309,7 @@ export default function AgentSetupCard({
           ? `Every check passed — ${connectionStateOf(agent)
               .line.replace(/^Tested /, "tested ")
               .replace(/\.$/, "")}.`
-          : "Confirm how we start it, then check it starts, replies, reaches the test tools and cancels.",
+          : "Confirm how we start it, then check it starts, replies, reaches the test tools and cancels. v1 is saved once every check passes.",
       action: {
         label: connectionStateOf(agent).state === "ready" ? "Review" : "Test",
         onClick: () => onTab("connections"),

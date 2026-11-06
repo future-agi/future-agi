@@ -4,19 +4,24 @@
   They follow the developer spec: the fi CLI and the fi.simulate
   module, both installed by futureagi. Keep them in step with it.
 */
-export const PYTHON_DEFINE = `from fi.simulate import Environment, World, Persona, Scenario, verifiers
+/* The SDK only submits and watches; environments and runs live in the
+   cloud (plan D01). Names are planned until the SDK ships. */
+export const PYTHON_DEFINE = `from futureagi import Client
 
-env = Environment(
-    name="my-environment",
-    world=World.prebuilt("returns-desk"),   # or your own tools and state
-    personas=[Persona("in-a-hurry", "Polite, wants it done now")],
-    scenarios=Scenario.load("scenarios/"),  # one YAML per scenario
-    verifiers=[verifiers.sub_goals(), verifiers.tool_calls()],
+client = Client()  # FI_API_KEY
+
+# Build in Future AGI: you review the proposed world and scenarios there
+env = client.sim.environments.create(
+    name="my-environment", repo=".", request="Refunds and cancellations",
 )
+env.wait_until_saved()
 
-env.validate()                       # check before you run
-env.run(agent=my_agent, repeats=3)   # evaluate your agent
-env.push()                           # optional: versions here`;
+# Run your registered agent version against it — in the cloud
+run = client.sim.runs.create(
+    env=env.id, agent_version="<agent-version-id>", repeats=3,
+)
+run.wait()  # this only watches; closing it doesn't cancel the run
+print(run.status, run.url)`;
 
 export const AGENT_PROMPT =
   "Build an environment for my refund agent, run it three times against 40 scenarios including prompt-injection attacks, and fix whatever fails most.";

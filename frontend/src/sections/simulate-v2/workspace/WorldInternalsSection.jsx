@@ -1153,6 +1153,22 @@ function ToolArgs({ tool, env, envState, setting }) {
           : "Restored to the seed before every trial",
       false,
     ],
+    /* world.md §3: a remote (Live) connection declares its safety, reset
+       and evidence limits — production is never a fallback. */
+    ...(live
+      ? [
+          [
+            "Safety",
+            "Calls reach the real system; only tools marked safe run, and nothing falls back to production",
+            false,
+          ],
+          [
+            "Evidence",
+            "Only what the tool returns — no before/after state, so checks on the world's records are Unmeasured",
+            false,
+          ],
+        ]
+      : []),
   ];
   return (
     <Box

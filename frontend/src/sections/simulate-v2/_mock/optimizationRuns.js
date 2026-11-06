@@ -968,7 +968,12 @@ const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}%`;
   by; a fixed amount is checked against today's cost per conversation; cost
   only where it can be measured.
 */
-export const limitGate = ({ limits, costKnown = true, surface }) => {
+export const limitGate = ({
+  limits,
+  costKnown = true,
+  latencyKnown = costKnown,
+  surface,
+}) => {
   const ceiling = limits?.costCeiling ?? 0;
   const tol = ceiling <= 0 ? COST_NOISE : 0;
   const latency = limits?.latencyCeiling ?? 10;
@@ -989,7 +994,7 @@ export const limitGate = ({ limits, costKnown = true, surface }) => {
         id: "cost",
         actual: `cost ${signed(e.cost)}, over ${ceiling <= 0 ? "no increase" : `+${ceiling}%`}`,
       };
-    if (e.latency > latency)
+    if (latencyKnown && e.latency > latency)
       return {
         id: "latency",
         actual: `latency ${signed(e.latency)}, over +${latency}%`,
@@ -1002,6 +1007,7 @@ export const limitGateOf = (record) =>
   limitGate({
     limits: record?.limits || DEFAULT_LIMITS,
     costKnown: record?.costMeasured !== false,
+    latencyKnown: record?.latencyMeasured ?? record?.costMeasured !== false,
     surface: record?.surface,
   });
 
@@ -1159,9 +1165,19 @@ const outcomeOf = (rec, { model } = {}) => {
     };
   }
   if (record?.status === OPT_STATUS.FAILED) {
+    /* improve.md §5: name the stage that failed — the run itself or the
+       grading — and never call the candidate bad for it. */
+    const grading = record.infra?.stage === "grading";
+    const stage =
+      record.infra?.stageLabel ||
+      (grading ? "grading the held-back cases" : "running the candidates");
     return {
-      ending: { key: "failed", label: "Infrastructure error" },
-      headline: `${record.infra?.reason || "The environment couldn't run the search."} An infrastructure problem, not the agent — no run was counted as a pass or a fail, and the crashed runs aren't charged to the budget.`,
+      ending: {
+        key: "failed",
+        label: grading ? "Grading error" : "Infrastructure error",
+      },
+      stage,
+      headline: `Failed while ${stage}. ${record.infra?.reason || "The environment couldn't run the search."} ${grading ? "A grading problem" : "An infrastructure problem"}, not the agent — no run was counted as a pass or a fail, and the crashed runs aren't charged to the budget. Try again to retry the same stage.`,
     };
   }
   /* A run that's reported nothing for a day has stopped — the engine times
@@ -1169,8 +1185,9 @@ const outcomeOf = (rec, { model } = {}) => {
   if (record?.status === OPT_STATUS.RUNNING && staleSince(record)) {
     return {
       ending: { key: "failed", label: "Infrastructure error" },
+      stage: "reporting progress",
       headline:
-        "It stopped reporting progress more than a day ago and was timed out. An infrastructure problem, not the agent — nothing it hadn't finished was charged. Start it again to retry.",
+        "Failed while reporting progress: it stopped more than a day ago and was timed out. An infrastructure problem, not the agent — nothing it hadn't finished was charged. Start it again to retry.",
     };
   }
   if (record?.status === OPT_STATUS.RUNNING || !r)
@@ -1189,9 +1206,11 @@ const outcomeOf = (rec, { model } = {}) => {
       : `Reproduced the failures on ${r.failingToday ?? "some"} of ${plural(all, "scenario")}`;
     return {
       ending: { key: "suggestion", label: "Suggestion only" },
-      headline: record.suggestChosen
-        ? `${reproduced}. A diagnosis and a suggested fix — not proven: you chose suggest only, so no change was tried.`
-        : `${reproduced}. A diagnosis and a suggested fix — not proven: we can only call this agent, so no change could be tried.`,
+      headline: record.reproduce?.diagnosticOnly
+        ? `${reproduced}. A diagnosis and a suggested change — not proven: nothing reproduced reliably, so no change was tried.`
+        : record.suggestChosen
+          ? `${reproduced}. A diagnosis and a suggested fix — not proven: you chose suggest only, so no change was tried.`
+          : `${reproduced}. A diagnosis and a suggested fix — not proven: we can only call this agent, so no change could be tried.`,
       suggestion,
       checks: [],
       held: null,
@@ -1253,6 +1272,9 @@ const outcomeOf = (rec, { model } = {}) => {
   const mustPassUnknown = !!chosen && !chosenFinalist && !verified;
 
   const costKnown = record?.costMeasured !== false;
+  /* Latency comes from the same timed events as cost (provider events or
+     traces); without them it isn't measured, so it isn't shown. */
+  const latencyKnown = record?.latencyMeasured ?? costKnown;
   const switched =
     (shipped?.proposals || []).find((p) => p.kind === "Model")?.model || null;
   const hitProtected = [
@@ -1348,7 +1370,7 @@ const outcomeOf = (rec, { model } = {}) => {
           ? [
               {
                 id: "compat",
-                label: "Fits the sealed environment",
+                label: "Fits the simulated environment",
                 actual: shipped.compat.pass
                   ? "entry point, build and start command unchanged"
                   : shipped.compat.reason,
@@ -1478,6 +1500,7 @@ const outcomeOf = (rec, { model } = {}) => {
         : null,
     effect,
     costKnown,
+    latencyKnown,
     checks,
     issue,
     noise: r.noise,
@@ -1521,7 +1544,7 @@ const outcomeOf = (rec, { model } = {}) => {
             : `it failed ${blockersBroken} must-pass scenarios, each again on a re-run`,
         repoTests: `it breaks the repository's own tests (${shipped.repoTests?.command})`,
         compat:
-          "it doesn't fit the sealed environment — rebuild the environment from its commit to test it",
+          "it doesn't fit the simulated environment — rebuild the environment from its commit to test it",
         areas: `it ${failedCheck.actual}, which this agent's constraints don't allow`,
         calibration: `gained ${lift >= 0 ? "+" : "−"}${Math.abs(lift)} pts on the held-back set, within run-to-run noise (±${r.noise})`,
         envs: `failed a must-pass scenario in ${(envRuns || [])
@@ -1605,13 +1628,21 @@ const outcomeOf = (rec, { model } = {}) => {
         : `${creditsLabel(s.budget || 0)} budget`;
     return {
       ...base,
-      ending: { key: "budget", label: "Stopped" },
+      /* The user's stop is "Stopped"; a budget or time limit says so (improve §5). */
+      ending: {
+        key: "budget",
+        label: s.by === "time" ? "Stopped at time limit" : "Stopped at budget",
+      },
       headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} trials. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   return {
     ...base,
-    ending: { key: "ready", label: "Ready for review" },
+    /* The list names the validation outcome, never one pill for all (improve §5). */
+    ending: {
+      key: "ready",
+      label: base.strength?.label || "Ready for review",
+    },
     headline: `${said}.`,
   };
 };
@@ -1683,7 +1714,9 @@ export const proofStrength = (r, issue, held) => {
       note: `${of}, but scored on ${r.goal.label}, which agrees with your annotators about as often as chance (κ ${goalRel.kappa.toFixed(2)})`,
     };
   }
-  if (fixed >= TELL_MIN) return { key: "proven", label: "Verified", note: of };
+  /* Verified: at least TELL_MIN untouched held-back cases, and it does
+     better on them (plan D04, improve §4 "Verified rule"). */
+  if (fixed > 0) return { key: "proven", label: "Verified", note: of };
   return { key: "none", label: "Inconclusive", note: of };
 };
 
@@ -1772,7 +1805,7 @@ export const issueLine = (issue, held, { thin = false } = {}) => {
 /*
   How a candidate is proven, cheapest first; it stops at the first tier it
   fails. Static checks (model, protected parts, nothing touching the judges;
-  for a code change, that it fits the sealed environment — same entry point,
+  for a code change, that it fits the simulated environment — same entry point,
   build and start command — and the repository's own tests), the target
   scenarios, the held-back set
   — scored once, at the end, for finalists only — the must-pass set (a
@@ -1894,7 +1927,7 @@ export const ladderOf = (record, trial) => {
     after("compat").forEach((id) =>
       set(id, {
         state: "skip",
-        note: "not run — it doesn't fit the sealed environment",
+        note: "not run — it doesn't fit the simulated environment",
       }),
     );
     return finish(tiers);

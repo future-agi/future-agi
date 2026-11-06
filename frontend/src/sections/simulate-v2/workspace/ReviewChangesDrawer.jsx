@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -178,6 +178,21 @@ export default function ReviewChangesDrawer({
       ),
     });
   const counts = reviewCountsOf(list);
+  const names = cost?.scenarioNames || [];
+  /* data.md §4: save after the affected scenario checks pass — checked
+     here, before the save, and again whenever the changes move. */
+  const checkKey = `${list.length}:${names.join("|")}`;
+  const [check, setCheck] = useState({ key: null, state: "idle" });
+  const checkState = check.key === checkKey ? check.state : "idle";
+  useEffect(() => {
+    if (checkState !== "running") return undefined;
+    const t = setTimeout(
+      () => setCheck({ key: checkKey, state: "passed" }),
+      1200,
+    );
+    return () => clearTimeout(t);
+  }, [checkState, checkKey]);
+  const needsCheck = names.length > 0 && checkState !== "passed";
   if (!open) return <SideDrawer open={false} onClose={onClose} />;
   const groups = [
     ...EDIT_AREAS,
@@ -208,7 +223,6 @@ export default function ReviewChangesDrawer({
       );
     else goTab(tab);
   };
-  const names = cost?.scenarioNames || [];
   /* Ids read as names (an actor's id → its name); rules read against the
      base wording. */
   const diffOpts = {
@@ -633,8 +647,26 @@ export default function ReviewChangesDrawer({
                       sx={{ color: "text.secondary", flexShrink: 0 }}
                     />
                     <Typography sx={{ typography: "s2", flex: 1 }}>
-                      {`These change what's graded, so ${names.length} scenario${names.length === 1 ? "" : "s"} get rechecked when you save`}
+                      {checkState === "passed"
+                        ? `${names.length} affected scenario${names.length === 1 ? "" : "s"} checked — all pass`
+                        : checkState === "running"
+                          ? `Checking ${names.length} affected scenario${names.length === 1 ? "" : "s"}…`
+                          : `These change what's graded: check the ${names.length} affected scenario${names.length === 1 ? "" : "s"} before you save`}
                     </Typography>
+                    {checkState !== "passed" && (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        color="inherit"
+                        disabled={checkState === "running"}
+                        onClick={() =>
+                          setCheck({ key: checkKey, state: "running" })
+                        }
+                        sx={{ minWidth: 0 }}
+                      >
+                        Run checks
+                      </Button>
+                    )}
                     <Button
                       variant="outlined"
                       size="small"
@@ -767,7 +799,9 @@ export default function ReviewChangesDrawer({
                     ? `Accept or reject the ${counts.undecided} change${counts.undecided === 1 ? "" : "s"} still waiting first.`
                     : !counts.accepted
                       ? "Every change is rejected — Discard all puts the world back."
-                      : ""
+                      : needsCheck
+                        ? "Run the affected scenario checks first."
+                        : ""
                 }
               >
                 <span>
@@ -775,7 +809,9 @@ export default function ReviewChangesDrawer({
                     size="small"
                     variant="contained"
                     color="primary"
-                    disabled={!!counts.undecided || !counts.accepted}
+                    disabled={
+                      !!counts.undecided || !counts.accepted || needsCheck
+                    }
                     onClick={() => {
                       onSave(note);
                       setNote("");

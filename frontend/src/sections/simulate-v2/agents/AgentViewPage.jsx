@@ -1,3 +1,5 @@
+import { buildableAgentsOf } from "../environments/worldSource";
+import { runPlanHref } from "../_mock/runPlanLink";
 import { staleSince } from "../_mock/optimizationRuns";
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useState } from "react";
@@ -110,7 +112,6 @@ import ProbeDetails from "./connect/ProbeDetails";
 import SourceMoved from "./connect/SourceMoved";
 import { sourceIdentityOf } from "./sourceIdentity";
 import PlatformTestCall from "./PlatformTestCall";
-import AgentCompatibilityTab from "../compat/AgentCompatibilityTab";
 import AgentSkillsTab from "./skills/AgentSkillsTab";
 import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 import { IdentityCard, SourceCard } from "./AgentProfileCards";
@@ -151,8 +152,6 @@ const TABS = [
   /* The improvement runs that tried to make this agent better. */
   { id: "improvements", label: "Improvements" },
   { id: "connections", label: "Connections" },
-  /* Can it run a given world — per capability, with the cases each gap affects. */
-  { id: "compatibility", label: "Capabilities" },
 ];
 
 /* Old tab ids still arrive in links — each lands on the tab that took its
@@ -164,6 +163,9 @@ const TAB_ALIAS = {
   "used-in": "environments",
   connection: "connections",
   production: "overview",
+  /* Readiness lives in Run setup now (plan T06), not on the agent. */
+  compatibility: "environments",
+  capabilities: "environments",
 };
 
 /**
@@ -887,11 +889,17 @@ export default function AgentViewPage() {
             /* Only changes what this page shows — environments pick their own. */
             /* The same words as every version picker: draft / in production. */
             renderValue={(l) =>
-              l === agent.production
-                ? `${l} · in production`
-                : l === agent.latest && agent.latestIsDraft
-                  ? `${l} · draft`
-                  : `Viewing ${l}`
+              /* A first version stays unsaved until the connection check
+                 passes (plan connect §4: Save after the checks). */
+              (agent.versions || []).length === 1 &&
+              checksConnection(agent) &&
+              connectionStateOf(agent).state !== "ready"
+                ? `${l} · not saved until the check passes`
+                : l === agent.production
+                  ? `${l} · in production`
+                  : l === agent.latest && agent.latestIsDraft
+                    ? `${l} · draft`
+                    : `Viewing ${l}`
             }
             sx={{
               height: 32,
@@ -1298,25 +1306,6 @@ export default function AgentViewPage() {
         </Stack>
       )}
       {tab === "improvements" && <ImprovementSourcesList agent={agent} />}
-      {tab === "compatibility" && (
-        <AgentCompatibilityTab
-          agent={agent}
-          state={state}
-          envId={params.get("env")}
-          mainEnvId={mainEnv?.envId}
-          onPickEnv={(id) => setQuery({ env: id })}
-          onSaveValues={saveValues}
-          /* Fix opens the repair that check offered (the start command, the
-             session field, pointing a tool at the test world). */
-          onRepair={(row) =>
-            setQuery({
-              tab: row?.repair === "agent" ? "definition" : "connections",
-              env: null,
-              fix: row?.repair === "connection" ? row.fixId || null : null,
-            })
-          }
-        />
-      )}
       {tab === "connections" && (
         <ConnectionTab
           agent={agent}
@@ -1433,6 +1422,62 @@ function EnvironmentsTab({
   focusEnvId = null,
 }) {
   const { state: simState } = useSimStore();
+  const navigate = useNavigate();
+  /* connect.md §5: choose an existing environment, or build one. Only the
+     same type of agent can run in an environment's world. */
+  const [addAnchor, setAddAnchor] = useState(null);
+  const addable = (simState.myEnvironments || []).filter(
+    (e) =>
+      !agent.usedIn.some((u) => u.envId === e.id) &&
+      simState.byEnv?.[e.id]?.agent?.typeId &&
+      simState.byEnv[e.id].agent.typeId === agent.typeId,
+  );
+  /* Only a connected agent (its check passed) can be picked in run setup. */
+  const canAdd = buildableAgentsOf([agent]).length > 0;
+  const addMenu = addable.length > 0 && (
+    <>
+      <Tooltip
+        arrow
+        title={
+          canAdd ? "" : "Pass the connection check first (Connections tab)."
+        }
+      >
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!canAdd}
+            onClick={(e) => setAddAnchor(e.currentTarget)}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+            sx={{
+              flexShrink: 0,
+              color: "text.primary",
+              borderColor: "divider",
+            }}
+          >
+            Add to an existing environment
+          </Button>
+        </span>
+      </Tooltip>
+      <Menu
+        anchorEl={addAnchor}
+        open={!!addAnchor}
+        onClose={() => setAddAnchor(null)}
+      >
+        {addable.map((e) => (
+          <MenuItem
+            key={e.id}
+            onClick={() => {
+              setAddAnchor(null);
+              navigate(runPlanHref(e.id, { useAgent: agent.key }));
+            }}
+          >
+            {e.name}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
   /* "agent vN × environment vM" — what the last run there held fixed, as every run reads. */
   /* Every version reads vN; a code agent's carries its commit — "v5 · main @ 3f9a2c1". */
   const nm = (l) => versionNameOf(agent, l).main;
@@ -1506,14 +1551,17 @@ function EnvironmentsTab({
           An environment gives this agent a world to act in: tools, seeded data,
           rules and scenarios to run.
         </Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={onBuild}
-        >
-          Build environment
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="center">
+          {addMenu}
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={onBuild}
+          >
+            Build environment
+          </Button>
+        </Stack>
       </Box>
     );
   }
@@ -1537,6 +1585,7 @@ function EnvironmentsTab({
                   ? `Fixes run in the main one${mainPicked ? "" : " — the first built"}`
                   : "Each environment tests what's in production unless its default says otherwise"}
               </Typography>
+              {addMenu}
               {/* Another world for the same agent — a second channel, a new
                   domain, a harder caller mix. */}
               {onBuild && (

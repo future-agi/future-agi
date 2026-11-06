@@ -11,6 +11,8 @@ import { paths } from "src/routes/paths";
     continues  the run whose unstarted scenarios this one finishes
     snapshot   play scenario text as it was in that run
     envVersion the environment version that snapshot ran on
+    useAgent   another compatible agent to run (connect.md §5: add an
+               agent to an existing environment)
 */
 export const runPlanHref = (
   envId,
@@ -23,6 +25,7 @@ export const runPlanHref = (
     snapshot,
     envVersion,
     toolReplay,
+    useAgent,
   } = {},
 ) => {
   const q = new URLSearchParams({ plan: "1" });
@@ -35,6 +38,7 @@ export const runPlanHref = (
   if (envVersion) q.set("env", envVersion);
   /* Recorded-tool replay: tools answer with what they returned in that run. */
   if (toolReplay) q.set("replay", toolReplay);
+  if (useAgent) q.set("useAgent", useAgent);
   return `${paths.dashboard.simulate.environmentStep(envId, "overview")}?${q}`;
 };
 
@@ -51,6 +55,7 @@ export const runPlanRequestOf = (searchParams) => {
     snapshot: searchParams.get("snapshot") || undefined,
     envVersion: searchParams.get("env") || undefined,
     toolReplay: searchParams.get("replay") || undefined,
+    useAgent: searchParams.get("useAgent") || undefined,
   };
 };
 
@@ -64,6 +69,7 @@ export const RUN_PLAN_PARAMS = [
   "snapshot",
   "env",
   "replay",
+  "useAgent",
 ];
 
 /*

@@ -180,7 +180,7 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             }}
           >
             <Tab value="world" label="World" />
-            <Tab value="start" label="Use with your agent" />
+            <Tab value="start" label="Use with my agent" />
             {/* rl.md step 1: a trainer starts from the catalogue. */}
             {entry && <Tab value="rl" label="RL access" />}
             {/* T26: a public benchmark proves its scores match its own grader. */}
@@ -224,7 +224,7 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
                 onClick={() => setTab("start")}
                 endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
               >
-                Use with your agent
+                Use with my agent
               </Button>
             </Stack>
           )}

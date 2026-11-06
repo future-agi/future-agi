@@ -429,7 +429,7 @@ export const fixGateOf = (agent, env, es = null) => {
     return {
       key: "found-live",
       title: "Mark the tools that must never run for real first",
-      body: `${agent.name} runs live, so its real tools would be called. Mark the ones that must never run for real, or switch it to sealed runs, then fix.`,
+      body: `${agent.name} runs live, so its real tools would be called. Mark the ones that must never run for real, or switch it to simulated runs, then fix.`,
       action: "overview",
     };
   }

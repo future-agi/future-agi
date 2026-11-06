@@ -160,8 +160,7 @@ export default function PrebuiltWorldsView({
               </Box>
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              Tables, tools and rules, as designed. Try one now with its sample
-              agent, or use it with one of your agents.
+              Tables, tools and rules, as designed. Use one with your agent.
             </Typography>
           </Box>
         </Stack>

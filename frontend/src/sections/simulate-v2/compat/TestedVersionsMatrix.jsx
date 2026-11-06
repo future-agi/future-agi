@@ -7,6 +7,7 @@ import { CAPABILITIES, COMPAT_STATUS } from "../_mock/compatibility";
 import {
   FAMILY_CATEGORIES,
   QUAL_CHECKS,
+  QUAL_LABEL,
   TESTED_VERSIONS,
   diagnosticOf,
   qualificationMs,
@@ -16,7 +17,8 @@ import {
 const MONO = "ui-monospace, Menlo, monospace";
 const COLS =
   "minmax(170px, 1.2fr) minmax(150px, 1.1fr) 104px minmax(0, 1.6fr) 150px 120px";
-const capLabel = (id) => CAPABILITIES.find((c) => c.id === id)?.label || id;
+const capLabel = (id) =>
+  QUAL_LABEL[id] || CAPABILITIES.find((c) => c.id === id)?.label || id;
 /* A family's qualification result, as its row shows it. */
 const QUAL_SHOWN = {
   running: { dot: "running", text: () => "Running…" },
@@ -33,7 +35,7 @@ const QUAL_SHOWN = {
     dot: "failed",
     text: (q) => `Failed: ${q.failed.map(capLabel).join(", ").toLowerCase()}`,
   },
-  "not-run": { dot: "queued", text: () => "Not run · no reference agent" },
+  "not-run": { dot: "queued", text: () => "Not run yet" },
 };
 const STATUS_KEY = {
   Supported: "supported",
@@ -149,7 +151,7 @@ function FamilyRow({ row, mine, qual }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mb: 0.5 }}
           >
-            {`Diagnostic ${diag.id} · ${diag.at ? when(diag.at) : ""} · the reference agent for this family, on the returns world`}
+            {`Diagnostic ${diag.id} · ${diag.at ? when(diag.at) : ""} · our internal check for this family, on the returns world`}
           </Typography>
           <Stack
             direction="row"

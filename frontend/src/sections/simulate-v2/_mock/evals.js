@@ -565,7 +565,7 @@ export const TOOL_CALL_JUDGE_ID = "tool_correctness";
 export const MAX_APPLIED_EVALS = 8;
 export const EVAL_CAP_NOTE = `Up to ${MAX_APPLIED_EVALS} evaluations plus the tool-call judge. Remove one to add another.`;
 export const REQUIRED_EVAL_NOTE =
-  "A failing score fails the conversation, whatever its sub-goals say.";
+  "A failing score is flagged on the conversation beside its task result; it doesn't change the task checks' verdict.";
 
 const idOfApplied = (e) => (typeof e === "string" ? e : e?.id);
 /** How many applied evals count toward the cap of 8. */

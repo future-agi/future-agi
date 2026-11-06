@@ -184,7 +184,7 @@ ResultsMovedNote.propTypes = { move: PropTypes.object, sx: PropTypes.object };
 const KIND_COPY = {
   sealed: {
     icon: "solar:lock-keyhole-minimalistic-linear",
-    line: "Sealed — tool calls are answered by this environment's world in our sandbox.",
+    line: "Simulated — tool calls are answered by this environment's world in our sandbox.",
   },
   live: {
     icon: "solar:plug-circle-linear",
@@ -198,7 +198,7 @@ const KIND_COPY = {
 
 /* Built to run on the person's machine: the CLI serves the world there. */
 const LOCAL_SEALED_LINE =
-  "Sealed — tool calls are answered by this environment's world, running on your machine through the CLI.";
+  "Simulated — tool calls are answered by this environment's world, running on your machine through the CLI.";
 const runsLocally = (env) =>
   env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local";
 

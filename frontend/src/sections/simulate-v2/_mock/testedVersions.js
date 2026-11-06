@@ -81,10 +81,11 @@ export const TESTED_VERSIONS = [
     family: "CrewAI",
     category: "multi",
     how: "Process",
-    versions: "crewai 0.80",
+    versions: "crewai 0.80 · traceAI-crewai 0.1.10",
     status: "Partial",
     evidence: "Turns and tools",
-    limits: "Delegation only from crew callbacks; some steps unmeasured",
+    limits:
+      "Delegation only from crew callbacks; some steps unmeasured. Runs with real credentials need traceAI-crewai 0.1.10 or later",
   },
   {
     family: "Coordinator + two workers",
@@ -399,14 +400,22 @@ export const familyOf = (agent, kind) => {
   supported passes, partial passes with a limit, unavailable fails. A family
   with no reference agent yet isn't run.
 */
+/* T43: every framework gets the same checks — start, a two-turn session,
+   tool binding, evidence and stop. */
 export const QUAL_CHECKS = [
   "start",
-  "message",
+  "continuity",
   "toolRouting",
-  "state",
+  "trace",
   "cancel",
-  "reset",
 ];
+export const QUAL_LABEL = {
+  start: "Start",
+  continuity: "Two-turn session",
+  toolRouting: "Tool binding",
+  trace: "Evidence",
+  cancel: "Stop",
+};
 
 /*
   SSE and custom WebSocket transports stay unsupported until an adapter for
@@ -423,7 +432,11 @@ export const qualificationOf = (row) => {
   if (row.status === "Untested")
     return { outcome: "not-run", checks: [], failed: [], limited: [] };
   const results = DIAG[row.family] || {};
-  const checks = QUAL_CHECKS.map((id) => ({ id, result: results[id] || T }));
+  /* Evidence is the trace a family emits, else the state we read back. */
+  const checks = QUAL_CHECKS.map((id) => ({
+    id,
+    result: results[id] || (id === "trace" ? results.state : null) || T,
+  }));
   const failed = checks
     .filter((c) => c.result === U || c.result === T)
     .map((c) => c.id);

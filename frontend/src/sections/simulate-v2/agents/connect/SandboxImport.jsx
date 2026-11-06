@@ -56,7 +56,7 @@ export default function SandboxImport({
             sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
           >
             <HintLine
-              hint={`We import a copy of the ${providerName || "platform"} assistant into our sandbox, so results carry Sealed proof.`}
+              hint={`We import a copy of the ${providerName || "platform"} assistant into our sandbox, so its tool calls are answered by a simulated world.`}
             >
               Optional · import a copy and upload the code behind its tools —
               they answer from the seeded world

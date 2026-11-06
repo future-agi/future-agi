@@ -125,7 +125,7 @@ export default function PlatformTestCall({ agent, onSaveValues }) {
             results: resultsOf(mode, transferTo, provider),
           },
         },
-        "Test call finished — what it measured is on the agent's Capabilities tab too.",
+        "Test call finished — Ready to run in each environment's Run setup uses what it measured.",
       );
     }, 1400);
   };

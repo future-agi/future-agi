@@ -5,6 +5,7 @@ import { resolveEval } from "../_mock/evals";
 import { worldFactsOf } from "../_mock/catalogue";
 import { worldPacksOf } from "./worldSource";
 import { simSitesOf } from "../_mock/simSites";
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 
 /* A spec-sheet section: a title, then rows or text. */
 function Section({ title, aside, children }) {
@@ -227,13 +228,15 @@ export default function WorldPreview({ world }) {
       )}
       <Section
         title="Scenario packs"
-        aside={`× ${ATTEMPTS} attempts · cost per run`}
+        aside={
+          SHOW_RUN_COST ? `× ${ATTEMPTS} attempts · cost per run` : undefined
+        }
       >
         <Rows
           rows={packs.map((p) => ({
             k: p.name,
             v: `${p.count} scenarios · ${p.blurb}`,
-            n: costOf(t, p.count),
+            n: SHOW_RUN_COST ? costOf(t, p.count) : null,
           }))}
         />
       </Section>

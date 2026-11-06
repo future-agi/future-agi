@@ -603,7 +603,7 @@ CodePlan.propTypes = {
 };
 
 /**
- * Code candidates that didn't fit the sealed environment — they moved the
+ * Code candidates that didn't fit the simulated environment — they moved the
  * entry point, changed the build or changed how the agent is started, so
  * they couldn't be tested in it and stopped there. Never eligible to win;
  * rebuilding the environment from the candidate's commit is how to test one.
@@ -617,7 +617,7 @@ export function UnfitNotice({ result }) {
     <Box sx={{ px: 2.5, pt: 2.25 }}>
       <Typography
         sx={heading}
-      >{`Didn't fit the sealed environment · ${unfit.length} of ${result.trials.length}`}</Typography>
+      >{`Didn't fit the simulated environment · ${unfit.length} of ${result.trials.length}`}</Typography>
       <Box sx={box}>
         {unfit.map((t, i) => (
           <Stack

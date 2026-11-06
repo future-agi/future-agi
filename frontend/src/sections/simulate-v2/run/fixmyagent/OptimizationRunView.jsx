@@ -444,6 +444,31 @@ export default function OptimizationRunView({
       ),
     });
 
+  /* Not reproduced → a diagnostic-only result: a suggestion, no candidates. */
+  const diagnoseOnly = () =>
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id
+          ? {
+              ...o,
+              status: OPT_STATUS.RUNNING,
+              startedAt: new Date().toISOString(),
+              fixDepth: "suggestion",
+              /* Nothing was searched: keep the measurement, drop candidates. */
+              result: {
+                ...(o.result || o.pendingResult),
+                winner: null,
+                finalists: [],
+                trials: [],
+              },
+              pendingResult: undefined,
+              pendingEnding: undefined,
+              reproduce: { ...o.reproduce, diagnosticOnly: true },
+            }
+          : o,
+      ),
+    });
+
   /* The question answered: the same improvement starts again. */
   const answerAndRestart = (answer) =>
     patch({
@@ -598,7 +623,7 @@ export default function OptimizationRunView({
             What ships
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
-            {`${count} ${count === 1 ? "change" : "changes"} · ${result.split?.thin ? "checked on its target and must-pass scenarios" : "verified on held-back and must-pass scenarios"}`}
+            {`${count} ${count === 1 ? "change" : "changes"} · ${outcome?.strength?.key === "proven" ? "Verified on held-back and must-pass scenarios" : `${outcome?.strength?.label || "Limited validation"} — checked on its target and must-pass scenarios, not proven on enough unseen ones`}`}
           </Typography>
           <Box
             sx={{
@@ -847,7 +872,13 @@ export default function OptimizationRunView({
                 ? () => setEditingScenarios(true)
                 : undefined
             }
-            onContinue={continueAnyway}
+            onConnectSource={() => {
+              navigate(
+                paths.dashboard.simulate.environmentStep(env.id, "world"),
+              );
+              onClose?.();
+            }}
+            onDiagnose={diagnoseOnly}
             onOpenIssue={
               record.trigger?.issueId
                 ? () => {
@@ -1265,8 +1296,12 @@ export default function OptimizationRunView({
                   />
                   <Metric
                     label="Latency"
-                    value={signedPct(outcome.effect.latency)}
-                    sub="vs today"
+                    value={
+                      outcome.latencyKnown
+                        ? signedPct(outcome.effect.latency)
+                        : "—"
+                    }
+                    sub={outcome.latencyKnown ? "vs today" : "not measured"}
                   />
                 </Box>
               </Box>
@@ -1321,7 +1356,7 @@ export default function OptimizationRunView({
               onApprove={approveContract}
             />
 
-            {/* Code candidates the sealed environment can't run. */}
+            {/* Code candidates the simulated environment can't run. */}
             <UnfitNotice result={result} />
 
             {/* The scenarios this improvement wrote, until they're added. */}

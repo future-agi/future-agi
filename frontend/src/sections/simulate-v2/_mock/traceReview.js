@@ -60,6 +60,13 @@ export const STATE_MODES = {
     evidence:
       "Synthetic — a made-up starting state, labelled as such on every result",
   },
+  /* evidence.md §3: no pre-state — a conversation-only test, never a
+     claim of exact state replay. */
+  conversation: {
+    label: "Conversation-only test",
+    evidence:
+      "Conversation only — no starting state, so checks on records are Unmeasured",
+  },
   blocked: {
     label: "Keep blocked",
     evidence: "Blocked — not runnable until the starting state is settled",
@@ -80,7 +87,44 @@ export const reviewOf = (row, sources) => {
     assumptions: r.assumptions || {},
     mapping: r.mapping || {},
     validated: r.validated || null,
+    /* What the record shows (evidence.md §2), from its outcome until the
+       reviewer confirms it. */
+    shows:
+      r.shows ||
+      (sources.every((s) => s.outcome === "failed")
+        ? "failure"
+        : sources.every((s) => s.outcome === "passed")
+          ? "success"
+          : "partial"),
+    variations: r.variations ?? "",
+    suite: r.suite ?? "",
+    linkTo: r.linkTo ?? null,
   };
+};
+
+/** evidence.md §3: each kind of evidence, Present or Missing. */
+export const evidenceKindsOf = (sources) => {
+  const all = (k) => sources.length > 0 && sources.every((s) => s.evidence[k]);
+  return [
+    ["Transcript", all("transcript")],
+    ["Tool calls", all("tools")],
+    ["Inputs and outputs", all("tools")],
+    ["Artifacts", all("artifacts")],
+    ["Before/after state", all("startingState")],
+  ];
+};
+
+/** Existing scenarios a draft looks like — link it as a new revision instead. */
+export const existingMatchesOf = (row, envState) => {
+  const k = String(row?.useCase || row?.title || "").toLowerCase();
+  if (!k) return [];
+  return (envState?.scenarios || []).filter(
+    (r) =>
+      !r.proposed &&
+      !r.archived &&
+      r.id !== row.id &&
+      String(r.useCase || r.title || "").toLowerCase() === k,
+  );
 };
 
 /** Seeded records a fixture can point at — the world's tables. */

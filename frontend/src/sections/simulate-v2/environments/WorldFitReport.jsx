@@ -241,7 +241,7 @@ export default function WorldFitReport({
       )}
 
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {`${fit.live ? "Live: only the starting state is checked." : "Sealed: the world resets for every case."}`}
+        {`${fit.live ? "Live: only the starting state is checked." : "Simulated: the world resets for every case."}`}
       </Typography>
 
       {/* Partial: what isn't measured, and how to repair it. */}

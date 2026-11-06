@@ -564,7 +564,7 @@ const STAGES = {
         note(
           proof === "prompt-only"
             ? `The world is up and resettable. The prompt runs on our model without your own tools, so a scenario asserts ${world.proof} in this world — results are labelled Prompt only.`
-            : "The world is up and resettable. In a sealed environment grading is settled from world state and every tool call, " +
+            : "The world is up and resettable. In a simulated environment grading is settled from world state and every tool call, " +
                 `so a scenario asserts ${world.proof} rather than that the agent said so.`,
         ),
       ],
@@ -603,7 +603,7 @@ const STAGES = {
     const third = Math.min(3, n);
     const early = Math.max(1, Math.min(2, n - 1));
     const mid = Math.max(third, Math.round(n * 0.6));
-    /* The three validity checks are a sealed environment's (RSI PRD); a live
+    /* The three validity checks are a simulated environment's (RSI PRD); a live
        or prompt-only one checks that the starting state is ready. */
     const sealed = proofOf(source) === "sealed";
     const checks = sealed

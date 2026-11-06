@@ -411,7 +411,7 @@ export const scenarioCli = {
   tag: (ids, tag) =>
     `fi sim scenarios tag ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""} --add ${tag || "risk=duplicate"}`,
   group: (ids, group) =>
-    `fi sim scenarios group add "${group || "Refund release gate"}" ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
+    `fi sim scenarios suite add "${group || "Refund release gate"}" ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
   ground: (id) =>
     `fi sim scenarios cite ${id} --source <source-ref> --supports expected`,
   validate: (ids) =>

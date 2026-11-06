@@ -356,7 +356,14 @@ export default function RepoAgentFlow({
         const ref = isSecretRef(keyRefs[name])
           ? keyRefs[name].trim()
           : envRefOf(name);
-        return { name, ...(ref && { ref }) };
+        /* A secret connected without a value: the connection check's
+           start fails on it, with the fix next to it. */
+        return {
+          name,
+          ...(ref
+            ? { ref }
+            : /KEY|TOKEN|SECRET|PASSWORD|DSN/i.test(name) && { unset: true }),
+        };
       }),
       fagiPrompts: detected.fagiPrompts.value,
       ...(detected.members.length && {

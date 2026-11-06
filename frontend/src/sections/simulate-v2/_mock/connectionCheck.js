@@ -10,7 +10,7 @@
   Stored on the agent's values: `connection` (the spec a person confirmed)
   and `connectionTest` ({ at, results, passed, productionTools }).
 */
-import { sourceKindOf } from "./agentRegistry";
+import { definitionOf, sourceKindOf } from "./agentRegistry";
 import { hashSeed } from "./runStream";
 
 /* Agents we start or call ourselves — a platform or built-in agent has its
@@ -202,7 +202,7 @@ export const CHECKS = [
 export const runConnectionCheck = (agent, spec, tools = []) => {
   const fromCode = startsFromCode(agent);
   const out = [];
-  const add = (id, state, detail, repair = null, outcome = null) =>
+  const add = (id, state, detail, repair = null, outcome = null, extra = {}) =>
     out.push({
       id,
       label: checksFor(spec).find((c) => c.id === id).label,
@@ -210,7 +210,13 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
       detail,
       ...(repair && { repair }),
       ...(outcome && { outcome }),
+      ...extra,
     });
+  /* A secret the code reads that was left unset at connect: the process
+     exits on start. connect.md: show the exit and a redacted log excerpt. */
+  const unsetKey = (definitionOf(agent)?.credentialKeys || []).find(
+    (k) => k && typeof k === "object" && k.unset && !k.ref,
+  )?.name;
   const addStop = (declared, okDetail, noneDetail) => {
     if (!declared) return add("cancel", "unavailable", noneDetail);
     if (spec.stopObserved) return add("cancel", "ok", okDetail);
@@ -229,6 +235,25 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
         label: "Add the start command",
       },
     );
+  else if (fromCode && unsetKey)
+    add(
+      "starts",
+      "failed",
+      `Exited with code 1 before :${spec.port || "8080"} answered — ${unsetKey} isn't set.`,
+      { id: "secret", label: `Set ${unsetKey}` },
+      null,
+      {
+        exitCode: 1,
+        log: [
+          `$ ${spec.startCommand}`,
+          "Traceback (most recent call last):",
+          '  File "app/config.py", line 14, in <module>',
+          `    API_KEY = os.environ["${unsetKey}"]`,
+          `KeyError: '${unsetKey}'`,
+          "process exited with code 1",
+        ],
+      },
+    );
   else if (fromCode)
     add(
       "starts",
@@ -238,11 +263,23 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
   else add("starts", "ok", `Reachable — ${spec.path} answered 200 in 340 ms.`);
 
   if (!spec.replyField.trim())
+    /* Reply not found: show the probe's response (secrets redacted) and the
+       field it most likely sits in — a mapping, not an annotation. */
     add(
       "replies",
       "failed",
-      "Connected, but no mapped reply — a 200 with nothing to show isn't a turn.",
-      { id: "reply", label: "Pick the reply field" },
+      "Connected, but no reply was read — the response has its text under answer.",
+      { id: "replySuggest", label: "Use answer" },
+      null,
+      {
+        probe: {
+          answer: "What is your order number?",
+          session_id: "test-1",
+          usage: { tokens: 41 },
+          api_key: "••••••••",
+        },
+        suggest: { replyField: "answer" },
+      },
     );
   else
     add(

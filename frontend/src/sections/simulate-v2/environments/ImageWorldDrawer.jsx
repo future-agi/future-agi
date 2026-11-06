@@ -9,6 +9,7 @@ import {
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -30,6 +31,18 @@ import {
   screen, each part opening as the one before it is done.
 */
 const mono = { fontFamily: "ui-monospace, Menlo, monospace" };
+
+const REVIEW_PARTS = [
+  ["tables", "Tables"],
+  ["tools", "Tools"],
+  ["personal", "Personal data"],
+  ["relations", "Relationships"],
+];
+/* "Tools, Personal data and Relationships" */
+const listOf = (xs) =>
+  xs.length < 2
+    ? xs.join("")
+    : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`;
 
 function Part({ n, title, hint, done, children, action }) {
   return (
@@ -123,9 +136,12 @@ export default function ImageWorldDrawer({ open, onClose }) {
   const [published, setPublished] = useState(false);
   const found = inspect === "done" ? inspectionOf() : null;
   const pinned = isPinnedImage(image);
-  const reviewed = ["tables", "tools", "personal", "relations"].every(
-    (k) => ok[k],
-  );
+  /* What's still to review, by name, so the next step is never a guess. */
+  const left = REVIEW_PARTS.filter(([k]) => !ok[k]).map(([, l]) => l);
+  const reviewed = left.length === 0;
+  const leftLine = `Tick Looks right on ${listOf(left)} first (${
+    REVIEW_PARTS.length - left.length
+  } of ${REVIEW_PARTS.length} reviewed).`;
   const run = (set, after) => {
     set("running");
     setTimeout(() => set(after), 1400);
@@ -347,16 +363,22 @@ export default function ImageWorldDrawer({ open, onClose }) {
                 hint="All four must pass before it becomes a private release."
                 done={checks === "passed"}
                 action={
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={!reviewed || checks === "running"}
-                    onClick={() => run(setChecks, "passed")}
-                    startIcon={<Iconify icon="solar:play-linear" width={16} />}
-                    sx={{ color: "text.primary", borderColor: "divider" }}
-                  >
-                    {checks === "passed" ? "Run again" : "Run checks"}
-                  </Button>
+                  <Tooltip arrow title={reviewed ? "" : leftLine}>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!reviewed || checks === "running"}
+                        onClick={() => run(setChecks, "passed")}
+                        startIcon={
+                          <Iconify icon="solar:play-linear" width={16} />
+                        }
+                        sx={{ color: "text.primary", borderColor: "divider" }}
+                      >
+                        {checks === "passed" ? "Run again" : "Run checks"}
+                      </Button>
+                    </span>
+                  </Tooltip>
                 }
               >
                 {IMAGE_CHECKS.map((c) => (
@@ -388,9 +410,9 @@ export default function ImageWorldDrawer({ open, onClose }) {
                 ))}
                 {!reviewed && (
                   <Typography
-                    sx={{ typography: "s3", color: "text.tertiary", pt: 0.5 }}
+                    sx={{ typography: "s2", color: "text.secondary", pt: 0.75 }}
                   >
-                    Review the four parts above first.
+                    {leftLine}
                   </Typography>
                 )}
               </Part>
@@ -418,7 +440,11 @@ export default function ImageWorldDrawer({ open, onClose }) {
               ? "Published as a private release, visible to this workspace only."
               : checks === "passed"
                 ? "Ready: it resets and grades. Only this workspace will see it."
-                : "Not every image can be inspected; unsupported ones are refused, not guessed at."}
+                : found && !reviewed
+                  ? `Next: ${leftLine.charAt(0).toLowerCase()}${leftLine.slice(1)}`
+                  : found
+                    ? "Next: run the checks."
+                    : "Not every image can be inspected; unsupported ones are refused, not guessed at."}
           </Typography>
           <Button
             size="small"

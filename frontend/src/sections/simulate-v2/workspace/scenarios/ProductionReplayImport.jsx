@@ -526,7 +526,7 @@ export default function ProductionReplayImport({
                 <Stack direction="row" spacing={1.5}>
                   <TextField
                     size="small"
-                    label="Group"
+                    label="Suite"
                     value={group}
                     onChange={(e) => setGroup(e.target.value)}
                     placeholder={groups[0]?.name || "e.g. Refund regressions"}
@@ -536,7 +536,7 @@ export default function ProductionReplayImport({
                             .slice(0, 3)
                             .map((g) => g.name)
                             .join(", ")}`
-                        : "A new group is made if it doesn't exist"
+                        : "A new suite is made if it doesn't exist"
                     }
                     sx={{ flex: 1 }}
                   />

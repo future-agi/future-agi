@@ -953,7 +953,7 @@ export const compatibilityOf = ({
       world: env?.name,
       worldVersion: currentEnvVersion(env, envState)?.label || "v1",
       release: env?.release || null,
-      mode: ["Hosted", live ? "Live" : "Sealed"].join(" · "),
+      mode: ["Hosted", live ? "Live" : "Simulated"].join(" · "),
       family: family ? `${family.family} ${family.versions}` : null,
       familyStatus: family?.status || null,
     },

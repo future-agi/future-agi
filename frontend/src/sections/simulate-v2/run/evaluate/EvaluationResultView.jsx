@@ -159,7 +159,7 @@ export default function EvaluationResultView({
           startIcon={<Iconify icon="solar:restart-linear" width={14} />}
           onClick={onRunAgain}
         >
-          Run again
+          Re-evaluate
         </Button>
       </Stack>
 

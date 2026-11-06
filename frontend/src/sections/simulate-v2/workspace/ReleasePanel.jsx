@@ -29,6 +29,7 @@ import {
   rlCodeOf,
   rlKeyPatch,
   runChecksPatch,
+  sessionStatusOf,
 } from "../_mock/release";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { RlClientCode, RlScaleFacts } from "./RlScaleFacts";
@@ -627,12 +628,12 @@ function RlAccess({ env, envState, patch, split, onSplit }) {
                     sx={{
                       ...cell,
                       color:
-                        s.status === "Failed" || s.status === "Grading error"
+                        sessionStatusOf(s) === "Grading error"
                           ? "status.danger.fg"
                           : "text.secondary",
                     }}
                   >
-                    {s.status}
+                    {sessionStatusOf(s)}
                   </Box>
                   <Box
                     component="td"

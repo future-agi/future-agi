@@ -58,7 +58,7 @@ const EVIDENCE = [
   {
     id: "fixture",
     label: "Add fixture",
-    line: "You supply the missing records — an exact reconstruction.",
+    line: "Reconstructed from records you supply — not an exact replay.",
   },
   {
     id: "replay",

@@ -1271,6 +1271,64 @@ export default function ScenariosStep({
   };
 
   /* Proposals join the environment only once someone adds them. */
+  /* Imported evidence (evidence.md §4): a draft linked to an existing
+     scenario becomes its next revision; the rest are added. Each joins the
+     suite its review chose — scenario groups only, never a run. */
+  const approveImport = (input) => {
+    const ok = input.filter((r) => !r.blocked);
+    const linked = ok.filter((r) => r.traceReview?.linkTo);
+    if (!linked.length) approve(input);
+    else {
+      const fresh = new Set(
+        ok.filter((r) => !r.traceReview?.linkTo).map((r) => r.id),
+      );
+      const linkedIds = new Set(linked.map((r) => r.id));
+      const at = new Date().toISOString();
+      patch(
+        suiteLogPatch(
+          envState,
+          {
+            scenarios: selected
+              .filter((x) => !linkedIds.has(x.id))
+              .map((x) => {
+                if (fresh.has(x.id)) {
+                  const { proposed: _p, ...rest } = x;
+                  return rest;
+                }
+                const l = linked.find((d) => d.traceReview.linkTo === x.id);
+                return l
+                  ? {
+                      ...x,
+                      editedAt: at,
+                      sourceLinks: [
+                        ...(x.sourceLinks || []),
+                        ...(l.traceImport?.sourceIds || []),
+                      ],
+                    }
+                  : x;
+              }),
+          },
+          {
+            summary: `Added ${fresh.size} and revised ${linked.length} from imported evidence`,
+            by: currentUser().name,
+          },
+        ),
+      );
+      enqueueSnackbar(
+        `Added ${fresh.size} · ${linked.length} linked as the next revision of an existing scenario`,
+        { variant: "success" },
+      );
+    }
+    const bySuite = {};
+    ok.forEach((r) => {
+      const name = r.traceReview?.suite;
+      const id = r.traceReview?.linkTo || r.id;
+      if (name) (bySuite[name] = bySuite[name] || []).push(id);
+    });
+    Object.entries(bySuite).forEach(([name, ids]) =>
+      patch(groupPatch(envState, ids, name)),
+    );
+  };
   const approve = (input) => {
     /* A blocked draft can't join the set until it passes. */
     const rows = input.filter((r) => !r.blocked);
@@ -2442,7 +2500,7 @@ export default function ScenariosStep({
         patch={patch}
         importId={traceReview}
         onApprove={(rows) => {
-          approve(rows);
+          approveImport(rows);
           setTraceReview(null);
         }}
       />

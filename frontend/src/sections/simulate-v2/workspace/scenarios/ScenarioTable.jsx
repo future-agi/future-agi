@@ -117,7 +117,7 @@ const COLUMNS = [
   { id: "persona", label: "Persona", w: 170 },
   {
     id: "org",
-    label: "Tags · groups",
+    label: "Tags · suites",
     w: 180,
     tip: "Tags describe and filter; groups select scenarios for a run",
   },

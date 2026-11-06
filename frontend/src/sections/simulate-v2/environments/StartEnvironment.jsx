@@ -1,6 +1,11 @@
 import PropTypes from "prop-types";
 import CodeBlock from "src/components/code-block";
-import { PYTHON_DEFINE, AGENT_PROMPT, MCP_ADD_CMD } from "./fromCode";
+import {
+  PYTHON_DEFINE,
+  AGENT_PROMPT,
+  MCP_ADD_CMD,
+  INSTALL_CMD,
+} from "./fromCode";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -1636,7 +1641,9 @@ function PanelRunningAgent() {
 
   const tokenOk = !tokenRef.trim() || isSecretRef(tokenRef);
   const urlOk = ENDPOINT_URL[transport].test(endpoint.trim());
-  const pathOk = REPLY_PATH.test(replyPath.trim());
+  /* Optional (connect.md): detected from the first test message; set it
+     only when detection is unsure. */
+  const pathOk = !replyPath.trim() || REPLY_PATH.test(replyPath.trim());
   const canGo = urlOk && pathOk && !!consent?.acknowledgedAt && tokenOk;
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
@@ -1701,8 +1708,7 @@ function PanelRunningAgent() {
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Field
-            label="Where the reply sits"
-            required
+            label="Reply field (optional)"
             placeholder="$.output.text"
             value={replyPath}
             onChange={setReplyPath}
@@ -1710,7 +1716,7 @@ function PanelRunningAgent() {
             helper={
               replyPath.trim() && !pathOk
                 ? "A JSON path, like $.output.text or $.messages[0].content"
-                : "The JSON path to the agent's reply."
+                : "Leave blank: it's detected from a test message."
             }
           />
         </Box>
@@ -1799,7 +1805,7 @@ function PanelRunningAgent() {
             : !urlOk
               ? `Use a ${transport === "websocket" ? "wss://" : "https://"} address`
               : !pathOk
-                ? "Say where the reply sits"
+                ? "Use a JSON path for the reply field"
                 : !tokenOk
                   ? "Use a reference for the auth token"
                   : "Acknowledge that simulations drive the real agent"
@@ -2871,13 +2877,16 @@ function PanelScratch() {
   const [flowText, setFlowText] = useState(prefill?.flowText || "");
   const [attachments, setAttachments] = useState([]);
   /* Files are parsed in a cloud sandbox; how personal data in them is
-     handled is asked up front (builder.md §1), the Privacy tab default. */
-  const [personalData, setPersonalData] = useState("replace");
+     handled is asked up front (builder.md §1) — an explicit choice, never
+     a default (keep, replace or no personal data). */
+  const [personalData, setPersonalData] = useState(null);
   /* Name is optional — the intake describes the flow well enough on its
      own, so if the user skips the name field we derive a reasonable one
      from the description before building. Build is only gated on the
      intake itself being non-trivial. */
-  const canGo = flowText.trim().length >= 10 || attachments.length > 0;
+  const canGo =
+    (flowText.trim().length >= 10 || attachments.length > 0) &&
+    (!attachments.length || !!personalData);
 
   /* Scratch flow diverges from the six connection panels — no agent
      source to derive from, so we mint a blank env in the store from the
@@ -3021,8 +3030,8 @@ function PanelScratch() {
       {attachments.length > 0 && (
         <Stack spacing={0.75}>
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Files are read in a cloud sandbox, not on your machine. Personal
-            data in them:
+            Files are read in a cloud sandbox, not on your machine. Choose how
+            to handle personal data in them before you build:
           </Typography>
           <ToggleButtonGroup
             size="small"
@@ -3031,8 +3040,8 @@ function PanelScratch() {
             onChange={(_, v) => v && setPersonalData(v)}
           >
             <ToggleButton value="replace">Replace consistently</ToggleButton>
-            <ToggleButton value="remove">Remove</ToggleButton>
             <ToggleButton value="keep">Keep as is</ToggleButton>
+            <ToggleButton value="none">No personal data</ToggleButton>
           </ToggleButtonGroup>
         </Stack>
       )}
@@ -3053,30 +3062,23 @@ function PanelScratch() {
 
 function PanelBuildLocally() {
   const [mode, setMode] = useState("cli");
-  const [os, setOs] = useState("mac");
-  const install =
-    os === "windows" ? "py -m pip install futureagi" : "pip install futureagi";
+  /* fi is a single Go binary (plan D10); the SDK is installed separately. */
   const steps = [
     {
       title: "Install the CLI",
-      body: "Once per machine — it adds fi to your path. Then sign in with fi auth login.",
-      extra: (
-        <Box sx={{ mb: 1 }}>
-          <ProviderRow options={OS_OPTIONS} value={os} onChange={setOs} />
-        </Box>
-      ),
-      cmd: install,
+      body: "Once per machine, then sign in.",
+      cmd: INSTALL_CMD,
     },
     {
-      title: "Register your agent and build for it",
-      body: "Every environment belongs to one agent in Agents — register it, then build its environment.",
+      title: "Register your agent, then build an environment",
+      body: "An environment can test many versions of your agent; you pick the version when you run.",
       hint: "--request says what to test; you review the proposed world and scenarios before it's saved.",
       cmd: 'fi agents push --repo .\nfi sim env create --repo . --name my-environment --request "Refunds and cancellations"',
     },
     {
       title: "Run it",
-      body: "Runs in Future AGI; the terminal only starts and watches it. Results show here.",
-      cmd: "fi sim run --env my-environment --trials 3 --budget 100 --budget-unit credits",
+      body: "Runs in Future AGI; the terminal only starts and watches it. --fail-under makes it a CI gate.",
+      cmd: "fi sim run --env my-environment --agent-version <agent-version-id> --trials 3 --wait --fail-under 0.9",
     },
   ];
   return (
@@ -3095,22 +3097,36 @@ function PanelBuildLocally() {
         </ToggleButtonGroup>
       </Box>
       <Box sx={{ p: 2.5 }}>
-        {mode === "cli" && <LocalSteps steps={steps} />}
+        {mode === "cli" && (
+          <>
+            <LocalSteps steps={steps} />
+            {/* Unpublished commands are marked Planned (plan clients §2). */}
+            <Typography
+              sx={{
+                fontSize: 12,
+                lineHeight: "16px",
+                color: "text.tertiary",
+                mt: 1,
+              }}
+            >
+              Planned — these commands aren&apos;t published yet and may change.
+            </Typography>
+          </>
+        )}
         {mode === "python" && (
           <Stack spacing={1.5}>
             <Typography
               sx={{ fontSize: 13, lineHeight: "20px", color: "text.secondary" }}
             >
-              Define the environment next to your agent and run it from Python.
-              Install with pip install futureagi.
+              Build and run from Python with the futureagi SDK (pip install
+              futureagi). It submits and watches; everything runs in Future AGI.
             </Typography>
             <CodeBlock code={PYTHON_DEFINE} />
             <Typography
               sx={{ fontSize: 12, lineHeight: "16px", color: "text.tertiary" }}
             >
-              Every setting in the builder has a code form. Without push() it
-              still runs; push() gives it versions and a place in My
-              environments.
+              Planned — these commands and SDK names aren&apos;t published yet
+              and may change.
             </Typography>
           </Stack>
         )}
@@ -3983,12 +3999,6 @@ const MCP_TRANSPORTS = [
   { id: "http", name: "HTTP", icon: "solar:global-linear" },
   { id: "sse", name: "SSE", icon: "solar:transfer-vertical-linear" },
   { id: "stdio", name: "stdio", icon: "solar:code-square-linear" },
-];
-
-const OS_OPTIONS = [
-  { id: "mac", name: "macOS", icon: "logos:apple" },
-  { id: "linux", name: "Linux", icon: "logos:linux-tux" },
-  { id: "windows", name: "Windows", icon: "logos:microsoft-windows-icon" },
 ];
 
 /*

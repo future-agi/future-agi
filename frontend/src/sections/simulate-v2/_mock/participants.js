@@ -34,7 +34,7 @@ export const NOT_DECLARED = "Not declared";
 /* Not recorded yet: which worker may call which tool, and the checks built on
    worker events. */
 export const LIMITS_SOON =
-  "Coming soon — which worker may call which tool isn't recorded yet.";
+  "Not enforced — which worker may call which tool isn't checked yet.";
 export const CHECKS_SOON =
   "Coming soon — retries, duplicate writes and what the caller was told, per worker.";
 

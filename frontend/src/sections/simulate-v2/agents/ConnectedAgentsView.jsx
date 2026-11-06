@@ -497,7 +497,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             size="small"
             onClick={onConnect}
           >
-            New agent
+            Connect agent
           </Button>
         }
       />

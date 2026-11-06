@@ -915,7 +915,7 @@ export function buildRun({
           passed: false,
           ...(!required && { reportedOnly: true }),
           reason: required
-            ? `${line} — a required evaluation, so it fails the conversation.`
+            ? `${line} — a required evaluation: flagged beside the task result, which it doesn't change.`
             : `${line} — reported only; every critical sub-goal held, so the conversation still passes.`,
         };
         if (required && !requiredHit) requiredHit = evalResults[k];
@@ -925,8 +925,10 @@ export function buildRun({
     /* The verdict of the kept episode. Older runs: the graders' — with none
        applied the scenario is not measured (above). Sub-goal rule: the
        critical sub-goals', or a required evaluation's. */
+    /* The task checks decide; a required evaluation's failure is shown
+       beside them, never folded in (plan evals "Task pass, poor explanation"). */
     const gradedFail = subGoalsDecide
-      ? failed || !!requiredHit
+      ? failed
       : evalResults.length
         ? evalResults.some((e) => !e.passed)
         : failed;

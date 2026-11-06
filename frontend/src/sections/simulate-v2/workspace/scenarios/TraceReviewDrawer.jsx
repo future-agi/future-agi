@@ -9,13 +9,16 @@ import {
   Select,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { StatusDot } from "../../components/primitives";
 import { clickable, focusRing } from "../../components/clickable";
-import { validateRows } from "../../_mock/scenarioOrg";
+import { groupsOf, validateRows } from "../../_mock/scenarioOrg";
+import { subGoalsOfScenario } from "../../_mock/envModel";
 import { currentEnvVersion } from "../../_mock/versions";
 import { currentUser } from "../../_mock/scenarioProvenance";
 import {
@@ -25,6 +28,8 @@ import {
   draftSourcesOf,
   draftStatusOf,
   duplicatesOf,
+  evidenceKindsOf,
+  existingMatchesOf,
   fixtureOptionsOf,
   happenedOf,
   mappingsOf,
@@ -281,7 +286,43 @@ export default function TraceReviewDrawer({
                   </Typography>
                 </Box>
 
+                <Section title="What the record shows">
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    value={review.shows}
+                    onChange={(_, v) =>
+                      v && save({ shows: v, validated: null })
+                    }
+                  >
+                    <ToggleButton value="failure">Failure</ToggleButton>
+                    <ToggleButton value="success">Success</ToggleButton>
+                    <ToggleButton value="partial">
+                      Partial evidence
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </Section>
+
                 <Section title="Evidence">
+                  <Box sx={{ ...box, mb: 0.75 }}>
+                    {evidenceKindsOf(sources).map(([k, present]) => (
+                      <Stack key={k} direction="row" sx={row}>
+                        <Typography sx={{ typography: "s2", flex: 1 }}>
+                          {k}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: present
+                              ? "text.secondary"
+                              : "status.warning.fg",
+                          }}
+                        >
+                          {present ? "Present" : "Missing"}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Box>
                   <Box sx={box}>
                     {sources.map((s) => (
                       <Typography
@@ -327,54 +368,57 @@ export default function TraceReviewDrawer({
                 {missingState && (
                   <Section title="Starting state — the trace didn't record it">
                     <Stack spacing={0.5}>
-                      {["fixture", "replay", "synthetic", "blocked"].map(
-                        (m) => {
-                          const off = m === "replay" && !hasTools;
-                          return (
-                            <Stack
-                              key={m}
-                              direction="row"
-                              alignItems="center"
-                              spacing={1}
-                              {...clickable(
-                                () =>
-                                  !off &&
-                                  save({ stateMode: m, validated: null }),
-                                {
-                                  role: "radio",
-                                  checked: review.stateMode === m,
-                                },
-                              )}
-                              sx={{
-                                ...focusRing,
-                                cursor: off ? "not-allowed" : "pointer",
-                                opacity: off ? 0.5 : 1,
-                              }}
-                            >
-                              <Radio
-                                size="small"
-                                checked={review.stateMode === m}
-                                tabIndex={-1}
-                                disabled={off}
-                                sx={{ p: 0 }}
-                              />
-                              <Typography sx={{ typography: "s2" }}>
-                                {STATE_MODES[m].label}
+                      {[
+                        "fixture",
+                        "replay",
+                        "synthetic",
+                        "conversation",
+                        "blocked",
+                      ].map((m) => {
+                        const off = m === "replay" && !hasTools;
+                        return (
+                          <Stack
+                            key={m}
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                            {...clickable(
+                              () =>
+                                !off && save({ stateMode: m, validated: null }),
+                              {
+                                role: "radio",
+                                checked: review.stateMode === m,
+                              },
+                            )}
+                            sx={{
+                              ...focusRing,
+                              cursor: off ? "not-allowed" : "pointer",
+                              opacity: off ? 0.5 : 1,
+                            }}
+                          >
+                            <Radio
+                              size="small"
+                              checked={review.stateMode === m}
+                              tabIndex={-1}
+                              disabled={off}
+                              sx={{ p: 0 }}
+                            />
+                            <Typography sx={{ typography: "s2" }}>
+                              {STATE_MODES[m].label}
+                            </Typography>
+                            {off && (
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  color: "text.tertiary",
+                                }}
+                              >
+                                — no tool responses were recorded
                               </Typography>
-                              {off && (
-                                <Typography
-                                  sx={{
-                                    typography: "s3",
-                                    color: "text.tertiary",
-                                  }}
-                                >
-                                  — no tool responses were recorded
-                                </Typography>
-                              )}
-                            </Stack>
-                          );
-                        },
-                      )}
+                            )}
+                          </Stack>
+                        );
+                      })}
                     </Stack>
                     {review.stateMode === "fixture" && (
                       <Select
@@ -580,7 +624,109 @@ export default function TraceReviewDrawer({
                   </Box>
                 </Stack>
 
-                <Section title="Inferred, not observed">
+                {/* evidence.md §4: expected outcome, private checks,
+                    permitted variations and the destination suite. */}
+                <Section title="Checks, variations and suite">
+                  <Box sx={{ ...box, mb: 0.75 }}>
+                    {subGoalsOfScenario(current, env, envState).map((g, i) => (
+                      <Typography
+                        key={`${i}-${g.text || g}`}
+                        sx={{ ...row, typography: "s2" }}
+                      >
+                        {typeof g === "string" ? g : g.text || g.label}
+                        <Box
+                          component="span"
+                          sx={{ color: "text.tertiary", ml: 0.75 }}
+                        >
+                          {g.critical === false ? "supporting" : "critical"} ·
+                          private
+                        </Box>
+                      </Typography>
+                    ))}
+                  </Box>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="Allowed variations"
+                    placeholder="e.g. Any polite wording; the refund can be offered as credit"
+                    value={review.variations}
+                    onChange={(e) => save({ variations: e.target.value })}
+                    sx={{
+                      mb: 0.75,
+                      "& .MuiInputBase-input": { typography: "s2" },
+                    }}
+                  />
+                  <Select
+                    size="small"
+                    displayEmpty
+                    value={review.suite}
+                    onChange={(e) => save({ suite: e.target.value })}
+                    sx={selSx}
+                  >
+                    <MenuItem value="" sx={{ typography: "s2" }}>
+                      No suite — every scenario
+                    </MenuItem>
+                    {groupsOf(envState).map((g) => (
+                      <MenuItem
+                        key={g.id}
+                        value={g.name}
+                        sx={{ typography: "s2" }}
+                      >
+                        {`Suite: ${g.name}`}
+                      </MenuItem>
+                    ))}
+                    <MenuItem
+                      value="Imported regressions"
+                      sx={{ typography: "s2" }}
+                    >
+                      New suite: Imported regressions
+                    </MenuItem>
+                  </Select>
+                </Section>
+
+                {existingMatchesOf(current, envState).length > 0 && (
+                  <Section title="Looks like an existing scenario">
+                    <Box sx={box}>
+                      {existingMatchesOf(current, envState).map((m) => (
+                        <Stack
+                          key={m.id}
+                          direction="row"
+                          alignItems="center"
+                          spacing={1}
+                          sx={row}
+                        >
+                          <Typography
+                            sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+                            noWrap
+                          >
+                            {m.title}
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant={
+                              review.linkTo === m.id ? "contained" : "outlined"
+                            }
+                            color={
+                              review.linkTo === m.id ? "primary" : "inherit"
+                            }
+                            onClick={() =>
+                              save({
+                                linkTo: review.linkTo === m.id ? null : m.id,
+                              })
+                            }
+                            sx={{ flexShrink: 0, borderColor: "divider" }}
+                          >
+                            {review.linkTo === m.id
+                              ? "Linked as its next revision"
+                              : "Link as its next revision"}
+                          </Button>
+                        </Stack>
+                      ))}
+                    </Box>
+                  </Section>
+                )}
+
+                <Section title="Assumptions to review — inferred, not observed">
                   <Box sx={box}>
                     {assumptionsOf(current).map((a) => {
                       const v = review.assumptions[a.id];

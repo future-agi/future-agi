@@ -11,7 +11,8 @@ import { observeProjectById } from "./connectAgent";
 const KEY = "fagi.simulate.runningNow";
 const EVENT = "fagi:running-now";
 
-/** Runs started and not finished, across every environment. */
+/** Work started and not finished, across every environment: runs, RSI
+    fixes (improvements) and builder jobs (tasks.md T33). */
 export const runningCountOf = (state) =>
   Object.values(state?.byEnv || {}).reduce(
     (n, es) =>
@@ -21,9 +22,12 @@ export const runningCountOf = (state) =>
           !r.finishedAt &&
           !r.pending &&
           String(r.status || "").toLowerCase() === "running",
-      ).length,
+      ).length +
+      (es?.optimizations || []).filter((o) => o.status === "running").length,
     0,
-  );
+  ) +
+  (state?.myEnvironments || []).filter((e) => e.buildStatus === "building")
+    .length;
 
 export const publishRunning = (n) => {
   try {

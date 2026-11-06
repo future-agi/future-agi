@@ -270,7 +270,7 @@ export function useNavData() {
             ...(runningNow > 0 && {
               info: (
                 <span
-                  title={`${runningNow} run${runningNow === 1 ? "" : "s"} running now`}
+                  title={`${runningNow} running now — runs, improvements and builds`}
                   style={{ fontVariantNumeric: "tabular-nums" }}
                 >
                   {runningNow}

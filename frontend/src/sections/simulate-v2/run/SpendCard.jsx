@@ -39,7 +39,7 @@ export default function SpendCard({
     tone = "warning";
     title =
       spend.reached === "stopped"
-        ? `Cancelling — no new ${unit}s start`
+        ? `Stop requested — no new ${unit}s start`
         : spend.reached === "credits"
           ? `Low on credits this month — no new ${unit}s start`
           : spend.reached === "provider"

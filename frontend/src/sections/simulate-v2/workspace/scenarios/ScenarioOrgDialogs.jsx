@@ -56,7 +56,7 @@ export function TagsGroupsManager({
     >
       <Stack direction="row" alignItems="center" sx={{ mb: 1.5 }}>
         <Typography sx={{ typography: "m2", fontWeight: 600, flex: 1 }}>
-          Tags and groups
+          Tags and suites
         </Typography>
         <IconButton size="small" onClick={onClose} aria-label="Close">
           <Iconify
@@ -217,7 +217,7 @@ export function TagsGroupsManager({
           mb: 0.5,
         }}
       >
-        Groups — select scenarios for a run
+        Suites — select scenarios for a run
       </Typography>
       <Box
         sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
@@ -231,7 +231,7 @@ export function TagsGroupsManager({
               py: 1.25,
             }}
           >
-            No groups yet. Select scenarios and choose Add to group — e.g.
+            No suites yet. Select scenarios and choose Add to suite — e.g.
             Refund release gate, Smoke.
           </Typography>
         )}
@@ -285,7 +285,7 @@ export function TagsGroupsManager({
         ))}
       </Box>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
-        Deleting a group keeps its scenarios. Renaming a tag updates it
+        Deleting a suite keeps its scenarios. Renaming a tag updates it
         everywhere; runs keep the scenarios they ran.
       </Typography>
     </Dialog>

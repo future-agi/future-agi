@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 import { atOnceOf } from "./atOnce";
 import { comparisonOf } from "../_mock/pairs";
 import { snapshotLabelOf } from "../_mock/envSnapshot";
@@ -85,6 +86,8 @@ import { groupMembersOf, settledRun } from "../_mock/runGroup";
 import { gradedRuleIds } from "../_mock/provenance";
 import { subTasksFor } from "../_mock/contract";
 import { pinsForNewRun } from "../_mock/envModel";
+import { currentSuiteLabel } from "../_mock/suiteLog";
+import CopyIdButton from "../components/CopyIdButton";
 import { pinnedScenarios } from "../_mock/decoupled";
 import { withRegrade } from "../_mock/regrade";
 import { attemptsOf, nextAttemptOf } from "../_mock/runPlanLink";
@@ -457,7 +460,8 @@ function LiveRun() {
       recorded?.budget?.cap ||
       pendingMember?.budget?.cap ||
       null;
-    if (!cap) return null;
+    /* Run caps are Later (plan T34); none applies while costFlags is off. */
+    if (!cap || !SHOW_RUN_COST) return null;
     const alertAt =
       (Number(params.get("warn")) ||
         Math.round((recorded?.budget?.alertAt || 0.8) * 100)) / 100;
@@ -1578,7 +1582,27 @@ function LiveRun() {
               </Typography>
               {/* Waiting on an answer is the run's state, not another
                   line — the question itself is the card below. */}
-              <StatusChip status={blocked ? "needs_input" : "running"} />
+              {/* runs §2: queued until the first trial starts. */}
+              <StatusChip
+                status={
+                  blocked
+                    ? "needs_input"
+                    : tasks.some(
+                          (t) =>
+                            t.status !== "queued" && t.status !== "notStarted",
+                        )
+                      ? "running"
+                      : "queued"
+                }
+              />
+              {/* One platform Run ID from the start — the one the CLI takes. */}
+              {!watchTrial && (
+                <CopyIdButton
+                  id={runId}
+                  what="run ID"
+                  usedBy="fi sim runs status / results take it"
+                />
+              )}
               {/* What the run proves, as a mark — the words on hover. */}
               <ProofKindChip proof={liveProof} compact />
               {/* The candidate came from a code snapshot, not a version. */}
@@ -1690,7 +1714,7 @@ function LiveRun() {
                       {` · ${spend.used.toLocaleString()} / ${spend.cap.toLocaleString()} credits`}
                     </Box>
                   ) : null}
-                  {` · ${env.name}`}
+                  {` · ${env.name} · environment ${runEnvShown} · suite ${snapshotSrc?.suiteVersion || currentSuiteLabel(envState)}`}
                   {named.improvement && (
                     <>
                       {" · "}

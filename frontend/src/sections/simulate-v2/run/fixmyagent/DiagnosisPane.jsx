@@ -1132,6 +1132,13 @@ export default function DiagnosisPane({
                     patch={patch}
                     included={included}
                     projected={projected}
+                    /* Nothing was searched or checked: any PR is a draft
+                       labelled Limited validation (improve §6). */
+                    validation={{
+                      key: "few",
+                      label: "Limited validation",
+                      note: "not searched or checked on held-back scenarios",
+                    }}
                     projectedOn="if every addressed scenario passes"
                     current={current}
                     willFix={willFix}

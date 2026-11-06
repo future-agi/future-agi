@@ -251,7 +251,7 @@ export function FrozenInputs({
           ...(f.compat
             ? [
                 [
-                  "Sealed environment",
+                  "Simulated environment",
                   `${envSnapshot ? `environment ${envSnapshot}` : f.compat.envVersion || "this version"} · entry point ${f.compat.entry} — a code change that moves it, changes the build or the start command doesn't fit`,
                 ],
               ]
@@ -515,7 +515,7 @@ export function ReceiptButton({
               />
               <Tooltip arrow title={`Fingerprint of every entry: ${seal}`}>
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {"Sealed · "}
+                  {"Simulated · "}
                   <Box component="span" sx={{ fontFamily: MONO }}>
                     {shortSeal(seal)}
                   </Box>

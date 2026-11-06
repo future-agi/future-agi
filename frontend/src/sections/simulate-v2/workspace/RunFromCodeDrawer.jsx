@@ -18,12 +18,6 @@ import SideDrawer from "../components/SideDrawer";
 import { QuietTag } from "../agents/AgentBits";
 import LocalSteps from "../environments/LocalSteps";
 import { CopyField } from "../components/primitives";
-import {
-  RATE_PLAN,
-  WORKSPACE_POLICY,
-  estimatePackageValidation,
-  fmtCredits,
-} from "../_mock/pricing";
 
 /* What `--dry-run` prints: the cases, versions and repeats that would run —
    nothing runs, and no cost estimate. */
@@ -51,7 +45,7 @@ const mark = (steps) => steps.map((s) => ({ ...s, planned: isPlanned(s.cmd) }));
 /*
   Run from code — the same run the Run simulation button starts, from the
   terminal, Python, CI or the developer's own agent (MCP). Every snippet
-  carries this environment's ID and the repeats/parallel the header is set
+  carries this environment's ID and the repeats the header is set
   to, so what you copy runs exactly what you'd run here.
 
   Also says where the environment is managed: in the console (edits here make
@@ -169,27 +163,29 @@ const TABS = [
   { id: "package", label: "Environment release" },
 ];
 
-/* What each exit code means — so a script reacts to the right problem. */
+/* The plan's exit codes — so a script reacts to the right problem. */
 const EXIT_CODES = [
-  ["0", "Done. A detached run was accepted."],
-  ["2", "Bad input or an empty selection — nothing was submitted."],
-  ["3", "Sign-in or permission problem."],
-  ["4", "Budget or usage limit — nothing new started."],
-  ["5", "Infrastructure or provider failure, not your agent."],
-  ["6", "A real regression (with --fail-on-regression)."],
-  ["7", "Evidence missing, or the runs can't be compared."],
-  ["130", "You stopped watching. The run keeps going in the cloud."],
+  ["0", "Success."],
+  ["1", "Unexpected client error."],
+  ["2", "Usage error — a bad flag or input; nothing was submitted."],
+  ["3", "Not signed in, or not allowed."],
+  ["4", "Not found."],
+  ["5", "The run completed and failed the gate (--fail-under)."],
+  [
+    "6",
+    "Network, server or infrastructure problem, or a required result is unavailable.",
+  ],
 ];
 
 export default function RunFromCodeDrawer({
   open,
   onClose,
-  /* The tab it opens on — Package and Train come from the ⋯ menu. */
+  /* The tab it opens on — Environment release comes from the ⋯ menu. */
   initialTab = "cli",
   env,
   agentName,
   repeats = 3,
-  parallel = 20,
+  parallel: _parallel = 20,
   /* Set when this run is over 200 conversations: it runs this many at once
      (Conversations at once) — the same as the Run button. */
   batchAt = null,
@@ -210,7 +206,7 @@ export default function RunFromCodeDrawer({
   }, [open, initialTab]);
   /* Platform runs are cloud-only: the terminal starts and watches them. */
   const id = env?.id || "env_…";
-  const flags = `--agent-version <agent>@<version> --suite all --trials ${repeats} --concurrency ${batchAt || parallel}`;
+  const flags = `--agent-version <agent-version-id> --suite all --trials ${repeats}`;
 
   const cli = [
     {
@@ -225,26 +221,26 @@ export default function RunFromCodeDrawer({
     },
     {
       title: "Run this environment",
-      body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}. It prints the run's ID and its link here.`,
-      hint: "--detach gives you the terminal back; the run keeps going. Follow it with fi sim runs status <run-id> --watch — Ctrl-C stops watching, not the run. --scenario or --suite picks a subset.",
-      cmd: `fi sim run --env ${id} ${flags}`,
+      body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "the agent version you pick"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}. It prints the run's ID and its link here.`,
+      hint: "Without --wait it returns once the run is submitted. Follow it with fi sim runs status <run-id> — closing the terminal doesn't stop the run; fi sim runs cancel <run-id> does. --suite picks a saved suite.",
+      cmd: `fi sim run --env ${id} ${flags} --wait`,
     },
     {
       title: "Read the results",
       body: "Pass rate, the failing scenarios and why, with a link to the run here — the same run, by its ID.",
-      hint: "fi sim runs logs <run-id> --trial <trial-id> shows one conversation's events — nothing new runs.",
-      cmd: "fi sim runs results <run-id> --failed-only --include checks,usage,trace",
+      hint: "fi sim runs logs <run-id> shows one conversation's events — nothing new runs.",
+      cmd: "fi sim runs results <run-id>",
     },
     {
       title: "Fix it and rerun the same test",
-      body: "The same scenarios and settings, on your changed agent — so the difference is the agent, not the test.",
-      hint: "--failed-only reruns just what failed: quick for checking a fix, but not a full comparison. Then fi experiments compare <run-id> <new-run-id> --scope identical.",
-      cmd: "fi sim run --from-run <run-id> --agent-version <agent>@<new-version>",
+      body: "The same environment, suite and repeats on your changed version — so the difference is the agent, not the test.",
+      hint: "Comparing two runs from the terminal (fi experiments compare) comes later; compare them here.",
+      cmd: `fi sim run --env ${id} --agent-version <new-agent-version-id> --suite all --trials ${repeats} --wait`,
     },
     {
       title: "Check what it cost",
       body: "The run's itemized credits, free-tier adjustment and pending items, as on its Cost tab.",
-      hint: `usage show --group-by agent compares versions; admins set limits with usage budget set. A --budget over your admin's ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)} per run is refused here too.`,
+      hint: "usage show --group-by agent compares versions.",
       cmd: "fi api usage show --run <run-id>",
     },
   ];
@@ -290,121 +286,105 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install futureagi
-      # CI needs a limit: a run without one fails before it starts.
+      - run: ${INSTALL_CMD.split(" && ")[0]}
+      # exit 5: the run completed and failed the gate · exit 6: infrastructure or result unavailable
       - run: |
-          fi sim run --env ${id} --suite must-pass --wait --fail-under 0.9 --non-interactive --yes --output json > run.json
-          fi experiments compare $BASELINE_RUN $(jq -r .run_id run.json) --scope identical --fail-on-regression
-          fi sim runs export $(jq -r .run_id run.json) --format junit --destination ./results.xml
+          fi sim run --env ${id} --agent-version $AGENT_VERSION --suite must-pass --trials ${repeats} \\
+            --wait --fail-under 0.9 --json --no-input > run.json
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
-          BASELINE_RUN: \${{ vars.BASELINE_RUN }}   # e.g. main's last run`;
+          AGENT_VERSION: \${{ vars.AGENT_VERSION }}   # the version this PR builds`;
 
-  /* An improvement experiment from code — the same experiment the
-     Improvements page shows, by the ID on its page. */
+  /* A fix run from code — the same fix run the Improvements page shows, by
+     the ID on its page. Flags follow the API's fields; the final fi spelling
+     isn't set yet. */
   const improveSteps = [
     {
-      title: "Create the experiment",
-      body: "From a run's failures, with what it may change and the scenarios it's checked on. Nothing runs yet.",
-      hint: "--suggest-only diagnoses and suggests a change without trials. Surfaces it can't change yet are refused, not ignored.",
-      cmd: `fi api fix-runs create --baseline <run-id> --goal "Fix the failing cases" \\\n  --allow prompt,skill,config --suite ${id}/target --holdout ${id}/holdout \\\n  --budget 2000 --budget-unit credits --max-candidates 3`,
+      title: "Start a fix run",
+      body: "From a run's failures: the cases to fix, the ones it must not break, what it may change and what stays locked.",
+      hint: "It stops at the credit budget or the time limit, whichever comes first. Surfaces it can't change yet are refused, not ignored.",
+      cmd: `fi api fix-runs create --source-run-id <run-id> \\\n  --target-case-keys <case-keys> --protected-case-keys <case-keys> \\\n  --surfaces prompt,skill,config --locked-paths <paths> \\\n  --budget-credits 2000 --max-minutes 30`,
     },
     {
-      title: "Run it",
-      body: "Tries the candidates on the target scenarios and checks the finalists on held-out ones.",
-      hint: "--candidate picks some; a higher cap needs a new review.",
-      cmd: "fi api fix-runs run <experiment-id>",
+      title: "Follow it",
+      body: "Its state, the candidates it tried and how each did on the held-back cases.",
+      cmd: "fi api fix-runs get <fix-run-id> --json",
     },
     {
-      title: "Read what it found",
-      body: "Each candidate's evidence, the held-out result, trade-offs and a recommendation — nothing ships on its own.",
-      cmd: "fi api fix-runs results <experiment-id>",
-    },
-    {
-      title: "Make the one you choose active",
-      body: "As a new agent version, a pull request, or an exported patch.",
-      hint: "--target patch-pr opens a PR; --target export --destination ./patch writes it to a file.",
-      cmd: "fi api fix-runs promote <experiment-id> --candidate <candidate-id> --target agent-version",
+      title: "Act on the one you choose",
+      body: "Open a pull request (a draft one under limited validation) or make it the environment default — nothing ships on its own.",
+      cmd: "fi api fix-runs open-pr <fix-run-id> --candidate <candidate-id>",
     },
   ];
 
-  /* Improve and package from Python and Node — the same experiments
-     and jobs by the same IDs; final signatures ship with the release. */
-  const pythonMore = `# Improve: an experiment from a run's failures
-exp = client.fix_runs.create(
-    baseline="<run-id>", goal="Fix the failing cases",
-    allow=["prompt", "skill", "config"],
-    suite="${id}/target", holdout="${id}/holdout",
-    budget={"amount": 2000, "unit": "credits"},
+  /* Fix runs and releases from Python and Node — the same fix runs and
+     releases by the same IDs; final signatures ship with the release. */
+  const pythonMore = `# Improve: a fix run from a run's failures
+fix = client.fix_runs.create(
+    source_run_id="<run-id>",
+    target_case_keys=[...], protected_case_keys=[...],
+    surfaces=["prompt", "skill", "config"], locked_paths=[...],
+    budget_credits=2000, max_minutes=30,
 )
-client.fix_runs.run(exp.id)
-found = client.fix_runs.wait(exp.id)      # candidates, held-out, recommendation
-client.fix_runs.promote(exp.id, candidate=found.recommended, target="agent-version")
+fix = client.fix_runs.wait(fix.id)        # state, candidates, held-back results
+client.fix_runs.open_pr(fix.id, candidate=fix.candidates[0].id)
 
-# Environment release: check it and save it privately
-check = client.sim.environments.validate("./my-world", budget={"amount": 100, "unit": "credits"})
-client.sim.environments.save_release("./my-world", visibility="workspace", version="1.0.0", validation=check.id)`;
+# Environment release: save a reviewed draft privately
+release = client.sim.environments.save_release(environment="${id}", draft="<draft-id>")
+release.wait_for_checks()                 # Ready once all five release checks pass`;
 
-  const nodeMore = `// Improve
-const exp = await client.fix_runs.create({
-  baseline: "<run-id>", goal: "Fix the failing cases",
-  allow: ["prompt", "skill", "config"],
-  suite: "${id}/target", holdout: "${id}/holdout",
-  budget: { amount: 2000, unit: "credits" }
+  const nodeMore = `// Improve: a fix run from a run's failures
+let fix = await client.fixRuns.create({
+  sourceRunId: "<run-id>",
+  targetCaseKeys: [/* … */], protectedCaseKeys: [/* … */],
+  surfaces: ["prompt", "skill", "config"], lockedPaths: [/* … */],
+  budgetCredits: 2000, maxMinutes: 30
 });
-await client.fix_runs.run(exp.id);
-const found = await client.fix_runs.wait(exp.id);
-await client.fix_runs.promote(exp.id, { candidate: found.recommended, target: "agent-version" });
+fix = await client.fixRuns.wait(fix.id);
+await client.fixRuns.openPr(fix.id, { candidate: fix.candidates[0].id });
 
-// Package
-const check = await client.sim.environments.validate("./my-world", { budget: { amount: 100, unit: "credits" } });
-await client.sim.environments.save_release("./my-world", { visibility: "workspace", version: "1.0.0", validation: check.id });`;
+// Environment release
+const release = await client.sim.environments.saveRelease({ environment: "${id}", draft: "<draft-id>" });
+await release.waitForChecks();`;
 
-  /* A private environment release: start one, preview and check it, save
-     it to the workspace, and adopt it — the same steps whoever runs them. */
+  /* Save release (builder.md): a reviewed draft becomes a private release
+     that has to pass the five release checks before it shows Ready. Using it
+     with another agent is the normal environment flow. */
   const packageSteps = [
     {
-      title: "Start an environment",
-      body: "A starter for a game, an app, a workflow or an empty world — edit it next to your code.",
-      cmd: "fi sim env init my-world --template app",
+      title: "Build or change it",
+      body: "From your repo, or edit it here — either way you get a draft to review.",
+      cmd: "fi sim env create --repo .",
     },
     {
-      title: "Try it in a sandbox",
-      body: "Open it with a starting state and look around before checking it.",
-      cmd: `fi sim env preview ./my-world --budget 50`,
+      title: "Review the changes",
+      body: "What the builder generated or changed, before anything is saved.",
+      cmd: "fi sim env diff --job <job-id>",
     },
     {
-      title: "Check it",
-      body: "Starts, resets, a reference run passes, mistakes fail, episodes stay apart. Publishing needs every check.",
-      cmd: "fi sim env validate ./my-world --budget 100",
+      title: "Save release",
+      body: "Saves a private release, visible to this workspace. It doesn't start a run or an improvement.",
+      cmd: "fi sim env save --job <job-id>",
       after: (
         <Box sx={{ mt: 1 }}>
           <CodeBlock
-            code={(() => {
-              const v = estimatePackageValidation();
-              return [
-                ...v.parts.map(
-                  (p) =>
-                    `  ${p.label.padEnd(30)}${p.credits ? `${Math.round(p.credits)} credits` : "measured, not billed"}   ${p.detail}`,
-                ),
-                `Estimate  ≈ ${Math.round(v.total)} credits`,
-                "Limit     100 credits — checks past it don't start; the ones done are kept",
-                `Rates     ${RATE_PLAN.name} · ${RATE_PLAN.version}`,
-              ].join("\n");
-            })()}
+            code={[
+              "release v1.0 saved · private · checks pending",
+              "  starts                     passed",
+              "  resets                     passed",
+              "  reference solution passes  passed",
+              "  wrong answer fails         passed",
+              "  hidden checks don't leak   passed",
+              "Ready",
+            ].join("\n")}
           />
         </Box>
       ),
     },
     {
-      title: "Publish it privately",
-      body: "An unchangeable version, visible to you or your workspace.",
-      cmd: "fi sim env publish ./my-world --visibility workspace --version 1.0.0 --notes ./CHANGES.md --validation <validation-id>",
-    },
-    {
-      title: "Build environments from it",
-      body: "You or a teammate adopt the released world for an agent, then run it like any environment.",
-      cmd: "fi sim env adopt my-world@1.0.0 --agent <agent> --name my-world-tests",
+      title: "Use it with another agent",
+      body: "The normal environment flow: pick the agent version when you run. Each agent still needs its own readiness check.",
+      cmd: `fi sim run --env ${id} --agent-version <agent-version-id> --wait`,
     },
   ];
 
@@ -541,7 +521,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                 <Box>
                   <Label planned>For scripts and CI</Label>
                   <CodeBlock
-                    code={`fi sim run --env ${id} ${flags} --non-interactive --yes --output json`}
+                    code={`fi sim run --env ${id} ${flags} --wait --json --no-input`}
                   />
                   <Typography
                     sx={{
@@ -552,10 +532,11 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                       mb: 1,
                     }}
                   >
-                    --non-interactive never prompts — a missing choice or budget
-                    is an error. --yes accepts the plan shown; it never allows
-                    live tools or a bigger budget. --output json prints the run
-                    for your script.
+                    --no-input never prompts — a missing choice is an error.
+                    --json (or --output jsonl) prints results on stdout and
+                    typed errors on stderr. Exit 6 isn&apos;t a reason to
+                    resend: read the run, or retry with the same idempotency
+                    key.
                   </Typography>
                   <Box
                     sx={{
@@ -612,9 +593,9 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                     color: "text.secondary",
                   }}
                 >
-                  Release your own world — its tools, data and rules — check it,
-                  and publish it privately so your team can build environments
-                  from it. Public publishing isn&apos;t available.
+                  Save a reviewed draft as a private release your workspace can
+                  run with any agent. It shows Ready once its release checks
+                  pass.
                 </Typography>
                 <LocalSteps steps={mark(packageSteps)} />
               </Stack>
@@ -627,7 +608,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                   <CodeBlock code={python} />
                 </Box>
                 <Box>
-                  <Label>Improve and package</Label>
+                  <Label>Improve and save a release</Label>
                   <CodeBlock code={pythonMore} />
                 </Box>
               </Stack>
@@ -636,11 +617,11 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
             {tab === "node" && (
               <Stack spacing={2}>
                 <Box>
-                  <Label>Preview, run and read what it cost</Label>
+                  <Label>Preview, run and read the results</Label>
                   <CodeBlock code={node} />
                 </Box>
                 <Box>
-                  <Label>Improve and package</Label>
+                  <Label>Improve and save a release</Label>
                   <CodeBlock code={nodeMore} />
                 </Box>
               </Stack>
@@ -655,8 +636,8 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                     color: "text.secondary",
                   }}
                 >
-                  The same experiment as on the Improvements page — copy its ID
-                  there to read or promote it from here.
+                  The same fix run as on the Improvements page — copy its ID
+                  there to follow or act on it from here.
                 </Typography>
                 <LocalSteps steps={mark(improveSteps)} />
               </Stack>
@@ -664,7 +645,7 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
 
             {tab === "ci" && (
               <Box>
-                <Label planned>Block a pull request on a regression</Label>
+                <Label planned>Block a pull request on a failing gate</Label>
                 <CodeBlock code={ci} />
                 <Typography
                   sx={{
@@ -674,10 +655,10 @@ await client.sim.environments.save_release("./my-world", { visibility: "workspac
                     mt: 1,
                   }}
                 >
-                  The run shows up here with its commit and pull request. The
-                  comparison runs the identical scenarios as the baseline: it
-                  exits 6 on a real regression and 7 when the two runs
-                  can&apos;t be compared — never a silent pass.
+                  The run shows up here with its commit and pull request. It
+                  exits 5 when the completed run is under 0.9 and 6 when it
+                  couldn&apos;t finish or a result is missing — a partial run
+                  never passes. Comparing against a baseline comes later.
                 </Typography>
               </Box>
             )}
