@@ -813,6 +813,26 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     )
 
 
+class HarnessRunHeldBackSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    by = serializers.DictField(
+        child=serializers.IntegerField(min_value=0),
+        help_text="Held-back cases per readiness row that held them.",
+    )
+
+
+class HarnessRunReadinessSelectionSerializer(serializers.Serializer):
+    requested = serializers.IntegerField(min_value=1)
+    running = serializers.IntegerField(min_value=0)
+    held_back = HarnessRunHeldBackSerializer()
+    reasons = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each holding row's reason, in plain words.",
+    )
+
+
 class HarnessRunCreateResponseSerializer(serializers.Serializer):
     environment_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
@@ -826,6 +846,13 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
     stage = serializers.CharField()
     versions = HarnessRunPinnedVersionsSerializer()
     warnings = HarnessRunWarningSerializer(many=True)
+    selection = HarnessRunReadinessSelectionSerializer(
+        allow_null=True,
+        help_text=(
+            "The cases readiness held back from this run and why; null when runs are"
+            " not pinned to versions."
+        ),
+    )
 
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):

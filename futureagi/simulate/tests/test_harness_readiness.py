@@ -609,11 +609,13 @@ class TestPairs:
         ) as read:
             with django_capture_on_commit_callbacks(execute=False) as callbacks:
                 run = _run(environment)
-            assert not read.called
+            # Once, before the environment's lock, for the cases the run holds back.
+            assert read.call_count == 1
             for callback in callbacks:
                 callback()
 
         run.refresh_from_db()
+        assert read.call_count == 2
         assert read.call_args.args[1].id == run.assembled_bundle_id
         assert run.capability_snapshot["answer"]["kind"] == "ready"
 
@@ -629,7 +631,7 @@ class TestPairs:
         assert stored.call_args.args[0] == run.id
         assert stored.call_args.kwargs["bundle"].id == run.assembled_bundle_id
 
-    def test_an_unreadable_snapshot_never_fails_the_run(
+    def test_unreadable_evidence_never_fails_the_run(
         self, user, workspace, storage, django_capture_on_commit_callbacks
     ):
         environment = _environment(user, workspace, storage, "rd-snapshot-error")

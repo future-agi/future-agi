@@ -9,6 +9,7 @@ refuses it and the check has not answered yet.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict
@@ -178,6 +179,57 @@ def selection_report(
             "requirements_recorded": placement.recorded,
         },
     }
+
+
+class HeldBack(TypedDict):
+    count: int
+    keys: list[str]
+    truncated: bool
+    # Held-back cases per row that held them.
+    by: dict[str, int]
+
+
+class RunSelection(TypedDict):
+    requested: int
+    running: int
+    held_back: HeldBack
+    # Each holding row's reason, in plain words.
+    reasons: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RunPlan:
+    """What a run of ``keys`` sends: every requested case but the Blocked ones."""
+
+    view: RunSelection
+    held: frozenset[str]
+
+
+def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
+    """The requested cases a run holds back, placed as ``selection_report`` places
+    them: a case in the blocked bucket is held back and named, never sent.
+
+    Raises:
+        HostedHarnessError: as ``selection_report``.
+    """
+    report = readiness_report(pairing)
+    placed = _place_all(pairing, report["rows"], keys=keys, trials=trials).placed
+    held = [one.case.key for one in placed if one.bucket == "blocked"]
+    by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
+    reasons = {
+        row["id"]: row["reason"] or row["label"]
+        for row in report["rows"]
+        if row["id"] in by
+    }
+    return RunPlan(
+        view={
+            "requested": len(keys),
+            "running": len(keys) - len(held),
+            "held_back": {"count": len(held), **_capped(held), "by": dict(by)},
+            "reasons": reasons,
+        },
+        held=frozenset(held),
+    )
 
 
 def case_page(

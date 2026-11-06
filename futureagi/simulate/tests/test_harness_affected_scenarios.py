@@ -539,3 +539,86 @@ class TestListsAndCounts:
         assert start["status"] == "stale"
         assert start["affected"]["count"] == 10
         assert report["selection"]["stale"] == 10
+
+
+def _run_metadata(run):
+    run.refresh_from_db()
+    return run.payload["metadata"]
+
+
+class TestHoldBack:
+    def test_a_run_holds_back_the_blocked_cases_and_names_them(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "hb-four")
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        run = _run(environment, REFUND_KEYS + LOOKUP_KEYS, key="hold")
+
+        metadata = _run_metadata(run)
+        chosen = metadata["readiness_selection"]
+        assert (chosen["requested"], chosen["running"]) == (10, 6)
+        assert chosen["held_back"] == {
+            "count": 4,
+            "keys": REFUND_KEYS,
+            "truncated": False,
+            "by": {"tool_routing": 4},
+        }
+        assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
+        sent = [entry["scenario_key"] for entry in metadata["execution_manifest"]]
+        assert sent == LOOKUP_KEYS
+        assert metadata["selected_scenario_keys"] == REFUND_KEYS + LOOKUP_KEYS
+        assert run.test_execution.total_scenarios == 6
+        assert run.test_execution.total_calls == 6
+
+    def test_every_case_blocked_is_refused_and_no_run_is_made(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "hb-all")
+        _built(environment, contract=PRODUCTION_ONLY)
+        before = HostedHarnessJob.no_workspace_objects.count()
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, REFUND_KEYS, key="all")
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "all_cases_blocked",
+            409,
+        )
+        assert "No run was created" in refused.value.message
+        assert "issue_refund reaches production" in refused.value.message
+        assert refused.value.details["selection"]["held_back"]["count"] == 4
+        assert HostedHarnessJob.no_workspace_objects.count() == before
+
+    def test_nothing_blocked_sends_every_case(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "hb-none")
+
+        run = _run(environment, REFUND_KEYS + LOOKUP_KEYS, key="none")
+
+        metadata = _run_metadata(run)
+        assert metadata["readiness_selection"]["held_back"]["count"] == 0
+        assert len(metadata["execution_manifest"]) == 10
+
+    def test_pins_moved_after_readiness_was_read_is_refused(
+        self, user, workspace, storage, monkeypatch
+    ):
+        from simulate.services import hosted_harness
+
+        environment = _ten_certified(user, workspace, storage, "hb-moved")
+        real = hosted_harness._readiness_plan
+
+        def stale(*args, **kwargs):
+            planned = real(*args, **kwargs)
+            return hosted_harness._ReadinessPlan(
+                pins=(None, None, None), plan=planned.plan
+            )
+
+        monkeypatch.setattr(hosted_harness, "_readiness_plan", stale)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, LOOKUP_KEYS, key="moved")
+
+        assert refused.value.code == "environment_not_ready"
+        assert refused.value.retryable is True

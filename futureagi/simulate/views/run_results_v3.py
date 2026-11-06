@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
+from simulate.serializers.harness_job import HarnessRunReadinessSelectionSerializer
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -249,6 +250,11 @@ class RunExecutionSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
         help_text="The run readiness of the run's versions when it was created.",
+    )
+    readiness_selection = HarnessRunReadinessSelectionSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The selected cases readiness held back from this run, and why.",
     )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
@@ -627,6 +633,7 @@ def _execution_payload(
         "pinned_agent_version": pinned.get("agent_version"),
         "agent_differs": bool(pinned.get("agent_differs")),
         "capability_snapshot": pinned.get("capability_snapshot"),
+        "readiness_selection": pinned.get("readiness_selection"),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition

@@ -765,7 +765,8 @@ def run_version_labels(
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
     not the one its environment version was built with. With ``readiness``, each also
-    carries ``capability_snapshot``: the readiness the run was created with.
+    carries ``capability_snapshot``: the readiness the run was created with, and
+    ``readiness_selection``: the cases it held back.
     """
     ids = [one for one in execution_ids if one]
     if not ids:
@@ -788,9 +789,11 @@ def run_version_labels(
     )
     snapshots = (
         {
-            str(one): snapshot
-            for one, snapshot in jobs.values_list(
-                "test_execution_id", "capability_snapshot"
+            str(one): (snapshot, selection)
+            for one, snapshot, selection in jobs.values_list(
+                "test_execution_id",
+                "capability_snapshot",
+                "payload__metadata__readiness_selection",
             )
         }
         if readiness
@@ -813,7 +816,12 @@ def run_version_labels(
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
             **(
-                {"capability_snapshot": snapshots.get(str(execution_id))}
+                {
+                    "capability_snapshot": snapshots.get(str(execution_id), (None,))[0],
+                    "readiness_selection": snapshots.get(
+                        str(execution_id), (None, None)
+                    )[1],
+                }
                 if readiness
                 else {}
             ),
