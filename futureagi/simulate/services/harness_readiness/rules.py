@@ -343,6 +343,8 @@ def consequence(row: RowView, where: str | None = None) -> str:
     agent's connection, which decides what a Stop can end."""
     if not row["measured"]:
         return _UNMEASURED
+    if row["id"] == "start" and row["status"] == "supported" and where != "sandbox":
+        return "The agent answers on its own side, so every case can begin"
     if row["id"] == "cancel":
         if row["status"] == "supported":
             return _CANCEL_CONFIRMED
