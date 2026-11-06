@@ -1118,3 +1118,179 @@ class TestReconcileWithoutSandbox:
         polled = gateway.reconcile_completed(attempt)
 
         assert polled.state == "canceled"
+
+
+def _age(job, minutes):
+    """The check was asked for ``minutes`` ago."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        created_at=timezone.now() - timedelta(minutes=minutes)
+    )
+    job.refresh_from_db()
+
+
+class TestDeadline:
+    def test_a_check_past_its_deadline_is_stopped_and_fails_the_pairing(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _pending(user, workspace, storage, "pv-deadline")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        monkeypatch.setattr(
+            gateway,
+            "_delete_and_record",
+            lambda attempt, **_: record_cleanup(
+                attempt.id, provider_ref=str(attempt.provider_ref), verified_absent=True
+            ),
+        )
+        _age(job, 46)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "canceled"
+        assert done.cancel_reason == validation.CHECK_TIMED_OUT
+        assert _job_metadata(job)["validation_outcome"] == "failed"
+        row = _row(environment)
+        assert (row.state, row.error["code"], row.error["source"]) == (
+            "failed",
+            "validation_timed_out",
+            "validation",
+        )
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, key="after-timeout")
+        assert refused.value.code == "pair_failed"
+        assert refused.value.details["reason_code"] == "validation_timed_out"
+        assert "did not finish within 45 minutes" in refused.value.message
+        again = _start(environment)
+        assert again.state == "validating" and again.job.id != job.id
+
+    def test_a_check_within_its_deadline_keeps_running(self, user, workspace, storage):
+        environment = _pending(user, workspace, storage, "pv-in-time")
+        job = _start(environment).job
+        _age(job, 30)
+
+        assert validation.overdue(job) is False
+        _age(job, 46)
+        assert validation.overdue(job) is True
+
+    def test_a_user_cancel_is_not_a_timed_out_check(self, user, workspace, storage):
+        environment = _pending(user, workspace, storage, "pv-user-cancel")
+        job = _start(environment).job
+        _age(job, 46)
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            cancel_reason="user_canceled", cancel_requested_at=job.created_at
+        )
+        job.refresh_from_db()
+
+        assert validation.overdue(job) is False
+
+
+class TestRefusals:
+    def test_a_validating_refusal_says_when_to_retry(self, user, workspace, storage):
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _pending(user, workspace, storage, "pv-retry-after")
+        job = _start(environment).job
+        _age(job, 5)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment)
+
+        body = refused.value.as_dict()
+        assert body["error"] == "pair_validating" and body["retryable"] is True
+        assert 39 * 60 <= body["retry_after"] <= 40 * 60
+        assert body["check"]["job_id"] == str(job.id)
+        assert "in 40 minutes" in body["message"]
+
+    def test_a_failed_refusal_names_the_reason_and_the_actions(
+        self, user, workspace, storage
+    ):
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _pending(user, workspace, storage, "pv-failed-reason")
+        _failed(
+            _row(environment),
+            source="validation",
+            message="Traceback: internal detail",
+            failed_actions=[{"action": "issue_refund", "status": "failed"}],
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment)
+
+        body = refused.value.as_dict()
+        assert body["error"] == "pair_failed" and body["retryable"] is False
+        assert body["reason_code"] == "authoring_runtime_validation_failed"
+        assert "issue_refund" in body["reason"]
+        assert "Traceback" not in body["message"]
+
+
+class TestOneCheckPerBundle:
+    def test_each_check_of_a_bundle_has_its_own_fixed_key(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-key")
+        first = _start(environment)
+        bundle = first.bundle
+
+        assert first.job.idempotency_key == f"validation:{bundle.id}:1"
+        assert _start(environment).job.id == first.job.id
+        _end(first.job, state="failed", code="certify_incomplete")
+        second = _start(environment)
+        assert second.job.idempotency_key == f"validation:{bundle.id}:2"
+
+    def test_a_passed_result_for_the_same_hash_is_reused(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-reuse")
+        first = _start(environment)
+        _ready(first.bundle)
+        _end(first.job, state="completed")
+
+        again = _start(environment)
+        assert again.ready and again.job is None
+        assert (
+            HostedHarnessJob.no_workspace_objects.filter(
+                assembled_bundle_id=first.bundle.id,
+                payload__metadata__certify_only=True,
+            ).count()
+            == 1
+        )
+
+
+class TestCheckLogs:
+    def test_a_finished_move_logs_its_pairing_hash_result_and_duration(
+        self, user, workspace, storage
+    ):
+        from structlog.testing import capture_logs
+
+        environment = _pending(user, workspace, storage, "pv-logs")
+        job = _start(environment).job
+        _age(job, 3)
+
+        with capture_logs() as logs:
+            _end(job, state="failed", code="certify_incomplete")
+
+        finished = next(
+            one for one in logs if one["event"] == "harness_pair_validation_finished"
+        )
+        assert finished["environment_id"] == str(environment.id)
+        assert finished["agent_version_id"] == str(environment.agent_version_id)
+        assert finished["environment_version_id"] == str(
+            environment.environment_version_id
+        )
+        assert finished["assembly_key"] == _row(environment).assembly_key
+        assert finished["outcome"] == "failed"
+        assert finished["duration_seconds"] >= 180

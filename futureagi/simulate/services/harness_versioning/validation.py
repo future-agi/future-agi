@@ -9,8 +9,8 @@ A newer move of the environment's default agent replaces any move still waiting.
 from __future__ import annotations
 
 import json
-import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal, TypedDict
 
 import structlog
@@ -44,10 +44,20 @@ logger = structlog.get_logger(__name__)
 Purpose = Literal["agent_move", "recheck"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
+# A check still running this long after it was asked for is stopped and fails the
+# pairing, so runs read why and the next check starts a fresh job.
+CHECK_DEADLINE = timedelta(minutes=45)
+CHECK_TIMED_OUT = "validation_timed_out"
 # The endings that are a check's verdict on the pairing; any other one is retried.
 CHECK_FAILURES = frozenset(
-    {"authoring_runtime_validation_failed", "certify_incomplete"}
+    {"authoring_runtime_validation_failed", "certify_incomplete", CHECK_TIMED_OUT}
 )
+# What a run refused after a failed check is told, by the check's ending.
+_FAILED_REASONS = {
+    "authoring_runtime_validation_failed": "the agent did not pass this environment's checks",
+    "certify_incomplete": "the check finished but its result was not kept",
+    CHECK_TIMED_OUT: "the check did not finish within 45 minutes",
+}
 FAILURE_SOURCE = "validation"
 # A move whose validation ended before a check did is validated this many times more.
 MOVE_RESTARTS = 1
@@ -106,6 +116,19 @@ class Validation:
             "finished_at": None,
             "error": None,
         }
+
+
+def failed_reason(error: dict[str, Any]) -> str:
+    """A failed check's reason in plain words, from its bundle's ``error``."""
+    reason = _FAILED_REASONS.get(error.get("code"), "the check failed")
+    actions = [
+        str(one["action"])
+        for one in error.get("failed_actions") or []
+        if isinstance(one, dict) and one.get("action")
+    ]
+    if actions:
+        reason += f" (failed actions: {', '.join(actions[:5])})"
+    return reason
 
 
 def certify_only(job: HostedHarnessJob) -> bool:
@@ -223,6 +246,17 @@ def start_validation(
             },
         )
         if bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key:
+            logger.info(
+                "harness_pair_validation_reused",
+                environment_id=str(locked.id),
+                agent_version_id=str(agent_version.id),
+                environment_version_id=str(environment_version.id),
+                suite_version_id=str(suite_version.id),
+                bundle_id=str(bundle.id),
+                assembly_key=bundle.assembly_key,
+                purpose=purpose,
+                caller=move["caller"] if move else None,
+            )
             return Validation("ready", bundle, purpose)
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
@@ -243,10 +277,8 @@ def start_validation(
         transaction.on_commit(lambda: _dispatch(job_id))
     logger.info(
         "harness_pair_validation_started",
-        environment_id=str(locked.id),
-        job_id=str(job.id),
-        bundle_id=str(bundle.id),
-        purpose=purpose,
+        **_check_log(job),
+        caller=move["caller"] if move else None,
     )
     return Validation("validating", bundle, purpose, job)
 
@@ -331,10 +363,15 @@ def _create_job(
         metadata["validation_move"] = move
     payload.pop("job_id", None)
     payload.pop("run_id", None)
+    # One key per check of this bundle, so two requests for the same check make one job,
+    # and so one workflow; the bundle is the environment's for this pairing's hash.
+    checks = HostedHarnessJob.no_workspace_objects.filter(
+        assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
+    ).count()
     job, _ = create_hosted_job(
         locked.organization,
         payload,
-        idempotency_key=f"validation:{locked.id}:{uuid.uuid4().hex}",
+        idempotency_key=f"validation:{bundle.id}:{checks + 1}",
         workspace=locked.workspace,
     )
     job.environment = locked
@@ -391,6 +428,35 @@ def on_terminal(job: HostedHarnessJob) -> None:
         transaction.on_commit(lambda: finish_validation(job_id))
 
 
+def overdue(job: HostedHarnessJob) -> bool:
+    """Whether a live validation job has run past its deadline and is to be stopped."""
+    return (
+        certify_only(job)
+        and job.state in _LIVE_STATES
+        and job.created_at + CHECK_DEADLINE <= timezone.now()
+        and (job.cancel_requested_at is None or job.cancel_reason == CHECK_TIMED_OUT)
+    )
+
+
+def _check_log(job: HostedHarnessJob) -> dict[str, Any]:
+    """The fields every log line of a check carries: its pairing, hash and duration."""
+    bundle = job.assembled_bundle
+    end = job.terminal_at or timezone.now()
+    return {
+        "job_id": str(job.id),
+        "environment_id": str(job.environment_id),
+        "agent_version_id": str(job.agent_version_id),
+        "environment_version_id": str(job.environment_version_id),
+        "suite_version_id": str(job.suite_version_id),
+        "bundle_id": str(job.assembled_bundle_id),
+        "assembly_key": bundle.assembly_key if bundle is not None else None,
+        "purpose": ((job.payload or {}).get("metadata") or {}).get(
+            "validation_purpose"
+        ),
+        "duration_seconds": round((end - job.created_at).total_seconds(), 1),
+    }
+
+
 def finish_validation(job_id: Any) -> str | None:
     """Settle the pairing a terminal validation job checked, then act on the outcome.
 
@@ -410,11 +476,13 @@ def finish_validation(job_id: Any) -> str | None:
         job.save(update_fields=["payload", "updated_at"])
     logger.info(
         "harness_pair_validation_finished",
-        job_id=str(job.id),
-        environment_id=str(job.environment_id),
-        bundle_id=str(job.assembled_bundle_id),
+        **_check_log(job),
         outcome=outcome,
-        code=(job.failure or {}).get("code"),
+        code=(
+            CHECK_TIMED_OUT
+            if job.cancel_reason == CHECK_TIMED_OUT
+            else (job.failure or {}).get("code")
+        ),
     )
     move = metadata.get("validation_move")
     if move:
@@ -434,6 +502,9 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
         return "ready"
     failure = job.failure or {}
     code = failure.get("code") or job.state
+    if job.cancel_reason == CHECK_TIMED_OUT:
+        code = CHECK_TIMED_OUT
+        failure = {"message": _FAILED_REASONS[CHECK_TIMED_OUT]}
     if code in CHECK_FAILURES:
         if bundle.state == HarnessAssembledBundle.State.PENDING:
             bundle.state = HarnessAssembledBundle.State.FAILED
@@ -490,9 +561,10 @@ def _after_move_validated(job: HostedHarnessJob, move: AgentMove, outcome: str) 
         _record_activation(move["agent_version_id"], {str(job.environment_id): result})
     logger.info(
         "harness_pair_validation_move",
-        environment_id=str(job.environment_id),
-        agent_version_id=move["agent_version_id"],
+        **{**_check_log(job), "agent_version_id": move["agent_version_id"]},
+        from_agent_version_id=move["from_agent_version_id"],
         caller=move["caller"],
+        check=outcome,
         outcome=result,
     )
 
@@ -715,15 +787,28 @@ def require_pair_runnable(
     ).first()
     if bundle is None:
         return
-    if live_validation(bundle.id) is not None:
+    live = live_validation(bundle.id)
+    if live is not None:
+        deadline = live.created_at + CHECK_DEADLINE
+        retry_after = max(60, int((deadline - timezone.now()).total_seconds()))
         raise HostedHarnessError(
             "pair_validating",
-            "These versions are being checked together; run them when the check ends",
+            "These versions are being checked together. Run them again when the "
+            f"check ends, at the latest in {-(-retry_after // 60)} minutes.",
             status_code=409,
+            retryable=True,
+            details={
+                "retry_after": retry_after,
+                "check": {"job_id": str(live.id), "deadline_at": deadline.isoformat()},
+            },
         )
     if failed_check(bundle):
+        error = bundle.error or {}
+        reason = failed_reason(error)
         raise HostedHarnessError(
             "pair_failed",
-            "These versions failed their check together; fix them and check again",
+            f"These versions failed their check together: {reason}. Fix them, or check "
+            "again from Ready to run.",
             status_code=409,
+            details={"reason_code": error.get("code"), "reason": reason},
         )

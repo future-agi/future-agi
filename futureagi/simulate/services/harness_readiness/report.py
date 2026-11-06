@@ -183,7 +183,7 @@ def _validation(
         state = "not_run"
     shown: dict[str, Any] | None = None
     if state == "failed":
-        shown = {"code": error.get("code")}
+        shown = {"code": error.get("code"), "reason": validation.failed_reason(error)}
         if "failed_actions" in error:
             shown["failed_actions"] = error["failed_actions"]
     elif state == "retry":

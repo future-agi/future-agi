@@ -4416,7 +4416,11 @@ class HostedHarnessGateway:
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
 
-        from simulate.services.harness_versioning.validation import certify_only
+        from simulate.services.harness_versioning.validation import (
+            CHECK_TIMED_OUT,
+            certify_only,
+            overdue,
+        )
 
         # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
@@ -4424,6 +4428,16 @@ class HostedHarnessGateway:
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
+        if overdue(job):
+            # A check past its deadline is stopped; ending it fails the pairing.
+            logger.warning("hosted pair validation past its deadline job=%s", job.id)
+            job = self.cancel(job, reason=CHECK_TIMED_OUT)
+            ended = job.state in {
+                HostedHarnessJob.State.COMPLETED,
+                HostedHarnessJob.State.FAILED,
+                HostedHarnessJob.State.CANCELED,
+            }
+            return job if ended else None
         # An attempt that completed without a sandbox settled its job the same way.
         if not attempt.provider_ref and (
             job.state

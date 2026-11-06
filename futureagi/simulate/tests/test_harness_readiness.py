@@ -457,6 +457,8 @@ class TestPairs:
         assert report["validation"]["state"] == "failed"
         assert report["validation"]["error"] == {
             "code": "authoring_runtime_validation_failed",
+            "reason": "the agent did not pass this environment's checks"
+            " (failed actions: issue_refund)",
             "failed_actions": [{"action": "issue_refund", "reason": "live"}],
         }
         assert report["answer"] == {
@@ -989,7 +991,10 @@ class TestReviewFollowUps:
         report = _report(environment)
 
         assert report["validation"]["state"] == state
-        assert report["validation"]["error"] == {"code": code}
+        shown = {"code": code}
+        if state == "failed":
+            shown["reason"] = "the agent did not pass this environment's checks"
+        assert report["validation"]["error"] == shown
         assert report["answer"]["kind"] == answer
 
     @pytest.mark.parametrize("source", ["validation", None])
