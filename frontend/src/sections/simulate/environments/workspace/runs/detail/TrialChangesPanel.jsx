@@ -111,6 +111,7 @@ export default function TrialChangesPanel({ trialState }) {
                 names[one.actor] || one.actor,
                 C.plays[one.play] || one.play,
                 timing(one) || one.action || C.nothing,
+                one.play !== "timeout" && C.actionOutcomes[one.outcome],
                 one.why,
               ]
                 .filter(Boolean)

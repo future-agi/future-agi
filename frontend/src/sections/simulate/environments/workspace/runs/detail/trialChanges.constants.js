@@ -42,6 +42,13 @@ export const TRIAL_CHANGES_COPY = {
     unresolved_at_end: "Still waited on when the trial ended",
     answered_by: (who) => `No answer: ${who} answered instead`,
   },
+  // What the world made of an actor's action, so a refused one reads apart from a committed one.
+  actionOutcomes: {
+    committed: "committed",
+    refused: "refused by the world",
+    faulted: "faulted",
+    duplicate: "already done, not repeated",
+  },
   // A problem of the scenario, never the agent's.
   problems: {
     not_activated: "Never came in: its trigger never happened",

@@ -64,6 +64,61 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads an actor's refused action apart from a committed one", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "coworker",
+              name: "Sam Lee",
+              attempted: 1,
+              committed: 0,
+              refused: 1,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+            },
+            {
+              who: "manager",
+              name: "Priya Raman",
+              attempted: 1,
+              committed: 1,
+              refused: 0,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["crm.approve_discount"],
+            },
+          ],
+          decisions: [
+            {
+              actor: "coworker",
+              play: "live",
+              action: "crm.approve_discount",
+              outcome: "refused",
+            },
+            {
+              actor: "manager",
+              play: "mocked",
+              action: "crm.approve_discount",
+              outcome: "committed",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Sam Lee · Decided · crm.approve_discount · refused by the world",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Priya Raman · As scheduled · crm.approve_discount · committed",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("says nothing changed when the trial recorded nothing", () => {
     render(
       <TrialChangesPanel trialState={{ state_changes: [], decisions: [] }} />,
