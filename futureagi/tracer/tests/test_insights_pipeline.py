@@ -28,7 +28,9 @@ from ee.agenthub.insights import (  # noqa: E402
 from ee.agenthub.insights.llm import InsightModelError  # noqa: E402
 from ee.agenthub.insights.units import UnitText  # noqa: E402
 from tracer.models.insights import InsightConfig, InsightRun, InsightUnit  # noqa: E402
-from tracer.tests.test_insights_api import insight_enabled as insight_enabled  # noqa: E402
+from tracer.tests.test_insights_api import (
+    insight_enabled as insight_enabled,  # noqa: E402
+)
 
 WINDOW = ["2026-10-01T00:00:00+00:00", "2026-10-08T00:00:00+00:00"]
 
@@ -612,6 +614,88 @@ def start_run(config, user, unit_ids):
     ready = pipeline.prepare(str(run.id))
     pipeline.extract_batch(str(run.id), ready)
     return run
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "summary_outcome", ["failed", "unverified", "empty", "complete"]
+)
+def test_summary_outcome_is_explicit_without_discarding_measured_analysis(
+    report, user, model, loaded, monkeypatch, summary_outcome
+):
+    from copy import deepcopy
+
+    from ee.agenthub.insights import billing
+    from tracer.views.insights import _config_item, _error_code
+
+    run = start_run(report, user, ids(order=6, human=6))
+    pipeline.organise(str(run.id))
+    charged = []
+    writes = []
+    draft = {
+        "title": "Support failures",
+        "findings": [],
+        "verification": {"status": "incomplete", "reason": "claims_unjudged"},
+        "unverified": {"findings": [{"headline": "Draft awaiting verification"}]},
+    }
+
+    def write(*args, **kwargs):
+        writes.append(True)
+        args[4].add(0.025)
+        if summary_outcome == "failed":
+            raise InsightModelError("Provider output was truncated.")
+        if summary_outcome == "unverified":
+            return deepcopy(draft)
+        return {
+            "title": "Support failures",
+            "findings": (
+                []
+                if summary_outcome == "empty"
+                else [{"headline": "Tool contradictions prevent resolution"}]
+            ),
+            "verification": {"status": "verified"},
+        }
+
+    monkeypatch.setattr(pipeline.report, "write", write)
+    monkeypatch.setattr(
+        billing, "charge_run", lambda value: charged.append(value.id) or 0.0
+    )
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+
+    expected = "complete" if summary_outcome == "complete" else "partial"
+    assert (run.status, run.stage) == ("completed", "done")
+    assert run.result["report_status"] == expected
+    expected_summary = "failed" if summary_outcome == "empty" else summary_outcome
+    assert run.result["summary"]["status"] == expected_summary
+    assert run.progress["report_status"] == expected
+    assert run.progress["summary_status"] == expected_summary
+    assert run.result["totals"]["count"] == 12
+    assert run.result["categories"]
+    assert (
+        InsightUnit.objects.filter(run=run, status="done", included=True).count() == 12
+    )
+    assert charged == [run.id]
+    assert run.cost_usd >= 0.025
+    if summary_outcome in {"failed", "empty"}:
+        assert _error_code(run) == "summary_unavailable"
+        if summary_outcome == "empty":
+            assert run.result["summary"]["error"] == "empty"
+    elif summary_outcome == "unverified":
+        assert run.result["summary"]["unverified"] == draft["unverified"]
+        assert _error_code(run) == "summary_unverified"
+    else:
+        assert _error_code(run) == ""
+    assert _config_item(report)["latest_run"]["error_code"] == _error_code(run)
+
+    # Workflow retry settles the same saved analysis; it does not rerun
+    # model work or add writer spend twice, even when the summary failed.
+    cost = run.cost_usd
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+    assert len(writes) == 1
+    assert run.cost_usd == cost
+    assert run.result["report_status"] == expected
 
 
 @pytest.mark.django_db(transaction=True)

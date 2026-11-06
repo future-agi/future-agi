@@ -42,7 +42,7 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
-from simulate.utils.stored_transcript_roles import sub_actor_label
+from simulate.utils.stored_transcript_roles import call_actor_label
 from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
@@ -301,8 +301,8 @@ def _build_transcript_data(call_execution):
                 for transcript in transcripts:
                     if not transcript.content.strip():
                         continue
-                    if transcript.speaker_role == CallTranscript.SpeakerRole.SUB_ACTOR:
-                        speaker = sub_actor_label(transcript.speaker_name)
+                    if transcript.speaker_role == CallTranscript.SpeakerRole.ACTOR:
+                        speaker = call_actor_label(transcript.speaker_name)
                         transcript_text.append(f"{speaker}: {transcript.content}")
                         continue
                     if transcript.speaker_role not in conversational_roles:

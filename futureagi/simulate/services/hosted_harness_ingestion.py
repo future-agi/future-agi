@@ -33,7 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
-from simulate.types import CallSubActors
+from simulate.types import CallCallActors
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -916,10 +916,15 @@ def _apply_receipt_to_call(
         failure = body.get("failure") or {}
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
-            f"({coverage['executed']}/{coverage['expected']} executed). "
+            f"({coverage['executed']}/{coverage['expected']} executed"
             + (
-                "The trial ended with "
-                f"{failure.get('code') or failure.get('message')}."
+                f", {coverage['unmeasured']} not measured"
+                if coverage.get("unmeasured")
+                else ""
+            )
+            + "). "
+            + (
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
                 if failure
                 else "This is a grading failure, not an agent failure."
             )
@@ -1221,7 +1226,7 @@ SUB_GOAL_PASSED = {"pass": True, "fail": False}
 
 
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
-    """pass, fail, not_applicable or inconclusive; a receipt from before verdicts reads from `held`."""
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
     if goal.get("verdict"):
         return str(goal["verdict"])
     if not isinstance(goal.get("held"), bool):
@@ -1262,14 +1267,17 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
         item for item in body.get("evaluations") or [] if isinstance(item, dict)
     ]
     expected = len(sub_goals) + len(evaluations)
-    executed = sum(sub_goal_result(item) is not None for item in sub_goals) + sum(
-        not bool(item.get("grading_error")) for item in evaluations
-    )
+    # An unmeasured sub-goal stays among those requested and is never counted as evaluated, passed or failed.
+    unmeasured = sum(sub_goal_result(item) == "unmeasured" for item in sub_goals)
+    executed = sum(
+        sub_goal_result(item) not in (None, "unmeasured") for item in sub_goals
+    ) + sum(not bool(item.get("grading_error")) for item in evaluations)
     return {
         "expected": expected,
         "executed": executed,
-        "failed": max(0, expected - executed),
-        "complete": executed == expected,
+        "failed": max(0, expected - executed - unmeasured),
+        "unmeasured": unmeasured,
+        "complete": executed + unmeasured == expected,
     }
 
 
@@ -1351,15 +1359,17 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
-# Where a call keeps its world actors' actions, sealed in the transcript beside the sub-actors.
+# Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
+# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
+TRIAL_STATE_KEY = "harness_trial_state"
 
 
-def _sub_actor_record(raw: object) -> CallSubActors | None:
-    """The transcript's sub-actor record, keeping only the entries of its three lists."""
+def _call_actor_record(raw: object) -> CallCallActors | None:
+    """The transcript's actor record, keeping only the entries of its three lists."""
     if not isinstance(raw, dict):
         return None
-    record: CallSubActors = {}
+    record: CallCallActors = {}
     for key in ("resolved", "summary", "events"):
         if isinstance(raw.get(key), list):
             record[key] = [one for one in raw[key] if isinstance(one, dict)]
@@ -1400,13 +1410,13 @@ def _ingest_hosted_transcript(
         messages = payload.get("messages") if isinstance(payload, dict) else []
         # Who else was in the call, who took part and when; a rerun without them clears it.
         if metadata is not None:
-            record = _sub_actor_record(
-                payload.get("sub_actors") if isinstance(payload, dict) else None
+            record = _call_actor_record(
+                payload.get("call_actors") if isinstance(payload, dict) else None
             )
             if record:
-                metadata["harness_sub_actors"] = record
+                metadata["harness_call_actors"] = record
             else:
-                metadata.pop("harness_sub_actors", None)
+                metadata.pop("harness_call_actors", None)
             # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
             world = payload.get("world_actors") if isinstance(payload, dict) else None
             actions = world.get("actions") if isinstance(world, dict) else None
@@ -1415,6 +1425,18 @@ def _ingest_hosted_transcript(
                 metadata[WORLD_ACTIONS_KEY] = actions
             else:
                 metadata.pop(WORLD_ACTIONS_KEY, None)
+            trial = {
+                key: [one for one in world.get(key) or [] if isinstance(one, dict)]
+                for key in ("state_changes", "decisions", "approvals", "usage")
+                if isinstance(world, dict) and isinstance(world.get(key), list)
+            }
+            # The limits the trial ran with, so the record says which applied.
+            if isinstance(world, dict) and isinstance(world.get("limits"), dict):
+                trial["limits"] = world["limits"]
+            if any(trial.values()):
+                metadata[TRIAL_STATE_KEY] = trial
+            else:
+                metadata.pop(TRIAL_STATE_KEY, None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
@@ -1558,8 +1580,13 @@ def _ingest_hosted_transcript(
                         speaker_role=role if role in valid_roles else "unknown",
                         speaker_name=(
                             str(message.get("name") or "")[:255]
-                            if role == CallTranscript.SpeakerRole.SUB_ACTOR
+                            if role == CallTranscript.SpeakerRole.ACTOR
                             else ""
+                        ),
+                        actor_id=(
+                            str(message.get("actor") or "")[:255] or None
+                            if role == CallTranscript.SpeakerRole.ACTOR
+                            else None
                         ),
                         content=str(content),
                         start_time_ms=start_ms,

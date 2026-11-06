@@ -8,123 +8,81 @@
       "tests",
       "setup_code",
       "ready_code",
-      "coverage"
+      "coverage",
+      "faults"
     ],
-    "files": [
-      "sub_goals.json",
-      "certification.json",
-      "runtime-validation.json"
-    ]
+    "files": ["sub_goals.json", "certification.json", "runtime-validation.json"]
   },
   "brief_inputs": [
-    [
-      "actor",
-      "name"
+    ["actor", "name"],
+    ["actor", "role"],
+    ["actor", "persona"],
+    ["actor", "goal"],
+    ["actor", "constraints"],
+    ["actor", "behaviour"],
+    ["actor", "prompt"],
+    ["actor", "surface"],
+    ["actor", "knowledge"],
+    ["scenario", "instruction"],
+    ["scenario", "knowledge"],
+    ["caller", "situation"]
+  ],
+  "private_to_actor": ["goal", "prompt", "instruction", "actions"],
+  "not_knowledge": {
+    "files": [
+      "contract.json",
+      "manifest.json",
+      "actors.json",
+      "actor_rules.json",
+      "credentials.json",
+      "world.py",
+      "world.sqlite",
+      "simulator_prompt.md",
+      "source-data-invariants.json",
+      "scenarios.json"
     ],
-    [
-      "actor",
-      "role"
-    ],
-    [
-      "actor",
-      "persona"
-    ],
-    [
-      "actor",
-      "goal"
-    ],
-    [
-      "actor",
-      "constraints"
-    ],
-    [
-      "actor",
-      "behaviour"
-    ],
-    [
-      "actor",
-      "prompt"
-    ],
-    [
-      "actor",
-      "surface"
-    ],
-    [
-      "actor",
-      "knowledge"
-    ],
-    [
-      "scenario",
-      "instruction"
-    ],
-    [
-      "scenario",
-      "knowledge"
-    ],
-    [
-      "caller",
-      "situation"
+    "prefixes": [
+      "generic-harness/",
+      "handlers/",
+      "seed/",
+      "scenarios/",
+      "checks/",
+      "."
     ]
-  ],
-  "private_to_actor": [
-    "goal",
-    "prompt",
-    "instruction",
-    "actions"
-  ],
+  },
   "situation_before": "Your details:",
-  "reserved_ids": [
-    "agent"
-  ],
+  "reserved_ids": ["agent"],
   "references": {
     "parent": [],
     "on_behalf_of": [],
-    "activation.fallback": [
-      "silent",
-      "decline"
-    ]
+    "activation.fallback": ["silent", "decline"]
   },
-  "acyclic": [
-    "parent"
-  ],
+  "acyclic": ["parent"],
   "world_actions": {
     "from": "tool_entrypoints",
     "route": "endpoint",
     "tool": "tool",
     "separator": ".",
     "method": "method",
-    "methods": [
-      "POST"
-    ],
+    "methods": ["POST"],
     "placeholder": "{"
   },
   "loudness": {
-    "channels": [
-      "audio_mix"
-    ],
-    "automatic": [
-      0.333,
-      0.667
-    ]
+    "channels": ["audio_mix"],
+    "automatic": [0.333, 0.667]
   },
-  "distinct_from_caller": [
-    "name"
-  ],
+  "distinct_from_caller": ["name"],
   "channels": {
     "audio_mix": "a voice near the person that speaks up whenever it has something to say, which the agent may hear",
     "audio_handoff": "someone who takes the phone from the person for a few turns to say something of their own, then hands it back; the person's request stays the person's, so they never carry it on, confirm it or finish it",
-    "ivr": "a phone menu on the person's own line that answers a call the agent places, before the person, and puts the call through to them"
+    "ivr": "a phone menu on the person's own line that answers a call the agent places, before the person, and puts the call through to them",
+    "chat_message": "someone else in the person's conversation with the agent who writes messages of their own, labelled with their name, which the agent reads"
   },
   "channel_modalities": {
-    "audio_mix": [
-      "voice"
-    ],
-    "audio_handoff": [
-      "voice"
-    ],
-    "ivr": [
-      "voice"
-    ]
+    "audio_mix": ["voice"],
+    "audio_handoff": ["voice"],
+    "ivr": ["voice"],
+    "chat_message": ["chat"]
   },
   "equal_when_set": {
     "persona.name": "name"
@@ -213,10 +171,7 @@
           "properties": {
             "kind": {
               "default": "immediate",
-              "enum": [
-                "immediate",
-                "delayed"
-              ],
+              "enum": ["immediate", "delayed"],
               "title": "Kind",
               "type": "string"
             },
@@ -240,7 +195,9 @@
                 "after_seconds",
                 "on_tool",
                 "contacted",
-                "probability"
+                "probability",
+                "mid_journey",
+                "on_keyword"
               ],
               "title": "Kind",
               "type": "string"
@@ -268,6 +225,19 @@
               "minimum": 0,
               "title": "P",
               "type": "number"
+            },
+            "turn": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Turn",
+              "type": "integer"
+            },
+            "words": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Words",
+              "type": "array"
             }
           },
           "title": "Trigger",
@@ -294,12 +264,10 @@
         },
         "side": {
           "default": "world",
-          "enum": [
-            "caller",
-            "world"
-          ],
+          "enum": ["caller", "world"],
           "title": "Side",
-          "type": "string"
+          "type": "string",
+          "description": "Whose side the actor is on, for reading the cast; it changes no rule"
         },
         "role": {
           "default": "",
@@ -318,135 +286,6 @@
           ],
           "default": null,
           "title": "Parent"
-        },
-        "persona": {
-          "additionalProperties": true,
-          "title": "Persona",
-          "type": "object"
-        },
-        "goal": {
-          "default": "",
-          "title": "Goal",
-          "type": "string"
-        },
-        "constraints": {
-          "$ref": "#/$defs/Constraints"
-        },
-        "behaviour": {
-          "$ref": "#/$defs/Behaviour"
-        },
-        "knowledge": {
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "title": "Knowledge",
-          "type": "array"
-        },
-        "prompt": {
-          "default": "",
-          "title": "Prompt",
-          "type": "string"
-        },
-        "surface": {
-          "default": "world.records",
-          "title": "Surface",
-          "type": "string"
-        },
-        "permitted_actions": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Permitted Actions",
-          "type": "array"
-        },
-        "identities": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Identities",
-          "type": "object"
-        },
-        "on_behalf_of": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "On Behalf Of"
-        },
-        "activation": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Activation"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "loudness_ratio": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 1,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Loudness Ratio"
-        },
-        "provenance": {
-          "additionalProperties": true,
-          "title": "Provenance",
-          "type": "object"
-        }
-      },
-      "required": [
-        "id",
-        "name"
-      ],
-      "title": "Actor",
-      "type": "object"
-    },
-    "sub_actors.json": {
-      "description": "One entry of the environment's list.",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "pattern": "^[a-z0-9_]{1,64}$",
-          "minLength": 1
-        },
-        "name": {
-          "maxLength": 80,
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "role": {
-          "default": "",
-          "maxLength": 160,
-          "title": "Role",
-          "type": "string",
-          "minLength": 1
-        },
-        "channel": {
-          "title": "Channel",
-          "type": "string",
-          "enum": [
-            "audio_handoff",
-            "audio_mix",
-            "ivr"
-          ]
         },
         "persona": {
           "description": "The simulated caller, in the same shape used by existing voice scenarios.\n\nA persona controls how the caller pursues a scenario's task. The task itself remains on\n``Scenario.instruction`` so the harness can vary either one without conflating them.",
@@ -528,7 +367,95 @@
             }
           },
           "title": "Persona",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "goal": {
+          "default": "",
+          "title": "Goal",
+          "type": "string"
+        },
+        "constraints": {
+          "$ref": "#/$defs/Constraints"
+        },
+        "behaviour": {
+          "$ref": "#/$defs/Behaviour"
+        },
+        "knowledge": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Knowledge",
+          "type": "array"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "surface": {
+          "default": "world.records",
+          "title": "Surface",
+          "type": "string",
+          "description": "Where the actor acts in the world; never how it speaks (that is `channel`)"
+        },
+        "permitted_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Permitted Actions",
+          "type": "array"
+        },
+        "identities": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Identities",
           "type": "object"
+        },
+        "on_behalf_of": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "On Behalf Of"
+        },
+        "activation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Activation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "play": {
+          "default": "mocked",
+          "enum": ["mocked", "live", "both"],
+          "title": "Play",
+          "type": "string",
+          "description": "mocked: only the actions each scenario gives it; live: decides its own actions from what it sees when reached; both"
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["audio_handoff", "audio_mix", "chat_message", "ivr"]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the actor speaks in the conversation, if it does; empty: it never speaks there"
         },
         "loudness_ratio": {
           "anyOf": [
@@ -543,16 +470,32 @@
           ],
           "default": null,
           "title": "Loudness Ratio"
+        },
+        "provenance": {
+          "additionalProperties": true,
+          "title": "Provenance",
+          "type": "object"
         }
       },
-      "required": [
-        "id",
-        "name",
-        "role",
-        "channel"
-      ],
-      "title": "SubActor",
-      "type": "object"
+      "required": ["id", "name"],
+      "title": "Actor",
+      "type": "object",
+      "if": {
+        "properties": {
+          "channel": {
+            "type": "string"
+          }
+        },
+        "required": ["channel"]
+      },
+      "then": {
+        "properties": {
+          "role": {
+            "minLength": 1
+          }
+        },
+        "required": ["role"]
+      }
     }
   }
 }

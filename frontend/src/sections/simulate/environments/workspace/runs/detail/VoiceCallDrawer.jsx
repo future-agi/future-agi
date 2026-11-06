@@ -18,6 +18,8 @@ import {
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
+import TrialChangesPanel from "./TrialChangesPanel";
+import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -112,8 +114,20 @@ export default function VoiceCallDrawer({
           />
         ),
       },
+      // Only a call whose world had actors or faults records what changed in it.
+      ...(data?.trial_state
+        ? [
+            {
+              label: TRIAL_CHANGES_COPY.tab,
+              value: "world_changes",
+              icon: "solar:global-linear",
+              content: <TrialChangesPanel trialState={data.trial_state} />,
+            },
+          ]
+        : []),
     ],
     [
+      data?.trial_state,
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,

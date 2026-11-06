@@ -695,8 +695,11 @@ def build_call_rows(
                 "name": str(name),
                 "passed": SUB_GOAL_PASSED.get(result),
             }
-            if result in ("not_applicable", "inconclusive"):
+            if result in ("not_applicable", "inconclusive", "unmeasured"):
                 entry.update(result=result, reason=str(item.get("reason") or ""))
+            if isinstance(item, dict) and isinstance(item.get("evidence"), list):
+                # What it was decided from: world_state, tool_calls, transcript, recording.
+                entry["evidence"] = [str(one) for one in item["evidence"]]
             sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")

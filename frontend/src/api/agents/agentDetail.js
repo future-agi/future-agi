@@ -9,9 +9,10 @@ const unwrap = (data) => data?.result ?? data;
 
 export const agentDetailQueryKey = (agentId) => ["agents", "detail", agentId];
 
-export const passRateOf = ({ passed, failed, skipped }) => {
+// Passed over passed plus failed; errored and skipped calls are counted apart.
+export const passRateOf = ({ passed, failed }) => {
   if (passed == null) return null;
-  const measured = passed + (failed ?? 0) + (skipped ?? 0);
+  const measured = passed + (failed ?? 0);
   return measured ? Math.round((passed / measured) * 100) : null;
 };
 
@@ -32,7 +33,6 @@ export const toRun = (raw) => ({
   passRate: passRateOf({
     passed: raw.outcome_passed ?? null,
     failed: raw.outcome_failed,
-    skipped: raw.outcome_skipped,
   }),
   startedAt: raw.started_at ?? null,
   completedAt: raw.completed_at ?? null,

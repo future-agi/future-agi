@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   KEPT_TRIGGER,
+  capProblem,
   hasEdits,
   hidden,
   idFrom,
@@ -8,6 +9,7 @@ import {
   readable,
   seenValue,
   toRecord,
+  triggerProblem,
 } from "../actorUtils";
 
 const CONTEXT = { others: [], loudness: { channels: ["audio_mix"] } };
@@ -69,13 +71,72 @@ describe("toRecord", () => {
   it("keeps a trigger of any kind until Comes in really changes", () => {
     const trigger = { kind: "after_seconds", seconds: 30 };
     const actor = { id: "a", name: "A", activation: { trigger } };
-    expect(toRecord(actor, { tool: KEPT_TRIGGER }, CONTEXT)).toEqual(actor);
+    expect(toRecord(actor, { mode: "after_seconds" }, CONTEXT)).toEqual(actor);
     expect(
-      toRecord(actor, { tool: "crm.note" }, CONTEXT).activation.trigger,
+      toRecord(actor, { mode: "on_tool", triggerTool: "crm.note" }, CONTEXT)
+        .activation.trigger,
     ).toEqual({ kind: "on_tool", tool: "crm.note" });
-    expect(toRecord(actor, { tool: "" }, CONTEXT).activation.trigger).toEqual({
+    expect(
+      toRecord(actor, { mode: "always" }, CONTEXT).activation.trigger,
+    ).toEqual({
       kind: "always",
     });
+    // A trigger the form cannot make itself (a later call of a tool) is kept as it is.
+    const later = {
+      id: "a",
+      name: "A",
+      activation: { trigger: { kind: "on_tool", tool: "x", on_call: 2 } },
+    };
+    expect(
+      toRecord(later, { mode: KEPT_TRIGGER, name: "B" }, CONTEXT).activation,
+    ).toEqual(later.activation);
+  });
+
+  it("writes each of the five ways an actor comes in, with its own fields", () => {
+    const actor = { id: "a", name: "A" };
+    const trigger = (fields) =>
+      toRecord(actor, fields, CONTEXT).activation.trigger;
+    expect(trigger({ mode: "contacted" })).toEqual({ kind: "contacted" });
+    expect(trigger({ mode: "after_seconds", triggerSeconds: "45" })).toEqual({
+      kind: "after_seconds",
+      seconds: 45,
+    });
+    expect(
+      trigger({ mode: "on_keyword", triggerWords: "refund, manager" }),
+    ).toEqual({
+      kind: "on_keyword",
+      words: ["refund", "manager"],
+    });
+    expect(trigger({ mode: "mid_journey", triggerTurn: "3" })).toEqual({
+      kind: "mid_journey",
+      turn: 3,
+    });
+    expect(
+      trigger({
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: '{"status": "pending"}',
+      }),
+    ).toEqual({
+      kind: "conditional",
+      collection: "approvals",
+      where: { status: "pending" },
+    });
+  });
+
+  it("writes an actor's own model and caps, and empty takes them away", () => {
+    const actor = {
+      id: "a",
+      name: "A",
+      model: "gemini-3.7-flash",
+      max_turns: 4,
+    };
+    const record = toRecord(actor, { model: "", max_turns: "" }, CONTEXT);
+    expect(record.model).toBeUndefined();
+    expect(record.max_turns).toBeUndefined();
+    expect(
+      toRecord({ id: "b", name: "B" }, { max_lines: "3" }, CONTEXT).max_lines,
+    ).toBe(3);
   });
 
   it("rewrites only the facts: other knowledge keeps its place, an unchanged fact keeps its keys", () => {
@@ -133,7 +194,7 @@ describe("toRecord", () => {
     ).toEqual({ name: "", gender: "male" });
   });
 
-  it("changes a sub-actor's voice and loudness only when they are edited", () => {
+  it("changes an actor's voice and loudness only when they are edited", () => {
     const actor = {
       id: "colleague",
       name: "Jordan",
@@ -178,17 +239,22 @@ describe("toRecord", () => {
         fallback: "silent",
       },
     });
-    expect(
-      toRecord({ channel: "audio_mix" }, { name: "Sam", id: "x" }, CONTEXT),
-    ).toEqual({
+    // An actor who speaks gets every field too, with how it joins; no side, since there is no split.
+    const speaking = toRecord(
+      { channel: "audio_mix" },
+      { name: "Sam", id: "x", gender: "female" },
+      CONTEXT,
+    );
+    expect(speaking).toMatchObject({
       id: "x",
       name: "Sam",
-      role: "",
-      side: "caller",
       channel: "audio_mix",
-      persona: {},
+      persona: { gender: "female" },
       loudness_ratio: null,
+      permitted_actions: [],
+      goal: "",
     });
+    expect(speaking).not.toHaveProperty("side");
   });
 });
 
@@ -245,19 +311,135 @@ describe("actorUtils", () => {
 
   it("groups what an actor never sees into grader material and other actors' fields", () => {
     expect(
-      hidden([
-        "scenario.sub_goals",
-        "file.sub_goals.json",
-        "file.runtime-validation.json",
-        "colleague.goal",
-        "colleague.prompt",
-        "boss.goal",
-        "boss.prompt",
-      ]),
+      hidden({
+        scenario_fields: ["sub_goals"],
+        files: ["sub_goals.json", "runtime-validation.json"],
+        // Named by name, and a name may hold a dot or the word file.
+        other_actors: [
+          "Dr. File.goal",
+          "Dr. File.prompt",
+          "boss.goal",
+          "boss.prompt",
+        ],
+      }),
     ).toEqual({
       grader: ["sub goals", "runtime validation"],
       others: [["goal, prompt", 2]],
     });
     expect(hidden(undefined)).toEqual({ grader: [], others: [] });
+  });
+});
+
+describe("toRecord play", () => {
+  it("sends how an actor acts in the world only when it is changed", () => {
+    const actor = { id: "m", name: "Mia", permitted_actions: [] };
+    expect(toRecord(actor, { play: "live" }, {})).toMatchObject({
+      play: "live",
+    });
+    expect(toRecord(actor, { play: "mocked" }, {})).not.toHaveProperty("play");
+  });
+});
+
+describe("toRecord knowledge picks", () => {
+  const sources = {
+    files: ["docs/policy.md", "docs/faq.md"],
+    records: [{ store: "crm", collection: "deals" }],
+  };
+  it("puts the picked files and records in place of the earlier ones and keeps facts and a record's where", () => {
+    const actor = {
+      id: "m",
+      name: "Mia",
+      knowledge: [
+        { kind: "facts", text: "Limit is 15%" },
+        { kind: "files", paths: ["docs/faq.md"] },
+        {
+          kind: "records",
+          store: "crm",
+          collection: "deals",
+          where: { owner: "mia" },
+        },
+      ],
+    };
+    const record = toRecord(
+      actor,
+      { files: ["docs/policy.md"], recordsRead: ["crm.deals"] },
+      { knowledgeSources: sources },
+    );
+    expect(record.knowledge).toEqual([
+      { kind: "facts", text: "Limit is 15%" },
+      { kind: "files", paths: ["docs/policy.md"] },
+      {
+        kind: "records",
+        store: "crm",
+        collection: "deals",
+        where: { owner: "mia" },
+      },
+    ]);
+  });
+
+  it("leaves the knowledge as it was when nothing is picked anew", () => {
+    const knowledge = [{ kind: "files", paths: ["docs/faq.md"] }];
+    const record = toRecord(
+      { id: "m", name: "Mia", knowledge },
+      { files: ["docs/faq.md"] },
+      { knowledgeSources: sources },
+    );
+    expect(record.knowledge).toBe(knowledge);
+  });
+});
+
+describe("capProblem", () => {
+  it.each([
+    ["", null],
+    ["  ", null],
+    ["3", null],
+    ["2.7", "A whole number above 0, or empty for no limit"],
+    ["0", "A whole number above 0, or empty for no limit"],
+    ["-1", "A whole number above 0, or empty for no limit"],
+    ["e", "A whole number above 0, or empty for no limit"],
+  ])("a typed cap of %j: %s", (typed, expected) => {
+    expect(capProblem(typed)).toBe(expected);
+  });
+});
+
+describe("triggerProblem", () => {
+  const reader = (fields) => (name) => fields[name] ?? "";
+  it.each([
+    [
+      { mode: "on_tool" },
+      { triggerTool: "Pick the action that brings them in" },
+    ],
+    [{ mode: "on_tool", triggerTool: "crm.update" }, {}],
+    [
+      { mode: "on_keyword", triggerWords: " , " },
+      { triggerWords: "Type at least one word" },
+    ],
+    [{ mode: "on_keyword", triggerWords: "refund" }, {}],
+    [
+      { mode: "conditional" },
+      { triggerCollection: "Pick the records that bring them in" },
+    ],
+    [
+      {
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: "{status: pending}",
+      },
+      {
+        triggerWhere:
+          'an object of field values, such as {"status": "pending"}',
+      },
+    ],
+    [
+      {
+        mode: "conditional",
+        triggerCollection: "approvals",
+        triggerWhere: '{"status": "pending"}',
+      },
+      {},
+    ],
+    [{ mode: "always" }, {}],
+  ])("says what %o still needs", (fields, expected) => {
+    expect(triggerProblem(reader(fields))).toEqual(expected);
   });
 });

@@ -316,6 +316,48 @@ describe("TraceTable — sub-goal verdicts", () => {
       }
     }
   });
+
+  it("says a check whose evidence never arrived is not measured, and what each check was decided from", () => {
+    render(
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                status: "failed",
+                subGoalResults: [
+                  {
+                    name: "Refund row",
+                    passed: false,
+                    evidence: ["world_state", "tool_calls"],
+                  },
+                  {
+                    name: "Polite",
+                    passed: null,
+                    result: "unmeasured",
+                    evidence: ["transcript"],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const details = within(activeRow())
+      .getAllByText("Scenario a1")[0]
+      .closest("td");
+    expect(within(details).getByText("Not measured")).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the world, the agent's calls"),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the transcript"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("TraceTable — column group band", () => {
@@ -844,14 +886,14 @@ describe("TraceTable skipped scenarios", () => {
             ...row("off"),
             status: "error",
             durationMs: null,
-            outcomeReason: "sub-actors are switched off",
+            outcomeReason: "actors are switched off",
             subGoalResults: [{ name: "noticed", passed: null }],
           },
         ],
         columns: new Set(["callDetails"]),
       }),
     );
-    expect(screen.getByText("sub-actors are switched off")).toBeInTheDocument();
+    expect(screen.getByText("actors are switched off")).toBeInTheDocument();
     expect(screen.getByText("noticed")).toBeInTheDocument();
   });
 });
@@ -887,8 +929,7 @@ describe("TraceTable calls with no pass or fail", () => {
           {
             ...row("in"),
             status: "unmeasured",
-            outcomeReason:
-              "The deciding moment cannot be heard.",
+            outcomeReason: "The deciding moment cannot be heard.",
             subGoalResults: [{ name: "booked", passed: true }],
           },
         ],
@@ -897,9 +938,7 @@ describe("TraceTable calls with no pass or fail", () => {
     );
     expect(screen.getByText("Inconclusive")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "The deciding moment cannot be heard.",
-      ),
+      screen.getByText("The deciding moment cannot be heard."),
     ).toBeInTheDocument();
   });
 

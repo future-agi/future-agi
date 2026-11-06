@@ -1845,6 +1845,7 @@ class TestRunTestExecutionsView:
         receipt("kept-passed", "passed", deleted=False, through_execution=True)
         receipt("kept-failed", "failed", deleted=False, through_execution=False)
         receipt("kept-skipped", "skipped", deleted=False, through_execution=True)
+        receipt("kept-errored", "errored", deleted=False, through_execution=True)
         receipt("gone-passed", "passed", deleted=True, through_execution=True)
         receipt("gone-errored", "errored", deleted=True, through_execution=False)
         receipt("gone-skipped", "skipped", deleted=True, through_execution=True)
@@ -1867,10 +1868,11 @@ class TestRunTestExecutionsView:
             for item in response.json()["results"]
             if item["id"] == str(test_execution.id)
         )
-        assert row["calls"] == 4
-        assert row["total_calls"] == 4
+        assert row["calls"] == 5
+        assert row["total_calls"] == 5
         assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 1
+        assert row["outcome_errored"] == 1
         assert row["outcome_skipped"] == 1
         assert row["outcome_no_score"] == 1
 

@@ -108,7 +108,7 @@ GroupSkeleton.propTypes = {
 };
 
 /** The tab while its cast loads: the words are known, so only the rows are placeholders. */
-export default function ActorsSkeleton({ callerSide = false, locked = false }) {
+export default function ActorsSkeleton({ locked = false }) {
   return (
     <Box aria-busy="true" sx={{ p: 2 }}>
       <Box role="status" sx={VISUALLY_HIDDEN}>
@@ -119,21 +119,11 @@ export default function ActorsSkeleton({ callerSide = false, locked = false }) {
       >
         {C.intro}
       </Typography>
-      {callerSide && (
-        <GroupSkeleton
-          title={C.callerSide}
-          about={C.callerSideAbout}
-          locked={locked}
-          addWidth={210}
-        >
-          <RowSkeleton locked={locked} />
-        </GroupSkeleton>
-      )}
       <GroupSkeleton
-        title={C.worldSide}
-        about={C.worldSideAbout}
+        title={C.title}
+        about={C.everyoneAbout}
         locked={locked}
-        addWidth={174}
+        addWidth={140}
       >
         <RowSkeleton locked={locked} />
         <RowSkeleton locked={locked} />
@@ -143,6 +133,5 @@ export default function ActorsSkeleton({ callerSide = false, locked = false }) {
 }
 
 ActorsSkeleton.propTypes = {
-  callerSide: PropTypes.bool,
   locked: PropTypes.bool,
 };

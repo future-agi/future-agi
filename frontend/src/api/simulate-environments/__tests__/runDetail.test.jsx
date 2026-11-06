@@ -154,7 +154,7 @@ describe("buildRunStats", () => {
       failed: 1,
       measured: 3,
       unmeasured: 3,
-      passRate: 33,
+      passRate: 67,
     });
   });
 
@@ -1582,7 +1582,9 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },
@@ -1658,31 +1660,31 @@ describe("useCallTraces", () => {
   });
 });
 
-describe("sub-actor turns in a call", () => {
+describe("actor turns in a call", () => {
   it("names who spoke on a voice turn", () => {
     const voice = mapCallDetail({
       id: "v",
       transcript: [
-        { speaker_role: "sub_actor", speaker_name: "Rowan", content: "Two" },
+        { speaker_role: "actor", speaker_name: "Rowan", content: "Two" },
         { speaker_role: "user", content: "One" },
       ],
     });
     expect(voice.turns.map((t) => [t.role, t.speakerName])).toEqual([
-      ["sub_actor", "Rowan"],
+      ["actor", "Rowan"],
       ["customer", ""],
     ]);
   });
 
-  it("gives each sub-actor's turn their role and how they were heard, and an older call neither", () => {
+  it("gives each actor's turn their role and how they were heard, and an older call neither", () => {
     const transcript = [
-      { speaker_role: "sub_actor", speaker_name: "Rowan", content: "Two" },
-      { speaker_role: "sub_actor", speaker_name: "Sam", content: "Me too" },
+      { speaker_role: "actor", speaker_name: "Rowan", content: "Two" },
+      { speaker_role: "actor", speaker_name: "Sam", content: "Me too" },
       { speaker_role: "user", content: "One" },
     ];
     const voice = mapCallDetail({
       id: "v",
       transcript,
-      sub_actors: [
+      call_actors: [
         { id: "friend", name: "Rowan", role: "roommate", channel: "audio_mix" },
         { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
       ],
@@ -1700,5 +1702,35 @@ describe("sub-actor turns in a call", () => {
       ["", ""],
       ["", ""],
     ]);
+  });
+
+  it("joins each actor's turn by their id, so two with the same name keep their own role", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "actor",
+          actor_id: "uncle",
+          speaker_name: "Sam",
+          content: "a",
+        },
+        {
+          speaker_role: "actor",
+          actor_id: "kid",
+          speaker_name: "Sam",
+          content: "b",
+        },
+      ],
+      call_actors: [
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+        { id: "uncle", name: "Sam", role: "uncle", channel: "audio_mix" },
+      ],
+    });
+    expect(voice.turns.map((t) => [t.actorId, t.actorRole, t.channel])).toEqual(
+      [
+        ["uncle", "uncle", "audio_mix"],
+        ["kid", "son", "audio_handoff"],
+      ],
+    );
   });
 });

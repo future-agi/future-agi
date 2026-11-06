@@ -71,7 +71,7 @@ from simulate.selectors.runs import user_executions
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import (
-    NO_SUB_ACTOR,
+    NO_CALL_ACTOR,
     SIMULATED_USER_ONLY,
 )
 from simulate.services.run_reliability_v3 import build_reliability
@@ -102,6 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
+from simulate.types import CallActorDelivery, CallActorFacetValue, CallActorTookPart
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -306,9 +307,7 @@ def _member_sub_goals() -> Subquery:
             Value([], output_field=JSONField()),
             output_field=JSONField(),
         )
-    )[
-        :1
-    ]
+    )[:1]
     return Subquery(member, output_field=JSONField())
 
 
@@ -1019,30 +1018,41 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
-def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
-    """Calls where a sub-actor (or this one) entered: at least one of its lines reached the agent."""
-    who = " && @.sub_actor == $who" if sub_actor else ""
-    path = Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})")
+def call_actor_delivery(took_part: CallActorTookPart) -> CallActorDelivery:
+    """How far an actor got in one call; a summary from before `drawn` counts as drawn."""
+    if (took_part.get("delivered") or 0) > 0:
+        return "delivered"
+    if took_part.get("triggered"):
+        return "dropped"
+    if took_part.get("drawn") is False:
+        return "not_drawn"
+    return "not_triggered"
+
+
+def _call_actor_planned(call_actor: str | None = None) -> Q:
+    """Calls an actor (or this one) was planned for, whether or not any of its lines reached the agent."""
+    who = " && @.actor == $who" if call_actor else ""
+    path = Value(f"$.harness_call_actors.summary[*] ? (!(@.drawn == false){who})")
     return Q(
         Func(
             F("call_metadata"),
             Func(path, template="%(expressions)s::jsonpath", output_field=TextField()),
             # The id travels as a jsonpath variable, never as path text.
-            Value({"who": sub_actor}, output_field=JSONField()),
+            Value({"who": call_actor}, output_field=JSONField()),
             function="jsonb_path_exists",
             output_field=BooleanField(),
         )
     )
 
 
-def _sub_actor_q(values: list[str]) -> Q:
-    """Calls each sub-actor entered; ``none`` is a call no sub-actor entered."""
+def _call_actor_q(values: list[str]) -> Q:
+    """Calls each actor was planned for; ``none`` is a call no actor was planned for."""
     query = Q(pk__in=[])
     for value in values:
-        if value == NO_SUB_ACTOR:
-            query |= Q(call_metadata__isnull=True) | ~_sub_actor_spoke()
+        if value == NO_CALL_ACTOR:
+            query |= Q(call_metadata__isnull=True) | ~_call_actor_planned()
         else:
-            query |= _sub_actor_spoke(value)
+            query |= _call_actor_planned(value)
     return query
 
 
@@ -1091,14 +1101,14 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             )
         )
 
-    if values := filters.get("sub_actor"):
-        queryset = queryset.filter(_sub_actor_q(values))
-    if values := filters.get("sub_actor_not"):
-        # NOT EXISTS, so a call with no sub-actor record still counts as "not".
+    if values := filters.get("actor"):
+        queryset = queryset.filter(_call_actor_q(values))
+    if values := filters.get("actor_not"):
+        # NOT EXISTS, so a call with no actor record still counts as "not".
         queryset = queryset.filter(
             ~Exists(
                 CallExecution._base_manager.filter(
-                    _sub_actor_q(values), pk=OuterRef("pk")
+                    _call_actor_q(values), pk=OuterRef("pk")
                 )
             )
         )
@@ -1257,33 +1267,42 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
-def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
-    """Calls per sub-actor that entered them, by name; none when no run call had one."""
+def _call_actor_facet(calls: QuerySet) -> list[CallActorFacetValue]:
+    """Calls per actor planned for them, by name and by how far it got; none when no run call had one."""
     counts: Counter = Counter()
-    names = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
+    deliveries: defaultdict[str, Counter] = defaultdict(Counter)
+    names = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
     summaries = (
         calls.order_by()
-        .values_list("call_metadata__harness_sub_actors__summary", flat=True)
+        .values_list("call_metadata__harness_call_actors__summary", flat=True)
         .iterator(chunk_size=2000)
     )
     for summary in summaries:
-        entered = [
+        planned = [
             one
             for one in (summary if isinstance(summary, list) else [])
             if isinstance(one, dict)
-            and (one.get("delivered") or 0) > 0
-            and one.get("sub_actor")
+            and one.get("actor")
+            and call_actor_delivery(one) != "not_drawn"
         ]
-        for one in entered:
-            key = str(one["sub_actor"])
+        for one in planned:
+            key = str(one["actor"])
             counts[key] += 1
+            deliveries[key][call_actor_delivery(one)] += 1
             names.setdefault(key, str(one.get("name") or key))
-        if not entered:
-            counts[NO_SUB_ACTOR] += 1
-    if set(counts) <= {NO_SUB_ACTOR}:
+        if not planned:
+            counts[NO_CALL_ACTOR] += 1
+    if set(counts) <= {NO_CALL_ACTOR}:
         return []
     return [
-        {"value": value, "count": count, "label": names[value]}
+        {
+            "value": value,
+            "count": count,
+            "label": names[value],
+            "delivered": deliveries[value]["delivered"],
+            "dropped": deliveries[value]["dropped"],
+            "not_triggered": deliveries[value]["not_triggered"],
+        }
         for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
 
@@ -1298,7 +1317,7 @@ def run_call_facets(
         return cached
     facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
     facets["sub_goal"] = _sub_goal_facet(calls())
-    facets["sub_actor"] = _sub_actor_facet(calls())
+    facets["actor"] = _call_actor_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets

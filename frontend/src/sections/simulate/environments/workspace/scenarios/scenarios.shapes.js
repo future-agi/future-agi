@@ -36,7 +36,7 @@ export const SCENARIO_SHAPE = PropTypes.shape({
   critical: PropTypes.bool,
   persona: PERSONA_SHAPE,
   subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE),
-  subActors: PropTypes.arrayOf(
+  callActors: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string,
       instruction: PropTypes.string,

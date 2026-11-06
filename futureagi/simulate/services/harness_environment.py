@@ -40,10 +40,10 @@ from simulate.models import (
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.services.harness_scenarios import (
-    sub_actor_choice_labels,
-    sub_actor_entries,
+    call_actor_choice_labels,
+    call_actor_entries,
 )
-from simulate.types import ContractSubActor
+from simulate.types import ContractCallActor
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -217,10 +217,12 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_passed": (
                 outcomes.get("passed", 0) if outcomes is not None else None
             ),
+            # A pass rate is passed over passed plus failed; every other outcome is its own count.
             "outcome_failed": (
-                outcomes.get("failed", 0) + outcomes.get("errored", 0)
-                if outcomes is not None
-                else None
+                outcomes.get("failed", 0) if outcomes is not None else None
+            ),
+            "outcome_errored": (
+                outcomes.get("errored", 0) if outcomes is not None else None
             ),
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
@@ -658,7 +660,7 @@ def _scenarios(
                     for name in doc.get("sub_goals") or []
                     if isinstance(name, str)
                 ],
-                "sub_actors": sub_actor_entries(doc.get("sub_actors")) or [],
+                "actors": call_actor_entries(doc.get("actors")) or [],
                 "persona": _persona_of(cells),
                 "situation": cells.get("situation") or None,
                 "outcome": cells.get("outcome") or None,
@@ -827,8 +829,8 @@ def _contract_section(
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
-    section["sub_actors"] = _sub_actor_list(
-        _stage_output(job, "sub_actors"), scenario_docs
+    section["call_actors"] = _call_actor_list(
+        _stage_output(job, "call_actors"), scenario_docs
     )
     section["end_conditions"] = _end_conditions(job, contract, scenario_docs)
     section["provenance"] = _provenance(job, environment)
@@ -860,19 +862,19 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
     return goals
 
 
-def sub_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
-    """How the scenario filter names each of the environment's sub-actors."""
-    return sub_actor_choice_labels(_stage_output(job, "sub_actors"))
+def call_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
+    """How the scenario filter names each of the environment's actors."""
+    return call_actor_choice_labels(_stage_output(job, "call_actors"))
 
 
-def _sub_actor_list(listing: object, scenario_docs: object) -> list[ContractSubActor]:
-    """The environment's sub-actors, each with how many scenarios include it."""
+def _call_actor_list(listing: object, scenario_docs: object) -> list[ContractCallActor]:
+    """The environment's actors, each with how many scenarios include it."""
     included: dict[str, int] = {}
     for doc in scenario_docs if isinstance(scenario_docs, list) else []:
-        for one in doc.get("sub_actors") or [] if isinstance(doc, dict) else []:
+        for one in doc.get("actors") or [] if isinstance(doc, dict) else []:
             if isinstance(one, dict) and one.get("id"):
                 included[str(one["id"])] = included.get(str(one["id"]), 0) + 1
-    entries = listing.get("sub_actors") if isinstance(listing, dict) else None
+    entries = listing.get("call_actors") if isinstance(listing, dict) else None
     return [
         {**entry, "scenarios_count": included.get(str(entry["id"]), 0)}
         for entry in entries or []

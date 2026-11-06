@@ -1285,7 +1285,7 @@ class TestRunResultsV3Views:
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
 
-    def test_a_scenario_skipped_with_sub_actors_switched_off_keeps_dev_s_outcome_and_shows_why(
+    def test_a_scenario_skipped_with_call_actors_switched_off_keeps_dev_s_outcome_and_shows_why(
         self, auth_client, test_execution, analytics_call_executions
     ):
         call = analytics_call_executions[0]
@@ -1295,7 +1295,7 @@ class TestRunResultsV3Views:
             "hosted_harness_receipt": {
                 "status": "skipped",
                 "sub_goals": [],
-                "reason": "sub-actors are switched off",
+                "reason": "actors are switched off",
             },
         }
         call.eval_outputs = {}
@@ -1311,7 +1311,7 @@ class TestRunResultsV3Views:
         )
         assert (row["outcome"], row["outcome_reason"]) == (
             "error",
-            "sub-actors are switched off",
+            "actors are switched off",
         )
         body = analytics.json()
         assert "skipped" not in body["summary"]["outcomes"]

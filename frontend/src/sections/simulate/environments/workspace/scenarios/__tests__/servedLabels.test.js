@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { withServedLabels } from "../scenarioEditor.constants";
 
 describe("withServedLabels", () => {
-  it("names sub-actor choices from the field's own labels, not the level labels", () => {
-    const [subActors, attack] = withServedLabels(
+  it("names actor choices from the field's own labels, not the level labels", () => {
+    const [callActors, attack] = withServedLabels(
       [
         {
-          value: "sub_actors",
+          value: "actors",
           choices: ["friend", "none"],
           choice_labels: { friend: "Rowan", none: "Simulated user only" },
         },
@@ -14,7 +14,7 @@ describe("withServedLabels", () => {
       ],
       { none: "None" },
     );
-    expect(subActors.choiceLabels).toEqual({
+    expect(callActors.choiceLabels).toEqual({
       friend: "Rowan",
       none: "Simulated user only",
     });
@@ -22,16 +22,16 @@ describe("withServedLabels", () => {
     expect(attack.choiceLabels).toEqual({ none: "None" });
   });
 
-  it("says how many scenarios include each sub-actor choice", () => {
-    const [subActors] = withServedLabels([
+  it("says how many scenarios include each actor choice", () => {
+    const [callActors] = withServedLabels([
       {
-        value: "sub_actors",
+        value: "actors",
         choices: ["none", "friend"],
         choice_labels: { friend: "Rowan", none: "Simulated user only" },
         counts: { none: 6, friend: 2 },
       },
     ]);
-    expect(subActors.choiceLabels).toEqual({
+    expect(callActors.choiceLabels).toEqual({
       friend: "Rowan (2)",
       none: "Simulated user only (6)",
     });

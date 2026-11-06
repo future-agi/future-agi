@@ -34,6 +34,14 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useEditActor(...args)
         : { mutate, reset: resetEdit, ...editState },
+    useSetActorLimits: (...args) =>
+      realHooks
+        ? real.useSetActorLimits(...args)
+        : { mutate: vi.fn(), reset: vi.fn() },
+    useUploadEnvironmentFile: (...args) =>
+      realHooks
+        ? real.useUploadEnvironmentFile(...args)
+        : { mutateAsync: vi.fn(), reset: vi.fn() },
     useActorView: () =>
       viewState ?? {
         data: {
@@ -57,17 +65,18 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
               value: { response_timing: { kind: "delayed", seconds: 5 } },
             },
           ],
-          never_sees: [
-            "scenario.solution",
-            "scenario.sub_goals",
-            "file.sub_goals.json",
-            "colleague.goal",
-            "colleague.prompt",
-            "colleague_2.goal",
-            "colleague_2.prompt",
-            "colleague_3.goal",
-            "colleague_3.prompt",
-          ],
+          never_sees: {
+            scenario_fields: ["solution", "sub_goals"],
+            files: ["sub_goals.json"],
+            other_actors: [
+              "Jordan.goal",
+              "Jordan.prompt",
+              "Sam.goal",
+              "Sam.prompt",
+              "Ravi.goal",
+              "Ravi.prompt",
+            ],
+          },
         },
       },
   };
@@ -194,6 +203,58 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     });
   });
 
+  it("saves on top of a document uploaded from the open form, in one request at the upload's revision", async () => {
+    const uploaded = cast([MANAGER], {
+      revision: 4,
+      knowledge_sources: { files: ["knowledge/policy.md"], records: [] },
+    });
+    axios.get.mockResolvedValue({
+      data: cast([MANAGER], { knowledge_sources: { files: [], records: [] } }),
+    });
+    axios.post.mockReset();
+    axios.post.mockResolvedValueOnce({ data: uploaded });
+    await openEdit();
+    const picker = document.querySelector('input[type="file"]');
+    fireEvent.change(picker, {
+      target: {
+        files: [new File(["# Policy"], "policy.md", { type: "text/markdown" })],
+      },
+    });
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    // Sent at the revision the form opened at.
+    expect(axios.post.mock.calls[0][1].get("expected_revision")).toBe("3");
+    await screen.findByText("knowledge/policy.md");
+    axios.put.mockResolvedValueOnce({ data: uploaded });
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    await waitFor(() => expect(screen.queryByText("Save to draft")).toBeNull());
+    expect(axios.put).toHaveBeenCalledTimes(1);
+    expect(body(0).expected_revision).toBe(4);
+    expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+  });
+
+  it.each([
+    [
+      {
+        error: "upload_invalid",
+        message: "notes.pdf: the format is one of .md, .txt, .json, .csv",
+        statusCode: 400,
+      },
+      "notes.pdf: the format is one of .md, .txt, .json, .csv",
+    ],
+    [{ message: "Network Error" }, "The document could not be uploaded"],
+  ])(
+    "says why an upload was refused in the platform's words, never a transport message",
+    async (failure, shown) => {
+      axios.post.mockReset();
+      axios.post.mockRejectedValueOnce(failure);
+      await openEdit();
+      fireEvent.change(document.querySelector('input[type="file"]'), {
+        target: { files: [new File(["x"], "notes.pdf")] },
+      });
+      expect(await screen.findByText(shown)).toBeInTheDocument();
+    },
+  );
+
   it("says so and won't save when the actor was removed elsewhere", async () => {
     await openEdit();
     axios.put.mockRejectedValueOnce(DRAFT_CHANGED);
@@ -223,13 +284,13 @@ describe("WorldActorsPanel", () => {
   it("shows a skeleton of the groups while loading, with no count and nothing to add yet", () => {
     actorsData = undefined;
     actorsState = { isLoading: true, isError: false };
-    render(<WorldActorsPanel envId="env-1" callerSide />);
+    render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading the actors…");
     expect(screen.queryByRole("progressbar")).toBeNull();
-    expect(screen.getByText("On the caller's side")).toBeInTheDocument();
-    expect(screen.getByText("In the world")).toBeInTheDocument();
-    expect(screen.queryByText("Add someone in the world")).toBeNull();
-    expect(screen.queryByText("Add someone on the caller's side")).toBeNull();
+    // One list for every actor: no caller-side or world group.
+    expect(screen.getByText("Actors")).toBeInTheDocument();
+    expect(screen.queryByText("On the caller's side")).toBeNull();
+    expect(screen.queryByText("Add an actor")).toBeNull();
   });
 
   it("says the actors could not be loaded, offers a retry and nothing to add", () => {
@@ -239,14 +300,14 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Couldn't load the actors")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalled();
-    expect(screen.queryByText("Add someone in the world")).toBeNull();
+    expect(screen.queryByText("Add an actor")).toBeNull();
   });
 
   it("keeps a cast already read when a refresh fails", () => {
     actorsState = { isLoading: false, isError: true };
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByText("In the world (1)")).toBeInTheDocument();
-    expect(screen.getByText("Add someone in the world")).toBeInTheDocument();
+    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
+    expect(screen.getByText("Add an actor")).toBeInTheDocument();
   });
 
   it("checks a typed id against the id rule the cast is sent with", () => {
@@ -256,7 +317,7 @@ describe("WorldActorsPanel", () => {
       },
     });
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: "Sam" },
     });
@@ -276,17 +337,42 @@ describe("WorldActorsPanel", () => {
 
   it("lists the cast with what each may do, when they come in, and says the changes are unsaved", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByText("In the world (1)")).toBeInTheDocument();
+    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText(/Priya Raman/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        "May do: crm.approve_discount · Comes in: From the start · If they do not answer: Nothing happens",
+        "May do: crm.approve_discount · Comes in: From the start · If they do not answer: Nothing happens · In 0 scenarios",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
-  it("lists people on the caller's side apart from the world, with their channel and scenarios", () => {
+  it("shows who can reach whom open once there is more than one actor, with limits folded", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.queryByText("Who can reach whom")).toBeNull();
+    actorsData = cast([
+      MANAGER,
+      { id: "caller", name: "Dana", role: "customer" },
+    ]);
+    const { container } = render(<WorldActorsPanel envId="env-2" />);
+    expect(
+      within(container).getByText("Who can reach whom"),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByRole("button", { name: "Limits" }),
+    ).toBeInTheDocument();
+    expect(within(container).queryByText("Save limits to draft")).toBeNull();
+  });
+
+  it("says nothing about a missing caller while there are no actors at all", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText(/no caller record yet/)).toBeInTheDocument();
+    actorsData = cast([]);
+    const { container } = render(<WorldActorsPanel envId="env-2" />);
+    expect(within(container).queryByText(/no caller record yet/)).toBeNull();
+  });
+
+  it("lists every actor in one list, one that speaks with its channel beside what it may do", () => {
     actorsData = cast([
       MANAGER,
       {
@@ -297,12 +383,14 @@ describe("WorldActorsPanel", () => {
         scenarios: 2,
       },
     ]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    expect(screen.getByText("On the caller's side (1)")).toBeInTheDocument();
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText("Actors (2)")).toBeInTheDocument();
+    expect(screen.queryByText(/On the caller's side/)).toBeNull();
     expect(
-      screen.getByText("Heard nearby · Loudness automatic · In 2 scenarios"),
+      screen.getByText(
+        "Heard nearby · Loudness automatic · May do: Nothing in the world · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText("In the world (1)")).toBeInTheDocument();
   });
 
   it("shows what an actor sees and never sees in plain words", () => {
@@ -334,7 +422,7 @@ describe("WorldActorsPanel", () => {
   it("adds someone in the world with every field, picking actions from the environment's own list", () => {
     actorsData = cast([], { source: "saved", revision: 0 });
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "manager" },
     });
@@ -364,7 +452,8 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
     );
-    choose("Comes in", "When the agent calls crm.request_approval");
+    choose("Comes in", "When the agent calls an action");
+    choose("The action", "crm.request_approval");
     fireEvent.click(screen.getByText("Save to draft"));
     const [change] = mutate.mock.calls[0];
     expect(change.op).toBe("create");
@@ -388,7 +477,7 @@ describe("WorldActorsPanel", () => {
   it("keeps the details a run does not read yet folded under More details", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     expect(
       screen.getByLabelText("What they know (optional, one per line)"),
     ).toBeVisible();
@@ -399,19 +488,24 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
   });
 
-  it("needs a role on the caller's side when the record schema requires one", () => {
+  it("needs a role for an actor who speaks when the record schema says so", () => {
     actorsData = cast([], {
       record_schemas: {
-        "actors.json": { properties: { id: { pattern: "^[a-z_]{1,64}$" } } },
-        "sub_actors.json": { required: ["id", "name", "role", "channel"] },
+        "actors.json": {
+          properties: { id: { pattern: "^[a-z_]{1,64}$" } },
+          then: { required: ["role"] },
+        },
       },
     });
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    fireEvent.click(screen.getByText("Add someone on the caller's side"));
-    fireEvent.change(screen.getByLabelText("Name"), {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: "Jordan" },
     });
     const save = screen.getByRole("button", { name: "Save to draft" });
+    // Without a channel it does not speak, so no role is needed.
+    expect(save).not.toBeDisabled();
+    choose("How they join the conversation", "Heard nearby");
     expect(save).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Role"), {
       target: { value: "the caller's colleague" },
@@ -419,13 +513,15 @@ describe("WorldActorsPanel", () => {
     expect(save).not.toBeDisabled();
   });
 
-  it("adds someone on the caller's side with a channel and its loudness", () => {
+  it("adds an actor who speaks with a channel and its loudness, and every other field too", () => {
     actorsData = cast([]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    // The same fields as any actor: what it may do in the world is offered to a speaking actor too.
     expect(
-      screen.queryByLabelText("World actions they may take (optional)"),
-    ).toBeNull();
+      screen.getByLabelText("World actions they may take (optional)"),
+    ).toBeInTheDocument();
+    choose("How they join the conversation", "Heard nearby");
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "colleague" },
     });
@@ -446,15 +542,15 @@ describe("WorldActorsPanel", () => {
     expect(mutate.mock.calls[0][0].actor).toMatchObject({
       id: "colleague",
       name: "Jordan",
-      side: "caller",
       channel: "audio_mix",
       loudness_ratio: 0.5,
       persona: { gender: "female", age_group: "50-59" },
     });
     expect(mutate.mock.calls[0][0].actor.persona).not.toHaveProperty("accent");
+    expect(mutate.mock.calls[0][0].actor).not.toHaveProperty("side");
   });
 
-  it("changes how a sub-actor sounds and keeps the rest of its persona", () => {
+  it("changes how an actor sounds and keeps the rest of its persona", () => {
     actorsData = cast([
       {
         id: "colleague",
@@ -463,7 +559,7 @@ describe("WorldActorsPanel", () => {
         persona: { gender: "male", age_group: "32-40", occupation: "Engineer" },
       },
     ]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
+    render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Jordan Taylor"));
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
@@ -478,9 +574,9 @@ describe("WorldActorsPanel", () => {
   });
 
   it("makes a new actor's id from its name, unique in the cast, and says how loud is automatic", () => {
-    actorsData = cast([{ id: "sam_lee", name: "Sam Lee", side: "world" }]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    actorsData = cast([{ id: "sam_lee", name: "Sam Lee" }]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Sam Lee" },
     });
@@ -488,7 +584,8 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(screen.getByText("Save to draft"));
     expect(mutate.mock.calls[0][0].actor.id).toBe("sam_lee_2");
     fireEvent.click(screen.getByText("Cancel"));
-    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    fireEvent.click(screen.getByText("Add an actor"));
+    choose("How they join the conversation", "Heard nearby");
     expect(
       screen.getByText(/Automatic: each call picks between 33% and 67%/),
     ).toBeInTheDocument();
@@ -501,20 +598,22 @@ describe("WorldActorsPanel", () => {
       },
     });
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     const role = screen.getByLabelText("Role (optional)");
     expect(role).toHaveAttribute("maxLength", "12");
     fireEvent.change(role, { target: { value: "twelve chars" } });
     expect(screen.getByText("At most 12 characters")).toBeInTheDocument();
   });
 
-  it("says who already has a typed id and will not save it, and offers no one to be brought in by when the world is empty", () => {
+  it("says who already has a typed id and will not save it, and offers any actor, one who speaks too, to be brought in by", () => {
     actorsData = cast([
       { id: "colleague", name: "Jordan Taylor", channel: "audio_mix" },
     ]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
-    expect(screen.queryByLabelText("Brought in by (optional)")).toBeNull();
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    expect(
+      screen.getByLabelText("Brought in by (optional)"),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "colleague" },
     });
@@ -526,8 +625,8 @@ describe("WorldActorsPanel", () => {
 
   it("uses the id made from the name when a typed id is cleared", () => {
     actorsData = cast([]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
-    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText("Id"), { target: { value: "x" } });
     fireEvent.change(screen.getByLabelText("Id"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Name"), {
@@ -545,7 +644,7 @@ describe("WorldActorsPanel", () => {
     mutate.mockImplementation((_change, options) => options?.onSuccess?.());
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya Raman" },
     });
@@ -553,7 +652,7 @@ describe("WorldActorsPanel", () => {
       target: { value: "store manager" },
     });
     fireEvent.click(screen.getByText("Save to draft"));
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     expect(screen.getByLabelText("Role (optional)")).toHaveValue("");
   });
 
@@ -600,15 +699,45 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText(/Comes in: After 30 seconds/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "After 30 seconds",
+      "At a set time",
     );
+    expect(screen.getByLabelText("Seconds after the start")).toHaveValue(30);
     const save = screen.getByRole("button", { name: "Save to draft" });
-    choose("Comes in", "When the agent calls crm.request_approval");
+    choose("Comes in", "When the agent contacts them");
     expect(save).not.toBeDisabled();
     // The first menu is gone before the select can be opened again.
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    choose("Comes in", "After 30 seconds");
+    choose("Comes in", "At a set time");
     expect(save).toBeDisabled();
+  });
+
+  it("keeps Save off while the way an actor comes in is missing what it needs, and says what", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    choose("Comes in", "When the agent calls an action");
+    expect(save).toBeDisabled();
+    expect(
+      screen.getByText("Pick the action that brings them in"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    choose("The action", "crm.approve_discount");
+    expect(save).not.toBeDisabled();
+  });
+
+  it("keeps Save off for a cap that is not a whole number, and saves the number as typed", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    const cap = screen.getByLabelText("Most turns in a call (optional)");
+    fireEvent.change(cap, { target: { value: "2.7" } });
+    expect(save).toBeDisabled();
+    expect(
+      screen.getByText("A whole number above 0, or empty for no limit"),
+    ).toBeInTheDocument();
+    fireEvent.change(cap, { target: { value: "3" } });
+    fireEvent.click(save);
+    expect(mutate.mock.calls[0][0].actor.max_turns).toBe(3);
   });
 
   it("shows a record's value even when its select doesn't list it, and an empty value by its own word", () => {
@@ -621,7 +750,7 @@ describe("WorldActorsPanel", () => {
       },
       { id: "colleague", name: "Jordan", channel: "audio_mix" },
     ]);
-    render(<WorldActorsPanel envId="env-1" callerSide />);
+    render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit Priya Raman" }));
     expect(screen.getByLabelText("Kind (optional)")).toHaveTextContent("robot");
     expect(screen.getByLabelText("If they do not answer")).toHaveTextContent(
@@ -631,14 +760,14 @@ describe("WorldActorsPanel", () => {
       "Jordan",
     );
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "From the start",
+      "Present from the start",
     );
   });
 
   it("shows no id before a name is typed, and still saves the fallback for a name with no letters", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     expect(screen.getByLabelText("Id")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "!!!" },
@@ -659,7 +788,7 @@ describe("WorldActorsPanel", () => {
       },
     });
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByLabelText("Id"), { target: { value: "ab" } });
     expect(screen.getByText(/Up to 3 letters\./)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Id"), {
@@ -728,7 +857,7 @@ describe("WorldActorsPanel", () => {
     });
     unmount();
     render(<WorldActorsPanel envId="env-1" locked />);
-    expect(screen.queryByText("Add someone in the world")).toBeNull();
+    expect(screen.queryByText("Add an actor")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
     expect(
@@ -745,9 +874,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByRole("button", { name: /^Edit / })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Remove / })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Add someone in the world" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add an actor" })).toBeDisabled();
   });
 
   it("still asks when an existing value was emptied and then folded away", async () => {
@@ -796,7 +923,7 @@ describe("WorldActorsPanel", () => {
 
   it("asks before closing a form with typed values, and keeps them if you stay", async () => {
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     const name = screen.getByRole("textbox", { name: "Name" });
     fireEvent.change(name, { target: { value: "Sam Lee" } });
     fireEvent.keyDown(name, { key: "Escape" });
@@ -818,10 +945,10 @@ describe("WorldActorsPanel", () => {
 
   it("closes straight away with nothing typed, and when Cancel is pressed", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByText("Save to draft")).toBeNull();
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "Sam Lee" },
     });
@@ -840,7 +967,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(resetEdit).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     expect(resetEdit).toHaveBeenCalledTimes(2);
   });
 
@@ -858,7 +985,7 @@ describe("WorldActorsPanel", () => {
 
   it("will not close or discard the form while a save is in flight", () => {
     const { rerender } = render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
       target: { value: "Sam Lee" },
     });
@@ -876,7 +1003,7 @@ describe("WorldActorsPanel", () => {
 
   it("does not ask once typed text has been deleted again", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByText("Add an actor"));
     const name = screen.getByRole("textbox", { name: "Name" });
     fireEvent.change(name, { target: { value: "Sam Lee" } });
     fireEvent.change(name, { target: { value: "" } });

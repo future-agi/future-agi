@@ -93,7 +93,7 @@ const useSpeakerColors = () => {
       user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
-      sub_actor: seriesColor(theme, OTHER_PARTY_SERIES),
+      actor: seriesColor(theme, OTHER_PARTY_SERIES),
       world_actor: seriesColor(theme, WORLD_ACTOR_SERIES),
       others: seriesColor(theme, OTHER_PARTY_SERIES),
       unknown: theme.palette.text.disabled,

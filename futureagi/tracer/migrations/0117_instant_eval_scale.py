@@ -7,6 +7,30 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_instant_eval_row",
+        "postgres:tracer_instant_eval_run",
+    ],
+    "mitigation": (
+        "Keep the original atomic Django schema operations and SQL unchanged. "
+        "This transition creates the instant-eval row and run tables, then sets "
+        "analyze reloptions only on the new row table; it does not backfill task "
+        "rows or join application tables in SQL. The reverse resets those options. "
+        "New-table assumptions do not eliminate DDL/index/constraint locks or "
+        "storage cost. Qualify normal bootstrap and cold snapshot restoration "
+        "with real source data and independently measured resource bounds; "
+        "unsupported or oversized hosts must refuse before disruption. Recovery "
+        "restores the sealed source snapshot rather than reversing migrations."
+    ),
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3289#discussion_r4465601408",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
 
     dependencies = [

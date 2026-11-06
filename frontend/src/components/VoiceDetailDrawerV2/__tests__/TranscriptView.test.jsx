@@ -89,11 +89,11 @@ const plainCall = [
   { id: "2", speaker_role: "assistant", content: "Booked", duration: 1 },
 ];
 
-const withSubActors = [
+const withCallActors = [
   ...plainCall,
   {
     id: "3",
-    speaker_role: "sub_actor",
+    speaker_role: "actor",
     speaker_name: "Rowan",
     actor_role: "roommate",
     channel: "audio_mix",
@@ -102,7 +102,7 @@ const withSubActors = [
   },
   {
     id: "4",
-    speaker_role: "sub_actor",
+    speaker_role: "actor",
     speaker_name: "Sam",
     actor_role: "son",
     channel: "audio_handoff",
@@ -117,9 +117,9 @@ const chipLabels = () =>
     .map((b) => b.textContent)
     .filter((t) => ["All", "Assistant", "Customer", "Others"].includes(t));
 
-describe("sub-actors in voice transcripts", () => {
-  it("names each sub-actor with their role and how they were heard", () => {
-    render(<TranscriptView transcript={withSubActors} />);
+describe("actors in voice transcripts", () => {
+  it("names each actor with their role and how they were heard", () => {
+    render(<TranscriptView transcript={withCallActors} />);
     expect(screen.getAllByText("Rowan · roommate").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sam · son").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Heard nearby").length).toBeGreaterThan(0);
@@ -127,19 +127,19 @@ describe("sub-actors in voice transcripts", () => {
     expect(screen.getByText(/^Others \d+%$/)).toBeInTheDocument();
   });
 
-  it("names a sub-actor, not their raw role, on the speaker timeline", () => {
-    render(<TranscriptView transcript={withSubActors} />);
+  it("names an actor, not their raw role, on the speaker timeline", () => {
+    render(<TranscriptView transcript={withCallActors} />);
     expect(
       screen.getByLabelText(/^Rowan · roommate · \d+:\d{2}$/),
     ).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^sub_actor/)).toBeNull();
+    expect(screen.queryByLabelText(/^actor/)).toBeNull();
   });
 
   it("lists who was on the call, customer first and the agent last", () => {
-    render(<TranscriptView transcript={withSubActors} customerName="Maya" />);
+    render(<TranscriptView transcript={withCallActors} customerName="Maya" />);
     expect(screen.getByText("On the call:")).toBeInTheDocument();
     expect(screen.getByText("Maya · Customer")).toBeInTheDocument();
-    // Each sub-actor shows once in the line and once on their turn.
+    // Each actor shows once in the line and once on their turn.
     expect(screen.getAllByText("Rowan · roommate")).toHaveLength(2);
     expect(screen.getAllByText("Sam · son")).toHaveLength(2);
   });
@@ -151,14 +151,14 @@ describe("sub-actors in voice transcripts", () => {
           ...plainCall,
           {
             id: "3",
-            speaker_role: "sub_actor",
+            speaker_role: "actor",
             speaker_name: "Rowan",
             content: "Two",
             duration: 1,
           },
           {
             id: "4",
-            speaker_role: "sub_actor",
+            speaker_role: "actor",
             content: "Hello?",
             duration: 1,
           },
@@ -174,7 +174,7 @@ describe("sub-actors in voice transcripts", () => {
   });
 
   it("filters to the others on the call", async () => {
-    render(<TranscriptView transcript={withSubActors} />);
+    render(<TranscriptView transcript={withCallActors} />);
     expect(chipLabels()).toEqual(["All", "Assistant", "Customer", "Others"]);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     expect(screen.getByText("Make it two")).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe("sub-actors in voice transcripts", () => {
   });
 
   it("shows every turn when Others was picked and the next call has none", async () => {
-    const { rerender } = render(<TranscriptView transcript={withSubActors} />);
+    const { rerender } = render(<TranscriptView transcript={withCallActors} />);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     rerender(<TranscriptView transcript={plainCall} />);
     expect(screen.queryByText("No matching turns")).toBeNull();

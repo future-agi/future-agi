@@ -90,6 +90,13 @@ const actorPath = (envId, actorId) =>
     actor_id: actorId,
   });
 
+const actorLimitsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/actor-limits/", {
+    id: envId,
+  });
+const environmentFilesPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
+
 const runPlanPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/run-plan/", { id: envId });
 
@@ -219,6 +226,27 @@ export const editActor = async (envId, { op, actor, actorId, revision }) => {
       params: { expected_revision: revision },
     })
   ).data;
+};
+
+// The environment's actor limits in the draft: each a number or null for no limit, and the actors' model.
+export const setActorLimits = async (envId, { limits, revision }) =>
+  (
+    await axios.put(actorLimitsPath(envId), {
+      limits,
+      expected_revision: revision,
+    })
+  ).data;
+
+// One file put into the environment's draft under its kind (`knowledge`: a document an actor may read).
+export const uploadEnvironmentFile = async (
+  envId,
+  { file, kind, revision },
+) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+  if (revision != null) form.append("expected_revision", String(revision));
+  return (await axios.post(environmentFilesPath(envId), form)).data;
 };
 
 export const environmentVersionsKey = (envId) => [
@@ -811,6 +839,33 @@ export function useEditActor(envId) {
     },
   });
 }
+
+/**
+ * Set the environment's actor limits, or upload a file into its draft; both answer with the cast.
+ * @param {string} envId
+ * @param {(envId: string, change: Object) => Promise<Object>} send
+ */
+function useCastChange(envId, send) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (change) => send(envId, change),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(actorsKey(envId), data);
+      refreshDrafts(queryClient, envId);
+    },
+    onError: (error) => {
+      if (DRAFTS_REFRESH_CODES.has(error?.error)) {
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      }
+    },
+  });
+}
+
+export const useSetActorLimits = (envId) =>
+  useCastChange(envId, setActorLimits);
+export const useUploadEnvironmentFile = (envId) =>
+  useCastChange(envId, uploadEnvironmentFile);
 
 // Discard the given pieces' drafts, one request each. Whatever was discarded
 // before a refusal is gone, so the drafts and what they overlay are asked

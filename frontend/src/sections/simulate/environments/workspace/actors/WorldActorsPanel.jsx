@@ -17,19 +17,22 @@ import {
   useActors,
   useActorView,
   useEditActor,
+  useSetActorLimits,
+  useUploadEnvironmentFile,
 } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import SectionCard from "../../components/SectionCard";
 import { refusalText } from "../evals/refusalText";
-import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
+import ActorLimits from "./ActorLimits";
+import ActorRelations from "./ActorRelations";
 import ActorsSkeleton from "./ActorsSkeleton";
 import { hidden, seenValue, speaks } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
-const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
+const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
 // Only as wide as its text, so the tooltip sits over the text, not the middle of the row.
 const ONE_LINE = {
   display: "inline-block",
@@ -48,13 +51,12 @@ const OUTLINED = {
  * version changes only when the draft is saved from the Save bar. Each row opens what that actor
  * sees and never sees.
  */
-export default function WorldActorsPanel({
-  envId,
-  locked = false,
-  callerSide = false,
-}) {
+export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
+  const limits = useSetActorLimits(envId);
+  const [settings, setSettings] = useState(false);
+  const upload = useUploadEnvironmentFile(envId);
   const [inUse, setInUse] = useState(null);
   // The record and the revision it was read at, taken together when the form opens: a refresh under an open form must
   // not move the revision, or a save would overwrite an edit it never saw.
@@ -66,9 +68,8 @@ export default function WorldActorsPanel({
     setEditing({ actor, revision });
   };
   const cast = data?.actors || [];
-  const caller = cast.filter(speaks);
   // Without a channel an actor cannot speak on the call, whatever side it is on: it acts in the world.
-  const world = cast.filter((one) => !speaks(one));
+  // One list: the caller, people beside them and people and systems in the world are all actors.
   const revision = data?.revision ?? 0;
   // A refused save moves the form onto the record the refusal refreshed. Its key stays, so what was typed stays too.
   const conflicted = Boolean(editing) && edit.error?.error === "draft_changed";
@@ -84,8 +85,32 @@ export default function WorldActorsPanel({
     actions: data?.actions || [],
     channels: data?.channels || {},
     loudness: data?.loudness || {},
+    knowledgeSources: data?.knowledge_sources || { files: [], records: [] },
     others: cast,
+    actorModels: data?.actor_models || [],
+    // Uploads a document into the draft and answers with its path, so the form can pick it for this actor.
+    upload: locked
+      ? null
+      : async (file) => {
+          const before = new Set(data?.knowledge_sources?.files || []);
+          // Sent at the open form's revision, so an edit made elsewhere since it opened is refused, not stepped over.
+          const next = await upload.mutateAsync({
+            file,
+            kind: "knowledge",
+            revision: editing?.revision ?? revision,
+          });
+          // The upload is a draft change of its own: the form saves on top of it.
+          if (typeof next?.revision === "number") {
+            setEditing((open) => open && { ...open, revision: next.revision });
+          }
+          return (
+            (next?.knowledge_sources?.files || []).find(
+              (one) => !before.has(one),
+            ) || `knowledge/${file.name}`
+          );
+        },
   };
+  const hasCaller = cast.some((one) => one.id === "caller");
 
   // Kept after the dialog closes, so its title doesn't blank while it fades out.
   const [removing, setRemoving] = useState(null);
@@ -101,7 +126,6 @@ export default function WorldActorsPanel({
   };
   const actionIds = context.actions.map((one) => one.action);
   // A new person on the caller's side starts on the first channel the rules list.
-  const firstChannel = Object.keys(context.channels)[0];
   const deletingId =
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
@@ -136,8 +160,7 @@ export default function WorldActorsPanel({
         </SectionCard>
       </Box>
     );
-  if (isLoading)
-    return <ActorsSkeleton callerSide={callerSide} locked={locked} />;
+  if (isLoading) return <ActorsSkeleton locked={locked} />;
 
   return (
     <Box sx={{ p: 2 }}>
@@ -148,6 +171,9 @@ export default function WorldActorsPanel({
       </Typography>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
+        {cast.length > 0 && !hasCaller && (
+          <Alert severity="info">{ACTORS_COPY.noCaller}</Alert>
+        )}
         {inUse && (
           <Alert severity="warning" onClose={() => setInUse(null)}>
             {inUse}
@@ -159,36 +185,46 @@ export default function WorldActorsPanel({
           </Alert>
         )}
       </Stack>
-      {(callerSide || caller.length > 0) && (
-        <Group
-          title={C.callerSide}
-          about={C.callerSideAbout}
-          empty={C.callerSideEmpty}
-          locked={locked || !firstChannel}
-          busy={edit.isPending}
-          addLabel={C.addCallerSide}
-          onAdd={() => openForm({ channel: firstChannel })}
-        >
-          {rows(caller)}
-        </Group>
-      )}
       <Group
-        title={C.worldSide}
-        about={C.worldSideAbout}
+        title={C.title}
+        about={C.everyoneAbout}
         empty={C.empty}
         locked={locked}
         busy={edit.isPending}
         addLabel={C.add}
         onAdd={() => openForm({})}
       >
-        {rows(world)}
+        {rows(cast)}
       </Group>
+      {cast.length > 1 && (
+        <Box sx={{ mt: 2 }}>
+          <ActorRelations cast={cast} />
+        </Box>
+      )}
+      <Button
+        size="small"
+        sx={{ mt: 2 }}
+        onClick={() => setSettings((open) => !open)}
+      >
+        {settings ? ACTORS_COPY.hideSettings : ACTORS_COPY.showSettings}
+      </Button>
+      <Collapse in={settings} unmountOnExit>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <ActorLimits
+            key={revision}
+            limits={data?.limits || {}}
+            models={data?.actor_models || []}
+            locked={locked}
+            busy={limits.isPending}
+            error={limits.error}
+            onSave={(next, done) =>
+              limits.mutate({ limits: next, revision }, { onSuccess: done })
+            }
+          />
+        </Stack>
+      </Collapse>
       <ActorForm
-        key={
-          form
-            ? form.actor.id || `new-${form.actor.channel ? "caller" : "world"}`
-            : "closed"
-        }
+        key={form ? form.actor.id || "new" : "closed"}
         actor={form?.actor ?? null}
         context={context}
         busy={edit.isPending}
@@ -242,8 +278,6 @@ export default function WorldActorsPanel({
 WorldActorsPanel.propTypes = {
   envId: PropTypes.string.isRequired,
   locked: PropTypes.bool,
-  // The environment can have people on the caller's side (a voice call).
-  callerSide: PropTypes.bool,
 };
 
 function Group({
@@ -308,23 +342,16 @@ Group.propTypes = {
 };
 
 function summary(actor, actionIds, loudChannels) {
-  if (speaks(actor))
-    return [
-      CHANNEL_LABELS[actor.channel] || actor.channel,
-      loudChannels.includes(actor.channel) &&
-        (actor.loudness_ratio
-          ? C.loudnessShare(actor.loudness_ratio)
-          : C.loudnessAutomatic),
-      genderLabel(actor.persona?.gender),
-      actor.persona?.age_group,
-      actor.persona?.accent,
-      ACTORS_COPY.subActors.scenarios(actor.scenarios ?? 0),
-    ]
-      .filter(Boolean)
-      .join(" · ");
   const permitted = actor.permitted_actions || [];
   const fallback = actor.activation?.fallback || "silent";
+  // Every actor has both: how it speaks in the conversation (if it does) and what it may do in the world.
   return [
+    speaks(actor) && (CHANNEL_LABELS[actor.channel] || actor.channel),
+    speaks(actor) &&
+      loudChannels.includes(actor.channel) &&
+      (actor.loudness_ratio
+        ? C.loudnessShare(actor.loudness_ratio)
+        : C.loudnessAutomatic),
     `${C.mayDo}: ${
       permitted.length
         ? permitted
@@ -336,7 +363,10 @@ function summary(actor, actionIds, loudChannels) {
     }`,
     `${C.comesIn}: ${C.comesInLabel(actor.activation?.trigger)}`,
     `${C.ifNoAnswer}: ${C.form.fallbackLabel(fallback)}`,
-  ].join(" · ");
+    ACTORS_COPY.callActors.scenarios(actor.scenarios ?? 0),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function ActorRow({
@@ -499,6 +529,9 @@ function ActorRow({
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
               {C.sees}
             </Typography>
+            {view.unused_reason && (
+              <Typography sx={quiet}>{view.unused_reason}</Typography>
+            )}
             {view.sees.map((one) => (
               <Typography key={one.input} sx={quiet}>
                 {`${C.inputs[one.input] || one.input}: `}

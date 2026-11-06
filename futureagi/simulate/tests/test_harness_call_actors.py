@@ -1,4 +1,4 @@
-"""Sub-actors on the platform: the environment's list, each scenario's, and who spoke."""
+"""Actors on the platform: the environment's list, each scenario's, and who spoke."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from rest_framework.test import APIClient
 from simulate.models import CallExecution, HostedHarnessScenario
 from simulate.services.harness_scenarios import (
     apply_filters,
+    call_actor_choice_labels,
     field_catalogue,
     index_scenarios,
     scenario_row,
-    sub_actor_choice_labels,
 )
 from simulate.services.hosted_harness import create_hosted_job, register_attempt
 from simulate.services.hosted_harness_ingestion import _ingest_hosted_transcript
@@ -29,7 +29,7 @@ _FRIEND = {
     "trigger": {"kind": "mid_journey", "turn": 2},
 }
 _LIST = {
-    "sub_actors": [
+    "call_actors": [
         {
             "id": "friend",
             "name": "Rowan",
@@ -55,7 +55,7 @@ def _docs():
             "scenario_key": "with-friend",
             "name": "with-friend",
             "instruction": "Book it.",
-            "sub_actors": [_FRIEND, "not-an-entry"],
+            "actors": [_FRIEND, "not-an-entry"],
         },
     ]
 
@@ -65,37 +65,37 @@ def _keys(queryset):
 
 
 @pytest.mark.django_db
-def test_a_suite_indexes_each_scenarios_sub_actors_and_filters_by_them(
+def test_a_suite_indexes_each_scenarios_call_actors_and_filters_by_them(
     organization, workspace
 ):
     job, _ = create_hosted_job(
         organization,
         _payload(scenario_count=2),
-        idempotency_key="sub-actor-index",
+        idempotency_key="actor-index",
         workspace=workspace,
     )
     index_scenarios(job, _docs())
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
 
-    assert scenario_row(rows.get(scenario_key="with-friend"))["sub_actors"] == [_FRIEND]
-    assert rows.get(scenario_key="alone").sub_actors is None
-    assert scenario_row(rows.get(scenario_key="alone"))["sub_actors"] == []
+    assert scenario_row(rows.get(scenario_key="with-friend"))["actors"] == [_FRIEND]
+    assert rows.get(scenario_key="alone").actors is None
+    assert scenario_row(rows.get(scenario_key="alone"))["actors"] == []
 
     def filtered(query: str):
         return _keys(apply_filters(rows, QueryDict(query)))
 
-    assert filtered("sub_actors=friend") == ["with-friend"]
-    assert filtered("sub_actors=none") == ["alone"]
-    assert filtered("sub_actors_not=friend") == ["alone"]
-    field = next(one for one in field_catalogue(rows) if one["value"] == "sub_actors")
+    assert filtered("actors=friend") == ["with-friend"]
+    assert filtered("actors=none") == ["alone"]
+    assert filtered("actors_not=friend") == ["alone"]
+    field = next(one for one in field_catalogue(rows) if one["value"] == "actors")
     assert field["counts"] == {"friend": 1, "none": 1}
-    # The panel names each choice: the sub-actor by name, and none as the simulated user alone.
+    # The panel names each choice: the actor by name, and none as the simulated user alone.
     named = next(
         one
         for one in field_catalogue(
-            rows, sub_actor_labels=sub_actor_choice_labels(_LIST)
+            rows, call_actor_labels=call_actor_choice_labels(_LIST)
         )
-        if one["value"] == "sub_actors"
+        if one["value"] == "actors"
     )
     assert named["choice_labels"] == {
         "none": "Simulated user only",
@@ -106,16 +106,18 @@ def test_a_suite_indexes_each_scenarios_sub_actors_and_filters_by_them(
 
 
 @pytest.mark.django_db
-def test_a_suite_with_no_sub_actors_offers_no_sub_actor_filter(organization, workspace):
+def test_a_suite_with_no_call_actors_offers_no_call_actor_filter(
+    organization, workspace
+):
     job, _ = create_hosted_job(
         organization,
         _payload(scenario_count=1),
-        idempotency_key="no-sub-actor-index",
+        idempotency_key="no-actor-index",
         workspace=workspace,
     )
     index_scenarios(job, _docs()[:1])
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
-    assert not any(one["value"] == "sub_actors" for one in field_catalogue(rows))
+    assert not any(one["value"] == "actors" for one in field_catalogue(rows))
 
 
 def _ingest(organization, workspace, key, call_type, transcript, metadata=None):
@@ -171,16 +173,16 @@ def _ingest(organization, workspace, key, call_type, transcript, metadata=None):
 
 
 @pytest.mark.django_db
-def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_part(
+def test_a_call_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_part(
     organization, workspace
 ):
     at = datetime(2026, 9, 29, 9, 0, tzinfo=UTC).timestamp()
     record = {
         "resolved": [{"id": "friend", "name": "Rowan"}],
-        "summary": [{"sub_actor": "friend", "triggered": True, "delivered": 1}],
-        "events": [{"sub_actor": "friend", "event": "delivered"}],
+        "summary": [{"actor": "friend", "triggered": True, "delivered": 1}],
+        "events": [{"actor": "friend", "event": "delivered"}],
     }
-    metadata = {"harness_sub_actors": {"stale": True}}
+    metadata = {"harness_call_actors": {"stale": True}}
     call = _ingest(
         organization,
         workspace,
@@ -195,7 +197,8 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
                     "stopped_speaking_at": at + 1,
                 },
                 {
-                    "role": "sub_actor",
+                    "role": "actor",
+                    "actor": "friend",
                     "name": "Rowan",
                     "content": "Add a stop.",
                     "started_speaking_at": at + 2,
@@ -208,18 +211,18 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
                     "stopped_speaking_at": at + 5,
                 },
             ],
-            "sub_actors": record,
+            "call_actors": record,
         },
         metadata,
     )
 
     rows = list(call.transcripts.order_by("start_time_ms"))
-    assert [(row.speaker_role, row.speaker_name) for row in rows] == [
-        ("assistant", ""),
-        ("sub_actor", "Rowan"),
-        ("user", ""),
+    assert [(row.speaker_role, row.speaker_name, row.actor_id) for row in rows] == [
+        ("assistant", "", None),
+        ("actor", "Rowan", "friend"),
+        ("user", "", None),
     ]
-    assert metadata["harness_sub_actors"] == record
+    assert metadata["harness_call_actors"] == record
     from simulate.tasks.alk_sim import _build_transcript_text
     from simulate.temporal.activities.xl import _build_transcript_data
 
@@ -235,8 +238,8 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
 
 
 @pytest.mark.django_db
-def test_a_rerun_without_sub_actors_clears_the_record(organization, workspace):
-    metadata = {"harness_sub_actors": {"resolved": [{"id": "friend"}]}}
+def test_a_rerun_without_call_actors_clears_the_record(organization, workspace):
+    metadata = {"harness_call_actors": {"resolved": [{"id": "friend"}]}}
     _ingest(
         organization,
         workspace,
@@ -245,7 +248,7 @@ def test_a_rerun_without_sub_actors_clears_the_record(organization, workspace):
         {"messages": [{"role": "user", "content": "Hello."}]},
         metadata,
     )
-    assert "harness_sub_actors" not in metadata
+    assert "harness_call_actors" not in metadata
 
 
 def test_the_environment_s_list_is_a_stage_output_and_an_emptied_list_replaces_it():
@@ -253,40 +256,40 @@ def test_the_environment_s_list_is_a_stage_output_and_an_emptied_list_replaces_i
 
     [listed] = [
         one
-        for one in authoring_stage_outputs(None, None, None, sub_actors=_LIST)
-        if one["kind"] == "sub_actors"
+        for one in authoring_stage_outputs(None, None, None, call_actors=_LIST)
+        if one["kind"] == "call_actors"
     ]
-    assert (listed["summary"], listed["data"]) == ("2 sub-actors", _LIST)
+    assert (listed["summary"], listed["data"]) == ("2 actors", _LIST)
     [emptied] = [
         one
         for one in authoring_stage_outputs(
-            None, None, None, sub_actors={"sub_actors": []}
+            None, None, None, call_actors={"call_actors": []}
         )
-        if one["kind"] == "sub_actors"
+        if one["kind"] == "call_actors"
     ]
-    assert emptied["summary"] == "0 sub-actors"
+    assert emptied["summary"] == "0 actors"
     assert not any(
-        one["kind"] == "sub_actors"
-        for one in authoring_stage_outputs(None, None, None, sub_actors=None)
+        one["kind"] == "call_actors"
+        for one in authoring_stage_outputs(None, None, None, call_actors=None)
     )
 
 
-def test_the_contract_lists_each_sub_actor_with_how_many_scenarios_include_it():
-    from simulate.services.harness_environment import _sub_actor_list
+def test_the_contract_lists_each_call_actor_with_how_many_scenarios_include_it():
+    from simulate.services.harness_environment import _call_actor_list
 
-    listed = _sub_actor_list(_LIST, _docs())
+    listed = _call_actor_list(_LIST, _docs())
     assert [(one["id"], one["scenarios_count"]) for one in listed] == [
         ("friend", 1),
         ("partner", 0),
     ]
     assert listed[0]["name"] == "Rowan"
-    assert _sub_actor_list(None, _docs()) == []
+    assert _call_actor_list(None, _docs()) == []
 
 
-def test_a_sub_actor_s_turns_are_shown_in_the_transcript_view():
+def test_a_call_actor_s_turns_are_shown_in_the_transcript_view():
     from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
-    assert "sub_actor" in get_displayable_transcript_roles()
+    assert "actor" in get_displayable_transcript_roles()
 
 
 @pytest.mark.django_db
@@ -313,30 +316,30 @@ def test_a_transcript_written_without_a_speaker_name_is_stored_with_none(
             "VALUES (gen_random_uuid(), now(), now(), false, %s, 'user', 'Hi', 0, 0, 1)",
             [call_execution.id],
         )
-    assert CallTranscript.objects.get(call_execution=call_execution).speaker_name == ""
+    row = CallTranscript.objects.get(call_execution=call_execution)
+    assert (row.speaker_name, row.actor_id) == ("", None)
 
 
 @pytest.mark.django_db
-def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
+def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
     organization, workspace
 ):
     from simulate.services.run_results_v3_queries import (
-        _sub_actor_facet,
+        _call_actor_facet,
         apply_run_call_query,
     )
 
+    def took_part(**part):
+        return [{"actor": "friend", "name": "Rowan", **part}]
+
     seen = {
-        "entered": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 1}
-        ],
-        # Included but never came in: the call is not one the friend entered.
-        "absent": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}
-        ],
-        # Triggered, but the call ended before their line was said: they never came in.
-        "unsaid": [
-            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 0}
-        ],
+        "entered": took_part(triggered=True, delivered=1, drawn=True),
+        # Planned, but their trigger never fired.
+        "absent": took_part(triggered=False, delivered=0, drawn=True),
+        # Triggered, but the call ended before their line was said: dropped, not absent.
+        "unsaid": took_part(triggered=True, delivered=0, drawn=True, dropped=["x"]),
+        # This call's draw left them out: absent by design.
+        "undrawn": took_part(triggered=False, delivered=0, drawn=False),
         "plain": None,
     }
     ids = {}
@@ -352,7 +355,7 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
         if summary is not None:
             call.call_metadata = {
                 **(call.call_metadata or {}),
-                "harness_sub_actors": {"summary": summary},
+                "harness_call_actors": {"summary": summary},
             }
             call.save(update_fields=["call_metadata"])
         ids[call.id] = key
@@ -366,40 +369,49 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
             )
         )
 
-    assert filtered(sub_actor=["friend"]) == ["entered"]
-    assert filtered(sub_actor=["none"]) == ["absent", "plain", "unsaid"]
-    assert filtered(sub_actor_not=["friend"]) == ["absent", "plain", "unsaid"]
-    assert filtered(sub_actor=["friend", "none"]) == [
-        "absent",
-        "entered",
-        "plain",
-        "unsaid",
+    assert filtered(actor=["friend"]) == ["absent", "entered", "unsaid"]
+    assert filtered(actor=["none"]) == ["plain", "undrawn"]
+    assert filtered(actor_not=["friend"]) == ["plain", "undrawn"]
+    assert filtered(actor=["friend", "none"]) == sorted(seen)
+    assert _call_actor_facet(calls) == [
+        {
+            "value": "friend",
+            "count": 3,
+            "label": "Rowan",
+            "delivered": 1,
+            "dropped": 1,
+            "not_triggered": 1,
+        },
+        {
+            "value": "none",
+            "count": 2,
+            "label": "Simulated user only",
+            "delivered": 0,
+            "dropped": 0,
+            "not_triggered": 0,
+        },
     ]
-    assert _sub_actor_facet(calls) == [
-        {"value": "none", "count": 3, "label": "Simulated user only"},
-        {"value": "friend", "count": 1, "label": "Rowan"},
-    ]
-    # A run where no sub-actor entered any call offers no sub-actor filter.
+    # A run where no call had an actor planned offers no actor filter.
     assert (
-        _sub_actor_facet(
-            calls.exclude(id__in=[k for k, v in ids.items() if v == "entered"])
+        _call_actor_facet(
+            calls.filter(
+                id__in=[k for k, v in ids.items() if v in ("plain", "undrawn")]
+            )
         )
         == []
     )
 
 
-def test_a_pinned_suite_version_keeps_each_scenario_s_sub_actors():
+def test_a_pinned_suite_version_keeps_each_scenario_s_call_actors():
     from simulate.services.harness_versioning.versions import _member_content
 
     included = [{"id": "near", "instruction": "x", "trigger": {"kind": "always"}}]
-    assert (
-        _member_content({"name": "a", "sub_actors": included})["sub_actors"] == included
-    )
-    assert "sub_actors" not in _member_content({"name": "a"})
+    assert _member_content({"name": "a", "actors": included})["actors"] == included
+    assert "actors" not in _member_content({"name": "a"})
 
 
 @pytest.mark.django_db
-def test_a_hostile_sub_actor_filter_value_matches_nothing_and_never_errors(
+def test_a_hostile_call_actor_filter_value_matches_nothing_and_never_errors(
     organization, workspace
 ):
     from simulate.services.run_results_v3_queries import apply_run_call_query
@@ -414,52 +426,52 @@ def test_a_hostile_sub_actor_filter_value_matches_nothing_and_never_errors(
     )
     call.call_metadata = {
         **(call.call_metadata or {}),
-        "harness_sub_actors": {
-            "summary": [{"sub_actor": "friend", "name": "Rowan", "delivered": 1}]
+        "harness_call_actors": {
+            "summary": [{"actor": "friend", "name": "Rowan", "delivered": 1}]
         },
     }
     call.save(update_fields=["call_metadata"])
     calls = CallExecution.objects.filter(id=call.id)
 
     for hostile in (
-        'friend" || @.delivered > 0 || @.sub_actor == "x',
+        'friend" || @.delivered > 0 || @.call_actor == "x',
         "friend\\",
         "$who",
     ):
         assert not apply_run_call_query(
-            calls, {"filters": {"sub_actor": [hostile]}}
+            calls, {"filters": {"actor": [hostile]}}
         ).exists()
         assert apply_run_call_query(
-            calls, {"filters": {"sub_actor_not": [hostile]}}
+            calls, {"filters": {"actor_not": [hostile]}}
         ).exists()
-    assert apply_run_call_query(calls, {"filters": {"sub_actor": ["friend"]}}).exists()
+    assert apply_run_call_query(calls, {"filters": {"actor": ["friend"]}}).exists()
 
 
 def test_a_filter_value_the_database_cannot_hold_is_refused():
     from simulate.views.run_results_v3 import RunCallFiltersSerializer
 
     for value in ("\x00", "\ud800"):
-        query = RunCallFiltersSerializer(data={"filters": {"sub_actor": [value]}})
+        query = RunCallFiltersSerializer(data={"filters": {"actor": [value]}})
         assert not query.is_valid()
     assert RunCallFiltersSerializer(
-        data={"filters": {"sub_actor": ["friend", "none"]}}
+        data={"filters": {"actor": ["friend", "none"]}}
     ).is_valid()
 
 
 @pytest.mark.django_db
-def test_a_built_bundle_s_sub_actor_list_is_stored_once_and_an_empty_one_is_not(
+def test_a_built_bundle_s_call_actor_list_is_stored_once_and_an_empty_one_is_not(
     organization, workspace
 ):
     from simulate.models import HostedHarnessStageOutput
     from simulate.services.hosted_harness_gateway import _persist_bundle_stage_outputs
 
-    one = {"sub_actors": _LIST["sub_actors"][:1]}
+    one = {"call_actors": _LIST["call_actors"][:1]}
 
     def persisted(key, listing):
         job, _ = create_hosted_job(
             organization, _payload(), idempotency_key=key, workspace=workspace
         )
-        files = {"sub_actors.json": listing}
+        files = {"actors.json": listing}
         with (
             patch(
                 "simulate.services.hosted_harness_gateway._load_bundle_file",
@@ -474,62 +486,71 @@ def test_a_built_bundle_s_sub_actor_list_is_stored_once_and_an_empty_one_is_not(
             _persist_bundle_stage_outputs(job, {})
         return list(
             HostedHarnessStageOutput.no_workspace_objects.filter(
-                job=job, kind="sub_actors"
+                job=job, kind="call_actors"
             ).values_list("title", "summary", "data")
         )
 
-    assert persisted("bundle-one", one) == [("Sub-actors", "1 sub-actor", one)]
-    assert persisted("bundle-empty", {"sub_actors": []}) == []
+    # The bundle has one actors.json; the stage output keeps the actors in it who speak in the conversation.
+    world_only = {
+        "id": "manager",
+        "name": "Mia",
+        "permitted_actions": ["deals.approve"],
+    }
+    assert persisted("bundle-one", {"actors": [*one["call_actors"], world_only]}) == [
+        ("Actors", "1 actor", one)
+    ]
+    assert persisted("bundle-empty", {"actors": [world_only]}) == []
     assert persisted("bundle-none", None) == []
 
 
-def test_a_pinned_version_s_sub_actor_list_replaces_the_run_s_own():
+def test_a_pinned_version_s_call_actor_list_replaces_the_run_s_own():
     from simulate.services.hosted_harness import pinned_stage_outputs
 
-    listed = {"kind": "sub_actors", "data": _LIST}
+    listed = {"kind": "call_actors", "data": _LIST}
     version = SimpleNamespace(documents={"stage_outputs": [listed]})
     assert pinned_stage_outputs(version, SimpleNamespace(documents={})) == {
-        "sub_actors": listed
+        "call_actors": listed
     }
 
 
 @pytest.mark.django_db
-def test_the_scenario_filter_names_the_environment_s_own_sub_actors(
+def test_the_scenario_filter_names_the_environment_s_own_call_actors(
     organization, workspace
 ):
     from simulate.models import HostedHarnessStageOutput
-    from simulate.services.harness_environment import sub_actor_labels
+    from simulate.services.harness_environment import call_actor_labels
 
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="labels", workspace=workspace
     )
-    assert sub_actor_labels(job) == {"none": "Simulated user only"}
+    assert call_actor_labels(job) == {"none": "Simulated user only"}
     HostedHarnessStageOutput.no_workspace_objects.create(
-        job=job, title="Sub-actors", summary="", kind="sub_actors", data=_LIST
+        job=job, title="Actors", summary="", kind="call_actors", data=_LIST
     )
-    assert sub_actor_labels(job) == {
+    assert call_actor_labels(job) == {
         "none": "Simulated user only",
         "friend": "Rowan",
         "partner": "Sam",
     }
 
 
-def test_stored_sub_actor_shapes_keep_only_well_formed_entries():
-    from simulate.services.harness_scenarios import sub_actor_entries
-    from simulate.services.hosted_harness_ingestion import _sub_actor_record
+def test_stored_call_actor_shapes_keep_only_well_formed_entries():
+    from simulate.services.harness_scenarios import call_actor_entries
+    from simulate.services.hosted_harness_ingestion import _call_actor_record
 
-    assert sub_actor_entries([{"id": "friend", "trigger": "soon"}, "x"]) == [
-        {"id": "friend", "instruction": "", "trigger": {}}
+    # A trigger that is not a record stays missing, so the actor's own activation applies.
+    assert call_actor_entries([{"id": "friend", "trigger": "soon"}, "x"]) == [
+        {"id": "friend", "instruction": ""}
     ]
-    assert sub_actor_entries({"id": "friend"}) is None
-    assert _sub_actor_record(
-        {"summary": [{"sub_actor": "friend"}, "x"], "events": "x", "extra": 1}
-    ) == {"summary": [{"sub_actor": "friend"}]}
-    assert _sub_actor_record(["x"]) is None
+    assert call_actor_entries({"id": "friend"}) is None
+    assert _call_actor_record(
+        {"summary": [{"actor": "friend"}, "x"], "events": "x", "extra": 1}
+    ) == {"summary": [{"actor": "friend"}]}
+    assert _call_actor_record(["x"]) is None
 
 
-def test_the_call_detail_serves_who_each_sub_actor_is_and_an_older_call_what_it_kept():
-    from simulate.views.run_results_v3 import _call_sub_actors
+def test_the_call_detail_serves_who_each_call_actor_is_and_an_older_call_what_it_kept():
+    from simulate.views.run_results_v3 import _call_call_actors
 
     resolved = [
         {
@@ -542,12 +563,28 @@ def test_the_call_detail_serves_who_each_sub_actor_is_and_an_older_call_what_it_
         {"id": "kid", "name": "Sam"},
         "x",
     ]
-    assert _call_sub_actors({"harness_sub_actors": {"resolved": resolved}}) == [
+    assert _call_call_actors({"harness_call_actors": {"resolved": resolved}}) == [
         {"id": "friend", "name": "Rowan", "role": "roommate", "channel": "audio_mix"},
         {"id": "kid", "name": "Sam"},
     ]
-    assert _call_sub_actors({"harness_sub_actors": {"summary": []}}) == []
-    assert _call_sub_actors(None) == []
+    summary = [
+        {"actor": "friend", "triggered": True, "delivered": 0},
+        {"actor": "kid", "triggered": False, "delivered": 0, "drawn": False},
+    ]
+    assert _call_call_actors(
+        {"harness_call_actors": {"resolved": resolved, "summary": summary}}
+    ) == [
+        {
+            "id": "friend",
+            "name": "Rowan",
+            "role": "roommate",
+            "channel": "audio_mix",
+            "delivery": "dropped",
+        },
+        {"id": "kid", "name": "Sam", "delivery": "not_drawn"},
+    ]
+    assert _call_call_actors({"harness_call_actors": {"summary": []}}) == []
+    assert _call_call_actors(None) == []
 
 
 @pytest.mark.django_db
@@ -562,7 +599,12 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
         CallExecution.SimulationCallType.VOICE,
         {
             "messages": [
-                {"role": "sub_actor", "name": "Rowan", "content": "Add a stop."}
+                {
+                    "role": "actor",
+                    "actor": "friend",
+                    "name": "Rowan",
+                    "content": "Add a stop.",
+                }
             ]
         },
         {},
@@ -570,4 +612,8 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
     clear_call_for_rerun(call)
 
     [turn] = CallExecutionSnapshot.objects.get(call_execution=call).transcripts
-    assert (turn["speaker_role"], turn["speaker_name"]) == ("sub_actor", "Rowan")
+    assert (turn["speaker_role"], turn["speaker_name"], turn["actor_id"]) == (
+        "actor",
+        "Rowan",
+        "friend",
+    )

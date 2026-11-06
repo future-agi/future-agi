@@ -11,14 +11,14 @@ const tabLabels = () =>
   screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 describe("ChatTranscriptPane", () => {
-  it("names a sub-actor with their role and how they were heard, and filters to them", async () => {
+  it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
       <ChatTranscriptPane
         customerName="Maya"
         turns={[
           ...plainChat,
           {
-            role: "sub_actor",
+            role: "actor",
             speakerName: "Rowan",
             actorRole: "roommate",
             channel: "audio_mix",
@@ -30,7 +30,7 @@ describe("ChatTranscriptPane", () => {
     expect(screen.getAllByText("Rowan · roommate")).toHaveLength(2);
     expect(screen.getAllByText("Heard nearby")).toHaveLength(2);
     expect(screen.getByText("Maya · Customer")).toBeInTheDocument();
-    expect(screen.queryByText(/sub_actor/)).toBeNull();
+    expect(screen.queryByText(/call_actor/)).toBeNull();
     expect(tabLabels()).toEqual(["All", "Assistant", "Customer", "Others"]);
     await userEvent.click(screen.getByRole("tab", { name: "Others" }));
     expect(screen.getByText("Make it two")).toBeInTheDocument();
@@ -40,7 +40,7 @@ describe("ChatTranscriptPane", () => {
   it("falls back to All when Others was picked and the next call has none", async () => {
     const { rerender } = render(
       <ChatTranscriptPane
-        turns={[...plainChat, { role: "sub_actor", text: "Hello?" }]}
+        turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );
     await userEvent.click(screen.getByRole("tab", { name: "Others" }));
@@ -51,10 +51,10 @@ describe("ChatTranscriptPane", () => {
     expect(screen.getByText("Booked")).toBeInTheDocument();
   });
 
-  it("shows just Someone for a sub-actor an older call kept no name for", () => {
+  it("shows just Someone for an actor an older call kept no name for", () => {
     render(
       <ChatTranscriptPane
-        turns={[...plainChat, { role: "sub_actor", text: "Hello?" }]}
+        turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );
     expect(screen.getAllByText("Someone")).toHaveLength(2);

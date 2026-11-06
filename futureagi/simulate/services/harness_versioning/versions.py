@@ -70,7 +70,7 @@ MEMBER_FIELDS = (
     "keywords",
     "background_noise",
     "max_turns",
-    "sub_actors",
+    "actors",
 )
 
 
@@ -213,6 +213,7 @@ def prepare_pieces(
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
         "actor_digests": hashing.actor_digests(split.environment),
+        "actor_names": hashing.actor_names(split.environment),
         "file_digests": _file_digests(split.environment),
         "stage_outputs": [
             one for one in outputs if one.get("kind") not in SUITE_OUTPUT_KINDS
@@ -485,7 +486,9 @@ def with_actor_digests(
     """A version's documents with its actor digests. A version saved before they were recorded has its cast read
     from its own files, so an actor it already had never reads as added."""
     documents = dict(documents or {})
-    if "actor_digests" not in documents and version.archive_object_key:
+    if (
+        "actor_digests" not in documents or "actor_names" not in documents
+    ) and version.archive_object_key:
         try:
             files = archives.read_archive(
                 archives.get_archive(version.archive_object_key)
@@ -493,7 +496,8 @@ def with_actor_digests(
         except (S3Error, HostedHarnessError):
             # Its files are gone or unreadable: its cast is unknown, as before.
             return documents
-        documents["actor_digests"] = hashing.actor_digests(files)
+        documents.setdefault("actor_digests", hashing.actor_digests(files))
+        documents["actor_names"] = hashing.actor_names(files)
     return documents
 
 
@@ -515,6 +519,8 @@ def environment_change(
             files=documents.get("file_digests") or {},
             previous_actors=previous.get("actor_digests"),
             actors=documents.get("actor_digests"),
+            previous_actor_names=previous.get("actor_names"),
+            actor_names=documents.get("actor_names"),
         )
     return diff, diffs.summarize_environment(diff)
 

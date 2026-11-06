@@ -115,6 +115,16 @@ const clampSx = {
   wordBreak: "break-word",
 };
 
+// What a check was decided from, in plain words: "from the world and the transcript".
+const EVIDENCE_WORDS = {
+  world_state: "the world",
+  tool_calls: "the agent's calls",
+  transcript: "the transcript",
+  recording: "the recording",
+};
+const evidenceLabel = (evidence) =>
+  `from ${evidence.map((one) => EVIDENCE_WORDS[one] || one).join(", ")}`;
+
 // A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
 const unscoredSummary = (t) => {
   if (t.status !== "no_score") return "";
@@ -123,6 +133,7 @@ const unscoredSummary = (t) => {
   return [
     [count("not_applicable"), STATUS_META.not_applicable.label.toLowerCase()],
     [count("inconclusive"), STATUS_META.inconclusive.label.toLowerCase()],
+    [count("unmeasured"), STATUS_META.unmeasured.label.toLowerCase()],
   ]
     .filter(([n]) => n)
     .map(([n, label]) => `${n} ${label}`)
@@ -352,9 +363,10 @@ export default function TraceTable({
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {
                     const verdict =
-                      goal.result === "not_applicable"
+                      goal.result === "not_applicable" ||
+                      goal.result === "unmeasured"
                         ? {
-                            label: STATUS_META.not_applicable.label,
+                            label: STATUS_META[goal.result].label,
                             color: "text.disabled",
                           }
                         : runOutcome(
@@ -376,6 +388,13 @@ export default function TraceTable({
                         >
                           {goal.name}
                         </Typography>
+                        {goal.evidence?.length > 0 && (
+                          <Typography
+                            sx={{ typography: "s3", color: "text.disabled" }}
+                          >
+                            {evidenceLabel(goal.evidence)}
+                          </Typography>
+                        )}
                         {goal.passed == null ? (
                           <CustomTooltip
                             show={!!goal.reason}
@@ -397,7 +416,11 @@ export default function TraceTable({
                             sx={{ display: "flex", color: verdict.color }}
                           >
                             <Iconify
-                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
+                              icon={
+                                goal.passed
+                                  ? "solar:check-linear"
+                                  : "solar:close-linear"
+                              }
                               width={16}
                               aria-hidden="true"
                             />

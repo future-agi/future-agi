@@ -3,8 +3,8 @@
 from simulate.models.test_execution import CallTranscript
 
 
-def sub_actor_label(name: str | None) -> str:
-    """How a transcript a model reads names a sub-actor, in the harness's words, so no one reads them as the caller."""
+def call_actor_label(name: str | None) -> str:
+    """How a transcript a model reads names an actor, in the harness's words, so no one reads them as the caller."""
     return f"{name or 'Someone else'} (not the person being served)"
 
 
@@ -22,5 +22,5 @@ def get_displayable_transcript_roles() -> list[str]:
         CallTranscript.SpeakerRole.USER,
         CallTranscript.SpeakerRole.ASSISTANT,
         CallTranscript.SpeakerRole.SYSTEM,
-        CallTranscript.SpeakerRole.SUB_ACTOR,
+        CallTranscript.SpeakerRole.ACTOR,
     ]

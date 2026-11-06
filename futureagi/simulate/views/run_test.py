@@ -5960,11 +5960,15 @@ class RunTestExecutionsView(APIView):
                             else None
                         ),
                         "outcome_failed": (
-                            sum(
-                                outcome_counts.get(
-                                    hosted_jobs[test_execution.id], {}
-                                ).get(status, 0)
-                                for status in ("failed", "errored")
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "failed", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_errored": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "errored", 0
                             )
                             if test_execution.id in hosted_jobs
                             else None

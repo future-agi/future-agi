@@ -24,11 +24,12 @@ export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   content: PropTypes.node,
 });
 
-// How a sub-actor joins a call, as the transcript and the contract tab both name it.
-export const SUB_ACTOR_CHANNEL_LABELS = {
+// How an actor joins a call, as the transcript and the contract tab both name it.
+export const ACTOR_CHANNEL_LABELS = {
   audio_mix: "Heard nearby",
   audio_handoff: "Takes the phone",
   ivr: "Phone menu",
+  chat_message: "Writes in the chat",
 };
 
 // Data-palette slot for everyone on a call besides the agent and the customer.
@@ -37,5 +38,5 @@ export const OTHER_PARTY_SERIES = 2;
 // Data-palette slot for a world actor's actions, apart from people speaking.
 export const WORLD_ACTOR_SERIES = 4;
 
-// Widest a sub-actor's "Name · role" label gets before it is cut, in px.
+// Widest an actor's "Name · role" label gets before it is cut, in px.
 export const OTHER_PARTY_LABEL_MAX_WIDTH = 320;

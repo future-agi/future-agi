@@ -4070,6 +4070,856 @@ export interface ClickHouseHealthErrorResponseApi {
   routing?: ClickHouseHealthErrorResponseApiRouting;
 }
 
+export type HostUpdateStatusResponseApiResultApiSchemaVersion =
+  (typeof HostUpdateStatusResponseApiResultApiSchemaVersion)[keyof typeof HostUpdateStatusResponseApiResultApiSchemaVersion];
+
+export const HostUpdateStatusResponseApiResultApiSchemaVersion = {
+  NUMBER_1: 1,
+} as const;
+
+export type HostUpdateStatusResponseApiResultAvailability =
+  (typeof HostUpdateStatusResponseApiResultAvailability)[keyof typeof HostUpdateStatusResponseApiResultAvailability];
+
+export const HostUpdateStatusResponseApiResultAvailability = {
+  available: "available",
+  unavailable: "unavailable",
+  unsupported: "unsupported",
+} as const;
+
+export type HostUpdateStatusResponseApiResultFreshness =
+  (typeof HostUpdateStatusResponseApiResultFreshness)[keyof typeof HostUpdateStatusResponseApiResultFreshness];
+
+export const HostUpdateStatusResponseApiResultFreshness = {
+  fresh: "fresh",
+  stale: "stale",
+  unknown: "unknown",
+} as const;
+
+export type HostUpdateStatusResponseApiResultDiscoveryFreshness =
+  (typeof HostUpdateStatusResponseApiResultDiscoveryFreshness)[keyof typeof HostUpdateStatusResponseApiResultDiscoveryFreshness];
+
+export const HostUpdateStatusResponseApiResultDiscoveryFreshness = {
+  fresh: "fresh",
+  stale: "stale",
+  unknown: "unknown",
+} as const;
+
+export type HostUpdateStatusResponseApiResultVersionsFreshness =
+  (typeof HostUpdateStatusResponseApiResultVersionsFreshness)[keyof typeof HostUpdateStatusResponseApiResultVersionsFreshness];
+
+export const HostUpdateStatusResponseApiResultVersionsFreshness = {
+  fresh: "fresh",
+  stale: "stale",
+  unknown: "unknown",
+} as const;
+
+export type HostUpdateStatusResponseApiResultProgressFreshness =
+  (typeof HostUpdateStatusResponseApiResultProgressFreshness)[keyof typeof HostUpdateStatusResponseApiResultProgressFreshness];
+
+export const HostUpdateStatusResponseApiResultProgressFreshness = {
+  fresh: "fresh",
+  stale: "stale",
+  unknown: "unknown",
+} as const;
+
+export type HostUpdateStatusResponseApiResultSnapshot = {
+  schema_version: 1;
+  /**
+   * @minimum 0
+   * @maximum 9007199254740991
+   */
+  sequence: number;
+  /**
+   * @minLength 20
+   * @maxLength 20
+   * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$
+   */
+  generated_at: string;
+  installation: {
+    /**
+     * @minLength 1
+     * @maxLength 32
+     * @pattern ^[0-9a-f]{32}$
+     */
+    slot_id: string;
+    topology: "standalone" | "distributed";
+    production: boolean;
+  };
+  versions: {
+    observed_at: string | null;
+    runtime_state: "consistent" | "mixed" | "unknown";
+    selected_release: string | null;
+    running_release: string | null;
+    /**
+     * @minItems 0
+     * @maxItems 9
+     */
+    components: {
+      component:
+        | "standalone"
+        | "backend"
+        | "frontend"
+        | "fi_collector"
+        | "agentcc_gateway"
+        | "serving"
+        | "serving_gpu"
+        | "code_executor"
+        | "simulation_runner";
+      selected_version: string | null;
+      /**
+       * @minItems 0
+       * @maxItems 8
+       */
+      observed_versions: string[];
+      observation: "known" | "unknown" | "not_deployed";
+    }[];
+  };
+  policy: {
+    channel: "stable" | "beta";
+    version_policy: "patch" | "minor" | "major";
+    /**
+     * @minimum 300
+     * @maximum 86400
+     */
+    check_interval_seconds: number;
+  };
+  automation: {
+    mode: "manual" | "notify" | "download" | "apply";
+    enabled: boolean;
+    state:
+      | "not_implemented"
+      | "disabled"
+      | "manual"
+      | "enabled"
+      | "paused"
+      | "blocked";
+    paused_until: string | null;
+    pause_indefinite: boolean;
+    maintenance_window:
+      | {
+          kind: "always";
+          /**
+           * @minLength 1
+           * @maxLength 64
+           */
+          timezone: string;
+        }
+      | {
+          kind: "interval";
+          /**
+           * @minLength 1
+           * @maxLength 64
+           */
+          timezone: string;
+          /**
+           * @minItems 1
+           * @maxItems 7
+           */
+          days_of_week: number[];
+          /**
+           * @minLength 1
+           * @maxLength 5
+           * @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$
+           */
+          start: string;
+          /**
+           * @minLength 1
+           * @maxLength 5
+           * @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$
+           */
+          end: string;
+        }
+      | null;
+    last_tick_at: string | null;
+    next_check_at: string | null;
+    next_action_at: string | null;
+  };
+  discovery: {
+    state: "not_checked" | "current" | "available" | "blocked" | "failed";
+    last_attempt_at: string | null;
+    checked_at: string | null;
+    candidate_version: string | null;
+    verification: "not_checked" | "verified" | "rejected";
+    /**
+     * @minItems 0
+     * @maxItems 12
+     */
+    reason_codes: (
+      | "manifest_unavailable"
+      | "signature_rejected"
+      | "channel_mismatch"
+      | "version_policy_blocked"
+      | "release_incomplete"
+      | "discovery_incomplete"
+      | "immutable_release_changed"
+      | "network_unavailable"
+      | "rate_limited"
+      | "cache_invalid"
+      | "ownership_unconfirmed"
+      | "deployment_files_mismatch"
+      | "required_env_missing"
+      | "unsupported_contract"
+      | "uncertified_release"
+      | "configuration_changed"
+      | "backup_required"
+      | "backup_failed"
+      | "backup_proof_invalid"
+      | "backup_expired"
+      | "stale_stage"
+      | "env_conflict"
+      | "initialization_required"
+      | "manual_stage_present"
+      | "recovery_required"
+      | "readiness_failed"
+      | "operation_interrupted"
+      | "operation_timeout"
+      | "rollback_ineligible"
+      | "rollback_failed"
+      | "failed_target_latched"
+      | "running_versions_unknown"
+      | "mixed_running_versions"
+      | "outside_window"
+      | "insufficient_window"
+      | "clock_skew"
+      | "timezone_unavailable"
+      | "host_verifier_required"
+      | "image_digest_mismatch"
+      | "disk_space_insufficient"
+      | "status_reporting_unavailable"
+      | "scheduler_unregistered"
+      | "unsupported_installation"
+      | "control_invalid"
+      | "process_failed"
+      | "restore_not_certified"
+      | "transition_not_rehearsed"
+      | "platform_not_rehearsed"
+      | "restore_procedure_unsupported"
+      | "migration_inventory_unsupported"
+      | "migration_inventory_mismatch"
+      | "backup_inventory_mismatch"
+      | "restore_capacity_unknown"
+      | "restore_capacity_insufficient"
+      | "restore_child_ambiguous"
+      | "restore_verification_failed"
+      | "automatic_recovery_pending"
+      | "restored_after_update_failure"
+      | "migration_exceeds_window"
+      | "insufficient_disk_for_migration"
+      | "backup_exceeds_window"
+      | "insufficient_disk_for_backup"
+      | "migration_stalled"
+      | "disk_watermark_abort"
+    )[];
+  };
+  download: {
+    state:
+      | "not_downloaded"
+      | "downloading"
+      | "downloaded"
+      | "failed"
+      | "unknown";
+    target_version: string | null;
+    completed_at: string | null;
+    /**
+     * @minItems 0
+     * @maxItems 9
+     */
+    verified_components: (
+      | "standalone"
+      | "backend"
+      | "frontend"
+      | "fi_collector"
+      | "agentcc_gateway"
+      | "serving"
+      | "serving_gpu"
+      | "code_executor"
+      | "simulation_runner"
+    )[];
+    /**
+     * @minItems 0
+     * @maxItems 12
+     */
+    reason_codes: (
+      | "manifest_unavailable"
+      | "signature_rejected"
+      | "channel_mismatch"
+      | "version_policy_blocked"
+      | "release_incomplete"
+      | "discovery_incomplete"
+      | "immutable_release_changed"
+      | "network_unavailable"
+      | "rate_limited"
+      | "cache_invalid"
+      | "ownership_unconfirmed"
+      | "deployment_files_mismatch"
+      | "required_env_missing"
+      | "unsupported_contract"
+      | "uncertified_release"
+      | "configuration_changed"
+      | "backup_required"
+      | "backup_failed"
+      | "backup_proof_invalid"
+      | "backup_expired"
+      | "stale_stage"
+      | "env_conflict"
+      | "initialization_required"
+      | "manual_stage_present"
+      | "recovery_required"
+      | "readiness_failed"
+      | "operation_interrupted"
+      | "operation_timeout"
+      | "rollback_ineligible"
+      | "rollback_failed"
+      | "failed_target_latched"
+      | "running_versions_unknown"
+      | "mixed_running_versions"
+      | "outside_window"
+      | "insufficient_window"
+      | "clock_skew"
+      | "timezone_unavailable"
+      | "host_verifier_required"
+      | "image_digest_mismatch"
+      | "disk_space_insufficient"
+      | "status_reporting_unavailable"
+      | "scheduler_unregistered"
+      | "unsupported_installation"
+      | "control_invalid"
+      | "process_failed"
+      | "restore_not_certified"
+      | "transition_not_rehearsed"
+      | "platform_not_rehearsed"
+      | "restore_procedure_unsupported"
+      | "migration_inventory_unsupported"
+      | "migration_inventory_mismatch"
+      | "backup_inventory_mismatch"
+      | "restore_capacity_unknown"
+      | "restore_capacity_insufficient"
+      | "restore_child_ambiguous"
+      | "restore_verification_failed"
+      | "automatic_recovery_pending"
+      | "restored_after_update_failure"
+      | "migration_exceeds_window"
+      | "insufficient_disk_for_migration"
+      | "backup_exceeds_window"
+      | "insufficient_disk_for_backup"
+      | "migration_stalled"
+      | "disk_watermark_abort"
+    )[];
+  };
+  operation:
+    | {
+        state:
+          | "idle"
+          | "checking"
+          | "downloading"
+          | "backing_up"
+          | "staged"
+          | "awaiting_initialization"
+          | "applying"
+          | "verifying"
+          | "succeeded"
+          | "failed"
+          | "interrupted"
+          | "rolling_back"
+          | "rolled_back"
+          | "blocked"
+          | "unknown"
+          | "restoring"
+          | "restored"
+          | "recovery_required";
+        kind: "check" | "download" | "apply" | "rollback" | "restore" | null;
+        stage:
+          | "planning"
+          | "backup"
+          | "image_fetch"
+          | "image_verification"
+          | "env_selection"
+          | "production_initialization"
+          | "rollout"
+          | "readiness"
+          | "recovery"
+          | "quiescence"
+          | "restore"
+          | "stability"
+          | null;
+        started_at: string | null;
+        finished_at: string | null;
+        reported_at: string | null;
+        /**
+         * @minItems 0
+         * @maxItems 12
+         */
+        reason_codes: (
+          | "manifest_unavailable"
+          | "signature_rejected"
+          | "channel_mismatch"
+          | "version_policy_blocked"
+          | "release_incomplete"
+          | "discovery_incomplete"
+          | "immutable_release_changed"
+          | "network_unavailable"
+          | "rate_limited"
+          | "cache_invalid"
+          | "ownership_unconfirmed"
+          | "deployment_files_mismatch"
+          | "required_env_missing"
+          | "unsupported_contract"
+          | "uncertified_release"
+          | "configuration_changed"
+          | "backup_required"
+          | "backup_failed"
+          | "backup_proof_invalid"
+          | "backup_expired"
+          | "stale_stage"
+          | "env_conflict"
+          | "initialization_required"
+          | "manual_stage_present"
+          | "recovery_required"
+          | "readiness_failed"
+          | "operation_interrupted"
+          | "operation_timeout"
+          | "rollback_ineligible"
+          | "rollback_failed"
+          | "failed_target_latched"
+          | "running_versions_unknown"
+          | "mixed_running_versions"
+          | "outside_window"
+          | "insufficient_window"
+          | "clock_skew"
+          | "timezone_unavailable"
+          | "host_verifier_required"
+          | "image_digest_mismatch"
+          | "disk_space_insufficient"
+          | "status_reporting_unavailable"
+          | "scheduler_unregistered"
+          | "unsupported_installation"
+          | "control_invalid"
+          | "process_failed"
+          | "restore_not_certified"
+          | "transition_not_rehearsed"
+          | "platform_not_rehearsed"
+          | "restore_procedure_unsupported"
+          | "migration_inventory_unsupported"
+          | "migration_inventory_mismatch"
+          | "backup_inventory_mismatch"
+          | "restore_capacity_unknown"
+          | "restore_capacity_insufficient"
+          | "restore_child_ambiguous"
+          | "restore_verification_failed"
+          | "automatic_recovery_pending"
+          | "restored_after_update_failure"
+          | "migration_exceeds_window"
+          | "insufficient_disk_for_migration"
+          | "backup_exceeds_window"
+          | "insufficient_disk_for_backup"
+          | "migration_stalled"
+          | "disk_watermark_abort"
+        )[];
+      }
+    | {
+        state:
+          | "idle"
+          | "checking"
+          | "downloading"
+          | "backing_up"
+          | "staged"
+          | "awaiting_initialization"
+          | "applying"
+          | "verifying"
+          | "succeeded"
+          | "failed"
+          | "interrupted"
+          | "rolling_back"
+          | "rolled_back"
+          | "blocked"
+          | "unknown"
+          | "restoring"
+          | "restored"
+          | "recovery_required";
+        kind: "check" | "download" | "apply" | "rollback" | "restore" | null;
+        stage:
+          | "planning"
+          | "backup"
+          | "image_fetch"
+          | "image_verification"
+          | "env_selection"
+          | "production_initialization"
+          | "rollout"
+          | "readiness"
+          | "recovery"
+          | "quiescence"
+          | "restore"
+          | "stability"
+          | null;
+        started_at: string | null;
+        finished_at: string | null;
+        reported_at: string | null;
+        /**
+         * @minItems 0
+         * @maxItems 12
+         */
+        reason_codes: (
+          | "manifest_unavailable"
+          | "signature_rejected"
+          | "channel_mismatch"
+          | "version_policy_blocked"
+          | "release_incomplete"
+          | "discovery_incomplete"
+          | "immutable_release_changed"
+          | "network_unavailable"
+          | "rate_limited"
+          | "cache_invalid"
+          | "ownership_unconfirmed"
+          | "deployment_files_mismatch"
+          | "required_env_missing"
+          | "unsupported_contract"
+          | "uncertified_release"
+          | "configuration_changed"
+          | "backup_required"
+          | "backup_failed"
+          | "backup_proof_invalid"
+          | "backup_expired"
+          | "stale_stage"
+          | "env_conflict"
+          | "initialization_required"
+          | "manual_stage_present"
+          | "recovery_required"
+          | "readiness_failed"
+          | "operation_interrupted"
+          | "operation_timeout"
+          | "rollback_ineligible"
+          | "rollback_failed"
+          | "failed_target_latched"
+          | "running_versions_unknown"
+          | "mixed_running_versions"
+          | "outside_window"
+          | "insufficient_window"
+          | "clock_skew"
+          | "timezone_unavailable"
+          | "host_verifier_required"
+          | "image_digest_mismatch"
+          | "disk_space_insufficient"
+          | "status_reporting_unavailable"
+          | "scheduler_unregistered"
+          | "unsupported_installation"
+          | "control_invalid"
+          | "process_failed"
+          | "restore_not_certified"
+          | "transition_not_rehearsed"
+          | "platform_not_rehearsed"
+          | "restore_procedure_unsupported"
+          | "migration_inventory_unsupported"
+          | "migration_inventory_mismatch"
+          | "backup_inventory_mismatch"
+          | "restore_capacity_unknown"
+          | "restore_capacity_insufficient"
+          | "restore_child_ambiguous"
+          | "restore_verification_failed"
+          | "automatic_recovery_pending"
+          | "restored_after_update_failure"
+          | "migration_exceeds_window"
+          | "insufficient_disk_for_migration"
+          | "backup_exceeds_window"
+          | "insufficient_disk_for_backup"
+          | "migration_stalled"
+          | "disk_watermark_abort"
+        )[];
+        phase:
+          | "attempt_reserved"
+          | "quiescing"
+          | "quiesced"
+          | "archiving"
+          | "backup_sealed"
+          | "env_commit_pending"
+          | "env_selected"
+          | "target_create_pending"
+          | "target_created"
+          | "target_starting"
+          | "target_verifying"
+          | "success_decided"
+          | "success_metadata_committed"
+          | "succeeded"
+          | "restore_decided"
+          | "restore_quiescing"
+          | "restore_quiesced"
+          | "restore_inputs_verified"
+          | "restoring_volumes"
+          | "restore_files_verified"
+          | "config_revert_pending"
+          | "config_reverted"
+          | "restore_data_committed"
+          | "previous_create_pending"
+          | "previous_created"
+          | "previous_start_armed"
+          | "previous_starting"
+          | "previous_verifying"
+          | "restore_verified"
+          | "restore_metadata_committed"
+          | "restored"
+          | "abort_quiescence"
+          | "failed_available"
+          | null;
+      };
+  last_run:
+    | {
+        kind: "apply" | "rollback";
+        automatic: boolean;
+        outcome:
+          | "succeeded"
+          | "staged"
+          | "rolled_back"
+          | "failed_before_rollout"
+          | "failed_during_rollout"
+          | "interrupted_before_rollout"
+          | "interrupted_during_rollout"
+          | "blocked";
+        from_version: string | null;
+        target_version: string | null;
+        finished_at: string | null;
+        fallback_outcome: "none" | "succeeded" | "failed" | "ineligible";
+      }
+    | {
+        kind: "apply" | "rollback";
+        automatic: boolean;
+        outcome:
+          | "succeeded"
+          | "staged"
+          | "rolled_back"
+          | "failed_before_rollout"
+          | "failed_during_rollout"
+          | "interrupted_before_rollout"
+          | "interrupted_during_rollout"
+          | "blocked";
+        from_version: string | null;
+        target_version: string | null;
+        finished_at: string | null;
+        fallback_outcome: "none" | "succeeded" | "failed" | "ineligible";
+        forward_result:
+          | "not_started"
+          | "running"
+          | "succeeded"
+          | "failed"
+          | "interrupted";
+        restore_result:
+          | "not_needed"
+          | "running"
+          | "verified"
+          | "failed"
+          | "recovery_required";
+        effective_version: string | null;
+        failed_target_version: string | null;
+      }
+    | null;
+  safety:
+    | {
+        backup_required: boolean;
+        backup_state:
+          | "not_evaluated"
+          | "required"
+          | "reported_complete"
+          | "failed"
+          | "explicitly_skipped"
+          | "pending"
+          | "quiescing"
+          | "sealed";
+        readiness: "unknown" | "pending" | "passed" | "failed";
+        automatic_rollback:
+          | "unsupported"
+          | "disabled"
+          | "eligible"
+          | "ineligible";
+        operator_action:
+          | "none"
+          | "inspect_host"
+          | "prepare_installation"
+          | "initialize_then_apply"
+          | "review_recovery"
+          | "repair_status_reporting";
+      }
+    | {
+        backup_required: boolean;
+        backup_state:
+          | "not_evaluated"
+          | "required"
+          | "reported_complete"
+          | "failed"
+          | "explicitly_skipped"
+          | "pending"
+          | "quiescing"
+          | "sealed";
+        readiness: "unknown" | "pending" | "passed" | "failed";
+        automatic_rollback:
+          | "unsupported"
+          | "disabled"
+          | "eligible"
+          | "ineligible";
+        operator_action:
+          | "none"
+          | "inspect_host"
+          | "prepare_installation"
+          | "initialize_then_apply"
+          | "review_recovery"
+          | "repair_status_reporting";
+        fallback_strategy: "restore_backup" | "none";
+        restore_state:
+          | "not_needed"
+          | "running"
+          | "verified"
+          | "failed"
+          | "recovery_required";
+        snapshot_at: string | null;
+        loss_window_start: string | null;
+        loss_window_end: string | null;
+        loss_window_qualification:
+          | "not_applicable"
+          | "bounded"
+          | "conservative"
+          | "unknown";
+        guidance_id: "none" | "inspect_host" | "review_recovery";
+        estimates: {
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          backup_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          restore_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          extra_disk_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          backup_required_free_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          docker_required_free_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          protected_restore_reserve_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          forward_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          recovery_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          total_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_deadline_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_stall_timeout_seconds: number;
+        } | null;
+        failed_target_version: string | null;
+      };
+} | null;
+
+export type HostUpdateStatusResponseApiResult = {
+  api_schema_version: HostUpdateStatusResponseApiResultApiSchemaVersion;
+  availability: HostUpdateStatusResponseApiResultAvailability;
+  reason_code:
+    | "not_configured"
+    | "not_reported"
+    | "unreadable"
+    | "malformed"
+    | "unsupported_schema"
+    | "untrusted_file"
+    | "clock_skew"
+    | "installation_mismatch"
+    | null;
+  freshness: HostUpdateStatusResponseApiResultFreshness;
+  age_seconds: number | null;
+  discovery_freshness: HostUpdateStatusResponseApiResultDiscoveryFreshness;
+  versions_freshness: HostUpdateStatusResponseApiResultVersionsFreshness;
+  progress_freshness: HostUpdateStatusResponseApiResultProgressFreshness;
+  snapshot: HostUpdateStatusResponseApiResultSnapshot;
+};
+
+export interface HostUpdateStatusResponseApi {
+  status: true;
+  result: HostUpdateStatusResponseApiResult;
+}
+
+export type HostUpdateStatusErrorApiType =
+  (typeof HostUpdateStatusErrorApiType)[keyof typeof HostUpdateStatusErrorApiType];
+
+export const HostUpdateStatusErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  api_error: "api_error",
+  service_unavailable: "service_unavailable",
+} as const;
+
+export type HostUpdateStatusErrorApiCode =
+  (typeof HostUpdateStatusErrorApiCode)[keyof typeof HostUpdateStatusErrorApiCode];
+
+export const HostUpdateStatusErrorApiCode = {
+  invalid: "invalid",
+  not_authenticated: "not_authenticated",
+  permission_denied: "permission_denied",
+  "2fa_required": "2fa_required",
+  saml_scope_conflict: "saml_scope_conflict",
+  not_found: "not_found",
+  method_not_allowed: "method_not_allowed",
+  service_unavailable: "service_unavailable",
+} as const;
+
+export interface HostUpdateStatusErrorApi {
+  status: false;
+  type: HostUpdateStatusErrorApiType;
+  code: HostUpdateStatusErrorApiCode;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  detail: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  message: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  error: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  result: string;
+}
+
 export type LangfuseHealthResponseApiStatus =
   (typeof LangfuseHealthResponseApiStatus)[keyof typeof LangfuseHealthResponseApiStatus];
 
@@ -16098,6 +16948,7 @@ export interface HarnessRunSummaryApi {
   agent_version: AgentVersionRefApi;
   outcome_passed: number;
   outcome_failed: number;
+  outcome_errored: number;
   outcome_skipped: number;
   outcome_no_score: number;
   started_at: string;
@@ -17884,7 +18735,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
-  sub_actor: "sub_actor",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -18249,7 +19100,7 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
-export interface HarnessEnvironmentSubActorPersonaApi {
+export interface HarnessEnvironmentCallActorPersonaApi {
   name?: string;
   gender?: string;
   age_group?: string;
@@ -18262,7 +19113,7 @@ export interface HarnessEnvironmentSubActorPersonaApi {
   accent?: string;
 }
 
-export interface HarnessEnvironmentSubActorApi {
+export interface HarnessEnvironmentCallActorApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
@@ -18270,7 +19121,7 @@ export interface HarnessEnvironmentSubActorApi {
   role: string;
   /** @minLength 1 */
   channel: string;
-  persona: HarnessEnvironmentSubActorPersonaApi;
+  persona: HarnessEnvironmentCallActorPersonaApi;
   loudness_ratio?: number;
   scenarios_count: number;
 }
@@ -18352,7 +19203,7 @@ export interface HarnessEnvironmentContractApi {
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
-  sub_actors: HarnessEnvironmentSubActorApi[];
+  call_actors: HarnessEnvironmentCallActorApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -18402,7 +19253,7 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
-export interface HarnessEnvironmentSubActorTriggerApi {
+export interface HarnessEnvironmentCallActorTriggerApi {
   /** @minLength 1 */
   kind?: string;
   turn?: number;
@@ -18412,11 +19263,16 @@ export interface HarnessEnvironmentSubActorTriggerApi {
   p?: number;
 }
 
-export interface HarnessEnvironmentScenarioSubActorApi {
+export type HarnessEnvironmentScenarioCallActorApiActionsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentScenarioCallActorApi {
   /** @minLength 1 */
   id: string;
   instruction: string;
-  trigger: HarnessEnvironmentSubActorTriggerApi;
+  trigger: HarnessEnvironmentCallActorTriggerApi;
+  actions?: HarnessEnvironmentScenarioCallActorApiActionsItem[];
 }
 
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
@@ -18438,7 +19294,7 @@ export interface HarnessEnvironmentScenarioApi {
   fixture: HarnessEnvironmentScenarioApiFixture;
   steps: number;
   sub_goals: HarnessEnvironmentSubGoalApi[];
-  sub_actors: HarnessEnvironmentScenarioSubActorApi[];
+  actors: HarnessEnvironmentScenarioCallActorApi[];
   persona: HarnessEnvironmentScenarioApiPersona;
   /** @minLength 1 */
   situation: string;
@@ -18582,6 +19438,14 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessActorLimitsWriteApiLimits = { [key: string]: string };
+
+export interface HarnessActorLimitsWriteApi {
+  limits: HarnessActorLimitsWriteApiLimits;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
 export type HarnessActorListApiActorsItem = { [key: string]: unknown };
 
 export type HarnessActorListApiSource =
@@ -18598,11 +19462,24 @@ export type HarnessActorListApiChannels = { [key: string]: string };
 
 export type HarnessActorListApiLoudness = { [key: string]: unknown };
 
+export type HarnessActorListApiLimits = { [key: string]: unknown };
+
 export interface HarnessWorldActionApi {
   /** @minLength 1 */
   action: string;
   tool: string;
   description: string;
+}
+
+export interface HarnessActorRecordSourceApi {
+  store: string;
+  /** @minLength 1 */
+  collection: string;
+}
+
+export interface HarnessActorKnowledgeSourcesApi {
+  files: string[];
+  records: HarnessActorRecordSourceApi[];
 }
 
 export interface HarnessActorListApi {
@@ -18613,6 +19490,10 @@ export interface HarnessActorListApi {
   actions: HarnessWorldActionApi[];
   channels: HarnessActorListApiChannels;
   loudness: HarnessActorListApiLoudness;
+  reserved_ids: string[];
+  knowledge_sources: HarnessActorKnowledgeSourcesApi;
+  limits?: HarnessActorListApiLimits;
+  actor_models?: string[];
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };
@@ -18641,12 +19522,21 @@ export interface HarnessActorSeenApi {
   source: HarnessActorSeenApiSource;
 }
 
+export interface HarnessActorNeverSeesApi {
+  scenario_fields: string[];
+  files: string[];
+  other_actors: string[];
+}
+
 export interface HarnessActorViewApi {
   /** @minLength 1 */
   actor_id: string;
   permitted_actions: string[];
   sees: HarnessActorSeenApi[];
-  never_sees: string[];
+  never_sees: HarnessActorNeverSeesApi;
+  played_from_view: boolean;
+  /** @minLength 1 */
+  unused_reason: string;
 }
 
 export type HarnessComparePairApiBand =
@@ -22390,7 +23280,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
-  sub_actor: "sub_actor",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -22400,6 +23290,8 @@ export interface CallTranscriptApi {
   speaker_role?: CallTranscriptApiSpeakerRole;
   /** @maxLength 255 */
   speaker_name?: string;
+  /** @maxLength 255 */
+  actor_id?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -23048,6 +23940,7 @@ export interface TestExecutionItemResponseApi {
   readonly completed_at?: string;
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
+  readonly outcome_errored?: number;
   readonly outcome_skipped?: number;
   readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
@@ -24245,6 +25138,7 @@ export type SubGoalResultApiResult =
 export const SubGoalResultApiResult = {
   not_applicable: "not_applicable",
   inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
 } as const;
 
 export interface SubGoalResultApi {
@@ -24253,6 +25147,8 @@ export interface SubGoalResultApi {
   passed: boolean | null;
   result?: SubGoalResultApiResult;
   reason?: string;
+  /** What the check was decided from: world_state, tool_calls, transcript, recording. */
+  evidence?: string[];
 }
 
 export interface CostBreakdownApi {
@@ -24326,8 +25222,21 @@ export interface SimulateRunV3FunctionCallApi {
   on_behalf_of?: string;
 }
 
-export interface CallSubActorApi {
-  /** The sub-actor's id in the environment. */
+/**
+ * How far they got in the call; absent on a call stored without a summary.
+ */
+export type CallCallActorApiDelivery =
+  (typeof CallCallActorApiDelivery)[keyof typeof CallCallActorApiDelivery];
+
+export const CallCallActorApiDelivery = {
+  delivered: "delivered",
+  dropped: "dropped",
+  not_triggered: "not_triggered",
+  not_drawn: "not_drawn",
+} as const;
+
+export interface CallCallActorApi {
+  /** The actor's id in the environment. */
   id?: string;
   /** The name the transcript shows. */
   name?: string;
@@ -24335,6 +25244,115 @@ export interface CallSubActorApi {
   role?: string;
   /** The channel id they joined the call on. */
   channel?: string;
+  /** How far they got in the call; absent on a call stored without a summary. */
+  delivery?: CallCallActorApiDelivery;
+}
+
+export interface TrialStateChangeApi {
+  /** @minLength 1 */
+  who: string;
+  /** @minLength 1 */
+  name: string;
+  attempted: number;
+  committed: number;
+  refused: number;
+  faulted: number;
+  duplicate: number;
+  committed_actions: string[];
+  /** True when this participant committed nothing: a result shown as 'no change', never left out. */
+  no_change?: boolean;
+}
+
+export type ActorDecisionApiPlay =
+  (typeof ActorDecisionApiPlay)[keyof typeof ActorDecisionApiPlay];
+
+export const ActorDecisionApiPlay = {
+  mocked: "mocked",
+  live: "live",
+  history: "history",
+  waiting: "waiting",
+  timeout: "timeout",
+  problem: "problem",
+} as const;
+
+/**
+ * What it sent: for a pre-run message (`history`), the message itself.
+ */
+export type ActorDecisionApiArguments = { [key: string]: string };
+
+export interface ActorDecisionApi {
+  /** @minLength 1 */
+  actor: string;
+  play: ActorDecisionApiPlay;
+  /** @minLength 1 */
+  action?: string;
+  /** What it sent: for a pre-run message (`history`), the message itself. */
+  arguments?: ActorDecisionApiArguments;
+  /**
+   * `voice` when decided on the call by a speaking actor.
+   * @minLength 1
+   */
+  channel?: string;
+  /**
+   * For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.
+   * @minLength 1
+   */
+  problem?: string;
+  why?: string;
+  status?: number;
+  timeout_seconds?: number;
+  /**
+   * silent, decline, one of the actor's own actions, or the id of the actor who answers instead
+   * @minLength 1
+   */
+  fallback?: string;
+  /**
+   * For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
+   * @minLength 1
+   */
+  outcome?: string;
+}
+
+export interface ApprovalWriteApi {
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  outcome: string;
+}
+
+export type ApprovalLineApiRequest = { [key: string]: string };
+
+export type ApprovalLineApiDecision = { [key: string]: string };
+
+export interface ApprovalLineApi {
+  request: ApprovalLineApiRequest;
+  decision: ApprovalLineApiDecision;
+  before_decision: ApprovalWriteApi[];
+  after_decision: ApprovalWriteApi[];
+  acted_before_decision: boolean;
+}
+
+export interface ActorUsageApi {
+  /** @minLength 1 */
+  actor: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+/**
+ * The actor limits this trial ran with; null is no limit.
+ */
+export type TrialStateApiLimits = { [key: string]: string };
+
+export interface TrialStateApi {
+  state_changes?: TrialStateChangeApi[];
+  decisions?: ActorDecisionApi[];
+  approvals?: ApprovalLineApi[];
+  usage?: ActorUsageApi[];
+  /** The actor limits this trial ran with; null is no limit. */
+  limits?: TrialStateApiLimits;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -24486,7 +25504,8 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
-  sub_actors: CallSubActorApi[];
+  call_actors: CallCallActorApi[];
+  trial_state: TrialStateApi;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
@@ -25158,18 +26177,24 @@ export interface FacetValueApi {
   count: number;
 }
 
-export interface LabelledFacetValueApi {
+export interface CallActorFacetValueApi {
   /** @minLength 1 */
   value: string;
   count: number;
   /** @minLength 1 */
   label: string;
+  /** Calls where at least one of the actor's lines reached the agent. */
+  delivered: number;
+  /** Calls where the actor was triggered but none of its lines reached the agent. */
+  dropped: number;
+  /** Calls the actor was planned for but never triggered in. */
+  not_triggered: number;
 }
 
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
-  sub_actor?: LabelledFacetValueApi[];
+  call_actor?: CallActorFacetValueApi[];
   status: FacetValueApi[];
 }
 
@@ -38320,6 +39345,13 @@ export type SimulateApiHarnessEnvironmentsCompareParams = {
    * The run to compare against; the previous completed run if absent.
    */
   against_execution_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsUploadFileBody = {
+  file: Blob;
+  /** What the file is for: `knowledge`, a document an actor may be given to read. */
+  kind: string;
+  expected_revision?: number;
 };
 
 export type SimulateApiHarnessEnvironmentsNudgesParams = {

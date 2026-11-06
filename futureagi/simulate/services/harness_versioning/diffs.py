@@ -83,6 +83,16 @@ def keyed_diff(
     return diff
 
 
+def _named(
+    diff: dict[str, list[str]], names: Mapping[str, str]
+) -> dict[str, list[dict[str, str]]]:
+    """Each changed actor by id and name, so a change reads by who it is about."""
+    return {
+        key: [{"id": one, "name": names.get(one) or one} for one in ids]
+        for key, ids in diff.items()
+    }
+
+
 def environment_diff(
     *,
     previous_contract: Mapping[str, Any] | None,
@@ -93,6 +103,8 @@ def environment_diff(
     files: Mapping[str, str],
     previous_actors: Mapping[str, str] | None = None,
     actors: Mapping[str, str] | None = None,
+    previous_actor_names: Mapping[str, str] | None = None,
+    actor_names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Contract items, sub-goal definitions, world files and actors, each added, removed or changed.
 
@@ -104,9 +116,7 @@ def environment_diff(
     if file_diff is not None and with_actors:
         # The actors section shows the cast one actor at a time; listing its files too counts each edit twice.
         file_diff = {
-            key: [
-                name for name in names if name not in ("actors.json", "sub_actors.json")
-            ]
+            key: [name for name in names if name != "actors.json"]
             for key, names in file_diff.items()
         }
     return {
@@ -117,7 +127,10 @@ def environment_diff(
             {
                 "actors": None
                 if previous_actors is None or actors is None
-                else keyed_diff(previous_actors, actors)
+                else _named(
+                    keyed_diff(previous_actors, actors),
+                    {**(previous_actor_names or {}), **(actor_names or {})},
+                )
             }
             if with_actors
             else {}

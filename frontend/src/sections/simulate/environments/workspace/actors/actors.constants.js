@@ -1,12 +1,51 @@
-import { SUB_ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+import { ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 
 // Every copy string on the Actors tab, so nothing is inlined in the JSX.
 export const ACTORS_COPY = {
-  subActors: {
-    title: (n) => `Sub-actors (${n})`,
+  limits: {
+    title: "Limits",
+    subtitle:
+      "Every limit on actors is a setting. Empty is the default for the channel; none is no limit.",
+    labels: {
+      max_active: "How many at once on a call",
+      caller_takes_back_after_turns: "Caller takes back after agent turns",
+      actor_seconds_per_call: "Seconds of actors per call",
+      max_messages: "Most messages in a conversation before the run",
+    },
+    defaults: {
+      max_active: "Default: 2 on a phone line, none in a chat",
+      caller_takes_back_after_turns:
+        "Default: 4 on a phone line, none in a chat",
+      actor_seconds_per_call: "Default: 60 on a phone line, none in a chat",
+      max_messages: "Default: 500",
+    },
+    none: "none",
+    badNumber: "A number above 0, or none",
+    model: "Model actors are played on",
+    modelHelp: "Each actor can also have its own",
+    callerModel: "The caller's model",
+    save: "Save limits to draft",
+    saveFailed: "The limits could not be saved",
+    scenarioOverride: "A scenario can set its own values for any of these.",
+  },
+  relations: {
+    title: "Who can reach whom",
+    subtitle:
+      "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
+    comesIn: (when) => `Comes in: ${when}`,
+    broughtBy: (name) => `Brought in by ${name}`,
+    reaches: (names) => `Its actions reach ${names.join(", ")}`,
+    reachesNoOne: "Its actions reach no other actor",
+  },
+  showSettings: "Limits",
+  hideSettings: "Hide limits",
+  noCaller:
+    "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
+  callActors: {
+    title: (n) => `Actors (${n})`,
     subtitle:
       "People on the person's side who are not the person. Change them in the builder chat.",
-    channels: SUB_ACTOR_CHANNEL_LABELS,
+    channels: ACTOR_CHANNEL_LABELS,
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },
 
@@ -24,23 +63,16 @@ export const ACTORS_COPY = {
     viewFailedTitle: "Couldn't load what they see",
     saveFailed: "Couldn't save the change. Try again in a moment.",
     subtitle:
-      "Everyone the agent deals with who is not the agent: people beside the caller on the call, and people and systems in the world. Edits wait in the draft until you save.",
+      "Everyone the agent deals with who is not the agent. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
-    callerSide: "On the caller's side",
-    callerSideAbout:
-      "People with the caller who speak on the call. They know the caller's situation, never the caller's own details.",
-    callerSideEmpty:
-      "No one with the caller yet. Add one, or ask the builder chat.",
-    addCallerSide: "Add someone on the caller's side",
-    worldSide: "In the world",
-    worldSideAbout:
-      "People and systems who act through the world's own actions, such as a manager approving in the CRM. They never speak to the agent.",
-    add: "Add someone in the world",
+    everyoneAbout:
+      "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
+    add: "Add an actor",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
-    empty: "No one in the world yet. Add one, or ask the builder chat.",
+    empty: "No actors yet. Add one, or ask the builder chat.",
     wants: "Wants",
     mayDo: "May do",
     nothing: "Nothing in the world",
@@ -103,7 +135,6 @@ export const ACTORS_COPY = {
       lessDetails: "Hide more details",
       moreDetailsHelp:
         "Saved with the actor, but a run plays them from each scenario's actions, so these do not change what happens yet.",
-      createCallerTitle: "Add someone on the caller's side",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       // The rule's words are the schema's own, when it sends them.
@@ -137,6 +168,19 @@ export const ACTORS_COPY = {
       stopWhen: "Is done when (optional, one per line)",
       facts: "What they know (optional, one per line)",
       factsHelp: "Facts they can use, such as the refund limit is $500",
+      files: "Files they can read (optional)",
+      filesHelp:
+        "The environment's own documents. What only the grader reads and the harness's files are never offered.",
+      recordsRead: "Records they can read (optional)",
+      recordsHelp:
+        "Record collections in the world they can look up during a run",
+      noFiles: "This environment has no documents an actor can read",
+      upload: "Upload a document",
+      uploading: "Uploading…",
+      uploadHelp:
+        "A policy, price list or note they know (.md, .txt, .json or .csv, up to 1 MB). Only actors you give it to can read it.",
+      uploadFailed: "The document could not be uploaded",
+      noRecords: "This environment's world has no records yet",
       style: "How they behave (optional)",
       styleHelp: "Their manner, such as brisk and decides quickly",
       answers: "Answers",
@@ -149,7 +193,39 @@ export const ACTORS_COPY = {
       noWorldActions:
         "This environment has no world actions: its tools run inside the agent, so no one in the world can act here.",
       trigger: "Comes in",
-      triggerHelp: "When they first act in a call",
+      triggerHelp:
+        "When they first take part; a scenario can give them its own",
+      modes: {
+        always: "Present from the start",
+        on_tool: "When the agent calls an action",
+        on_keyword: "When the agent says a word",
+        mid_journey: "From an agent turn",
+        contacted: "When the agent contacts them",
+        after_seconds: "At a set time",
+        conditional: "Once a record exists",
+      },
+      triggerTool: "The action",
+      triggerWords: "Words",
+      triggerWordsHelp: "Separated by commas",
+      triggerTurn: "From the agent's turn",
+      triggerSeconds: "Seconds after the start",
+      triggerCollection: "Records of",
+      triggerWhere: "Matching (optional)",
+      triggerWhereHelp:
+        'Field values the record holds, such as {"status": "pending"}',
+      triggerNeeds: {
+        tool: "Pick the action that brings them in",
+        words: "Type at least one word",
+        collection: "Pick the records that bring them in",
+      },
+      takesAction: (action) => `${action} is taken for them`,
+      model: "Model they are played on",
+      environmentModel: "The environment's model",
+      modelHelp: "A cheaper model costs less per actor turn",
+      maxTurns: "Most turns in a call (optional)",
+      maxLines: "Most lines in a call (optional)",
+      noLimitHelp: "Empty is no limit of their own",
+      wholeNumber: "A whole number above 0, or empty for no limit",
       timeout: "Waits, in seconds (optional)",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",
@@ -158,7 +234,18 @@ export const ACTORS_COPY = {
       answeredBy: (name) => `${name} answers instead`,
       fallbackLabel: (id) =>
         ACTORS_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
-      channel: "How they join the call",
+      channel: "How they join the conversation",
+      noChannel: "Doesn't speak in the conversation",
+      play: "How they act in the world",
+      plays: {
+        mocked: "Only the actions each scenario gives them",
+        live: "Decide their own actions when reached",
+        both: "Both",
+      },
+      playHelp:
+        "Deciding their own actions, they read what they see below and choose within what they may do; the world still refuses anything they may not.",
+      noChannelHelp:
+        "They act only through the world's actions. Pick how they join to have them speak too.",
       loudness: "How loud, next to the caller (optional)",
       loudnessAutomatic: (low, high) =>
         `Automatic: each call picks between ${low} and ${high} of the caller's voice`,

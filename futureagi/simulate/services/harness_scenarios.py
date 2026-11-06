@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
-from simulate.types import ScenarioSubActor
+from simulate.types import ScenarioCallActor
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -88,8 +88,8 @@ FIELDS: tuple[dict[str, Any], ...] = (
         "category": "conditions",
     },
     {
-        "value": "sub_actors",
-        "label": "Sub-actors",
+        "value": "actors",
+        "label": "Actors",
         "type": "enum",
         "category": "conditions",
     },
@@ -509,18 +509,33 @@ def _orm_path(field: str) -> str:
     return _ALIASES.get(head, head)
 
 
-# The filter's value for a scenario that includes no sub-actor.
-NO_SUB_ACTOR = "none"
+# The filter's value for a scenario that includes no actor.
+NO_CALL_ACTOR = "none"
 SIMULATED_USER_ONLY = "Simulated user only"
 
 
-def sub_actor_entries(raw: object) -> list[ScenarioSubActor] | None:
-    """A scenario's sub-actors as `{id, instruction, trigger}`, the fields a run reads."""
-    entries: list[ScenarioSubActor] = [
+def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
+    """A scenario's actors as `{id, instruction, trigger, knowledge, actions}`, the fields a run reads. A missing
+    trigger stays missing (the actor's own activation then applies), never stored as an empty one."""
+    entries: list[ScenarioCallActor] = [
         {
             "id": str(one["id"]),
             "instruction": str(one.get("instruction") or ""),
-            "trigger": one["trigger"] if isinstance(one.get("trigger"), dict) else {},
+            **(
+                {"trigger": one["trigger"]}
+                if isinstance(one.get("trigger"), dict) and one["trigger"]
+                else {}
+            ),
+            **(
+                {"knowledge": one["knowledge"]}
+                if isinstance(one.get("knowledge"), list)
+                else {}
+            ),
+            **(
+                {"actions": one["actions"]}
+                if isinstance(one.get("actions"), list)
+                else {}
+            ),
         }
         for one in (raw if isinstance(raw, list) else [])
         if isinstance(one, dict) and one.get("id")
@@ -528,19 +543,75 @@ def sub_actor_entries(raw: object) -> list[ScenarioSubActor] | None:
     return entries or None
 
 
-def sub_actor_choice_labels(listing: object) -> dict[str, str]:
-    """How the filter names each sub-actor, and scenarios with none of them."""
-    labels = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
-    for one in (listing.get("sub_actors") if isinstance(listing, dict) else None) or []:
+def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
+    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
+    its event start. Refused when the scenario is saved, the same rule the builder keeps."""
+    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+    named = [
+        str((one or {}).get("id") or "")
+        for one in doc.get("actors") or []
+        if isinstance(one, dict)
+    ]
+    for session in doc.get("pre_run") or []:
+        if isinstance(session, dict):
+            named += [str(one) for one in session.get("actors") or []]
+            named += [
+                str((one or {}).get("actor") or "")
+                for one in session.get("thread") or []
+                if isinstance(one, dict)
+            ]
+    starts = doc.get("starts_with")
+    if isinstance(starts, dict):
+        named.append(str(starts.get("actor") or ""))
+    missing = sorted({one for one in named if one and one not in known})
+    return [f"{name}: {one} is not an actor in this environment" for one in missing]
+
+
+def with_sessions_to_rewrite(
+    doc: dict[str, Any], before: dict[str, Any] | None
+) -> dict[str, Any]:
+    """A scenario whose pre-run session changed its situation (who, where, about) since it was written: that session's
+    thread is cleared, so the next seal writes it again from its actors; a thread is never kept for a situation that
+    no longer matches."""
+    sessions = doc.get("pre_run")
+    if not isinstance(sessions, list):
+        return doc
+    old = (before or {}).get("pre_run") if isinstance(before, dict) else None
+    old = old if isinstance(old, list) else []
+
+    def shape(one: object) -> object:
+        """What a session was written from: who is in it, where, and about what."""
+        if not isinstance(one, dict):
+            return None
+        return (one.get("actors"), one.get("where"), one.get("about"))
+
+    kept = []
+    for index, session in enumerate(sessions):
+        if not isinstance(session, dict):
+            kept.append(session)
+            continue
+        earlier = old[index] if index < len(old) else None
+        if earlier is not None and shape(session) != shape(earlier):
+            session = {**session, "fingerprint": "", "thread": []}
+        kept.append(session)
+    return {**doc, "pre_run": kept}
+
+
+def call_actor_choice_labels(listing: object) -> dict[str, str]:
+    """How the filter names each actor, and scenarios with none of them."""
+    labels = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
+    for one in (
+        listing.get("call_actors") if isinstance(listing, dict) else None
+    ) or []:
         if isinstance(one, dict) and one.get("id"):
             labels[str(one["id"])] = str(one.get("name") or one["id"])
     return labels
 
 
-def _sub_actor_match(value: str) -> Q:
-    if value == NO_SUB_ACTOR:
-        return Q(sub_actors__isnull=True)
-    return Q(sub_actors__contains=[{"id": value}])
+def _call_actor_match(value: str) -> Q:
+    if value == NO_CALL_ACTOR:
+        return Q(actors__isnull=True)
+    return Q(actors__contains=[{"id": value}])
 
 
 def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
@@ -557,7 +628,7 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
         "persona": persona or None,
         "coverage": doc.get("coverage") or None,
         "sub_goals": doc.get("sub_goals") or None,
-        "sub_actors": sub_actor_entries(doc.get("sub_actors")),
+        "actors": call_actor_entries(doc.get("actors")),
         # Older suites carry keywords on the persona.
         "keywords": (
             doc.get("keywords")
@@ -616,7 +687,7 @@ def _rows_held(
         take(index, by_key.get(key_of(docs[index])))
     owner = {
         key_of(doc): doc.get("name")
-        for doc, row in zip(docs, held_rows)
+        for doc, row in zip(docs, held_rows, strict=False)
         if row is not None
     }
     for index, doc in enumerate(docs):
@@ -964,10 +1035,10 @@ def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
         def matches(
             row: HostedHarnessScenario, path=path, field=field, values=values
         ) -> bool:
-            if field == "sub_actors":
-                ids = {str(one.get("id")) for one in row.sub_actors or []}
+            if field == "actors":
+                ids = {str(one.get("id")) for one in row.actors or []}
                 return any(
-                    not ids if one == NO_SUB_ACTOR else one in ids for one in values
+                    not ids if one == NO_CALL_ACTOR else one in ids for one in values
                 )
             held = _row_value(row, path)
             if field in _LIST_FIELDS:
@@ -983,10 +1054,10 @@ def apply_filters(queryset: QuerySet, params) -> QuerySet:
     if isinstance(queryset, ScenarioRows):
         return _filtered_rows(queryset, params)
     for field, path, values, negated in _filter_terms(params):
-        if field == "sub_actors":
+        if field == "actors":
             matches = Q()
             for value in values:
-                matches |= _sub_actor_match(value)
+                matches |= _call_actor_match(value)
             queryset = (
                 queryset.exclude(matches) if negated else queryset.filter(matches)
             )
@@ -1042,7 +1113,7 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
 def field_catalogue(
     queryset: QuerySet,
     spoken: bool = True,
-    sub_actor_labels: dict[str, str] | None = None,
+    call_actor_labels: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
@@ -1051,17 +1122,17 @@ def field_catalogue(
     for row in queryset.values(*set(paths.values())):
         for value, path in paths.items():
             held = row.get(path)
-            if value == "sub_actors":
-                held = [one.get("id") for one in held or []] or [NO_SUB_ACTOR]
+            if value == "actors":
+                held = [one.get("id") for one in held or []] or [NO_CALL_ACTOR]
             for one in held if isinstance(held, list) else [held]:
                 text = str(one or "").strip()
                 if text:
                     counts = tally[value]
                     counts[text] = counts.get(text, 0) + 1
 
-    # A suite where no scenario includes a sub-actor has nothing to filter on.
-    if set(tally["sub_actors"]) <= {NO_SUB_ACTOR}:
-        tally["sub_actors"] = {}
+    # A suite where no scenario includes an actor has nothing to filter on.
+    if set(tally["actors"]) <= {NO_CALL_ACTOR}:
+        tally["actors"] = {}
     catalogue: list[dict[str, Any]] = []
     for field in FIELDS:
         if not spoken and field["value"] in VOICE_ONLY_FIELDS:
@@ -1078,8 +1149,8 @@ def field_catalogue(
             for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
         ]
         entry["counts"] = counts
-        if field["value"] == "sub_actors":
-            entry["choice_labels"] = sub_actor_labels or sub_actor_choice_labels(None)
+        if field["value"] == "actors":
+            entry["choice_labels"] = call_actor_labels or call_actor_choice_labels(None)
         catalogue.append(entry)
     return catalogue
 
@@ -1190,7 +1261,7 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
-        "sub_actors": row.sub_actors or [],
+        "actors": row.actors or [],
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

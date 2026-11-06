@@ -1,5 +1,6 @@
 import { slugify } from "../../helpers/slugify";
 import { genderLabel } from "../scenarios/personaLabels";
+import { ACTORS_COPY } from "./actors.constants";
 
 // A world actor's id rule; the server applies it to every actor.
 const ID_SOURCE = "actors.json";
@@ -39,18 +40,18 @@ export const seenValue = (input, value) => {
     .join(" · ");
 };
 
-// `never_sees` names: grader material (`scenario.*`, `file.*`) and other actors' private fields (`<id>.<field>`).
-export const hidden = (names) => {
+// `never_sees`: grader material, sent as scenario fields and files apart, and other actors' private fields
+// (`<name>.<field>`).
+export const hidden = (neverSees) => {
   const grader = new Set();
+  // Grader material reads as words, a file without its extension, so `sub_goals.json` and `sub_goals` are one line.
+  for (const name of neverSees?.scenario_fields || []) grader.add(words(name));
+  for (const name of neverSees?.files || [])
+    grader.add(name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
   const others = {};
-  for (const name of names || []) {
-    const [head, ...rest] = name.split(".");
-    const field = rest.join(".");
-    // Grader material reads as words, a file without its extension, so `sub_goals.json` and `sub_goals` are one line.
-    if (head === "file")
-      grader.add(field.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "));
-    else if (head === "scenario") grader.add(words(field));
-    else (others[head] ||= []).push(words(field));
+  for (const name of neverSees?.other_actors || []) {
+    const at = name.lastIndexOf(".");
+    (others[name.slice(0, at)] ||= []).push(words(name.slice(at + 1)));
   }
   // Every other actor keeps the same fields to itself, so one line per field set, not one per actor.
   const groups = {};
@@ -82,27 +83,178 @@ export const idRule = (records) => {
 export const idRuleText = (records) =>
   records?.[ID_SOURCE]?.properties?.id?.description || "";
 
-// A sub-actor speaks on a call channel; a world actor has none.
+// An actor with a channel speaks in the conversation; every actor has every other field.
 export const speaks = (actor) => Boolean(actor?.channel);
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
-// The persona fields a sub-actor's voice is picked from.
+// The persona fields an actor's voice is picked from.
 const VOICE_FIELDS = ["gender", "age_group", "accent"];
 
-// The "Comes in" choice for a trigger the select can't make itself (a delay, a chance, a later call): kept as it is.
+// The "Comes in" choice for a trigger the form can't make itself (a chance, a later call): kept as it is.
 export const KEPT_TRIGGER = "__kept__";
 
-const triggerChoice = (trigger) => {
+// The five ways an actor comes in, as each runtime can evaluate them: someone who speaks runs on the agent's
+// turns and words; someone acting through the world on its actions, contacts and time.
+export const MODES = {
+  speaking: ["always", "on_tool", "on_keyword", "mid_journey", "conditional"],
+  world: ["always", "on_tool", "contacted", "after_seconds", "conditional"],
+};
+export const modesFor = (channel) => (channel ? MODES.speaking : MODES.world);
+
+const triggerFields = (trigger) => {
   const kind = trigger?.kind || "always";
-  if (kind === "always") return "";
-  if (kind === "on_tool" && trigger.tool && !(trigger.on_call > 1))
-    return trigger.tool;
-  return KEPT_TRIGGER;
+  const plain =
+    [...MODES.speaking, ...MODES.world].includes(kind) &&
+    !(kind === "on_tool" && trigger.on_call > 1);
+  return {
+    mode: plain ? kind : KEPT_TRIGGER,
+    triggerTool: trigger?.tool || "",
+    triggerWords: (trigger?.words || []).join(", "),
+    triggerTurn: trigger?.turn ?? 1,
+    triggerSeconds: trigger?.seconds ?? 0,
+    triggerCollection: trigger?.collection || "",
+    triggerWhere:
+      trigger?.where && Object.keys(trigger.where).length
+        ? JSON.stringify(trigger.where)
+        : "",
+  };
+};
+
+const TRIGGER_FIELDS = [
+  "mode",
+  "triggerTool",
+  "triggerWords",
+  "triggerTurn",
+  "triggerSeconds",
+  "triggerCollection",
+  "triggerWhere",
+];
+
+// The trigger the form's fields make; null when the mode is the one kept as it was.
+export const triggerOf = (read) => {
+  switch (read("mode")) {
+    case "always":
+      return { kind: "always" };
+    case "on_tool":
+      return { kind: "on_tool", tool: read("triggerTool") };
+    case "on_keyword":
+      return {
+        kind: "on_keyword",
+        words: String(read("triggerWords") || "")
+          .split(",")
+          .map((one) => one.trim())
+          .filter(Boolean),
+      };
+    case "mid_journey":
+      return { kind: "mid_journey", turn: Number(read("triggerTurn")) || 1 };
+    case "contacted":
+      return { kind: "contacted" };
+    case "after_seconds":
+      return {
+        kind: "after_seconds",
+        seconds: Number(read("triggerSeconds")) || 0,
+      };
+    case "conditional":
+      // Only read once `triggerProblem` has nothing to say, so the text is a JSON object here.
+      return {
+        kind: "conditional",
+        collection: read("triggerCollection"),
+        where: read("triggerWhere") ? JSON.parse(read("triggerWhere")) : {},
+      };
+    default:
+      return null;
+  }
+};
+
+// Why the form's conditional "where" cannot be saved, or "".
+export const whereProblem = (text) => {
+  if (!String(text || "").trim()) return "";
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? ""
+      : "an object of field values";
+  } catch {
+    return 'an object of field values, such as {"status": "pending"}';
+  }
+};
+
+// Why a typed per-actor cap cannot be saved, or nothing: empty is no limit, anything else is a whole number above 0.
+export const capProblem = (typed) => {
+  const text = String(typed ?? "").trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isInteger(number) && number > 0
+    ? null
+    : ACTORS_COPY.worldActors.form.wholeNumber;
+};
+
+// What a chosen way of coming in still needs before it can be saved, by field; nothing when it is complete.
+export const triggerProblem = (read) => {
+  const words = ACTORS_COPY.worldActors.form.triggerNeeds;
+  switch (read("mode")) {
+    case "on_tool":
+      return read("triggerTool") ? {} : { triggerTool: words.tool };
+    case "on_keyword":
+      return String(read("triggerWords") || "")
+        .split(",")
+        .some((one) => one.trim())
+        ? {}
+        : { triggerWords: words.words };
+    case "conditional": {
+      const problems = {};
+      if (!read("triggerCollection"))
+        problems.triggerCollection = words.collection;
+      const where = whereProblem(read("triggerWhere"));
+      if (where) problems.triggerWhere = where;
+      return problems;
+    }
+    default:
+      return {};
+  }
 };
 
 // A fact the form can show: one with text. Any other entry is kept where it is, untouched.
 const isWrittenFact = (one) =>
   one?.kind === "facts" && typeof one.text === "string" && one.text.trim();
+
+// The files and record collections an actor's knowledge names, as the form picks them.
+const readFiles = (knowledge) =>
+  (knowledge || [])
+    .filter((one) => one?.kind === "files")
+    .flatMap((one) => one.paths || []);
+export const recordKey = (one) => `${one.store || ""}.${one.collection || ""}`;
+const readRecords = (knowledge) =>
+  (knowledge || []).filter((one) => one?.kind === "records").map(recordKey);
+
+// The knowledge with what the form picked for files and records in place of what it named before; facts and any
+// other entry stay where they were. A record keeps the rest of its entry (a `where`) when it is still picked.
+const withReadable = (knowledge, files, records, sources) => {
+  const kept = knowledge.filter(
+    (one) => one?.kind !== "files" && one?.kind !== "records",
+  );
+  const before = Object.fromEntries(
+    knowledge
+      .filter((one) => one?.kind === "records")
+      .map((one) => [recordKey(one), one]),
+  );
+  const offered = Object.fromEntries(
+    (sources?.records || []).map((one) => [recordKey(one), one]),
+  );
+  return [
+    ...kept,
+    ...(files.length ? [{ kind: "files", paths: files }] : []),
+    ...records.map(
+      (key) =>
+        before[key] || {
+          kind: "records",
+          store: offered[key]?.store ?? key.split(".")[0],
+          collection:
+            offered[key]?.collection ?? key.split(".").slice(1).join("."),
+        },
+    ),
+  ];
+};
 
 // What each form field starts from, read from the record.
 export const initialFields = (actor) => {
@@ -114,7 +266,7 @@ export const initialFields = (actor) => {
     id: "",
     name: actor?.name || "",
     role: actor?.role || "",
-    channel: actor?.channel,
+    channel: actor?.channel || "",
     loudness_ratio: actor?.loudness_ratio ?? null,
     ...Object.fromEntries(VOICE_FIELDS.map((one) => [one, persona[one] || ""])),
     kind: actor?.kind || "person",
@@ -127,13 +279,19 @@ export const initialFields = (actor) => {
       .filter(isWrittenFact)
       .map((one) => one.text)
       .join("\n"),
+    files: readFiles(actor?.knowledge),
+    recordsRead: readRecords(actor?.knowledge),
     style: actor?.behaviour?.style || "",
     timing: timing.kind || "immediate",
     seconds: timing.seconds ?? 0,
     permitted: actor?.permitted_actions || [],
-    tool: triggerChoice(activation.trigger),
+    play: actor?.play || "mocked",
+    ...triggerFields(activation.trigger),
     timeout: activation.timeout_seconds ?? 0,
     fallback: activation.fallback || "silent",
+    model: actor?.model || "",
+    max_turns: actor?.max_turns ?? "",
+    max_lines: actor?.max_lines ?? "",
   };
 };
 
@@ -208,24 +366,30 @@ export const toRecord = (actor, fields, context) => {
   if (edited("name") && String(actor.persona?.name ?? "").trim())
     record.persona = { ...actor.persona, name: record.name };
 
-  if (speaks(actor)) {
-    if (isNew) record.side = "caller";
-    if (writes("channel")) record.channel = read("channel");
-    if (writes(...VOICE_FIELDS)) {
-      record.persona = { ...record.persona };
-      for (const name of VOICE_FIELDS) {
-        if (read(name)) record.persona[name] = read(name);
-        else delete record.persona[name];
-      }
-    }
-    if (writes("channel", "loudness_ratio"))
-      record.loudness_ratio = (context.loudness?.channels || []).includes(
-        read("channel"),
-      )
-        ? read("loudness_ratio")
-        : null;
-    return record;
+  // Every actor has the same fields; a channel only adds how it speaks in the conversation.
+  if (writes("channel")) {
+    if (read("channel")) record.channel = read("channel");
+    else delete record.channel;
   }
+  if (
+    writes(...VOICE_FIELDS) &&
+    (record.persona || VOICE_FIELDS.some((name) => read(name)))
+  ) {
+    record.persona = { ...record.persona };
+    for (const name of VOICE_FIELDS) {
+      if (read(name)) record.persona[name] = read(name);
+      else delete record.persona[name];
+    }
+  }
+  if (
+    writes("channel", "loudness_ratio") &&
+    (read("channel") || actor.loudness_ratio != null)
+  )
+    record.loudness_ratio = (context.loudness?.channels || []).includes(
+      read("channel"),
+    )
+      ? read("loudness_ratio")
+      : null;
 
   if (writes("kind")) record.kind = read("kind");
   if (writes("parent")) record.parent = read("parent") || null;
@@ -238,6 +402,13 @@ export const toRecord = (actor, fields, context) => {
   }
   if (writes("facts"))
     record.knowledge = withFacts(actor.knowledge || [], lines(read("facts")));
+  if (edited("files") || edited("recordsRead"))
+    record.knowledge = withReadable(
+      record.knowledge || actor.knowledge || [],
+      read("files"),
+      read("recordsRead"),
+      context.knowledgeSources,
+    );
   if (writes("style", "timing", "seconds")) {
     record.behaviour = { ...actor.behaviour };
     if (writes("style")) record.behaviour.style = read("style");
@@ -248,19 +419,34 @@ export const toRecord = (actor, fields, context) => {
           : { kind: "immediate", seconds: 0 };
   }
   if (writes("permitted")) record.permitted_actions = read("permitted");
-  if (writes("tool", "timeout", "fallback")) {
+  if (edited("play")) record.play = read("play");
+  if (writes(...TRIGGER_FIELDS, "timeout", "fallback")) {
     record.activation = { ...actor.activation };
-    if (writes("tool"))
-      record.activation.trigger = read("tool")
-        ? { kind: "on_tool", tool: read("tool") }
-        : { kind: "always" };
+    if (
+      TRIGGER_FIELDS.some((name) => edited(name)) ||
+      (isNew && read("mode") !== KEPT_TRIGGER)
+    ) {
+      const trigger = triggerOf(read);
+      if (trigger) record.activation.trigger = trigger;
+    }
     if (writes("timeout"))
       record.activation.timeout_seconds = Number(read("timeout")) || 0;
     if (writes("fallback")) record.activation.fallback = read("fallback");
   }
+  // Empty is the environment's model, and no limit of its own.
+  if (edited("model")) {
+    if (read("model")) record.model = read("model");
+    else delete record.model;
+  }
+  for (const name of ["max_turns", "max_lines"]) {
+    if (!edited(name)) continue;
+    const value = Number(read(name));
+    if (read(name) !== "" && value > 0) record[name] = value;
+    else delete record[name];
+  }
   return record;
 };
 
-// The tab shows what it can edit (versioning keeps a draft) or list (sub-actors read-only).
+// The tab shows what it can edit (versioning keeps a draft) or list (actors read-only).
 export const showActorsTab = (env) =>
-  Boolean(env?.versioning?.enabled && env?.id) || env?.subActors?.length > 0;
+  Boolean(env?.versioning?.enabled && env?.id) || env?.callActors?.length > 0;

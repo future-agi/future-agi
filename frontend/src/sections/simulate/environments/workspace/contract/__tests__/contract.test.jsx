@@ -12,15 +12,23 @@ const voiceEnv = {
     { name: "lookup_account", desc: "Reads the caller's account." },
     { name: "issue_refund", desc: "Refunds a charge." },
   ],
-  rules: ["Never disclose another caller's data.", "Only refund verified callers."],
-  seed: { tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }] },
+  rules: [
+    "Never disclose another caller's data.",
+    "Only refund verified callers.",
+  ],
+  seed: {
+    tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }],
+  },
 };
 
 const renderPanel = (props = {}) =>
   render(
     <RlContractPanel
       env={voiceEnv}
-      envState={{ evals: [{ id: "task_success" }], agent: { name: "Support agent" } }}
+      envState={{
+        evals: [{ id: "task_success" }],
+        agent: { name: "Support agent" },
+      }}
       patch={vi.fn()}
       onGo={vi.fn()}
       {...props}
@@ -66,20 +74,28 @@ describe("RlContractPanel", () => {
   });
 
   it("has no seed row: the API carries no seed for it to describe", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } } });
+    renderPanel({
+      env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } },
+    });
     expect(screen.queryByText("Deterministic seed")).toBeNull();
   });
 
   it("says a template or fork has no end conditions because it was never built", () => {
     renderPanel({ env: { ...voiceEnv, endConditions: null } });
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.getByText("This environment hasn't been built, so it has none.")).toBeInTheDocument();
+    expect(
+      screen.getByText("This environment hasn't been built, so it has none."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/The build writes these/)).toBeNull();
   });
 
   it("says the end conditions are not authored yet instead of showing sample ones", () => {
     renderPanel({ env: { ...voiceEnv, endConditions: null }, backed: true });
-    expect(screen.getByText(/The build writes these once it has read how a run of this agent ends/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /The build writes these once it has read how a run of this agent ends/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
     expect(screen.queryByText("Terminate")).toBeNull();
@@ -114,10 +130,15 @@ describe("RlContractPanel", () => {
 
   it("has no actors section, because actors have their own tab", () => {
     renderPanel({
-      env: { ...voiceEnv, id: "env-1", versioning: { enabled: true }, subActors: [{ id: "friend" }] },
+      env: {
+        ...voiceEnv,
+        id: "env-1",
+        versioning: { enabled: true },
+        callActors: [{ id: "friend" }],
+      },
     });
     expect(screen.queryByText("In the world")).toBeNull();
-    expect(screen.queryByText(/^Sub-actors/)).toBeNull();
+    expect(screen.queryByText(/^Actors/)).toBeNull();
   });
 
   describe("template lock (read-only until forked)", () => {

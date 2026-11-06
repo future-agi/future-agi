@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1127,
+  endpointCount: 1130,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -8758,6 +8758,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           503: {
             $ref: "#/definitions/ClickHouseHealthErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/api/host-update-status/": {
+      get: {
+        operationId: "api_host-update-status_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HostUpdateStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          401: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          403: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          404: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          405: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          503: {
+            $ref: "#/definitions/HostUpdateStatusError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28571,6 +28606,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/actor-limits/": {
+      put: {
+        operationId: "simulate_api_harness-environments_actor_limits",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessActorLimitsWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/actors/": {
       get: {
         operationId: "simulate_api_harness-environments_actors",
@@ -28835,6 +28889,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/files/": {
+      post: {
+        operationId: "simulate_api_harness-environments_upload_file",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -56140,7 +56211,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
-        "sub_actors",
+        "call_actors",
+        "trial_state",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -56614,11 +56686,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SimulateRunV3FunctionCall",
           },
         },
-        sub_actors: {
+        call_actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/CallSubActor",
+            $ref: "#/definitions/CallCallActor",
           },
+        },
+        trial_state: {
+          $ref: "#/definitions/TrialState",
         },
         scoring_status: {
           title: "Scoring status",
@@ -66159,6 +66234,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorLimitsWrite: {
+      required: ["limits"],
+      type: "object",
+      properties: {
+        limits: {
+          title: "Limits",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     HarnessActorList: {
       required: [
         "actors",
@@ -66168,6 +66262,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "actions",
         "channels",
         "loudness",
+        "reserved_ids",
+        "knowledge_sources",
       ],
       type: "object",
       properties: {
@@ -66210,10 +66306,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        reserved_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        knowledge_sources: {
+          $ref: "#/definitions/HarnessActorKnowledgeSources",
+        },
+        limits: {
+          title: "Limits",
+          type: "object",
+          additionalProperties: true,
+        },
+        actor_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessActorView: {
-      required: ["actor_id", "permitted_actions", "sees", "never_sees"],
+      required: [
+        "actor_id",
+        "permitted_actions",
+        "sees",
+        "never_sees",
+        "played_from_view",
+        "unused_reason",
+      ],
       type: "object",
       properties: {
         actor_id: {
@@ -66235,11 +66360,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         never_sees: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
+          $ref: "#/definitions/HarnessActorNeverSees",
+        },
+        played_from_view: {
+          title: "Played from view",
+          type: "boolean",
+        },
+        unused_reason: {
+          title: "Unused reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -68519,6 +68650,2300 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: {},
         },
       },
+    },
+    HostUpdateStatusError: {
+      required: [
+        "status",
+        "type",
+        "code",
+        "detail",
+        "message",
+        "error",
+        "result",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          type: "boolean",
+          enum: [false],
+        },
+        type: {
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "permission_error",
+            "not_found",
+            "api_error",
+            "service_unavailable",
+          ],
+        },
+        code: {
+          type: "string",
+          enum: [
+            "invalid",
+            "not_authenticated",
+            "permission_denied",
+            "2fa_required",
+            "saml_scope_conflict",
+            "not_found",
+            "method_not_allowed",
+            "service_unavailable",
+          ],
+        },
+        detail: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        message: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        error: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        result: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+      },
+      additionalProperties: false,
+    },
+    HostUpdateStatusResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          type: "boolean",
+          enum: [true],
+        },
+        result: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "api_schema_version",
+            "availability",
+            "reason_code",
+            "freshness",
+            "age_seconds",
+            "discovery_freshness",
+            "versions_freshness",
+            "progress_freshness",
+            "snapshot",
+          ],
+          properties: {
+            api_schema_version: {
+              type: "integer",
+              enum: [1],
+            },
+            availability: {
+              type: "string",
+              enum: ["available", "unavailable", "unsupported"],
+            },
+            reason_code: {
+              type: "string",
+              enum: [
+                "not_configured",
+                "not_reported",
+                "unreadable",
+                "malformed",
+                "unsupported_schema",
+                "untrusted_file",
+                "clock_skew",
+                "installation_mismatch",
+              ],
+              "x-nullable": true,
+            },
+            freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            age_seconds: {
+              type: "integer",
+              minimum: 0,
+              maximum: 9007199254740991,
+              "x-nullable": true,
+            },
+            discovery_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            versions_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            progress_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            snapshot: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schema_version",
+                "sequence",
+                "generated_at",
+                "installation",
+                "versions",
+                "policy",
+                "automation",
+                "discovery",
+                "download",
+                "operation",
+                "last_run",
+                "safety",
+              ],
+              properties: {
+                schema_version: {
+                  type: "integer",
+                  enum: [1],
+                },
+                sequence: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                generated_at: {
+                  type: "string",
+                  minLength: 20,
+                  maxLength: 20,
+                  pattern:
+                    "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                  format: "date-time",
+                },
+                installation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["slot_id", "topology", "production"],
+                  properties: {
+                    slot_id: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 32,
+                      pattern: "^[0-9a-f]{32}$",
+                    },
+                    topology: {
+                      type: "string",
+                      enum: ["standalone", "distributed"],
+                    },
+                    production: {
+                      type: "boolean",
+                    },
+                  },
+                },
+                versions: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "observed_at",
+                    "runtime_state",
+                    "selected_release",
+                    "running_release",
+                    "components",
+                  ],
+                  properties: {
+                    observed_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    runtime_state: {
+                      type: "string",
+                      enum: ["consistent", "mixed", "unknown"],
+                    },
+                    selected_release: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    running_release: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    components: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        additionalProperties: false,
+                        required: [
+                          "component",
+                          "selected_version",
+                          "observed_versions",
+                          "observation",
+                        ],
+                        properties: {
+                          component: {
+                            type: "string",
+                            enum: [
+                              "standalone",
+                              "backend",
+                              "frontend",
+                              "fi_collector",
+                              "agentcc_gateway",
+                              "serving",
+                              "serving_gpu",
+                              "code_executor",
+                              "simulation_runner",
+                            ],
+                          },
+                          selected_version: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: 128,
+                            pattern:
+                              "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                            "x-nullable": true,
+                          },
+                          observed_versions: {
+                            type: "array",
+                            items: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 128,
+                              pattern:
+                                "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                            },
+                            minItems: 0,
+                            maxItems: 8,
+                            uniqueItems: true,
+                          },
+                          observation: {
+                            type: "string",
+                            enum: ["known", "unknown", "not_deployed"],
+                          },
+                        },
+                      },
+                      minItems: 0,
+                      maxItems: 9,
+                    },
+                  },
+                },
+                policy: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "channel",
+                    "version_policy",
+                    "check_interval_seconds",
+                  ],
+                  properties: {
+                    channel: {
+                      type: "string",
+                      enum: ["stable", "beta"],
+                    },
+                    version_policy: {
+                      type: "string",
+                      enum: ["patch", "minor", "major"],
+                    },
+                    check_interval_seconds: {
+                      type: "integer",
+                      minimum: 300,
+                      maximum: 86400,
+                    },
+                  },
+                },
+                automation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "mode",
+                    "enabled",
+                    "state",
+                    "paused_until",
+                    "pause_indefinite",
+                    "maintenance_window",
+                    "last_tick_at",
+                    "next_check_at",
+                    "next_action_at",
+                  ],
+                  properties: {
+                    mode: {
+                      type: "string",
+                      enum: ["manual", "notify", "download", "apply"],
+                    },
+                    enabled: {
+                      type: "boolean",
+                    },
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_implemented",
+                        "disabled",
+                        "manual",
+                        "enabled",
+                        "paused",
+                        "blocked",
+                      ],
+                    },
+                    paused_until: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    pause_indefinite: {
+                      type: "boolean",
+                    },
+                    maintenance_window: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["kind", "timezone"],
+                      description:
+                        "always: kind/timezone only; interval: also requires days_of_week/start/end.",
+                      "x-oneOf": [
+                        {
+                          type: "object",
+                          additionalProperties: false,
+                          required: ["kind", "timezone"],
+                          properties: {
+                            kind: {
+                              type: "string",
+                              enum: ["always"],
+                            },
+                            timezone: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 64,
+                            },
+                          },
+                        },
+                        {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "kind",
+                            "timezone",
+                            "days_of_week",
+                            "start",
+                            "end",
+                          ],
+                          properties: {
+                            kind: {
+                              type: "string",
+                              enum: ["interval"],
+                            },
+                            timezone: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 64,
+                            },
+                            days_of_week: {
+                              type: "array",
+                              items: {
+                                type: "integer",
+                                minimum: 1,
+                                maximum: 7,
+                              },
+                              minItems: 1,
+                              maxItems: 7,
+                              uniqueItems: true,
+                            },
+                            start: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 5,
+                              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            },
+                            end: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 5,
+                              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            },
+                          },
+                        },
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["always", "interval"],
+                        },
+                        timezone: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 64,
+                        },
+                        days_of_week: {
+                          type: "array",
+                          items: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 7,
+                          },
+                          minItems: 1,
+                          maxItems: 7,
+                          uniqueItems: true,
+                        },
+                        start: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 5,
+                          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        },
+                        end: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 5,
+                          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        },
+                      },
+                      "x-nullable": true,
+                    },
+                    last_tick_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    next_check_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    next_action_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                  },
+                },
+                discovery: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "last_attempt_at",
+                    "checked_at",
+                    "candidate_version",
+                    "verification",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_checked",
+                        "current",
+                        "available",
+                        "blocked",
+                        "failed",
+                      ],
+                    },
+                    last_attempt_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    checked_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    candidate_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    verification: {
+                      type: "string",
+                      enum: ["not_checked", "verified", "rejected"],
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                  },
+                },
+                download: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "target_version",
+                    "completed_at",
+                    "verified_components",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_downloaded",
+                        "downloading",
+                        "downloaded",
+                        "failed",
+                        "unknown",
+                      ],
+                    },
+                    target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    completed_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    verified_components: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "standalone",
+                          "backend",
+                          "frontend",
+                          "fi_collector",
+                          "agentcc_gateway",
+                          "serving",
+                          "serving_gpu",
+                          "code_executor",
+                          "simulation_runner",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 9,
+                      uniqueItems: true,
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                  },
+                },
+                operation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "kind",
+                    "stage",
+                    "started_at",
+                    "finished_at",
+                    "reported_at",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "idle",
+                        "checking",
+                        "downloading",
+                        "backing_up",
+                        "staged",
+                        "awaiting_initialization",
+                        "applying",
+                        "verifying",
+                        "succeeded",
+                        "failed",
+                        "interrupted",
+                        "rolling_back",
+                        "rolled_back",
+                        "blocked",
+                        "unknown",
+                        "restoring",
+                        "restored",
+                        "recovery_required",
+                      ],
+                    },
+                    kind: {
+                      type: "string",
+                      enum: [
+                        "check",
+                        "download",
+                        "apply",
+                        "rollback",
+                        "restore",
+                      ],
+                      "x-nullable": true,
+                    },
+                    stage: {
+                      type: "string",
+                      enum: [
+                        "planning",
+                        "backup",
+                        "image_fetch",
+                        "image_verification",
+                        "env_selection",
+                        "production_initialization",
+                        "rollout",
+                        "readiness",
+                        "recovery",
+                        "quiescence",
+                        "restore",
+                        "stability",
+                      ],
+                      "x-nullable": true,
+                    },
+                    started_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    finished_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    reported_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                    phase: {
+                      type: "string",
+                      enum: [
+                        "attempt_reserved",
+                        "quiescing",
+                        "quiesced",
+                        "archiving",
+                        "backup_sealed",
+                        "env_commit_pending",
+                        "env_selected",
+                        "target_create_pending",
+                        "target_created",
+                        "target_starting",
+                        "target_verifying",
+                        "success_decided",
+                        "success_metadata_committed",
+                        "succeeded",
+                        "restore_decided",
+                        "restore_quiescing",
+                        "restore_quiesced",
+                        "restore_inputs_verified",
+                        "restoring_volumes",
+                        "restore_files_verified",
+                        "config_revert_pending",
+                        "config_reverted",
+                        "restore_data_committed",
+                        "previous_create_pending",
+                        "previous_created",
+                        "previous_start_armed",
+                        "previous_starting",
+                        "previous_verifying",
+                        "restore_verified",
+                        "restore_metadata_committed",
+                        "restored",
+                        "abort_quiescence",
+                        "failed_available",
+                      ],
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "state",
+                        "kind",
+                        "stage",
+                        "started_at",
+                        "finished_at",
+                        "reported_at",
+                        "reason_codes",
+                      ],
+                      properties: {
+                        state: {
+                          type: "string",
+                          enum: [
+                            "idle",
+                            "checking",
+                            "downloading",
+                            "backing_up",
+                            "staged",
+                            "awaiting_initialization",
+                            "applying",
+                            "verifying",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                            "rolling_back",
+                            "rolled_back",
+                            "blocked",
+                            "unknown",
+                            "restoring",
+                            "restored",
+                            "recovery_required",
+                          ],
+                        },
+                        kind: {
+                          type: "string",
+                          enum: [
+                            "check",
+                            "download",
+                            "apply",
+                            "rollback",
+                            "restore",
+                          ],
+                          "x-nullable": true,
+                        },
+                        stage: {
+                          type: "string",
+                          enum: [
+                            "planning",
+                            "backup",
+                            "image_fetch",
+                            "image_verification",
+                            "env_selection",
+                            "production_initialization",
+                            "rollout",
+                            "readiness",
+                            "recovery",
+                            "quiescence",
+                            "restore",
+                            "stability",
+                          ],
+                          "x-nullable": true,
+                        },
+                        started_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reported_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reason_codes: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                            enum: [
+                              "manifest_unavailable",
+                              "signature_rejected",
+                              "channel_mismatch",
+                              "version_policy_blocked",
+                              "release_incomplete",
+                              "discovery_incomplete",
+                              "immutable_release_changed",
+                              "network_unavailable",
+                              "rate_limited",
+                              "cache_invalid",
+                              "ownership_unconfirmed",
+                              "deployment_files_mismatch",
+                              "required_env_missing",
+                              "unsupported_contract",
+                              "uncertified_release",
+                              "configuration_changed",
+                              "backup_required",
+                              "backup_failed",
+                              "backup_proof_invalid",
+                              "backup_expired",
+                              "stale_stage",
+                              "env_conflict",
+                              "initialization_required",
+                              "manual_stage_present",
+                              "recovery_required",
+                              "readiness_failed",
+                              "operation_interrupted",
+                              "operation_timeout",
+                              "rollback_ineligible",
+                              "rollback_failed",
+                              "failed_target_latched",
+                              "running_versions_unknown",
+                              "mixed_running_versions",
+                              "outside_window",
+                              "insufficient_window",
+                              "clock_skew",
+                              "timezone_unavailable",
+                              "host_verifier_required",
+                              "image_digest_mismatch",
+                              "disk_space_insufficient",
+                              "status_reporting_unavailable",
+                              "scheduler_unregistered",
+                              "unsupported_installation",
+                              "control_invalid",
+                              "process_failed",
+                              "restore_not_certified",
+                              "transition_not_rehearsed",
+                              "platform_not_rehearsed",
+                              "restore_procedure_unsupported",
+                              "migration_inventory_unsupported",
+                              "migration_inventory_mismatch",
+                              "backup_inventory_mismatch",
+                              "restore_capacity_unknown",
+                              "restore_capacity_insufficient",
+                              "restore_child_ambiguous",
+                              "restore_verification_failed",
+                              "automatic_recovery_pending",
+                              "restored_after_update_failure",
+                              "migration_exceeds_window",
+                              "insufficient_disk_for_migration",
+                              "backup_exceeds_window",
+                              "insufficient_disk_for_backup",
+                              "migration_stalled",
+                              "disk_watermark_abort",
+                            ],
+                          },
+                          minItems: 0,
+                          maxItems: 12,
+                          uniqueItems: true,
+                        },
+                        phase: {
+                          type: "string",
+                          enum: [
+                            "attempt_reserved",
+                            "quiescing",
+                            "quiesced",
+                            "archiving",
+                            "backup_sealed",
+                            "env_commit_pending",
+                            "env_selected",
+                            "target_create_pending",
+                            "target_created",
+                            "target_starting",
+                            "target_verifying",
+                            "success_decided",
+                            "success_metadata_committed",
+                            "succeeded",
+                            "restore_decided",
+                            "restore_quiescing",
+                            "restore_quiesced",
+                            "restore_inputs_verified",
+                            "restoring_volumes",
+                            "restore_files_verified",
+                            "config_revert_pending",
+                            "config_reverted",
+                            "restore_data_committed",
+                            "previous_create_pending",
+                            "previous_created",
+                            "previous_start_armed",
+                            "previous_starting",
+                            "previous_verifying",
+                            "restore_verified",
+                            "restore_metadata_committed",
+                            "restored",
+                            "abort_quiescence",
+                            "failed_available",
+                          ],
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 7,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "state",
+                        "kind",
+                        "stage",
+                        "started_at",
+                        "finished_at",
+                        "reported_at",
+                        "reason_codes",
+                        "phase",
+                      ],
+                      properties: {
+                        state: {
+                          type: "string",
+                          enum: [
+                            "idle",
+                            "checking",
+                            "downloading",
+                            "backing_up",
+                            "staged",
+                            "awaiting_initialization",
+                            "applying",
+                            "verifying",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                            "rolling_back",
+                            "rolled_back",
+                            "blocked",
+                            "unknown",
+                            "restoring",
+                            "restored",
+                            "recovery_required",
+                          ],
+                        },
+                        kind: {
+                          type: "string",
+                          enum: [
+                            "check",
+                            "download",
+                            "apply",
+                            "rollback",
+                            "restore",
+                          ],
+                          "x-nullable": true,
+                        },
+                        stage: {
+                          type: "string",
+                          enum: [
+                            "planning",
+                            "backup",
+                            "image_fetch",
+                            "image_verification",
+                            "env_selection",
+                            "production_initialization",
+                            "rollout",
+                            "readiness",
+                            "recovery",
+                            "quiescence",
+                            "restore",
+                            "stability",
+                          ],
+                          "x-nullable": true,
+                        },
+                        started_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reported_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reason_codes: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                            enum: [
+                              "manifest_unavailable",
+                              "signature_rejected",
+                              "channel_mismatch",
+                              "version_policy_blocked",
+                              "release_incomplete",
+                              "discovery_incomplete",
+                              "immutable_release_changed",
+                              "network_unavailable",
+                              "rate_limited",
+                              "cache_invalid",
+                              "ownership_unconfirmed",
+                              "deployment_files_mismatch",
+                              "required_env_missing",
+                              "unsupported_contract",
+                              "uncertified_release",
+                              "configuration_changed",
+                              "backup_required",
+                              "backup_failed",
+                              "backup_proof_invalid",
+                              "backup_expired",
+                              "stale_stage",
+                              "env_conflict",
+                              "initialization_required",
+                              "manual_stage_present",
+                              "recovery_required",
+                              "readiness_failed",
+                              "operation_interrupted",
+                              "operation_timeout",
+                              "rollback_ineligible",
+                              "rollback_failed",
+                              "failed_target_latched",
+                              "running_versions_unknown",
+                              "mixed_running_versions",
+                              "outside_window",
+                              "insufficient_window",
+                              "clock_skew",
+                              "timezone_unavailable",
+                              "host_verifier_required",
+                              "image_digest_mismatch",
+                              "disk_space_insufficient",
+                              "status_reporting_unavailable",
+                              "scheduler_unregistered",
+                              "unsupported_installation",
+                              "control_invalid",
+                              "process_failed",
+                              "restore_not_certified",
+                              "transition_not_rehearsed",
+                              "platform_not_rehearsed",
+                              "restore_procedure_unsupported",
+                              "migration_inventory_unsupported",
+                              "migration_inventory_mismatch",
+                              "backup_inventory_mismatch",
+                              "restore_capacity_unknown",
+                              "restore_capacity_insufficient",
+                              "restore_child_ambiguous",
+                              "restore_verification_failed",
+                              "automatic_recovery_pending",
+                              "restored_after_update_failure",
+                              "migration_exceeds_window",
+                              "insufficient_disk_for_migration",
+                              "backup_exceeds_window",
+                              "insufficient_disk_for_backup",
+                              "migration_stalled",
+                              "disk_watermark_abort",
+                            ],
+                          },
+                          minItems: 0,
+                          maxItems: 12,
+                          uniqueItems: true,
+                        },
+                        phase: {
+                          type: "string",
+                          enum: [
+                            "attempt_reserved",
+                            "quiescing",
+                            "quiesced",
+                            "archiving",
+                            "backup_sealed",
+                            "env_commit_pending",
+                            "env_selected",
+                            "target_create_pending",
+                            "target_created",
+                            "target_starting",
+                            "target_verifying",
+                            "success_decided",
+                            "success_metadata_committed",
+                            "succeeded",
+                            "restore_decided",
+                            "restore_quiescing",
+                            "restore_quiesced",
+                            "restore_inputs_verified",
+                            "restoring_volumes",
+                            "restore_files_verified",
+                            "config_revert_pending",
+                            "config_reverted",
+                            "restore_data_committed",
+                            "previous_create_pending",
+                            "previous_created",
+                            "previous_start_armed",
+                            "previous_starting",
+                            "previous_verifying",
+                            "restore_verified",
+                            "restore_metadata_committed",
+                            "restored",
+                            "abort_quiescence",
+                            "failed_available",
+                          ],
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                },
+                last_run: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "kind",
+                    "automatic",
+                    "outcome",
+                    "from_version",
+                    "target_version",
+                    "finished_at",
+                    "fallback_outcome",
+                  ],
+                  properties: {
+                    kind: {
+                      type: "string",
+                      enum: ["apply", "rollback"],
+                    },
+                    automatic: {
+                      type: "boolean",
+                    },
+                    outcome: {
+                      type: "string",
+                      enum: [
+                        "succeeded",
+                        "staged",
+                        "rolled_back",
+                        "failed_before_rollout",
+                        "failed_during_rollout",
+                        "interrupted_before_rollout",
+                        "interrupted_during_rollout",
+                        "blocked",
+                      ],
+                    },
+                    from_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    finished_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    fallback_outcome: {
+                      type: "string",
+                      enum: ["none", "succeeded", "failed", "ineligible"],
+                    },
+                    forward_result: {
+                      type: "string",
+                      enum: [
+                        "not_started",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "interrupted",
+                      ],
+                    },
+                    restore_result: {
+                      type: "string",
+                      enum: [
+                        "not_needed",
+                        "running",
+                        "verified",
+                        "failed",
+                        "recovery_required",
+                      ],
+                    },
+                    effective_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    failed_target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "kind",
+                        "automatic",
+                        "outcome",
+                        "from_version",
+                        "target_version",
+                        "finished_at",
+                        "fallback_outcome",
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["apply", "rollback"],
+                        },
+                        automatic: {
+                          type: "boolean",
+                        },
+                        outcome: {
+                          type: "string",
+                          enum: [
+                            "succeeded",
+                            "staged",
+                            "rolled_back",
+                            "failed_before_rollout",
+                            "failed_during_rollout",
+                            "interrupted_before_rollout",
+                            "interrupted_during_rollout",
+                            "blocked",
+                          ],
+                        },
+                        from_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        fallback_outcome: {
+                          type: "string",
+                          enum: ["none", "succeeded", "failed", "ineligible"],
+                        },
+                        forward_result: {
+                          type: "string",
+                          enum: [
+                            "not_started",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                          ],
+                        },
+                        restore_result: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        effective_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 7,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "kind",
+                        "automatic",
+                        "outcome",
+                        "from_version",
+                        "target_version",
+                        "finished_at",
+                        "fallback_outcome",
+                        "forward_result",
+                        "restore_result",
+                        "effective_version",
+                        "failed_target_version",
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["apply", "rollback"],
+                        },
+                        automatic: {
+                          type: "boolean",
+                        },
+                        outcome: {
+                          type: "string",
+                          enum: [
+                            "succeeded",
+                            "staged",
+                            "rolled_back",
+                            "failed_before_rollout",
+                            "failed_during_rollout",
+                            "interrupted_before_rollout",
+                            "interrupted_during_rollout",
+                            "blocked",
+                          ],
+                        },
+                        from_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        fallback_outcome: {
+                          type: "string",
+                          enum: ["none", "succeeded", "failed", "ineligible"],
+                        },
+                        forward_result: {
+                          type: "string",
+                          enum: [
+                            "not_started",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                          ],
+                        },
+                        restore_result: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        effective_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                  "x-nullable": true,
+                },
+                safety: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "backup_required",
+                    "backup_state",
+                    "readiness",
+                    "automatic_rollback",
+                    "operator_action",
+                  ],
+                  properties: {
+                    backup_required: {
+                      type: "boolean",
+                    },
+                    backup_state: {
+                      type: "string",
+                      enum: [
+                        "not_evaluated",
+                        "required",
+                        "reported_complete",
+                        "failed",
+                        "explicitly_skipped",
+                        "pending",
+                        "quiescing",
+                        "sealed",
+                      ],
+                    },
+                    readiness: {
+                      type: "string",
+                      enum: ["unknown", "pending", "passed", "failed"],
+                    },
+                    automatic_rollback: {
+                      type: "string",
+                      enum: [
+                        "unsupported",
+                        "disabled",
+                        "eligible",
+                        "ineligible",
+                      ],
+                    },
+                    operator_action: {
+                      type: "string",
+                      enum: [
+                        "none",
+                        "inspect_host",
+                        "prepare_installation",
+                        "initialize_then_apply",
+                        "review_recovery",
+                        "repair_status_reporting",
+                      ],
+                    },
+                    fallback_strategy: {
+                      type: "string",
+                      enum: ["restore_backup", "none"],
+                    },
+                    restore_state: {
+                      type: "string",
+                      enum: [
+                        "not_needed",
+                        "running",
+                        "verified",
+                        "failed",
+                        "recovery_required",
+                      ],
+                    },
+                    snapshot_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_start: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_end: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_qualification: {
+                      type: "string",
+                      enum: [
+                        "not_applicable",
+                        "bounded",
+                        "conservative",
+                        "unknown",
+                      ],
+                    },
+                    guidance_id: {
+                      type: "string",
+                      enum: ["none", "inspect_host", "review_recovery"],
+                    },
+                    estimates: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_seconds",
+                        "migration_seconds",
+                        "restore_seconds",
+                        "extra_disk_bytes",
+                        "backup_required_free_bytes",
+                        "docker_required_free_bytes",
+                        "protected_restore_reserve_bytes",
+                        "forward_seconds",
+                        "recovery_seconds",
+                        "total_seconds",
+                        "migration_deadline_seconds",
+                        "migration_stall_timeout_seconds",
+                      ],
+                      properties: {
+                        backup_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        restore_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        extra_disk_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        backup_required_free_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        docker_required_free_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        protected_restore_reserve_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        forward_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        recovery_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        total_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_deadline_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_stall_timeout_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      "x-nullable": true,
+                    },
+                    failed_target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_required",
+                        "backup_state",
+                        "readiness",
+                        "automatic_rollback",
+                        "operator_action",
+                      ],
+                      properties: {
+                        backup_required: {
+                          type: "boolean",
+                        },
+                        backup_state: {
+                          type: "string",
+                          enum: [
+                            "not_evaluated",
+                            "required",
+                            "reported_complete",
+                            "failed",
+                            "explicitly_skipped",
+                            "pending",
+                            "quiescing",
+                            "sealed",
+                          ],
+                        },
+                        readiness: {
+                          type: "string",
+                          enum: ["unknown", "pending", "passed", "failed"],
+                        },
+                        automatic_rollback: {
+                          type: "string",
+                          enum: [
+                            "unsupported",
+                            "disabled",
+                            "eligible",
+                            "ineligible",
+                          ],
+                        },
+                        operator_action: {
+                          type: "string",
+                          enum: [
+                            "none",
+                            "inspect_host",
+                            "prepare_installation",
+                            "initialize_then_apply",
+                            "review_recovery",
+                            "repair_status_reporting",
+                          ],
+                        },
+                        fallback_strategy: {
+                          type: "string",
+                          enum: ["restore_backup", "none"],
+                        },
+                        restore_state: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        snapshot_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_start: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_end: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_qualification: {
+                          type: "string",
+                          enum: [
+                            "not_applicable",
+                            "bounded",
+                            "conservative",
+                            "unknown",
+                          ],
+                        },
+                        guidance_id: {
+                          type: "string",
+                          enum: ["none", "inspect_host", "review_recovery"],
+                        },
+                        estimates: {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "backup_seconds",
+                            "migration_seconds",
+                            "restore_seconds",
+                            "extra_disk_bytes",
+                            "backup_required_free_bytes",
+                            "docker_required_free_bytes",
+                            "protected_restore_reserve_bytes",
+                            "forward_seconds",
+                            "recovery_seconds",
+                            "total_seconds",
+                            "migration_deadline_seconds",
+                            "migration_stall_timeout_seconds",
+                          ],
+                          properties: {
+                            backup_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            restore_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            extra_disk_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            backup_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            docker_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            protected_restore_reserve_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            forward_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            recovery_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            total_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_deadline_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_stall_timeout_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                          },
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 5,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_required",
+                        "backup_state",
+                        "readiness",
+                        "automatic_rollback",
+                        "operator_action",
+                        "fallback_strategy",
+                        "restore_state",
+                        "snapshot_at",
+                        "loss_window_start",
+                        "loss_window_end",
+                        "loss_window_qualification",
+                        "guidance_id",
+                        "estimates",
+                        "failed_target_version",
+                      ],
+                      properties: {
+                        backup_required: {
+                          type: "boolean",
+                        },
+                        backup_state: {
+                          type: "string",
+                          enum: [
+                            "not_evaluated",
+                            "required",
+                            "reported_complete",
+                            "failed",
+                            "explicitly_skipped",
+                            "pending",
+                            "quiescing",
+                            "sealed",
+                          ],
+                        },
+                        readiness: {
+                          type: "string",
+                          enum: ["unknown", "pending", "passed", "failed"],
+                        },
+                        automatic_rollback: {
+                          type: "string",
+                          enum: [
+                            "unsupported",
+                            "disabled",
+                            "eligible",
+                            "ineligible",
+                          ],
+                        },
+                        operator_action: {
+                          type: "string",
+                          enum: [
+                            "none",
+                            "inspect_host",
+                            "prepare_installation",
+                            "initialize_then_apply",
+                            "review_recovery",
+                            "repair_status_reporting",
+                          ],
+                        },
+                        fallback_strategy: {
+                          type: "string",
+                          enum: ["restore_backup", "none"],
+                        },
+                        restore_state: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        snapshot_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_start: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_end: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_qualification: {
+                          type: "string",
+                          enum: [
+                            "not_applicable",
+                            "bounded",
+                            "conservative",
+                            "unknown",
+                          ],
+                        },
+                        guidance_id: {
+                          type: "string",
+                          enum: ["none", "inspect_host", "review_recovery"],
+                        },
+                        estimates: {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "backup_seconds",
+                            "migration_seconds",
+                            "restore_seconds",
+                            "extra_disk_bytes",
+                            "backup_required_free_bytes",
+                            "docker_required_free_bytes",
+                            "protected_restore_reserve_bytes",
+                            "forward_seconds",
+                            "recovery_seconds",
+                            "total_seconds",
+                            "migration_deadline_seconds",
+                            "migration_stall_timeout_seconds",
+                          ],
+                          properties: {
+                            backup_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            restore_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            extra_disk_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            backup_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            docker_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            protected_restore_reserve_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            forward_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            recovery_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            total_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_deadline_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_stall_timeout_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                          },
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+      additionalProperties: false,
     },
     HuggingFaceAddRowsRequest: {
       required: [
@@ -89237,7 +91662,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
-            "sub_actor",
+            "actor",
             "unknown",
           ],
         },
@@ -91329,6 +93754,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version",
         "outcome_passed",
         "outcome_failed",
+        "outcome_errored",
         "outcome_skipped",
         "outcome_no_score",
         "started_at",
@@ -91378,6 +93804,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_failed: {
           title: "Outcome failed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_errored: {
+          title: "Outcome errored",
           type: "integer",
           "x-nullable": true,
         },
@@ -92692,12 +95123,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    CallSubActor: {
+    CallCallActor: {
       type: "object",
       properties: {
         id: {
           title: "Id",
-          description: "The sub-actor's id in the environment.",
+          description: "The actor's id in the environment.",
           type: "string",
         },
         name: {
@@ -92714,6 +95145,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Channel",
           description: "The channel id they joined the call on.",
           type: "string",
+        },
+        delivery: {
+          title: "Delivery",
+          description:
+            "How far they got in the call; absent on a call stored without a summary.",
+          type: "string",
+          enum: ["delivered", "dropped", "not_triggered", "not_drawn"],
         },
       },
     },
@@ -92945,13 +95383,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         result: {
           title: "Result",
           type: "string",
-          enum: ["not_applicable", "inconclusive"],
+          enum: ["not_applicable", "inconclusive", "unmeasured"],
         },
         reason: {
           title: "Reason",
           type: "string",
         },
+        evidence: {
+          description:
+            "What the check was decided from: world_state, tool_calls, transcript, recording.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
+    },
+    TrialState: {
+      type: "object",
+      properties: {
+        state_changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialStateChange",
+          },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ActorDecision",
+          },
+        },
+        approvals: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalLine",
+          },
+        },
+        usage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ActorUsage",
+          },
+        },
+        limits: {
+          title: "Limits",
+          description:
+            "The actor limits this trial ran with; null is no limit.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+      "x-nullable": true,
     },
     CallTranscript: {
       required: ["content"],
@@ -92973,7 +95460,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
-            "sub_actor",
+            "actor",
             "unknown",
           ],
         },
@@ -92981,6 +95468,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Speaker name",
           type: "string",
           maxLength: 255,
+        },
+        actor_id: {
+          title: "Actor id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
         },
         content: {
           title: "Content",
@@ -98836,6 +101329,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorKnowledgeSources: {
+      required: ["files", "records"],
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        records: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorRecordSource",
+          },
+        },
+      },
+    },
     HarnessWorldAction: {
       required: ["action", "tool", "description"],
       type: "object",
@@ -98852,6 +101364,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         description: {
           title: "Description",
           type: "string",
+        },
+      },
+    },
+    HarnessActorNeverSees: {
+      required: ["scenario_fields", "files", "other_actors"],
+      type: "object",
+      properties: {
+        scenario_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        other_actors: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -99793,7 +102332,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "amendments",
         "sub_goals",
-        "sub_actors",
+        "call_actors",
         "end_conditions",
         "provenance",
       ],
@@ -99903,10 +102442,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentCatalogueSubGoal",
           },
         },
-        sub_actors: {
+        call_actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessEnvironmentSubActor",
+            $ref: "#/definitions/HarnessEnvironmentCallActor",
           },
         },
         end_conditions: {
@@ -100084,7 +102623,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "fixture",
         "steps",
         "sub_goals",
-        "sub_actors",
+        "actors",
         "persona",
         "situation",
         "outcome",
@@ -100149,10 +102688,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentSubGoal",
           },
         },
-        sub_actors: {
+        actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessEnvironmentScenarioSubActor",
+            $ref: "#/definitions/HarnessEnvironmentScenarioCallActor",
           },
         },
         persona: {
@@ -108884,10 +111423,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/FacetValue",
           },
         },
-        sub_actor: {
+        call_actor: {
           type: "array",
           items: {
-            $ref: "#/definitions/LabelledFacetValue",
+            $ref: "#/definitions/CallActorFacetValue",
           },
         },
         status: {
@@ -109278,6 +111817,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_failed: {
           title: "Outcome failed",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_errored: {
+          title: "Outcome errored",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -115034,6 +117579,208 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ActorDecision: {
+      required: ["actor", "play"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "string",
+          minLength: 1,
+        },
+        play: {
+          title: "Play",
+          type: "string",
+          enum: ["mocked", "live", "history", "waiting", "timeout", "problem"],
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        arguments: {
+          title: "Arguments",
+          description:
+            "What it sent: for a pre-run message (`history`), the message itself.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        channel: {
+          title: "Channel",
+          description: "`voice` when decided on the call by a speaking actor.",
+          type: "string",
+          minLength: 1,
+        },
+        problem: {
+          title: "Problem",
+          description:
+            "For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+          type: "string",
+          minLength: 1,
+        },
+        why: {
+          title: "Why",
+          type: "string",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "integer",
+          "x-nullable": true,
+        },
+        timeout_seconds: {
+          title: "Timeout seconds",
+          type: "number",
+        },
+        fallback: {
+          title: "Fallback",
+          description:
+            "silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
+          type: "string",
+          minLength: 1,
+        },
+        outcome: {
+          title: "Outcome",
+          description:
+            "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    ActorUsage: {
+      required: ["actor", "model", "tokens_in", "tokens_out", "cost_usd"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "string",
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+        },
+        tokens_in: {
+          title: "Tokens in",
+          type: "integer",
+        },
+        tokens_out: {
+          title: "Tokens out",
+          type: "integer",
+        },
+        cost_usd: {
+          title: "Cost usd",
+          type: "number",
+        },
+      },
+    },
+    ApprovalLine: {
+      required: [
+        "request",
+        "decision",
+        "before_decision",
+        "after_decision",
+        "acted_before_decision",
+      ],
+      type: "object",
+      properties: {
+        request: {
+          title: "Request",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        decision: {
+          title: "Decision",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        before_decision: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalWrite",
+          },
+        },
+        after_decision: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalWrite",
+          },
+        },
+        acted_before_decision: {
+          title: "Acted before decision",
+          type: "boolean",
+        },
+      },
+    },
+    TrialStateChange: {
+      required: [
+        "who",
+        "name",
+        "attempted",
+        "committed",
+        "refused",
+        "faulted",
+        "duplicate",
+        "committed_actions",
+      ],
+      type: "object",
+      properties: {
+        who: {
+          title: "Who",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        committed: {
+          title: "Committed",
+          type: "integer",
+        },
+        refused: {
+          title: "Refused",
+          type: "integer",
+        },
+        faulted: {
+          title: "Faulted",
+          type: "integer",
+        },
+        duplicate: {
+          title: "Duplicate",
+          type: "integer",
+        },
+        committed_actions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        no_change: {
+          title: "No change",
+          description:
+            "True when this participant committed nothing: a result shown as 'no change', never left out.",
+          type: "boolean",
+        },
+      },
+    },
     InvestigationEvidenceWindow: {
       required: ["start", "end"],
       type: "object",
@@ -119066,6 +121813,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorRecordSource: {
+      required: ["store", "collection"],
+      type: "object",
+      properties: {
+        store: {
+          title: "Store",
+          type: "string",
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessAgentConfigChange: {
       type: "object",
       properties: {
@@ -119178,6 +121940,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentCallActor: {
+      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          minLength: 1,
+        },
+        persona: {
+          $ref: "#/definitions/HarnessEnvironmentCallActorPersona",
+        },
+        loudness_ratio: {
+          title: "Loudness ratio",
+          type: "number",
+        },
+        scenarios_count: {
+          title: "Scenarios count",
+          type: "integer",
+        },
+      },
+    },
     HarnessEnvironmentCatalogueSubGoal: {
       required: ["name", "what", "kind", "claim", "check"],
       type: "object",
@@ -119287,42 +122085,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
             "x-nullable": true,
           },
-        },
-      },
-    },
-    HarnessEnvironmentSubActor: {
-      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        role: {
-          title: "Role",
-          type: "string",
-        },
-        channel: {
-          title: "Channel",
-          type: "string",
-          minLength: 1,
-        },
-        persona: {
-          $ref: "#/definitions/HarnessEnvironmentSubActorPersona",
-        },
-        loudness_ratio: {
-          title: "Loudness ratio",
-          type: "number",
-        },
-        scenarios_count: {
-          title: "Scenarios count",
-          type: "integer",
         },
       },
     },
@@ -119509,7 +122271,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentScenarioSubActor: {
+    HarnessEnvironmentScenarioCallActor: {
       required: ["id", "instruction", "trigger"],
       type: "object",
       properties: {
@@ -119523,7 +122285,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         trigger: {
-          $ref: "#/definitions/HarnessEnvironmentSubActorTrigger",
+          $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
+        },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },
@@ -123817,23 +126589,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    FacetValue: {
-      required: ["value", "count"],
-      type: "object",
-      properties: {
-        value: {
-          title: "Value",
-          type: "string",
-          minLength: 1,
-        },
-        count: {
-          title: "Count",
-          type: "integer",
-        },
-      },
-    },
-    LabelledFacetValue: {
-      required: ["value", "count", "label"],
+    CallActorFacetValue: {
+      required: [
+        "value",
+        "count",
+        "label",
+        "delivered",
+        "dropped",
+        "not_triggered",
+      ],
       type: "object",
       properties: {
         value: {
@@ -123849,6 +126613,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Label",
           type: "string",
           minLength: 1,
+        },
+        delivered: {
+          title: "Delivered",
+          description:
+            "Calls where at least one of the actor's lines reached the agent.",
+          type: "integer",
+        },
+        dropped: {
+          title: "Dropped",
+          description:
+            "Calls where the actor was triggered but none of its lines reached the agent.",
+          type: "integer",
+        },
+        not_triggered: {
+          title: "Not triggered",
+          description:
+            "Calls the actor was planned for but never triggered in.",
+          type: "integer",
+        },
+      },
+    },
+    FacetValue: {
+      required: ["value", "count"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
         },
       },
     },
@@ -127031,6 +129828,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ApprovalWrite: {
+      required: ["action", "outcome"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     InvestigationMemoryEntry: {
       required: ["id", "text"],
       type: "object",
@@ -127918,7 +130733,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentSubActorPersona: {
+    HarnessEnvironmentCallActorPersona: {
       type: "object",
       properties: {
         name: {
@@ -127966,7 +130781,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentSubActorTrigger: {
+    HarnessEnvironmentCallActorTrigger: {
       type: "object",
       properties: {
         kind: {
