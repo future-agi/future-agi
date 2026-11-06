@@ -1448,39 +1448,37 @@ class TestCheckUnavailable:
             assert validation.platform_failure(_failure(WORLD_SEED, tail=tail)) is None
         assert validation.platform_failure(_failure(WORLD_SEED, tail="")) is None
 
-    def test_an_untrusted_certificate_is_ours_only_in_alk_s_own_error(self):
+    def test_an_infrastructure_phase_is_the_agent_s(self):
         certificate = (
             "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
         )
-        ours = _failure(certificate, phase="infrastructure")
+        alone = _failure(certificate, phase="infrastructure")
+        # ALK retries this phase: a later attempt can be the agent's own crash.
+        then_crash = _failure(
+            _AGENT_CRASH,
+            tail=(
+                f"runtime validation: infrastructure: {certificate}\n"
+                + _guest(_AGENT_CRASH, ["KeyError: 'PORT'"])
+            ),
+        )
+        # The agent's own migration printing a certificate error through psql.
+        migration = _failure(
+            "ProcessRuntimeError: seed/seed_failed (world-db): 0007.sql: exited 1:"
+            " CERTIFICATE_VERIFY_FAILED",
+            phase="infrastructure",
+        )
         # The agent failed its own TLS at boot: ALK sets the phase from its output.
         agent_tls = _failure(
             _AGENT_CRASH,
             agent=["ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED]"],
             phase="infrastructure",
         )
-        agent_quiet = _failure(
-            "ProcessRuntimeError: spawn/spawn_failed (agent): CERTIFICATE_VERIFY_FAILED",
-            phase="infrastructure",
+        world = _failure(
+            "spawn/spawn_failed (world-db): exited 1", phase="infrastructure"
         )
 
-        with_output = _failure(
-            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] x; last output:",
-            agent=["booting"],
-            phase="infrastructure",
-        )
-
-        assert validation.platform_failure(ours) == "infrastructure"
-        assert validation.platform_failure(with_output) is None
-        assert validation.platform_failure(agent_tls) is None
-        assert validation.platform_failure(agent_quiet) is None
-        assert (
-            validation.platform_failure(
-                _failure("ConnectError: x", phase="infrastructure")
-            )
-            is None
-        )
-        assert validation.platform_failure(_failure(certificate)) is None
+        for failure in (alone, then_crash, migration, agent_tls, world):
+            assert validation.platform_failure(failure) is None
 
     def test_a_failed_action_probe_is_the_agent_s(self):
         assert (
@@ -1695,25 +1693,11 @@ class TestUnavailableReuse:
             == 1
         )
 
-    @pytest.mark.parametrize(
-        ("error", "phase"),
-        [
-            (
-                "ProcessRuntimeError: admission/resource_capacity_unavailable: no world fits",
-                "runtime",
-            ),
-            (
-                "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] verify failed",
-                "infrastructure",
-            ),
-        ],
-    )
-    def test_any_other_cause_checks_again(
-        self, user, workspace, storage, settings, error, phase
-    ):
+    def test_any_other_cause_checks_again(self, user, workspace, storage, settings):
         _template(settings, "b1")
-        environment = _pending(user, workspace, storage, f"pv-reuse-{phase}")
-        _settle_unavailable(_move(environment).job, _failure(error, phase=phase))
+        environment = _pending(user, workspace, storage, "pv-reuse-capacity")
+        capacity = "ProcessRuntimeError: admission/resource_capacity_unavailable: no world fits"
+        _settle_unavailable(_move(environment).job, _failure(capacity))
         assert "template" not in _row(environment).error["last_attempt"]
 
         assert _move(environment).state == "validating"
