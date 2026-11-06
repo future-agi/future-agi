@@ -58,6 +58,11 @@ func (p *Plugin) SetEdgeHandler(h *EdgeCacheHandler) {
 func (p *Plugin) Name() string  { return "cache" }
 func (p *Plugin) Priority() int { return 35 } // After auth (20) + RBAC (30), before budget/guardrails/validation/rate-limit. Cache hits skip all heavier plugins.
 
+// PostPriority stores a response only after the output guardrails (50) have
+// passed it. At 35 it stored the response a guardrail then blocked, and the
+// next identical request was served it from the cache.
+func (p *Plugin) PostPriority() int { return 55 }
+
 // ProcessRequest checks the cache for a hit before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	// Per-org cache override: if the org has disabled caching, skip entirely.

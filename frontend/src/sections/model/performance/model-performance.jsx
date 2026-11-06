@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Box, Card, ToggleButton, ToggleButtonGroup } from "@mui/material";
+import { Box, ToggleButton, ToggleButtonGroup } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import { DatasetMetricChart } from "src/components/charts";
 import { DatasetFilter } from "src/components/selectors";
@@ -23,11 +24,11 @@ export default function ModelPerformance({ model }) {
   return (
     <>
       <DatasetFilter datasets={datasetDetails} />
-      <Card>
+      <Section variant="panel">
         <DatasetMetricChart />
-      </Card>
+      </Section>
 
-      <Card sx={{ my: 2, mx: 2 }}>
+      <Section variant="panel" sx={{ my: 2, mx: 2 }}>
         <ToggleButtonGroup
           value={currentTab}
           exclusive
@@ -49,15 +50,15 @@ export default function ModelPerformance({ model }) {
             More Charts
           </ToggleButton>
         </ToggleButtonGroup>
-      </Card>
+      </Section>
       {currentTab === "predictions" && <ModelPredictions />}
       {currentTab === "embeddings" && <EmbeddingExplorer />}
       {currentTab === "data-slice" && <DataSlices />}
       {/* {currentTab === "more" && <EmbeddingExplorer></EmbeddingExplorer> } */}
 
-      <Card>
+      <Section variant="panel">
         <Box sx={{ my: 2, mx: 2 }} />
-      </Card>
+      </Section>
     </>
   );
 }

@@ -15,11 +15,38 @@ RUN pip install --no-cache-dir \
     "aiohttp>=3.13.3" \
     "granian[uvloop,reload]==2.8.3" \
     "channels-redis==4.3.0" \
-    "asgiref==3.11.0"
+    "asgiref==3.11.0" \
+    "django==5.1.15" \
+    "litellm==1.84.10" \
+    "pyjwt==2.15.1" \
+    "openai==2.54.0" \
+    "mcp==1.30.0" \
+    "nltk==3.10.3" \
+    "pillow==12.3.0" \
+    "pypdf==6.19.0" \
+    "pdfplumber==0.11.10" \
+    "pdfminer.six==20260107" \
+    "pypdfium2==5.14.0" \
+    "lxml==6.1.3"
 # daytona, httpx-ws and e2b mirror the `sandbox` extra of
 # futureagi/pyproject.toml and claude-agent-sdk its `localizer` extra;
 # aiohttp, granian, channels-redis and asgiref mirror futureagi/requirements.txt
 # until a future-agi-base rebuilt from it (v1.0.5) replaces v1.0.4.
+# django, litellm, pyjwt and openai are the critical-CVE upgrades of TH-8369
+# (CVE-2025-64459, CVE-2026-35030, CVE-2026-49468, CVE-2026-48526); v1.0.5 still
+# carries the vulnerable django 5.1.8 / litellm 1.81.11 / pyjwt 2.10.1, so they
+# are reinstalled here until the base is rebuilt. openai>=2.20.0 is required by
+# litellm 1.84.x, so the base's 2.15.0 has to move with it.
+# mcp, nltk, pillow, pypdf, pdfminer.six and lxml are the high-CVE upgrades of
+# TH-8370 (MCP session authorization and origin/host validation
+# — CVE-2026-52869, CVE-2026-52870, CVE-2026-59950; NLTK remote code execution,
+# unsafe pickle loading, path traversal and SSRF; and the document/image
+# parsers every PDF, image and XML upload reaches). v1.0.5 still carries the
+# flagged mcp 1.26.0 / nltk 3.9.2 / pillow 12.1.0 / pypdf 6.6.0 /
+# pdfminer.six 20231228 / lxml 6.0.2. pdfplumber pins pdfminer.six to an exact
+# release, so 0.11.10 has to move with it; it also wants pypdfium2>=5.9.0 over
+# the base's 5.6.0, pinned so this layer stays reproducible instead of taking
+# whatever is newest at build time.
 # deploy/tests/test_image_standards.py compares the pins.
 # granian>=2.7.1 fixes granian#798. channels-redis (CHANNEL_LAYER_BACKEND=redis)
 # needs asgiref>=3.9.1; pinning it stops pip from replacing the base's 3.8.1

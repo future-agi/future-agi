@@ -18,7 +18,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   defaultTraceColumns,
   headCellSx,
@@ -32,12 +32,19 @@ import {
   runOutcome,
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
+  pinnedLeftSx,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
   TruncTooltip,
 } from "../../../scenarios/ScenarioTableCells";
-import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
+import {
+  CsatValue,
+  MetricValue,
+  Score,
+  Field,
+  UnscoredEval,
+} from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -83,6 +90,8 @@ const textCellSx = (width) => ({
 // The narrow first column that holds a call's tick when rows can be selected.
 const checkboxCellSx = {
   ...bodyCellSx,
+  ...pinnedLeftSx,
+  zIndex: 1,
   width: 44,
   minWidth: 44,
   px: 1,
@@ -124,6 +133,7 @@ export default function TraceTable({
   onGroupViewChange,
   expandedForRef: expandedForRefProp,
   runActive = false,
+  renderEvalHeaderAction = null,
   selection = null,
 }) {
   // A parent that unmounts this table (a filter's loading or empty state)
@@ -235,7 +245,16 @@ export default function TraceTable({
         {selection && (
           // The tick is its own control: this cell has no open-the-call click,
           // and a row click elsewhere opens the call without touching it.
-          <TableCell sx={checkboxCellSx}>
+          <TableCell
+            sx={{
+              ...checkboxCellSx,
+              // The row's open-call tint, layered over the opaque base.
+              ...(active && {
+                backgroundImage: (th) =>
+                  `linear-gradient(${th.palette.action.selected}, ${th.palette.action.selected})`,
+              }),
+            }}
+          >
             {selection.canSelect(t) && (
               <Checkbox
                 size="small"
@@ -278,22 +297,19 @@ export default function TraceTable({
                       <Iconify
                         icon="solar:danger-triangle-bold"
                         width={12}
-                        sx={{ color: BUILD_TONES.red }}
+                        sx={{ color: "status.danger.solid" }}
                       />
                     </Box>
                   </CustomTooltip>
                 )}
               </Stack>
               <Stack direction="row" alignItems="center" spacing={0.75}>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    fontWeight: "fontWeightSemiBold",
-                    color: outcome.color,
-                  }}
-                >
-                  {outcome.label}
-                </Typography>
+                <StatusBadge
+                  status={t.status}
+                  label={outcome.label}
+                  role={outcome.role}
+                  variant="dot"
+                />
                 {t.durationMs != null && (
                   <>
                     <Box
@@ -348,7 +364,7 @@ export default function TraceTable({
                             sx={{ display: "flex", color: verdict.color }}
                           >
                             <Iconify
-                              icon={goal.passed ? "mdi:check" : "mdi:close"}
+                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
                               width={16}
                               aria-hidden="true"
                             />
@@ -449,7 +465,12 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} loading={callLive} />
+            <CsatValue
+              value={t.csat}
+              status={t.csatStatus}
+              reason={t.csatReason}
+              callLive={callLive}
+            />
           </TableCell>
         )}
         {show("turns") && (
@@ -525,7 +546,11 @@ export default function TraceTable({
           <TableHead>
             {bandSegments.length > 0 && (
               <TableRow>
-                {selection && <TableCell sx={bandCellSx} />}
+                {selection && (
+                  <TableCell
+                    sx={{ ...bandCellSx, ...pinnedLeftSx, zIndex: 4 }}
+                  />
+                )}
                 {bandSegments.map((segment) => (
                   <TableCell
                     key={segment.name}
@@ -539,7 +564,14 @@ export default function TraceTable({
             )}
             <TableRow>
               {selection && (
-                <TableCell sx={{ ...headSx, ...checkboxHeadSx }}>
+                <TableCell
+                  sx={{
+                    ...headSx,
+                    ...checkboxHeadSx,
+                    ...pinnedLeftSx,
+                    zIndex: 4,
+                  }}
+                >
                   <Checkbox
                     size="small"
                     checked={selection.pageChecked}
@@ -608,20 +640,39 @@ export default function TraceTable({
               {show("tokens") && (
                 <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
               )}
-              {scoredColumns.map((e) => (
-                <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+              {scoredColumns.map((e) => {
+                // Sub-goal columns share this row but aren't evals, so only
+                // an eval's own column gets the action.
+                const action =
+                  renderEvalHeaderAction && evals.includes(e)
+                    ? renderEvalHeaderAction(e)
+                    : null;
+                const name = (
                   <Typography
                     noWrap
                     sx={{
                       typography: "s2",
                       fontWeight: "fontWeightMedium",
                       color: "text.secondary",
+                      ...(action && { flex: 1, minWidth: 0 }),
                     }}
                   >
                     {e.name}
                   </Typography>
-                </TableCell>
-              ))}
+                );
+                return (
+                  <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+                    {action ? (
+                      <Stack direction="row" alignItems="center" spacing={0.5}>
+                        {name}
+                        <Box sx={{ flexShrink: 0 }}>{action}</Box>
+                      </Stack>
+                    ) : (
+                      name
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -675,6 +726,8 @@ TraceTable.propTypes = {
   onGroupViewChange: PropTypes.func,
   expandedForRef: PropTypes.shape({ current: PropTypes.any }),
   runActive: PropTypes.bool,
+  // Optional per-eval node shown after the eval's name in its header cell.
+  renderEvalHeaderAction: PropTypes.func,
   // Present when calls can be ticked: adds a checkbox column. `canSelect`
   // decides per call; the page box covers this page's selectable calls.
   selection: PropTypes.shape({

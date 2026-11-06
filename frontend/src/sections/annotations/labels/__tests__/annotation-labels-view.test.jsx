@@ -178,7 +178,7 @@ describe("AnnotationLabelsView", () => {
   it("renders search field and type filter", () => {
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByPlaceholderText("Search labels...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Active" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Archived" }),
@@ -186,6 +186,19 @@ describe("AnnotationLabelsView", () => {
     // Type filter select is rendered (MUI renders select with a combobox role)
     const selects = screen.getAllByRole("combobox");
     expect(selects.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("tabs from search through the archive toggle before the type filter", async () => {
+    const user = userEvent.setup();
+    render(<AnnotationLabelsView />);
+
+    await user.click(screen.getByPlaceholderText("Search"));
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Active" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Archived" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByText("All Types")).toHaveFocus();
   });
 
   it("opens create drawer on Create Label click", async () => {
@@ -211,7 +224,7 @@ describe("AnnotationLabelsView", () => {
 
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByText("No labels created yet")).toBeInTheDocument();
+    expect(screen.getByText("No labels yet")).toBeInTheDocument();
   });
 
   it("loads archived labels and restores from the archived view", async () => {

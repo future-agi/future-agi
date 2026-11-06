@@ -36,7 +36,7 @@ export const RecordingGroup = ({ tracks }) => (
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "10px", fontFamily: "monospace" }}
+          sx={{ fontSize: "12px", fontFamily: "monospace" }}
         >
           {label}
         </Typography>

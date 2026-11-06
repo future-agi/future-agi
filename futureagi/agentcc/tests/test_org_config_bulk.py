@@ -51,6 +51,7 @@ class TestOrgConfigBulk:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["status"] is True
         assert response.json()["result"] == {}
+        assert response.json()["unbuilt_org_ids"] == []
 
     def test_returns_configs_keyed_by_org_id(self, admin_client, organization):
         _make_active_config(organization)
@@ -98,7 +99,8 @@ class TestOrgConfigBulk:
     ):
         # The gateway drops its whole org store when this endpoint errors, so a
         # single org whose config the contract rejects must not take the rest
-        # of the fleet offline. See issue #3131.
+        # of the fleet offline. See issue #3131. The org is named in
+        # unbuilt_org_ids so the gateway keeps its last good config (TH-8487).
         _make_active_config(organization)
         org_b = Organization.objects.create(name="Bulk Sync Healthy Org")
         _make_active_config(org_b)
@@ -115,9 +117,10 @@ class TestOrgConfigBulk:
             response = admin_client.get("/agentcc/org-configs/bulk/")
 
         assert response.status_code == status.HTTP_200_OK
-        result = response.json()["result"]
-        assert str(organization.id) not in result
-        assert str(org_b.id) in result
+        body = response.json()
+        assert str(organization.id) not in body["result"]
+        assert str(org_b.id) in body["result"]
+        assert body["unbuilt_org_ids"] == [str(organization.id)]
 
     def test_soft_deleted_configs_excluded(self, admin_client, organization, db):
         # Soft-deleted rows are still present in the DB but must be filtered

@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,20 +13,52 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Helper: resolve provider for Assistants endpoints
+// Helper: resolve provider for Assistants and Vector Stores endpoints
 // ---------------------------------------------------------------------------
 
-// resolveAssistantsProvider resolves the provider for an Assistants API request.
-// If modelName is non-empty, it resolves using that model; otherwise it uses "gpt-4o" as default.
-// Returns the AssistantsProvider and any error.
-func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.RequestContext, modelName string) (providers.AssistantsProvider, error) {
-	if modelName == "" {
-		modelName = "gpt-4o"
+// openAIProviderID names the provider Assistants and Vector Stores requests go
+// to. Both are OpenAI APIs proxied path for path, so they need OpenAI itself;
+// any OpenAI-compatible provider has the same Go type but not these APIs, and
+// assistants, threads and stores live wherever they were created.
+const openAIProviderID = "openai"
+
+// resolveOpenAIProvider returns the org's own "openai" provider when it has
+// one configured, and otherwise the global one, which keys limited to their
+// org's providers may not use.
+func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.RequestContext) (providers.Provider, error) {
+	orgID, orgCfg := h.resolveOrgConfig(rc)
+	if orgID != "" && orgCfg != nil && h.orgProviderCache != nil {
+		if pcfg := orgCfg.Providers[openAIProviderID]; pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+			p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, openAIProviderID, pcfg.APIKey, pcfg)
+			if err != nil {
+				return nil, &models.APIError{
+					Status:  http.StatusBadGateway,
+					Type:    models.ErrTypeServer,
+					Code:    "provider_unavailable",
+					Message: "your organization's OpenAI provider could not be set up; check its configuration",
+				}
+			}
+			rc.Provider = openAIProviderID
+			return p, nil
+		}
 	}
 
-	orgID := rc.Metadata["org_id"]
-	_, orgCfg := h.resolveOrgConfig(rc)
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, modelName)
+	p, ok := h.registry.GetProvider(openAIProviderID)
+	if !ok || h.orgProvidersOnly(ctx, rc) {
+		return nil, &models.APIError{
+			Status:  http.StatusNotImplemented,
+			Type:    models.ErrTypeServer,
+			Code:    "not_supported",
+			Message: fmt.Sprintf("this API is served by an OpenAI provider with id %q, and none is configured for this key", openAIProviderID),
+		}
+	}
+	rc.Provider = openAIProviderID
+	return p, nil
+}
+
+// resolveAssistantsProvider resolves the provider for an Assistants API request.
+func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.RequestContext) (providers.AssistantsProvider, error) {
+	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -95,93 +125,8 @@ func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, ctx context.C
 		models.WriteErrorFromError(w, err)
 		return nil
 	}
-
-	h.setAgentccHeaders(w, rc)
-
-	// Forward upstream headers.
-	if respHeaders != nil {
-		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
-			if v := respHeaders.Get(key); v != "" {
-				w.Header().Set(key, v)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
-	w.WriteHeader(statusCode)
-	w.Write(respBody)
+	h.writeAssistantsResponse(w, rc, respBody, statusCode, respHeaders)
 	return respBody
-}
-
-// ---------------------------------------------------------------------------
-// Helper: proxy streaming Assistants request (SSE relay)
-// ---------------------------------------------------------------------------
-
-func (h *Handlers) proxyAssistantsStream(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, upstreamPath string, body []byte) {
-	stream, _, respHeaders, err := ap.StreamAssistantsRequest(ctx, "POST", upstreamPath, body, nil)
-	if err != nil {
-		models.WriteErrorFromError(w, err)
-		return
-	}
-	defer stream.Close()
-
-	h.setAgentccHeaders(w, rc)
-
-	// Forward upstream headers.
-	if respHeaders != nil {
-		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
-			if v := respHeaders.Get(key); v != "" {
-				w.Header().Set(key, v)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		slog.Warn("streaming not supported by server", "request_id", rc.RequestID)
-		return
-	}
-	flusher.Flush()
-
-	// Line-by-line relay with selective event inspection.
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Write the line and newline to the client.
-		if _, writeErr := fmt.Fprintf(w, "%s\n", line); writeErr != nil {
-			slog.Warn("error writing assistants stream", "request_id", rc.RequestID, "error", writeErr)
-			return
-		}
-
-		// Flush on empty lines (SSE event separator).
-		if line == "" {
-			flusher.Flush()
-		}
-
-		// Check for context cancellation.
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if err != io.EOF {
-			slog.Warn("error reading assistants stream", "request_id", rc.RequestID, "error", err)
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +170,7 @@ func (h *Handlers) CreateAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -250,7 +195,7 @@ func (h *Handlers) ListAssistants(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -283,7 +228,7 @@ func (h *Handlers) GetAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -314,7 +259,7 @@ func (h *Handlers) UpdateAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -345,7 +290,7 @@ func (h *Handlers) DeleteAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -372,7 +317,7 @@ func (h *Handlers) CreateThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -397,7 +342,7 @@ func (h *Handlers) GetThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -427,7 +372,7 @@ func (h *Handlers) UpdateThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -452,7 +397,7 @@ func (h *Handlers) DeleteThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -486,7 +431,7 @@ func (h *Handlers) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -511,7 +456,7 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -546,7 +491,7 @@ func (h *Handlers) GetMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -578,7 +523,7 @@ func (h *Handlers) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -605,7 +550,7 @@ func (h *Handlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -636,6 +581,9 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 
@@ -643,7 +591,7 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -655,20 +603,7 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	upstreamPath := "/v1/threads/" + threadID + "/runs"
-
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		// Extract usage for cost tracking.
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/"+threadID+"/runs", body, true)
 }
 
 // ListRuns handles GET /v1/threads/{thread_id}/runs.
@@ -687,7 +622,7 @@ func (h *Handlers) ListRuns(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -721,19 +656,17 @@ func (h *Handlers) GetRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
 
 	respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID, nil, nil)
-	// Extract usage from completed run for cost tracking on polling.
-	if respBody != nil {
-		if usage := models.ExtractRunUsage(respBody); usage != nil {
-			rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-			rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-		}
+	// A poll stays outside the pipeline, unless it is the first to see the
+	// run finish: then it charges the run, as the call that started it.
+	if respBody != nil && h.observeRun(ctx, rc, respBody, false) {
+		h.engine.RunPostPlugins(ctx, rc)
 	}
 }
 
@@ -760,7 +693,7 @@ func (h *Handlers) UpdateRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -787,7 +720,7 @@ func (h *Handlers) CancelRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -818,7 +751,7 @@ func (h *Handlers) ListRunSteps(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -860,7 +793,7 @@ func (h *Handlers) GetRunStep(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -891,6 +824,9 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 
@@ -898,7 +834,7 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -910,17 +846,7 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, "/v1/threads/runs", body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/runs", body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/runs", body, true)
 }
 
 // SubmitToolOutputs handles POST /v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs.
@@ -949,25 +875,14 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
 
-	upstreamPath := "/v1/threads/" + threadID + "/runs/" + runID + "/submit_tool_outputs"
-
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
-	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
-	}
+	// Continues a run started earlier, which holds the pending charge.
+	h.proxyRunCall(w, ctx, rc, ap, "/v1/threads/"+threadID+"/runs/"+runID+"/submit_tool_outputs", body, false)
 }
 
 // ---------------------------------------------------------------------------

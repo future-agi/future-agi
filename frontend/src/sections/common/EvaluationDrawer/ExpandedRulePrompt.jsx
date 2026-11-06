@@ -52,7 +52,7 @@ const ExpandedRulePrompt = ({
           onClick={onClose}
         >
           <Iconify
-            icon="line-md:close"
+            icon="solar:close-linear"
             sx={{
               width: theme.spacing(3),
               height: theme.spacing(3),

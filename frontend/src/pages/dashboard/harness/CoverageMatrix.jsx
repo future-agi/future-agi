@@ -1,15 +1,13 @@
 import { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
+import { statusColors } from "src/utils/runStatus";
 import { Box, Chip, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 
 // Cross-tabulates a suite over the axes the plan declared, so an empty cell reads as a gap.
 // Axis names come from each scenario's `coverage` coordinate and are never known here. What they
 // are CALLED comes from the coverage report's own labels, so a reader sees "What makes it hard"
 // rather than `overlay`, and the words cannot drift from the harness that deals the coordinates.
-
-const GREEN = "#16A34A";
-const RED = "#DC2626";
 
 const titled = (raw) =>
   String(raw || "")
@@ -189,7 +187,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
       </Stack>
 
       {/* Bounded: this panel sits above an unbounded list, so the grid may not grow without limit. */}
-      <Box sx={{ overflow: "auto", maxHeight: 420, border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
+      <Box sx={{ overflow: "auto", maxHeight: 420, border: 1, borderColor: "divider", borderRadius: "8px", p: 1.5 }}>
         <Box
           sx={{
             display: "grid",
@@ -204,7 +202,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
               key={col}
               variant="caption"
               sx={{
-                fontWeight: 700,
+                fontWeight: 500,
                 color: "text.secondary",
                 textAlign: "center",
                 pb: 0.5,
@@ -223,7 +221,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
               <Typography
                 variant="body2"
                 sx={{
-                  fontWeight: 600,
+                  fontWeight: 500,
                   alignSelf: "center",
                   pr: 1.5,
                   position: "sticky",
@@ -237,7 +235,6 @@ export default function CoverageMatrix({ scenarios, coverage }) {
               {matrix.colKeys.map((col) => {
                 const n = matrix.at(row, col);
                 const t = matrix.max > 1 ? (n - 1) / (matrix.max - 1) : n > 0 ? 1 : 0;
-                const strong = n && n / matrix.max >= 0.85;
                 return (
                   <Tooltip
                     key={col}
@@ -256,19 +253,22 @@ export default function CoverageMatrix({ scenarios, coverage }) {
                         placeItems: "center",
                         border: "1px solid",
                         borderStyle: n ? "solid" : "dashed",
-                        borderColor: n ? alpha(GREEN, 0.12 + 0.2 * t) : alpha(RED, 0.28),
+                        // Covered cells deepen with the count (a heat ramp on the
+                        // success token); a gap is the danger tint, dashed.
+                        borderColor: n
+                          ? (theme) => alpha(statusColors(theme, "success").solid, 0.12 + 0.2 * t)
+                          : "status.danger.solid",
                         bgcolor: n
-                          ? alpha(GREEN, 0.08 + 0.22 * t)
-                          : (theme) =>
-                              alpha(RED, theme.palette.mode === "dark" ? 0.05 : 0.035),
+                          ? (theme) => alpha(statusColors(theme, "success").solid, 0.08 + 0.22 * t)
+                          : "status.danger.bg",
                       }}
                     >
                       <Typography
                         variant="body2"
                         sx={{
-                          fontWeight: 700,
+                          fontWeight: 500,
                           fontVariantNumeric: "tabular-nums",
-                          color: n ? (strong ? "#fff" : "text.primary") : alpha(RED, 0.85),
+                          color: n ? "text.primary" : "status.danger.fg",
                         }}
                       >
                         {n || "—"}
