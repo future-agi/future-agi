@@ -1322,33 +1322,125 @@ class TestCheckLogs:
         assert finished["duration_seconds"] >= 180
 
 
-WORLD_SEED_FAILED = (
-    "Generated environment failed real-runtime validation after bounded repair: "
-    "seed/seed_failed (world-db): canonical World IR could not be compiled or applied: "
-    "source_model_fingerprint_mismatch"
+_CHECK = "Generated environment failed real-runtime validation after bounded repair: "
+# The cause the gateway recorded for ALK's own fingerprint check failing the seed.
+WORLD_SEED = (
+    "ProcessRuntimeError: seed/seed_failed (world-db): canonical World IR could not be "
+    "compiled or applied: source_model_fingerprint_mismatch"
 )
+
+
+def _failure(cause, tail=""):
+    return {
+        "code": "authoring_runtime_validation_failed",
+        "message": _CHECK + cause if cause else _CHECK.rstrip(": "),
+        "details": {"guest_log_tail": tail},
+    }
 
 
 class TestCheckUnavailable:
     @pytest.mark.parametrize(
-        ("message", "failed_actions", "cause"),
+        ("cause", "cause_code"),
         [
-            (WORLD_SEED_FAILED, None, "seed_failed"),
+            # ALK's own fingerprint check failed the canonical seed.
+            (WORLD_SEED, "seed_failed"),
             (
-                "...: render/store_statement_failed: insert refused",
+                "seed/seed_failed (world-db): canonical World IR could not be compiled or"
+                " applied: source_model_fingerprint_mismatch; agent: KeyError: 'id'",
+                "seed_failed",
+            ),
+            # The agent's own migration or seed content, applied to world-db.
+            (
+                "seed/seed_failed (world-db): 0042_orders.sql: exited 1: syntax error",
                 None,
+            ),
+            (
+                "seed/seed_failed (world-db): canonical World IR could not be compiled or"
+                " applied: source_model_fingerprint_mismatch, unknown_column",
+                None,
+            ),
+            ("baseline/seed_failed (world-db): world-db: sentinel check failed", None),
+            # Infrastructure at every raise site in ALK.
+            (
+                "render/store_statement_failed (redis): redis: store rejected a command",
                 "store_statement_failed",
             ),
-            ("...: spawn/spawn_failed (world-api): exited 1", None, "spawn_failed"),
-            ("...: spawn/spawn_failed (agent): ModuleNotFoundError", None, None),
-            ("...: build/build_failed (agent): pip failed", None, None),
-            (WORLD_SEED_FAILED, [{"action": "issue_refund"}], None),
-            ("the agent did not answer the test message", None, None),
-            ("", None, None),
+            ("reset/store_statement_failed: copy failed", "store_statement_failed"),
+            (
+                "admission/resource_capacity_unknown: both bounds are unavailable",
+                "resource_capacity_unknown",
+            ),
+            (
+                "admission/resource_capacity_unavailable: no world fits",
+                "resource_capacity_unavailable",
+            ),
+            # ALK bugs.
+            (
+                "render/internal_unknown_placeholder (agent): {{X}}",
+                "internal_unknown_placeholder",
+            ),
+            # A process ALK adds to the world, by its exact name.
+            (
+                "depends_on/depends_on_timeout (world-db): not ready",
+                "depends_on_timeout",
+            ),
+            ("spawn/spawn_failed (world-db): exited 1", "spawn_failed"),
+            ("spawn/spawn_failed (tool-proxy): exited 1", "spawn_failed"),
+            ("build/build_failed (mcp-toolbox): exited 1", "build_failed"),
+            # The agent's own processes and services, whatever they are called.
+            (
+                "depends_on/depends_on_timeout (agent): agent: started_check did not pass"
+                " within 180s; last output:",
+                None,
+            ),
+            ("spawn/spawn_failed (world-api): exited 1", None),
+            ("spawn/spawn_failed (tool-proxy-v2): exited 1", None),
+            ("spawn/spawn_failed (agent): ModuleNotFoundError", None),
+            ("build/build_failed (agent): pip failed", None),
+            # Only the head of the cause is read, never the agent's text after it.
+            (
+                "spawn/spawn_failed (agent): exited 1; agent: ProcessRuntimeError:"
+                " render/store_statement_failed: x",
+                None,
+            ),
+            ("RuntimeError: boom render/store_statement_failed: x", None),
+            ("the agent did not answer the test message", None),
+            ("", None),
         ],
     )
-    def test_only_a_test_world_failure_is_ours(self, message, failed_actions, cause):
-        assert validation.platform_failure(message, failed_actions) == cause
+    def test_only_a_failure_alk_owns_is_ours(self, cause, cause_code):
+        assert validation.platform_failure(_failure(cause)) == cause_code
+
+    def test_alk_s_infrastructure_phase_is_ours_and_any_other_phase_reads_the_cause(
+        self,
+    ):
+        cause = (
+            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+        )
+        tail = (
+            "runtime validation: environment: ConnectError: earlier\n"
+            f"runtime validation: infrastructure: {cause}\n"
+            f"RuntimeValidationError: {cause}\n"
+        )
+        assert validation.platform_failure(_failure(cause, tail)) == "infrastructure"
+        assert (
+            validation.platform_failure(
+                _failure(cause, tail.replace("infrastructure", "runtime"))
+            )
+            is None
+        )
+        # Only the last phase is the check's ending; an earlier attempt's is not.
+        retried = f"runtime validation: infrastructure: {cause}\nruntime validation: runtime: {cause}\n"
+        assert validation.platform_failure(_failure(cause, retried)) is None
+
+    def test_a_failed_action_probe_is_the_agent_s(self):
+        assert (
+            validation.platform_failure(
+                _failure(WORLD_SEED), [{"action": "issue_refund"}]
+            )
+            is None
+        )
+        assert validation.platform_failure(None) is None
 
     def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
         self, user, workspace, storage
@@ -1362,10 +1454,7 @@ class TestCheckUnavailable:
         job = _start(environment).job
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
             state="failed",
-            failure={
-                "code": "authoring_runtime_validation_failed",
-                "message": WORLD_SEED_FAILED,
-            },
+            failure=_failure(WORLD_SEED),
         )
 
         with capture_logs() as logs:
@@ -1398,11 +1487,28 @@ class TestCheckUnavailable:
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
         job.refresh_from_db()
 
-        assembly.mark_failed(job, WORLD_SEED_FAILED)
+        assembly.mark_failed(job, _failure(WORLD_SEED))
 
         assert _row(environment).state == "pending"
-        assembly.mark_failed(job, "the agent did not answer the test message")
+        assembly.mark_failed(job, _failure("the agent did not answer the test message"))
         assert _row(environment).state == "failed"
+
+    def test_an_ordinary_run_s_test_world_failure_still_fails_its_bundle(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-ours-run")
+        job = _start(environment).job
+        payload = dict(job.payload)
+        payload["metadata"]["assembly"]["outcome"] = "miss"
+        del payload["metadata"]["certify_only"]
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+        job.refresh_from_db()
+
+        assembly.mark_failed(job, _failure(WORLD_SEED))
+
+        row = _row(environment)
+        assert row.state == "failed"
+        assert row.error["run_id"] == str(job.id)
 
     def test_an_agent_failure_still_fails_the_pair_and_refuses_runs(
         self, user, workspace, storage
@@ -1415,7 +1521,7 @@ class TestCheckUnavailable:
             state="failed",
             failure={
                 "code": "authoring_runtime_validation_failed",
-                "message": "...: spawn/spawn_failed (agent): ModuleNotFoundError",
+                "message": _CHECK + "spawn/spawn_failed (agent): ModuleNotFoundError",
             },
         )
 
@@ -1432,13 +1538,89 @@ class TestCheckUnavailable:
         job = _move_job(environment, a2)
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
             state="failed",
-            failure={
-                "code": "authoring_runtime_validation_failed",
-                "message": WORLD_SEED_FAILED,
-            },
+            failure=_failure(WORLD_SEED),
         )
 
         assert validation.finish_validation(job.id) == "unavailable"
 
         environment.refresh_from_db()
         assert environment.agent_version_id == a2.id
+
+
+def _template(settings, build):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = build
+
+
+def _checks(environment):
+    return HostedHarnessJob.no_workspace_objects.filter(
+        assembled_bundle_id=_row(environment).id, payload__metadata__certify_only=True
+    ).count()
+
+
+class TestUnavailableReuse:
+    def test_a_repeating_cause_is_reused_until_the_template_changes(
+        self, user, workspace, storage, settings
+    ):
+        _template(settings, "b1")
+        environment = _pending(user, workspace, storage, "pv-reuse")
+        job = _start(environment).job
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed", failure=_failure(WORLD_SEED)
+        )
+        assert validation.finish_validation(job.id) == "unavailable"
+
+        again = _start(environment)
+
+        assert again.state == "check_unavailable" and again.ready
+        assert again.job is None and _checks(environment) == 1
+        assert again.as_view()["error"] == {
+            "code": "check_unavailable",
+            "reason": validation.UNAVAILABLE_REASON,
+        }
+        assert again.as_view()["job_id"] == str(job.id)
+        _template(settings, "b2")
+        assert _start(environment).state == "validating"
+        assert _checks(environment) == 2
+
+    def test_a_move_lands_on_a_reused_result_without_a_check(
+        self, user, workspace, storage, settings
+    ):
+        _template(settings, "b1")
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-reuse-move")
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        job = _move_job(environment, a2)
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed", failure=_failure(WORLD_SEED)
+        )
+        assert validation.finish_validation(job.id) == "unavailable"
+        environment.refresh_from_db()
+        move_agent_default(environment, a1.id, expected_default_id=a2.id, user=user)
+        environment.refresh_from_db()
+
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a2.id
+        assert (
+            HostedHarnessJob.no_workspace_objects.filter(
+                assembled_bundle_id=job.assembled_bundle_id,
+                payload__metadata__certify_only=True,
+            ).count()
+            == 1
+        )
+
+    def test_a_passing_cause_checks_again(self, user, workspace, storage, settings):
+        _template(settings, "b1")
+        environment = _pending(user, workspace, storage, "pv-reuse-transient")
+        job = _start(environment).job
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed",
+            failure=_failure("admission/resource_capacity_unavailable: no world fits"),
+        )
+        assert validation.finish_validation(job.id) == "unavailable"
+        assert "template" not in _row(environment).error["last_attempt"]
+
+        assert _start(environment).state == "validating"
+        assert _checks(environment) == 2

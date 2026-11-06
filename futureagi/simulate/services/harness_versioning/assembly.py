@@ -1147,7 +1147,7 @@ def fill_bundle(
 
 def mark_failed(
     job: HostedHarnessJob,
-    message: str,
+    failure: dict[str, Any],
     *,
     failed_actions: list[dict[str, str]] | None = None,
 ) -> None:
@@ -1172,13 +1172,13 @@ def mark_failed(
             **_RESET, updated_at=timezone.now()
         )
         outcome = "reset"
-    elif certify_only(job) and platform_failure(message, failed_actions):
+    elif certify_only(job) and platform_failure(failure, failed_actions):
         # A check that failed on our side settles as unavailable, never failed.
         return
     elif assembly.get("outcome") == "miss":
         error: dict[str, Any] = {
             "code": "authoring_runtime_validation_failed",
-            "message": message[:1000],
+            "message": str(failure.get("message") or "")[:1000],
             "run_id": str(job.id),
         }
         if failed_actions is not None:

@@ -4688,7 +4688,7 @@ class HostedHarnessGateway:
                 try:
                     bundle_cache.mark_failed(
                         attempt.job,
-                        attempt.terminal_failure["message"],
+                        attempt.terminal_failure,
                         failed_actions=self._certify_failed_actions(attempt),
                     )
                 except Exception:  # noqa: BLE001 - the cache never changes the outcome
