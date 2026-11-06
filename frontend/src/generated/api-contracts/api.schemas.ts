@@ -25226,8 +25226,14 @@ export const CallWorkerEventApiAttribution = {
   unattributed: "unattributed",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type CallWorkerEventApiInput = { [key: string]: unknown };
 
+/**
+ * Any valid JSON value.
+ */
 export type CallWorkerEventApiOutput = { [key: string]: unknown };
 
 export interface CallWorkerEventApi {
@@ -25250,7 +25256,9 @@ export interface CallWorkerEventApi {
   span_id?: string;
   /** @minLength 1 */
   trace_id?: string;
+  /** Any valid JSON value. */
   input?: CallWorkerEventApiInput;
+  /** Any valid JSON value. */
   output?: CallWorkerEventApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
@@ -25273,6 +25281,82 @@ export const CallWorkerStepApiKind = {
   tool_call: "tool_call",
 } as const;
 
+export type CallWorkerEventOrNullApiType =
+  (typeof CallWorkerEventOrNullApiType)[keyof typeof CallWorkerEventOrNullApiType];
+
+export const CallWorkerEventOrNullApiType = {
+  delegated: "delegated",
+  transferred: "transferred",
+  tool_call: "tool_call",
+  returned: "returned",
+} as const;
+
+export type CallWorkerEventOrNullApiStatus =
+  (typeof CallWorkerEventOrNullApiStatus)[keyof typeof CallWorkerEventOrNullApiStatus];
+
+export const CallWorkerEventOrNullApiStatus = {
+  ok: "ok",
+  error: "error",
+} as const;
+
+export type CallWorkerEventOrNullApiRelationship =
+  (typeof CallWorkerEventOrNullApiRelationship)[keyof typeof CallWorkerEventOrNullApiRelationship];
+
+export const CallWorkerEventOrNullApiRelationship = {
+  observed: "observed",
+  unknown: "unknown",
+} as const;
+
+export type CallWorkerEventOrNullApiAttribution =
+  (typeof CallWorkerEventOrNullApiAttribution)[keyof typeof CallWorkerEventOrNullApiAttribution];
+
+export const CallWorkerEventOrNullApiAttribution = {
+  reported: "reported",
+  unattributed: "unattributed",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventOrNullApiInput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type CallWorkerEventOrNullApiOutput = { [key: string]: unknown };
+
+export interface CallWorkerEventOrNullApi {
+  seq: number;
+  type: CallWorkerEventOrNullApiType;
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  by?: string;
+  /** @minLength 1 */
+  delegation_id?: string;
+  /** @minLength 1 */
+  task?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  tool?: string;
+  status?: CallWorkerEventOrNullApiStatus;
+  /** @minLength 1 */
+  span_id?: string;
+  /** @minLength 1 */
+  trace_id?: string;
+  /** Any valid JSON value. */
+  input?: CallWorkerEventOrNullApiInput;
+  /** Any valid JSON value. */
+  output?: CallWorkerEventOrNullApiOutput;
+  input_omitted?: boolean;
+  output_omitted?: boolean;
+  relationship?: CallWorkerEventOrNullApiRelationship;
+  /** @minLength 1 */
+  at: string;
+  attribution: CallWorkerEventOrNullApiAttribution;
+}
+
 export type CallWorkerStepApiRelationship =
   (typeof CallWorkerStepApiRelationship)[keyof typeof CallWorkerStepApiRelationship];
 
@@ -25289,8 +25373,8 @@ export interface CallWorkerStepApi {
   /** @minLength 1 */
   worker_id: string;
   transfer?: boolean;
-  handoff?: CallWorkerEventApi;
-  returned?: CallWorkerEventApi;
+  handoff?: CallWorkerEventOrNullApi;
+  returned?: CallWorkerEventOrNullApi;
   /** @minLength 1 */
   started_at?: string;
   /** @minLength 1 */
@@ -25506,6 +25590,7 @@ export interface RunDashboardTaskApi {
   modality: string;
   /** @minLength 1 */
   provider: string;
+  completed_at: string;
 }
 
 export interface RunDashboardUnavailableApi {

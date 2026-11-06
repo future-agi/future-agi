@@ -95260,11 +95260,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Input",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         output: {
           title: "Output",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         input_omitted: {
           title: "Input omitted",
@@ -95351,10 +95355,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
         handoff: {
-          $ref: "#/definitions/CallWorkerEvent",
+          $ref: "#/definitions/CallWorkerEventOrNull",
         },
         returned: {
-          $ref: "#/definitions/CallWorkerEvent",
+          $ref: "#/definitions/CallWorkerEventOrNull",
         },
         started_at: {
           title: "Started at",
@@ -117322,6 +117326,109 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    CallWorkerEventOrNull: {
+      required: ["seq", "type", "worker_id", "at", "attribution"],
+      type: "object",
+      properties: {
+        seq: {
+          title: "Seq",
+          type: "integer",
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["delegated", "transferred", "tool_call", "returned"],
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        by: {
+          title: "By",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        delegation_id: {
+          title: "Delegation id",
+          type: "string",
+          minLength: 1,
+        },
+        task: {
+          title: "Task",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "error"],
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        input: {
+          title: "Input",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        input_omitted: {
+          title: "Input omitted",
+          type: "boolean",
+        },
+        output_omitted: {
+          title: "Output omitted",
+          type: "boolean",
+        },
+        relationship: {
+          title: "Relationship",
+          type: "string",
+          enum: ["observed", "unknown"],
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attribution: {
+          title: "Attribution",
+          type: "string",
+          enum: ["reported", "unattributed"],
+        },
+      },
+      "x-nullable": true,
+    },
     InvestigationEvidenceWindow: {
       required: ["start", "end"],
       type: "object",
@@ -125921,6 +126028,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "value",
         "modality",
         "provider",
+        "completed_at",
       ],
       type: "object",
       properties: {
@@ -125957,6 +126065,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Provider",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
           "x-nullable": true,
         },
       },

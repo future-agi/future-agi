@@ -52892,8 +52892,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       status: zod.enum(["ok", "error"]).optional(),
       span_id: zod.string().min(1).optional(),
       trace_id: zod.string().min(1).optional(),
-      input: zod.object({}).passthrough().optional(),
-      output: zod.object({}).passthrough().optional(),
+      input: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      output: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
       input_omitted: zod.boolean().optional(),
       output_omitted: zod.boolean().optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
@@ -52934,8 +52942,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           status: zod.enum(["ok", "error"]).optional(),
           span_id: zod.string().min(1).optional(),
           trace_id: zod.string().min(1).optional(),
-          input: zod.object({}).passthrough().optional(),
-          output: zod.object({}).passthrough().optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
@@ -52956,8 +52972,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           status: zod.enum(["ok", "error"]).optional(),
           span_id: zod.string().min(1).optional(),
           trace_id: zod.string().min(1).optional(),
-          input: zod.object({}).passthrough().optional(),
-          output: zod.object({}).passthrough().optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
@@ -52981,8 +53005,16 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           status: zod.enum(["ok", "error"]).optional(),
           span_id: zod.string().min(1).optional(),
           trace_id: zod.string().min(1).optional(),
-          input: zod.object({}).passthrough().optional(),
-          output: zod.object({}).passthrough().optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
@@ -53193,6 +53225,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         value: zod.number(),
         modality: zod.string().min(1),
         provider: zod.string().min(1),
+        completed_at: zod.string().datetime({ offset: true }),
       }),
     ),
     most_expensive_tasks: zod.array(
@@ -53204,6 +53237,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         value: zod.number(),
         modality: zod.string().min(1),
         provider: zod.string().min(1),
+        completed_at: zod.string().datetime({ offset: true }),
       }),
     ),
     unavailable_features: zod.array(

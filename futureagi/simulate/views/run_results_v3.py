@@ -68,6 +68,7 @@ from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.services.clickhouse.client import CHError
 
 logger = structlog.get_logger(__name__)
@@ -573,8 +574,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     span_id = serializers.CharField(required=False)
     trace_id = serializers.CharField(required=False)
     # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
-    input = serializers.JSONField(allow_null=True, required=False)
-    output = serializers.JSONField(allow_null=True, required=False)
+    input = JsonValueField(allow_null=True, required=False)
+    output = JsonValueField(allow_null=True, required=False)
     # True when the record's size limit was reached before this step, so that part was not kept.
     input_omitted = serializers.BooleanField(required=False)
     output_omitted = serializers.BooleanField(required=False)
@@ -584,6 +585,14 @@ class CallWorkerEventSerializer(serializers.Serializer):
     )
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
+
+
+class CallWorkerEventOrNullSerializer(CallWorkerEventSerializer):
+    """A hand-off or its return, null when the record did not see it."""
+
+    class Meta:
+        ref_name = "CallWorkerEventOrNull"
+        swagger_schema_fields = {"x-nullable": True}
 
 
 class CallWorkerCoordinatorSerializer(serializers.Serializer):
@@ -605,8 +614,8 @@ class CallWorkerStepSerializer(serializers.Serializer):
     worker_id = serializers.CharField(allow_null=True)
     # Hand-off rows: the hand-off and its return (null when not seen), its span, and whether a sibling overlapped it.
     transfer = serializers.BooleanField(required=False)
-    handoff = CallWorkerEventSerializer(allow_null=True, required=False)
-    returned = CallWorkerEventSerializer(allow_null=True, required=False)
+    handoff = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
+    returned = CallWorkerEventOrNullSerializer(allow_null=True, required=False)
     started_at = serializers.CharField(allow_null=True, required=False)
     ended_at = serializers.CharField(allow_null=True, required=False)
     parallel = serializers.BooleanField(required=False)

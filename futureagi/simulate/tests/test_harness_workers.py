@@ -1734,3 +1734,38 @@ def test_a_nested_hand_off_from_spans_names_the_hand_off_its_maker_ran_in():
     tool = next(e for e in events if e["type"] == "tool_call")
     assert (nested["delegation_id"], nested["parent_delegation_id"]) == ("c", "b")
     assert (tool["delegation_id"], tool["trace_id"]) == ("c", "tr1")
+
+
+def test_the_workers_contract_allows_string_payloads_and_the_parts_that_can_be_missing():
+    from pathlib import Path
+
+    from simulate.views.run_results_v3 import CallWorkerEventSerializer
+    from tfc.utils.serializer_fields import JsonValueField
+
+    event = CallWorkerEventSerializer()
+    for name in ("input", "output"):
+        assert isinstance(event.fields[name], JsonValueField)
+    swagger = Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+    definitions = json.loads(swagger.read_text())["definitions"]
+
+    def nullable(schema):
+        target = (
+            definitions[schema["$ref"].rsplit("/", 1)[1]]
+            if "$ref" in schema
+            else schema
+        )
+        return bool(schema.get("x-nullable") or target.get("x-nullable"))
+
+    payload = definitions["CallWorkerEvent"]["properties"]
+    assert payload["input"]["x-json-value"] and payload["output"]["x-json-value"]
+    step = definitions["CallWorkerStep"]["properties"]
+    turn = definitions["CallWorkerRound"]["properties"]
+    response = definitions["CallWorkersResponse"]["properties"]
+    assert nullable(step["handoff"]) and nullable(step["returned"])
+    assert nullable(turn["request"]) and nullable(turn["response"])
+    assert nullable(response["coordinator"])
+    # A tool-call row's call, and every event in the list, is always there.
+    assert not nullable(step["call"])
+    assert not nullable(
+        definitions["CallWorkersResponse"]["properties"]["events"]["items"]
+    )
