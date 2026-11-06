@@ -428,12 +428,23 @@ def on_terminal(job: HostedHarnessJob) -> None:
         transaction.on_commit(lambda: finish_validation(job_id))
 
 
+def check_deadline(job: HostedHarnessJob) -> Any:
+    """When a validation job is stopped: ``CHECK_DEADLINE`` after its latest sandbox
+    launched, so time queued for a runner never counts; from its creation before one."""
+    launched = (
+        job.attempts.order_by("-attempt_number")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    return (launched or job.created_at) + CHECK_DEADLINE
+
+
 def overdue(job: HostedHarnessJob) -> bool:
     """Whether a live validation job has run past its deadline and is to be stopped."""
     return (
         certify_only(job)
         and job.state in _LIVE_STATES
-        and job.created_at + CHECK_DEADLINE <= timezone.now()
+        and check_deadline(job) <= timezone.now()
         and (job.cancel_requested_at is None or job.cancel_reason == CHECK_TIMED_OUT)
     )
 
@@ -789,7 +800,7 @@ def require_pair_runnable(
         return
     live = live_validation(bundle.id)
     if live is not None:
-        deadline = live.created_at + CHECK_DEADLINE
+        deadline = check_deadline(live)
         retry_after = max(60, int((deadline - timezone.now()).total_seconds()))
         raise HostedHarnessError(
             "pair_validating",

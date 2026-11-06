@@ -1120,14 +1120,21 @@ class TestReconcileWithoutSandbox:
         assert polled.state == "canceled"
 
 
-def _age(job, minutes):
-    """The check was asked for ``minutes`` ago."""
+def _age(job, minutes, *, launched=None):
+    """The check was asked for ``minutes`` ago and its sandbox launched ``launched``
+    minutes ago (as long ago when absent)."""
     from datetime import timedelta
 
     from django.utils import timezone
 
+    from simulate.models import HostedHarnessAttempt
+
+    now = timezone.now()
     HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        created_at=timezone.now() - timedelta(minutes=minutes)
+        created_at=now - timedelta(minutes=minutes)
+    )
+    HostedHarnessAttempt.no_workspace_objects.filter(job_id=job.id).update(
+        created_at=now - timedelta(minutes=minutes if launched is None else launched)
     )
     job.refresh_from_db()
 
@@ -1183,6 +1190,18 @@ class TestDeadline:
 
         assert validation.overdue(job) is False
         _age(job, 46)
+        assert validation.overdue(job) is True
+
+    def test_time_queued_before_the_sandbox_launched_does_not_count(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _pending(user, workspace, storage, "pv-queued")
+        job = _start(environment).job
+        _launch(gateway, job)
+        _age(job, 60, launched=10)
+
+        assert validation.overdue(job) is False
+        _age(job, 60, launched=46)
         assert validation.overdue(job) is True
 
     def test_a_user_cancel_is_not_a_timed_out_check(self, user, workspace, storage):
