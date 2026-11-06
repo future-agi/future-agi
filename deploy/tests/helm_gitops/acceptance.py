@@ -381,7 +381,7 @@ class Fixture:
         self.checkpoints.append(name)
         print("PASS persistent product witnesses " + name, flush=True)
 
-    def browser(self, name):
+    def browser(self, name, *, first_login=False):
         def stop(process):
             if process.poll() is None:
                 process.terminate()
@@ -411,6 +411,7 @@ class Fixture:
             result = self.run([sys.executable, "-m", "deploy.tests.helm_gitops.browser"], timeout=180,
                 input=json.dumps({"ui": self.values["urls"]["app"], "api": self.values["urls"]["api"],
                     "email": "gitops-admin@example.com", "name": "GitOps Smoke", "password": ADMIN_PASSWORD,
+                    "first_login": first_login,
                     "output": str(self.output / ("browser-" + name + ".json"))}), check=False)
             if result.returncode:
                 report_path = self.output / ("browser-" + name + ".json")
@@ -603,7 +604,7 @@ class Fixture:
             self.select(self.artifacts["a"])
             self.successful(self.artifacts["a"])
             self.witnesses("installed-a", seed=True)
-            self.browser("installed-a")
+            self.browser("installed-a", first_login=True)
             self.permissions()
             self.pinned_digest_ignores_moved_tag()
             self.missing_digest()

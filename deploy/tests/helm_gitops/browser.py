@@ -30,6 +30,8 @@ def main():
 
         def response_seen(response):
             url = urlsplit(response.url)
+            if response.url == api + "/accounts/get-user-profile-details/" and response.request.method == "GET":
+                result["profile_status"] = response.status
             if f"{url.scheme}://{url.netloc}" in (origin, api) and response.status >= 500:
                 # No query strings, headers or bodies in retained diagnostics.
                 result["local_server_errors"].append({"path": url.path, "status": response.status})
@@ -40,23 +42,47 @@ def main():
             page.goto(origin + "/auth/jwt/login?" + urlencode({"returnTo": profile}), wait_until="domcontentloaded")
             page.get_by_label("Email address", exact=True).fill(config["email"])
             page.get_by_label("Password", exact=True).fill(config["password"])
-            stage = "real login and profile request"
-            with page.expect_response(lambda r: r.url == api + "/accounts/get-user-profile-details/" and r.request.method == "GET") as profile_response:
-                with page.expect_response(lambda r: r.url == api + "/accounts/token/" and r.request.method == "POST") as login_response:
+            stage = "real login"
+            with page.expect_response(lambda r: r.url == api + "/accounts/token/" and r.request.method == "POST") as login_response:
+                page.get_by_role("button", name="Continue", exact=True).click()
+            result["login_status"] = login_response.value.status
+            if result["login_status"] != 200:
+                raise AssertionError("login response was not successful")
+            if config["first_login"]:
+                # Bootstrap creates an account, not a completed onboarding flow.
+                # Perform it once through the UI; never seed a bypass flag or
+                # silently repeat it after an upgrade loses the account state.
+                stage = "first-login role"
+                expect(page.get_by_text("What's your role", exact=True)).to_be_visible()
+                page.get_by_placeholder("Tell us about your role", exact=True).fill("Platform Engineer")
+                page.get_by_role("button", name="Continue", exact=True).click()
+                stage = "first-login goals"
+                expect(page.get_by_text("Tell us about your goals", exact=True)).to_be_visible()
+                page.get_by_text("Monitor LLMs and Agents", exact=True).click()
+                with page.expect_response(lambda r: r.url == api + "/accounts/onboarding/" and r.request.method == "POST") as onboarding_response:
                     page.get_by_role("button", name="Continue", exact=True).click()
-                if login_response.value.status != 200:
-                    raise AssertionError("login response was not successful")
-            if profile_response.value.status != 200:
-                raise AssertionError("profile response was not successful")
+                if onboarding_response.value.status != 200:
+                    raise AssertionError("onboarding response was not successful")
+                stage = "first-login organization"
+                page.get_by_label("Organization Name", exact=True).fill("GitOps Fixture")
+                with page.expect_response(lambda r: r.url == api + "/accounts/team/users/" and r.request.method == "POST") as organization_response:
+                    page.get_by_role("button", name="Continue", exact=True).click()
+                if organization_response.value.status not in (200, 201):
+                    raise AssertionError("organization setup response was not successful")
+                if organization_response.value.request.post_data_json.get("members") != []:
+                    raise AssertionError("fixture onboarding must not invite members")
+                result["initial_onboarding_completed"] = True
             stage = "rendered retained identity"
             expect(page).to_have_url(origin + profile)
             expect(page.get_by_text("Profile Details", exact=True)).to_be_visible()
             expect(page.get_by_text(config["email"], exact=True).last).to_be_visible()
             expect(page.get_by_text(config["name"], exact=True).last).to_be_visible()
             page.screenshot(path=str(output.with_suffix(".png")), full_page=True)
+            if result.get("profile_status") != 200:
+                raise AssertionError("profile response was not successful")
             if result["page_errors"] or result["local_server_errors"]:
                 raise AssertionError("browser or local server error during smoke")
-            result.update(status="passed", login_status=200, profile_status=200, retained_identity_visible=True)
+            result.update(status="passed", retained_identity_visible=True)
         except Exception as exc:
             # Playwright exception text can echo entered fields; retain only a
             # bounded stage/type and a screenshot with the password field masked.

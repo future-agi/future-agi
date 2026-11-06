@@ -298,8 +298,10 @@ wrong-key refusal (external cosign for Argo; Flux's actual source verifier), a r
 bootstrap followed by an injected failure, explicit pause/repair/resume, and a
 reviewed return to the earlier chart. Native PostgreSQL, ClickHouse and S3 witnesses,
 migration inventory, Secret hashes and PVC UIDs must remain unchanged. Chromium
-signs in through the real login form and renders the seeded profile after install,
-forward repair and rollback. Evidence includes bounded status, native witnesses
+signs in through the real login form, completes first-login onboarding through the
+UI only on initial install, and renders the seeded profile after install, forward
+repair and rollback. Later logins must reach the retained profile without repeating
+onboarding. Evidence includes bounded status, native witnesses
 and screenshots, not auth tokens, private signing keys, kubeconfig or browser HAR.
 
 **Limits:** the synthetic chart versions all use the same current application
