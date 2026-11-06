@@ -9,7 +9,7 @@ import { seriesColor } from "src/theme/data-colors";
 const ROLE_LABEL = {
   agent: "Assistant",
   customer: "Customer",
-  tool: "Tool",
+  tool: "Tool call",
 };
 const TOOL_SERIES = 1;
 const isHandOffRow = (turn) =>

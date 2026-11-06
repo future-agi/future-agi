@@ -23,7 +23,7 @@ describe("ChatTranscriptPane", () => {
     );
 
     expect(screen.getByText(/· Hand-off$/)).toBeInTheDocument();
-    const tool = screen.getByText(/· Tool$/).parentElement;
+    const tool = screen.getByText(/· Tool call$/).parentElement;
     const customer = screen.getByText(/· Customer$/).parentElement;
     expect(getComputedStyle(tool).borderLeftColor).not.toBe(
       getComputedStyle(customer).borderLeftColor,
