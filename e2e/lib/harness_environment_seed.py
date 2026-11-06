@@ -15,7 +15,9 @@ versions backfill reads, as the backend tests build one
 A ``certified`` archive carries the sealed bundle a build certifies: a certificate
 whose checks all passed, and per-tool and per-action certification files. Without it
 the pairing has no bundle, so its first check is a validation. ``production_only``
-names a tool the contract says reaches production.
+names a tool the contract says reaches production. ``failed_check`` names an action
+an uncertified pairing's last validation failed on: its bundle is left failed by that
+check, as a validation leaves it (``validation._settle_bundle``).
 
 Every row belongs to the given organization and workspace. Prints one JSON line.
 """
@@ -182,6 +184,7 @@ def seed_environment(
     lookups=1,
     certified=True,
     production_only=None,
+    failed_check=None,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios."""
     from simulate.models import (
@@ -278,6 +281,8 @@ def seed_environment(
         )
     if certified and environment.assembled_bundle_id is None:
         raise RuntimeError("backfill cached no certified bundle")
+    if failed_check:
+        _fail_check(environment, failed_check)
     return {
         "environmentId": str(environment.id),
         "agentVersionId": str(environment.agent_version_id),
@@ -287,6 +292,42 @@ def seed_environment(
         "refundKeys": [d["scenario_key"] for d in documents[:refunds]],
         "lookupKeys": [d["scenario_key"] for d in documents[refunds:]],
     }
+
+
+def _fail_check(environment, action):
+    """The pairing's bundle, keyed as a validation keys it, failed by its check."""
+    from simulate.models import HarnessAgentVersionRuntime, HarnessAssembledBundle
+    from simulate.services.harness_versioning import assembly
+    from simulate.services.harness_versioning.backfill import effective_runtime
+
+    runtime = effective_runtime(
+        environment,
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=environment.agent_version_id
+        ).first(),
+    )
+    key = assembly.bundle_key(
+        runtime, environment.environment_version, environment.suite_version
+    )
+    HarnessAssembledBundle._base_manager.update_or_create(
+        job_id=environment.id,
+        assembly_key=key,
+        defaults={
+            "organization_id": environment.organization_id,
+            "agent_version_id": environment.agent_version_id,
+            "environment_version_id": environment.environment_version_id,
+            "suite_version_id": environment.suite_version_id,
+            "state": HarnessAssembledBundle.State.FAILED,
+            "error": {
+                "code": "authoring_runtime_validation_failed",
+                "message": f"Traceback (most recent call last): {action} probe",
+                "source": "validation",
+                "failed_actions": [
+                    {"action": action, "status": "failed", "reason": "no world"}
+                ],
+            },
+        },
+    )
 
 
 def main():
