@@ -1811,7 +1811,7 @@ export default function ScenariosStep({
                           borderColor: "divider",
                         }}
                       >
-                        Tags &amp; groups
+                        Tags &amp; suites
                       </Button>
                     ) : barFit === "compact" ? (
                       <Tooltip arrow title="Tags & suites">
