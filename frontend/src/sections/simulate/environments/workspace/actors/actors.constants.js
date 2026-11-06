@@ -20,7 +20,6 @@ export const ACTORS_COPY = {
       max_messages: "Default: 500",
     },
     none: "none",
-    help: "A number, or none",
     badNumber: "A number above 0, or none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",

@@ -72,7 +72,9 @@ export default function ActorLimits({
             disabled={locked}
             placeholder={L.defaults[key]}
             error={problems.includes(L.labels[key])}
-            helperText={problems.includes(L.labels[key]) ? L.badNumber : L.help}
+            helperText={
+              problems.includes(L.labels[key]) ? L.badNumber : undefined
+            }
           />
         ))}
         {models?.length > 0 && (
