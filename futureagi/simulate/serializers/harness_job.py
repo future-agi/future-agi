@@ -963,8 +963,7 @@ class HarnessSecretValuesSerializer(serializers.Serializer):
 class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
-    # Absent from a coding agent's read of its own run.
-    source = serializers.DictField(required=False)
+    source = serializers.DictField()
     metadata = serializers.DictField(child=JsonValueField(allow_null=True))
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
@@ -1080,11 +1079,9 @@ class HarnessJobReadSerializer(serializers.Serializer):
 
     job = HarnessJobInfoSerializer()
     status = HarnessJobStatusSerializer()
-    # A coding agent's read of its own run leaves these three out: they carry the
-    # suite's cases, held-back ones included.
-    events = HarnessJobEventSerializer(many=True, required=False)
-    stage_outputs = HarnessStageOutputSerializer(many=True, required=False)
-    scenarios = HarnessScenarioSerializer(many=True, required=False)
+    events = HarnessJobEventSerializer(many=True)
+    stage_outputs = HarnessStageOutputSerializer(many=True)
+    scenarios = HarnessScenarioSerializer(many=True)
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)

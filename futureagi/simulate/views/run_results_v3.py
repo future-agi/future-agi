@@ -322,14 +322,14 @@ class RunCallSerializer(serializers.Serializer):
     csat = serializers.FloatField(allow_null=True)
     ended_reason = serializers.CharField(allow_null=True)
     error_message = serializers.CharField(allow_null=True)
-    failure_domain = serializers.ChoiceField(
-        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
-    )
-    failure_code = serializers.CharField(allow_null=True)
     evaluations = EvaluationResultSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
+    failure_domain = serializers.ChoiceField(
+        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
+    )
+    failure_code = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):

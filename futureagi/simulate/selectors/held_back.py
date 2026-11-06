@@ -7,7 +7,8 @@ cases, cannot run them, and learns how a version did on them only as counts.
 
 The cases are hidden from the API only. A run's sandbox holds every case of its suite,
 and the agent under test runs there as the same OS user as the harness, so a hostile
-candidate can read them and speak them into a transcript the key reads.
+candidate can read them and speak them into a transcript the key reads. The OS-user
+split follow-up closes that.
 """
 
 from collections.abc import Collection, Mapping
