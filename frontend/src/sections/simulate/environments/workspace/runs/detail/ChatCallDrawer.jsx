@@ -9,12 +9,18 @@ import { ShareDialog } from "src/components/share-dialog";
 import {
   useCallDetail,
   useCallTraces,
+  useHasWorkers,
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import {
+  CALL_TRACES_COPY,
+  CALL_WORKERS_COPY,
+  ownsArrowKeys,
+} from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -64,17 +70,6 @@ NavArrow.propTypes = {
   disabled: PropTypes.bool,
 };
 
-// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
-// instead of stepping to another conversation — the voice transcript does the
-// same. Focusable so a click inside hands it the keyboard; default not
-// prevented, so the browser still scrolls.
-const ownsArrowKeys = {
-  tabIndex: 0,
-  onKeyDown: (e) => {
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
-  },
-};
-
 export default function ChatCallDrawer({
   task,
   executionId = null,
@@ -104,7 +99,18 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [artifact, setArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [openTraceId, setOpenTraceId] = useState(null);
+  const openTrace = (traceId) => {
+    setOpenTraceId(traceId);
+    setChosenArtifact("traces");
+  };
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back.
+  const artifact =
+    chosenArtifact === "workers" && hasWorkers === false
+      ? "transcript"
+      : chosenArtifact;
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -185,16 +191,24 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value={showTraces ? "traces" : "transcript"}
-            onChange={(_, value) => setArtifact(value)}
+            value={artifact}
+            onChange={(_, value) => {
+              setOpenTraceId(null);
+              setChosenArtifact(value);
+            }}
             sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
+            {hasWorkers || artifact === "workers" ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {showTraces ? (
+            {artifact === "workers" ? (
+              <CallWorkersPanel key={task.id} callExecutionId={task.id} onOpenTrace={openTrace} />
+            ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
                   traces={callTraces.traces}
@@ -202,6 +216,7 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
+                  openTraceId={openTraceId}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (
@@ -340,6 +355,7 @@ ChatCallDrawer.propTypes = {
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
     provider: PropTypes.string,
+    completedAt: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,
   executionId: PropTypes.string,

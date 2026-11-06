@@ -4,8 +4,18 @@ import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/mat
 
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import { seriesColor } from "src/theme/data-colors";
 
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
+const ROLE_LABEL = {
+  agent: "Assistant",
+  customer: "Customer",
+  tool: "Tool",
+};
+const TOOL_SERIES = 1;
+const isHandOffRow = (turn) =>
+  turn.role === "tool" &&
+  Array.isArray(turn.toolCalls) &&
+  turn.toolCalls.some((call) => call?.delegated_to);
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -86,8 +96,19 @@ export default function ChatTranscriptPane({ turns }) {
             key={i}
             sx={{
               borderLeft: "2px solid",
-              borderColor: s.role === "agent" ? "text.secondary" : "text.disabled",
-              bgcolor: s.role === "agent" ? "action.hover" : "background.neutral",
+              // Each speaker keeps its own mark, so a tool call never reads as the customer.
+              borderColor: (t) =>
+                s.role === "agent"
+                  ? t.palette.text.secondary
+                  : s.role === "tool"
+                    ? seriesColor(t, TOOL_SERIES)
+                    : t.palette.text.disabled,
+              bgcolor:
+                s.role === "agent"
+                  ? "action.hover"
+                  : s.role === "tool"
+                    ? "transparent"
+                    : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
@@ -95,7 +116,8 @@ export default function ChatTranscriptPane({ turns }) {
             <Typography
               sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}
             >
-              {turnStamp(s, i)} · {ROLE_LABEL[s.role] || s.role}
+              {turnStamp(s, i)} ·{" "}
+              {isHandOffRow(s) ? "Hand-off" : ROLE_LABEL[s.role] || s.role}
             </Typography>
             {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
             {Array.isArray(s.toolCalls) &&

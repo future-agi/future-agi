@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Box,
   CircularProgress,
@@ -13,11 +13,17 @@ import {
   callTranscript,
   useCallExecutionV3Detail,
   useCallTraces,
+  useHasWorkers,
   withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import {
+  CALL_TRACES_COPY,
+  CALL_WORKERS_COPY,
+  ownsArrowKeys,
+} from "./callTraces.constants";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -96,6 +102,13 @@ export default function VoiceCallDrawer({
   );
 
   const callTraces = useCallTraces(executionId, task.id);
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  // Held here because the panel unmounts while the next call's detail loads.
+  const [chosenTab, setChosenTab] = useState("transcript");
+  const [openTraceId, setOpenTraceId] = useState(null);
+  // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
+  const showWorkers =
+    hasWorkers || (hasWorkers === undefined && chosenTab === "workers");
   const leftPanelTabs = useMemo(
     () => [
       {
@@ -109,16 +122,41 @@ export default function VoiceCallDrawer({
             testExecutionId={executionId}
             isError={callTraces.isError}
             onMountedChange={onTracePanelMountedChange}
+            openTraceId={openTraceId}
           />
         ),
       },
+      ...(showWorkers
+        ? [
+            {
+              label: CALL_WORKERS_COPY.tab,
+              value: "workers",
+              icon: "solar:users-group-two-rounded-linear",
+              content: (
+                <Box {...ownsArrowKeys} sx={{ outline: "none" }}>
+                  <CallWorkersPanel
+                    key={task.id}
+                    callExecutionId={task.id}
+                    onOpenTrace={(traceId) => {
+                      setOpenTraceId(traceId);
+                      setChosenTab("traces");
+                    }}
+                  />
+                </Box>
+              ),
+            },
+          ]
+        : []),
     ],
     [
+      task.id,
+      showWorkers,
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,
       executionId,
       onTracePanelMountedChange,
+      openTraceId,
     ],
   );
 
@@ -161,6 +199,11 @@ export default function VoiceCallDrawer({
         // dead end.
         hideAnnotationTab
         leftPanelTabs={leftPanelTabs}
+        leftPanelTab={chosenTab}
+        onLeftPanelTabChange={(value) => {
+          setOpenTraceId(null);
+          setChosenTab(value);
+        }}
         // The product header defaults both arrows to enabled, so always pass
         // real values.
         onPrev={onPrev}
@@ -172,7 +215,8 @@ export default function VoiceCallDrawer({
   );
 }
 VoiceCallDrawer.propTypes = {
-  task: PropTypes.shape({ id: PropTypes.string }).isRequired,
+  task: PropTypes.shape({ id: PropTypes.string, completedAt: PropTypes.string })
+    .isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,

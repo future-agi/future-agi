@@ -148,6 +148,7 @@ export function mapCallRow(row, evalColumns = []) {
     // Routing hints for the call drawer.
     simulationCallType: row?.modality ?? row?.simulation_call_type ?? null,
     provider: row?.provider ?? null,
+    completedAt: row?.completed_at ?? null,
     evalResults,
   };
 }
