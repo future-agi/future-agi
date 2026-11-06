@@ -332,3 +332,41 @@ def test_an_amend_to_a_scenario_whose_actor_the_list_no_longer_has_is_refused_wi
     [receipt] = amend.json()["receipts"]
     assert amend.status_code == 200 and receipt["outcome"] == "refused"
     assert "manager is not an actor in this environment" in receipt["why"]
+
+
+def test_an_amend_to_another_scenario_is_applied_while_one_names_an_actor_the_list_no_longer_has(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    environment = _built(user, workspace, "actor-amend-untouched")
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    first, second, *rest = suite_documents(drafts.edit_sides(environment)["suite"])
+    drafts.write_suite_edit(
+        environment,
+        [{**first, "actors": [{"id": "manager"}]}, second, *rest],
+        user=user,
+    )
+    monkeypatch.setattr(drafts, "actor_ids", lambda files: set())
+    amend = auth_client.post(
+        f"/simulate/api/harness-jobs/{environment.id}/scenarios/amend/",
+        {
+            "changes": [
+                {
+                    "op": "set_field",
+                    "scenario": second["name"],
+                    "field": "tests",
+                    "value": "edited",
+                }
+            ]
+        },
+        format="json",
+    )
+    [receipt] = amend.json()["receipts"]
+    assert amend.status_code == 200 and receipt["outcome"] == "applied", receipt
+    edited = {
+        one["name"]: one
+        for one in suite_documents(drafts.edit_sides(environment)["suite"])
+    }
+    assert edited[second["name"]]["tests"] == "edited"
+    assert edited[first["name"]]["actors"] == [{"id": "manager"}]
