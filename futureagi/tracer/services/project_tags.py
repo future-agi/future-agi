@@ -67,14 +67,20 @@ class SpanKey:
     @property
     def start_us(self) -> int:
         start = self.start_time
-        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        start = (
+            start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        )
         delta = start - datetime(1970, 1, 1, tzinfo=UTC)
-        return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+        return (
+            delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+        )
 
     @property
     def partition_id(self) -> str:
         start = self.start_time
-        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        start = (
+            start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        )
         return start.strftime("%Y%m%d")
 
 

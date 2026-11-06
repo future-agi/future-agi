@@ -477,7 +477,6 @@ class TestTraceAndSpanTagWrites:
             assert "project_id" in str(response.data)
         assert _span_tags(second, span_id) == [["second"]]
 
-
     def test_root_corrected_within_the_hour_is_tagged_on_every_version(
         self, auth_client, observe_project, ch_seed
     ):
@@ -530,7 +529,9 @@ class TestTraceAndSpanTagWrites:
         response = _post_span(auth_client, span_id, ["changed"])
 
         assert response.status_code == status.HTTP_200_OK, response.data
-        by_service = {svc: tags for svc, _, tags in _stored_rows(observe_project, span_id)}
+        by_service = {
+            svc: tags for svc, _, tags in _stored_rows(observe_project, span_id)
+        }
         # Only the most recently written one (what span detail shows) changes.
         assert by_service == {"svc-a": ["a"], "svc-b": ["changed"]}
 
@@ -835,7 +836,9 @@ class TestProjectTagDefinitions:
     def test_an_existing_name_is_matched_exactly(
         self, auth_client, observe_project, ch_seed
     ):
-        span = _Span(observe_project, trace_id=str(uuid.uuid4()), tags=[" prod ", "prod"])
+        span = _Span(
+            observe_project, trace_id=str(uuid.uuid4()), tags=[" prod ", "prod"]
+        )
         ch_seed(span)
 
         response = auth_client.delete(
