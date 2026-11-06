@@ -92,7 +92,8 @@ const hasFailedCall = (block) =>
 
 /**
  * How a hand-off ended. A return decides it, even after a tool failed, since the worker may have recovered.
- * A control pass never returns, so only a failed tool marks it; a record cut at its limit can't say.
+ * A control pass never returns, so only a failed tool marks it. A record cut at its limit, or read only in part,
+ * can't say.
  */
 export const handOffEnd = (block, cutOff) => {
   if (block.returned)
