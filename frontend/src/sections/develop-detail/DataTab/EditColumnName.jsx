@@ -118,7 +118,8 @@ const EditColumnName = ({ onSuccess }) => {
     <Dialog
       open={Boolean(editColumnName)}
       onClose={onCloseCallback}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
     >
       <DialogTitle
@@ -136,11 +137,11 @@ const EditColumnName = ({ onSuccess }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} fontSize="18px">
+          <Typography fontWeight={600} fontSize="16px">
             Edit Column Name
           </Typography>
           <IconButton onClick={onCloseCallback}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

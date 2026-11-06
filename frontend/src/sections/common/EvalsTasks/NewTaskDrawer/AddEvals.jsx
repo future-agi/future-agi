@@ -75,7 +75,7 @@ const AddEvals = ({
           justifyContent: "space-between",
         }}
       >
-        <Typography fontWeight={500} fontSize="14px" color="text.primary">
+        <Typography fontWeight={500} fontSize="13px" color="text.primary">
           Added Evaluations
         </Typography>
         <Box
@@ -113,9 +113,6 @@ const AddEvals = ({
               disabled
               sx={{
                 color: "text.disabled",
-                borderRadius: "50%",
-                boxShadow: 3,
-                height: "35px",
                 width: "35px",
                 position: "absolute",
                 top: "45%",
@@ -124,11 +121,11 @@ const AddEvals = ({
                 backgroundColor: "background.paper",
               }}
             >
-              <Iconify icon="basil:cross-outline" width={30} />
+              <Iconify icon="solar:close-linear" width={30} />
             </IconButton>
             <Typography
               fontWeight="600"
-              fontSize="14px"
+              fontSize="13px"
               color="text.disabled"
               sx={{
                 position: "absolute",

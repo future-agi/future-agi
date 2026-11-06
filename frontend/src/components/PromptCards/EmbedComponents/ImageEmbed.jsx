@@ -47,7 +47,7 @@ const ImageEmbed = ({
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            borderRadius: "2px",
+            borderRadius: "4px",
             flexShrink: 0,
           }}
         >
@@ -71,7 +71,7 @@ const ImageEmbed = ({
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               fontWeight: 500,
-              fontSize: "14px",
+              fontSize: "13px",
               fontFamily: "IBM Plex Sans,sans-serif",
               color: "var(--text-primary)",
             }}

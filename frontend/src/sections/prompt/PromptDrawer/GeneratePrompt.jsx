@@ -21,14 +21,14 @@ const StyledBox = styled(Box)(() => ({
 }));
 
 const buttons = [
-  { icon: <Iconify icon="ph:pen-nib-light" />, label: "Write me an email" },
+  { icon: <Iconify icon="solar:pen-linear" />, label: "Write me an email" },
   {
     icon: <Iconify icon="solar:document-outline" />,
     label: "Summarize a document",
   },
   { icon: <Iconify icon="solar:code-bold" />, label: "Translate code" },
-  { icon: <Iconify icon="carbon:product" />, label: "Recommend a product" },
-  { icon: <Iconify icon="basil:copy-outline" />, label: "Content moderation" },
+  { icon: <Iconify icon="solar:graph-linear" />, label: "Recommend a product" },
+  { icon: <Iconify icon="solar:copy-linear" />, label: "Content moderation" },
 ];
 
 const GeneratePrompt = (props) => {
@@ -346,7 +346,7 @@ const GeneratePrompt = (props) => {
                         rows={2}
                         sx={{
                           background: action.hover,
-                          borderRadius: 1.4,
+                          borderRadius: "8px",
                           width: "100%",
                           marginBottom: 1,
                           paddingBottom: "25px",
@@ -389,13 +389,10 @@ const GeneratePrompt = (props) => {
                           onClick={handleCancelEdit}
                           size="small"
                           sx={{
-                            fontSize: "0.7rem",
                             minWidth: "50px",
                             margin: 0.5,
-                            paddingX: "12px",
                             color: "text.primary",
                             background: "action.selected",
-                            borderRadius: "10px",
                           }}
                         >
                           Cancel
@@ -406,11 +403,7 @@ const GeneratePrompt = (props) => {
                           onClick={() => handleUpdatePrompt(index, item.prompt)}
                           size="small"
                           sx={{
-                            fontSize: "0.7rem",
                             minWidth: "45px",
-
-                            borderRadius: "10px",
-                            paddingX: "12px",
                           }}
                         >
                           Update
@@ -426,7 +419,7 @@ const GeneratePrompt = (props) => {
                         padding: 1.6,
                         paddingBottom: 4,
                         paddingRight: 4,
-                        borderRadius: 1.4,
+                        borderRadius: "8px",
                         fontWeight: "400",
                         wordWrap: "break-word",
                         position: "relative",
@@ -450,7 +443,7 @@ const GeneratePrompt = (props) => {
                             }
                           >
                             <Iconify
-                              icon="material-symbols:edit-outline"
+                              icon="solar:pen-linear"
                               color="text.disabled"
                               style={{
                                 pointerEvents: loading ? "none" : "auto",
@@ -489,7 +482,6 @@ const GeneratePrompt = (props) => {
                         gap: "4px",
                         marginY: "3px",
                         color: "text.secondary",
-                        fontSize: "12px",
                         // padding: '6px 10px',
                         minWidth: "100px",
                       }}
@@ -535,7 +527,7 @@ const GeneratePrompt = (props) => {
               rows={3}
               sx={{
                 background: action.hover,
-                borderRadius: "10px",
+                borderRadius: "8px",
                 padding: "0px",
               }}
               placeholder={

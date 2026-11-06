@@ -17,12 +17,12 @@ export default function FunctionCallContent({ calls, renderText }) {
           <Box key={call.id || `${name}-${index}`}>
             <Stack direction="row" alignItems="center" gap={0.5}>
               <Iconify
-                icon="mdi:tools"
+                icon="solar:toolbox-linear"
                 width={18}
                 sx={{ color: "text.secondary", flexShrink: 0 }}
               />
-              <Typography sx={{ fontSize: 12.5, overflowWrap: "anywhere" }}>
-                <Box component="span" sx={{ fontWeight: 600 }}>
+              <Typography variant="s1" sx={{ overflowWrap: "anywhere" }}>
+                <Box component="span" sx={{ fontWeight: 500 }}>
                   Function call
                 </Box>
                 {" · "}
@@ -36,8 +36,7 @@ export default function FunctionCallContent({ calls, renderText }) {
               sx={{
                 mt: 1,
                 fontFamily: "monospace",
-                fontSize: 11.5,
-                lineHeight: 1.6,
+                typography: "s2",
                 whiteSpace: "pre-wrap",
                 overflowWrap: "anywhere",
                 wordBreak: "normal",

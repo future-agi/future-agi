@@ -18,6 +18,8 @@ class SdkConfig(AppConfig):
             external_eval_config,  # noqa: F401
             feed_alert,  # noqa: F401
             imagine_analysis,  # noqa: F401
+            insights,  # noqa: F401
+            instant_eval,  # noqa: F401
             metric_pg_revision,  # noqa: F401
             metric_source_intent,  # noqa: F401
             monitor,  # noqa: F401

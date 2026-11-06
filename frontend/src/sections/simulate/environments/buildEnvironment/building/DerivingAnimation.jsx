@@ -1,11 +1,10 @@
 import PropTypes from "prop-types";
-import { alpha, useTheme, keyframes } from "@mui/material/styles";
+import { useTheme, keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-import { SURFACE_INK, TRAFFIC_LIGHTS, BUILD_TONES } from "../buildTones";
 import { DERIVING_LABEL } from "../build.constants";
-import { LandedChip, MiniCount, KIND_COLOR } from "./LandedChip";
+import { LandedChip, MiniCount, kindColor } from "./LandedChip";
 
 /**
  * Hero illustration for the derivation panel.
@@ -91,7 +90,7 @@ const SKELETON_WIDTHS = [64, 92, 48, 76, 58, 84];
 
 export default function DerivingAnimation({ label, source, world = null, failed = false }) {
   const theme = useTheme();
-  const dark = theme.palette.mode === "dark";
+  const { danger } = theme.palette.status;
   // A terminal-failed build freezes the illustration: the beam, particles,
   // conveyor and skeleton shimmer all stop, so the hero reads as halted rather
   // than a build still churning. `motion` gates every looping animation on it.
@@ -102,19 +101,20 @@ export default function DerivingAnimation({ label, source, world = null, failed 
   const fileLabel = source ? truncate(source, 26) : DERIVING_LABEL.readingSource;
 
   return (
-    <Box sx={{ px: 2.5, pt: 1 }}>
+    <Box sx={{ px: 3, pt: 1 }}>
       {/* live phase label */}
       <Stack
         direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, mb: 1.5 }}
       >
         <Box
           sx={{
-            width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-            bgcolor: failed ? BUILD_TONES.red : "text.disabled",
+            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+            bgcolor: failed ? "status.danger.solid" : "text.disabled",
             animation: motion(`${pulseSoft} 1.4s ease-in-out infinite`),
+            "@media (prefers-reduced-motion: reduce)": { animation: "none" },
           }}
         />
-        <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.secondary" }}>
           {label || DERIVING_LABEL.idle}
         </Typography>
       </Stack>
@@ -122,18 +122,18 @@ export default function DerivingAnimation({ label, source, world = null, failed 
       {/* the illustration */}
       <Box
         sx={{
-          position: "relative", height: 260, borderRadius: 2, overflow: "hidden",
+          position: "relative", height: 260, borderRadius: "8px", overflow: "hidden",
           border: "1px solid", borderColor: "divider",
-          bgcolor: dark ? SURFACE_INK.dark : SURFACE_INK.light,
+          bgcolor: "background.neutral",
         }}
       >
         {/* subtle grid so it doesn't feel like an empty box */}
         <Box
           sx={{
             position: "absolute", inset: 0, pointerEvents: "none",
-            backgroundImage: `linear-gradient(${alpha(theme.palette.text.primary, dark ? 0.05 : 0.04)} 1px, transparent 1px),
-                              linear-gradient(90deg, ${alpha(theme.palette.text.primary, dark ? 0.05 : 0.04)} 1px, transparent 1px)`,
-            backgroundSize: "22px 22px",
+            backgroundImage: `linear-gradient(${theme.palette.action.hover} 1px, transparent 1px),
+                              linear-gradient(90deg, ${theme.palette.action.hover} 1px, transparent 1px)`,
+            backgroundSize: "24px 24px",
           }}
         />
 
@@ -141,52 +141,47 @@ export default function DerivingAnimation({ label, source, world = null, failed 
         <Box
           sx={{
             position: "absolute", top: 30, left: 24, width: 200, height: 200,
-            borderRadius: 1.5, overflow: "hidden",
-            bgcolor: dark ? SURFACE_INK.panelDark : SURFACE_INK.panelLight,
-            border: "1px solid",
-            borderColor: alpha(theme.palette.text.primary, dark ? 0.1 : 0.08),
-            boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.45)" : "0 8px 32px rgba(16,24,40,0.08)",
+            borderRadius: "8px", overflow: "hidden",
+            bgcolor: "background.paper",
+            border: "1px solid", borderColor: "divider",
           }}
         >
           {/* file header — the real source being read */}
           <Stack
             direction="row" alignItems="center" spacing={0.5}
-            sx={{
-              px: 1.25, py: 0.75, borderBottom: "1px solid",
-              borderColor: alpha(theme.palette.text.primary, dark ? 0.08 : 0.06),
-            }}
+            sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: TRAFFIC_LIGHTS[0] }} />
-            <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: TRAFFIC_LIGHTS[1] }} />
-            <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: TRAFFIC_LIGHTS[2] }} />
+            {[0, 1, 2].map((i) => (
+              <Box key={i} sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "divider" }} />
+            ))}
             <Box sx={{ flex: 1 }} />
             <Typography
               title={source || undefined}
-              sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, whiteSpace: "nowrap" }}
+              sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "nowrap" }}
             >
               {fileLabel}
             </Typography>
           </Stack>
 
           {/* code lines — an abstract "reading source" shimmer, not a real file */}
-          <Box sx={{ position: "relative", height: 172, py: 1, px: 1.25 }}>
+          <Box sx={{ position: "relative", height: 172, py: 1, px: 1.5 }}>
             {[92, 60, 78, 40, 84, 66, 52, 74, 46, 88, 62, 70].map((w, i) => (
               <Box
                 key={i}
                 sx={{
-                  display: "flex", alignItems: "center", gap: 0.75,
-                  py: 0.375, opacity: 0,
+                  display: "flex", alignItems: "center", gap: 1,
+                  py: 0.5, opacity: 0,
                   animation: `${codeAppear} 0.4s ease-out forwards`,
                   animationDelay: `${i * 90}ms`,
                 }}
               >
-                <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 8.5, width: 12 }}>
+                <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", width: 16 }}>
                   {i + 1}
                 </Typography>
                 <Box
                   sx={{
-                    height: 4, width: `${w}%`, borderRadius: 999,
-                    background: alpha(theme.palette.text.primary, dark ? 0.16 : 0.12),
+                    height: 4, width: `${w}%`, borderRadius: "2px",
+                    bgcolor: "divider",
                   }}
                 />
               </Box>
@@ -203,9 +198,8 @@ export default function DerivingAnimation({ label, source, world = null, failed 
               >
                 <Box
                   sx={{
-                    height: "100%", borderRadius: 999,
-                    background: `linear-gradient(90deg, transparent, ${alpha(theme.palette.text.primary, dark ? 0.55 : 0.45)}, transparent)`,
-                    boxShadow: `0 0 10px ${alpha(theme.palette.text.primary, dark ? 0.3 : 0.2)}`,
+                    height: "100%", borderRadius: "2px", opacity: 0.5,
+                    background: `linear-gradient(90deg, transparent, ${theme.palette.text.secondary}, transparent)`,
                   }}
                 />
               </Box>
@@ -221,8 +215,8 @@ export default function DerivingAnimation({ label, source, world = null, failed 
             <Box
               sx={{
                 position: "absolute", top: "50%", left: 224, right: 224, height: 2,
-                transform: "translateY(-50%)",
-                background: `linear-gradient(90deg, transparent 0%, ${alpha(BUILD_TONES.red, 0.45)} 50%, transparent 100%)`,
+                transform: "translateY(-50%)", opacity: 0.5,
+                background: `linear-gradient(90deg, transparent 0%, ${danger.solid} 50%, transparent 100%)`,
               }}
             />
             <Box
@@ -230,13 +224,11 @@ export default function DerivingAnimation({ label, source, world = null, failed 
                 position: "absolute", top: "50%", left: "50%",
                 transform: "translate(-50%, -50%)",
                 display: "grid", placeItems: "center",
-                width: 30, height: 30, borderRadius: "50%",
-                bgcolor: dark ? SURFACE_INK.panelDark : SURFACE_INK.panelLight,
-                border: `1.5px solid ${alpha(BUILD_TONES.red, 0.65)}`,
-                boxShadow: `0 0 0 5px ${alpha(BUILD_TONES.red, dark ? 0.16 : 0.1)}`,
+                width: 32, height: 32, borderRadius: "50%",
+                bgcolor: "status.danger.bg",
               }}
             >
-              <Iconify icon="solar:close-circle-bold" width={18} sx={{ color: BUILD_TONES.red }} />
+              <Iconify icon="solar:close-circle-bold" width={20} sx={{ color: "status.danger.fg" }} />
             </Box>
           </>
         ) : (
@@ -247,7 +239,7 @@ export default function DerivingAnimation({ label, source, world = null, failed 
                 transform: "translateY(-50%)",
                 background: `linear-gradient(90deg,
                   transparent 0%,
-                  ${alpha(theme.palette.text.primary, dark ? 0.28 : 0.22)} 50%,
+                  ${theme.palette.divider} 50%,
                   transparent 100%)`,
               }}
             />
@@ -257,7 +249,7 @@ export default function DerivingAnimation({ label, source, world = null, failed 
                 transform: "translateY(-50%)",
                 background: `linear-gradient(90deg,
                   transparent 0%,
-                  ${alpha(theme.palette.text.primary, dark ? 0.08 : 0.05)} 50%,
+                  ${theme.palette.action.hover} 50%,
                   transparent 100%)`,
                 backgroundSize: "200% 100%",
                 animation: motion(`${shimmerBg} 2s linear infinite`),
@@ -270,9 +262,8 @@ export default function DerivingAnimation({ label, source, world = null, failed 
                 key={i}
                 sx={{
                   position: "absolute", top: "50%", left: 210,
-                  width: 5, height: 5, borderRadius: "50%",
-                  bgcolor: alpha(theme.palette.text.primary, dark ? 0.7 : 0.6),
-                  boxShadow: `0 0 6px ${alpha(theme.palette.text.primary, dark ? 0.35 : 0.25)}`,
+                  width: 4, height: 4, borderRadius: "50%",
+                  bgcolor: "text.secondary",
                   transform: "translate(0, 0)",
                   "--dx": `${310}px`,
                   "--dy": `${(i % 2 === 0 ? -1 : 1) * 8}px`,
@@ -288,41 +279,36 @@ export default function DerivingAnimation({ label, source, world = null, failed 
         <Box
           sx={{
             position: "absolute", top: 30, right: 24, width: 240, height: 200,
-            borderRadius: 1.5, overflow: "hidden",
-            bgcolor: dark ? SURFACE_INK.sandboxDark : SURFACE_INK.panelLight,
+            borderRadius: "8px", overflow: "hidden",
+            bgcolor: "background.paper",
             border: "1px solid",
             // Nothing reached the sandbox on a failed build — mark it with a faint
             // red edge so the empty container reads as failed, not still loading.
-            borderColor: failed
-              ? alpha(BUILD_TONES.red, 0.4)
-              : alpha(theme.palette.text.primary, dark ? 0.15 : 0.12),
-            boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.45)" : "0 8px 32px rgba(16,24,40,0.08)",
+            borderColor: failed ? "status.danger.border" : "divider",
           }}
         >
           {/* sandbox label */}
           <Stack
-            direction="row" alignItems="center" spacing={0.75}
+            direction="row" alignItems="center" spacing={1}
             sx={{
-              px: 1.25, py: 0.75, borderBottom: "1px solid",
-              borderColor: failed
-                ? alpha(BUILD_TONES.red, 0.25)
-                : alpha(theme.palette.text.primary, dark ? 0.08 : 0.06),
+              px: 1.5, py: 1, borderBottom: "1px solid",
+              borderColor: failed ? "status.danger.border" : "divider",
             }}
           >
             <Iconify
               icon={failed ? "solar:danger-triangle-bold" : "solar:box-linear"}
               width={12}
-              sx={{ color: failed ? BUILD_TONES.red : "text.subtitle" }}
+              sx={{ color: failed ? "status.danger.fg" : "text.secondary" }}
             />
-            <Typography sx={{ typography: "s3", color: "text.secondary", fontWeight: "fontWeightBold", letterSpacing: 0.5 }}>
-              SANDBOX
+            <Typography sx={{ typography: "s3", color: "text.secondary", fontWeight: 500 }}>
+              Sandbox
             </Typography>
             <Box flex={1} />
             <Typography
               sx={{
                 typography: "s3",
-                color: failed ? BUILD_TONES.red : "text.disabled",
-                fontVariantNumeric: "tabular-nums", fontSize: 10,
+                color: failed ? "status.danger.fg" : "text.disabled",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {counts.tool + counts.rule + counts.data}
@@ -334,16 +320,16 @@ export default function DerivingAnimation({ label, source, world = null, failed 
           <Box sx={{ p: 1, height: 172, overflowY: "auto", overflowX: "hidden" }}>
             <Stack direction="row" flexWrap="wrap" gap={0.5}>
               {hasReal
-                ? chips.map((item) => <LandedChip key={item.id} item={item} dark={dark} />)
+                ? chips.map((item) => <LandedChip key={item.id} item={item} />)
                 : SKELETON_WIDTHS.map((w, i) => (
                     <Box
                       key={i}
                       sx={{
-                        height: 20, width: w, borderRadius: 999,
+                        height: 20, width: w, borderRadius: "4px",
                         background: `linear-gradient(90deg,
-                          ${alpha(theme.palette.text.primary, dark ? 0.06 : 0.05)} 0%,
-                          ${alpha(theme.palette.text.primary, dark ? 0.12 : 0.09)} 50%,
-                          ${alpha(theme.palette.text.primary, dark ? 0.06 : 0.05)} 100%)`,
+                          ${theme.palette.action.hover} 0%,
+                          ${theme.palette.action.selected} 50%,
+                          ${theme.palette.action.hover} 100%)`,
                         backgroundSize: "200% 100%",
                         animation: motion(`${shimmerBg} 1.8s linear infinite`),
                       }}
@@ -356,11 +342,11 @@ export default function DerivingAnimation({ label, source, world = null, failed 
         {/* ─── legend under the sandbox — real tallies ─── */}
         <Stack
           direction="row" spacing={1.5}
-          sx={{ position: "absolute", bottom: 10, right: 24 }}
+          sx={{ position: "absolute", bottom: 8, right: 24 }}
         >
-          <MiniCount color={KIND_COLOR.tool} label={`${counts.tool} tools`} />
-          <MiniCount color={KIND_COLOR.rule} label={`${counts.rule} rules`} />
-          <MiniCount color={KIND_COLOR.data} label={`${counts.data} tables`} />
+          <MiniCount color={kindColor(theme, "tool")} label={`${counts.tool} tools`} />
+          <MiniCount color={kindColor(theme, "rule")} label={`${counts.rule} rules`} />
+          <MiniCount color={kindColor(theme, "data")} label={`${counts.data} tables`} />
         </Stack>
       </Box>
     </Box>

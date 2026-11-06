@@ -6,6 +6,12 @@ const READY = { status: ENV_STATUS.READY, platform: { runTestId: "rt-1" } };
 const STATE = { agent: { typeId: "retell" }, scenarios: [{ id: "a" }] };
 
 describe("blockedReason", () => {
+  it("reads the server scenario count over the seeded list", () => {
+    expect(blockedReason({ agent: {}, scenarios: [] }, READY, true, false, 3)).not.toBe(
+      "Add scenarios on the Scenarios tab",
+    );
+  });
+
   it("says a built environment that isn't Ready hasn't finished building", () => {
     expect(blockedReason(STATE, { ...READY, status: ENV_STATUS.FAILED }, true)).toBe(
       "This environment hasn't finished building",

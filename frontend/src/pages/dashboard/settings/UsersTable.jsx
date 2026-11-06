@@ -79,7 +79,7 @@ const UsersTable = ({
         height: "calc(100vh - 165px)",
         width: "100%",
         border: "1px solid",
-        borderRadius: "15px",
+        borderRadius: "12px",
         borderColor: "text.disabled",
         padding: "10px",
       }}

@@ -179,7 +179,7 @@ const LeftPanelSplit = ({
           }}
         >
           <Iconify
-            icon="mdi:dots-horizontal"
+            icon="solar:menu-dots-linear"
             width={16}
             color="text.disabled"
           />

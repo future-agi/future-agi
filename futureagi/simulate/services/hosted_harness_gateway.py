@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import gzip
 import hashlib
@@ -175,7 +176,8 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
     """
     environment = job.environment or job
     revision = str(
-        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
     )
     if not revision:
         return checkpoint
@@ -196,7 +198,9 @@ def _with_chat_state(current: bytes, checkpoint: bytes | None) -> bytes:
         for member in accepted.getmembers():
             parts = _archive_parts(member.name)
             if parts and not parts[0].startswith("."):
-                target.addfile(member, accepted.extractfile(member) if member.isfile() else None)
+                target.addfile(
+                    member, accepted.extractfile(member) if member.isfile() else None
+                )
         if checkpoint is not None:
             with tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat:
                 for member in chat.getmembers():
@@ -350,6 +354,30 @@ def _sandbox_collector_url() -> str:
     ).strip()
 
 
+def platform_model_gateway() -> tuple[str, str]:
+    """The sandbox-reachable AgentCC URL and the platform-owned key a sandbox's model calls use."""
+    url = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
+        or os.environ.get("AGENTCC_BASE_URL")
+        or ""
+    ).strip()
+    # Prefer a separately scoped authoring key, while preserving compatibility
+    # with deployments that use the platform-owned internal key for both lanes.
+    key = str(
+        os.environ.get("AGENTCC_HARNESS_API_KEY")
+        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+        or ""
+    ).strip()
+    if not (url and key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    return url.rstrip("/"), key
+
+
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -368,28 +396,10 @@ def _platform_simulator_material() -> dict[str, str]:
         os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
     ).strip()
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
-    agentcc_url = str(
-        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
-        or os.environ.get("AGENTCC_BASE_URL")
-        or ""
-    ).strip()
-    # Prefer a separately scoped authoring key, while preserving compatibility
-    # with deployments that use the platform-owned internal key for both lanes.
-    agentcc_key = str(
-        os.environ.get("AGENTCC_HARNESS_API_KEY")
-        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
-        or ""
-    ).strip()
+    agentcc_url, agentcc_key = platform_model_gateway()
     agentcc_model = str(
         os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
     ).strip()
-    if not (agentcc_url and agentcc_key):
-        raise HostedHarnessError(
-            "agentcc_not_configured",
-            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
-            "AgentCC URL and a platform-owned harness or internal API key",
-            status_code=503,
-        )
     unsupported_speech = sorted(
         {
             str(os.environ.get(name) or "").strip().lower()
@@ -881,6 +891,97 @@ def guest_failure_cause(tail: str) -> str:
     return cause[:400]
 
 
+# Where git reaches GitHub repositories.
+GITHUB_GIT_URL = "https://github.com"
+
+
+def run_git(
+    command: list[str], environment: Mapping[str, str], token: str
+) -> tuple[int, str]:
+    """Run one git command; on failure its output comes back with the token redacted."""
+    completed = subprocess.run(
+        command,
+        env=dict(environment),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    detail = completed.stderr or completed.stdout or "git failed"
+    if token:
+        detail = detail.replace(token, "[REDACTED]")
+    return completed.returncode, detail
+
+
+def github_checkout(
+    repository: str, revision: str, checkout: Path, token: str
+) -> dict[str, str]:
+    """Fetch one revision of a GitHub repository into ``checkout`` and check it out. The
+    installation token, when there is one, travels as a header and is never written to disk.
+    Returns git's environment for further calls on the checkout."""
+    if shutil.which("git") is None:
+        # The default backend image ships without git (with perl it is
+        # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
+        # WITH_GIT=true puts it back for GitHub sources.
+        raise HostedHarnessError(
+            "git_unavailable",
+            "git is not installed in this backend image; rebuild it with "
+            "--build-arg WITH_GIT=true to use GitHub sources",
+            status_code=501,
+            retryable=False,
+        )
+    environment = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1" if token else "0",
+    }
+    if token:
+        # GitHub's git endpoint takes an installation token as Basic x-access-token; it
+        # refuses Bearer, and git then reports a prompt it may not show.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        environment.update(
+            {
+                "GIT_CONFIG_KEY_0": "http.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+            }
+        )
+    commands = [
+        ["git", "init", str(checkout)],
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "remote",
+            "add",
+            "origin",
+            f"{GITHUB_GIT_URL}/{repository}.git",
+        ],
+        ["git", "-C", str(checkout), "fetch", "--depth", "1", "origin", revision],
+        ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
+    ]
+    for command in commands:
+        returncode, detail = run_git(command, environment, token)
+        if returncode:
+            lowered = detail.lower()
+            if (
+                "repository not found" in lowered
+                or "could not read username" in lowered
+            ):
+                raise HostedHarnessError(
+                    "github_repository_not_found",
+                    f"repository {repository} was not found, or it is "
+                    "private and the GitHub App is not installed on it",
+                    status_code=422,
+                )
+            raise HostedHarnessError(
+                "github_clone_failed",
+                detail.strip()[:500],
+                status_code=502,
+                retryable=True,
+            )
+    return environment
+
+
 class HostedSourceAcquirer:
     _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     _REF = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -905,17 +1006,6 @@ class HostedSourceAcquirer:
             )
         if ".." in ref or not self._REF.fullmatch(ref):
             raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
-        if shutil.which("git") is None:
-            # The default backend image ships without git (with perl it is
-            # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
-            # WITH_GIT=true puts it back for GitHub sources.
-            raise HostedHarnessError(
-                "git_unavailable",
-                "git is not installed in this backend image; rebuild it with "
-                "--build-arg WITH_GIT=true to use GitHub sources",
-                status_code=501,
-                retryable=False,
-            )
         credential = nullcontext("")
         if source.get("visibility") == "private":
             installation_id = str(source.get("installation_id") or "")
@@ -926,73 +1016,10 @@ class HostedSourceAcquirer:
             credential as token,
             tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
         ):
-            root = Path(temp)
-            checkout = root / "source"
-            environment = {
-                **os.environ,
-                "GIT_TERMINAL_PROMPT": "0",
-                "GIT_CONFIG_COUNT": "1" if token else "0",
-            }
-            if token:
-                environment.update(
-                    {
-                        "GIT_CONFIG_KEY_0": "http.extraHeader",
-                        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
-                    }
-                )
-            commands = [
-                ["git", "init", str(checkout)],
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "remote",
-                    "add",
-                    "origin",
-                    f"https://github.com/{repository}.git",
-                ],
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "fetch",
-                    "--depth",
-                    "1",
-                    "origin",
-                    str(source.get("commit_sha") or ref),
-                ],
-                ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
-            ]
-            for command in commands:
-                completed = subprocess.run(
-                    command,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    check=False,
-                )
-                if completed.returncode:
-                    detail = completed.stderr or completed.stdout or "git failed"
-                    if token:
-                        detail = detail.replace(token, "[REDACTED]")
-                    lowered = detail.lower()
-                    if (
-                        "repository not found" in lowered
-                        or "could not read username" in lowered
-                    ):
-                        raise HostedHarnessError(
-                            "github_repository_not_found",
-                            f"repository {source.get('repository')} was not found, or it is "
-                            "private and the GitHub App is not installed on it",
-                            status_code=422,
-                        )
-                    raise HostedHarnessError(
-                        "github_clone_failed",
-                        detail.strip()[:500],
-                        status_code=502,
-                        retryable=True,
-                    )
+            checkout = Path(temp) / "source"
+            github_checkout(
+                repository, str(source.get("commit_sha") or ref), checkout, token
+            )
             completed = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
                 capture_output=True,
@@ -2799,7 +2826,11 @@ class HostedHarnessGateway:
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
+                        + (
+                            "--await-harness "
+                            if harness_builds
+                            else f"--adjustments {_ADJUSTMENTS_PATH} "
+                        )
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
@@ -6154,8 +6185,8 @@ def store_authoring_archive(
             locked.state = HostedHarnessJob.State.ADMITTED
             update_fields.extend(["stage_outputs", "current_stage", "state"])
         locked.save(update_fields=update_fields)
-    for field in update_fields:
-        setattr(job, field, getattr(locked, field))
+    for name in update_fields:
+        setattr(job, name, getattr(locked, name))
     return object_key
 
 

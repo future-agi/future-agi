@@ -10,11 +10,19 @@ import {
 import Iconify from "src/components/iconify";
 
 export const VOICE_ACTIONS = [
-  { id: "annotate", label: "Annotate", icon: "mdi:comment-text-outline" },
-  { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
-  { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
-  { id: "tags", label: "Add tags", icon: "mdi:tag-outline" },
-  { id: "download", label: "Download raw data", icon: "mdi:download-outline" },
+  { id: "annotate", label: "Annotate", icon: "solar:chat-round-line-linear" },
+  {
+    id: "queue",
+    label: "Add to annotation queue",
+    icon: "solar:list-plus-linear",
+  },
+  { id: "dataset", label: "Move to dataset", icon: "solar:database-linear" },
+  { id: "tags", label: "Add tags", icon: "solar:tag-linear" },
+  {
+    id: "download",
+    label: "Download raw data",
+    icon: "solar:download-minimalistic-linear",
+  },
 ];
 
 const VoiceActionsDropdown = ({ onAction, actions = VOICE_ACTIONS }) => {
@@ -37,7 +45,7 @@ const VoiceActionsDropdown = ({ onAction, actions = VOICE_ACTIONS }) => {
           borderColor: "divider",
           borderRadius: "4px",
           bgcolor: "background.paper",
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 500,
           fontFamily: "'Inter', sans-serif",
           color: "text.primary",
@@ -49,9 +57,9 @@ const VoiceActionsDropdown = ({ onAction, actions = VOICE_ACTIONS }) => {
           },
         }}
       >
-        <Iconify icon="mdi:lightning-bolt-outline" width={13} />
+        <Iconify icon="solar:bolt-linear" width={14} />
         <span>Actions</span>
-        <Iconify icon="mdi:chevron-down" width={12} />
+        <Iconify icon="solar:alt-arrow-down-linear" width={12} />
       </ButtonBase>
 
       <Menu
@@ -63,10 +71,9 @@ const VoiceActionsDropdown = ({ onAction, actions = VOICE_ACTIONS }) => {
         slotProps={{
           paper: {
             sx: {
-              minWidth: 220,
+              minWidth: 240,
               mt: 0.5,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-              borderRadius: "6px",
+              borderRadius: "8px",
               "& .MuiMenuItem-root": { fontSize: 12, py: 0.75, px: 1.25 },
             },
           },
@@ -82,7 +89,7 @@ const VoiceActionsDropdown = ({ onAction, actions = VOICE_ACTIONS }) => {
             dense
           >
             <ListItemIcon sx={{ minWidth: 0, mr: 1 }}>
-              <Iconify icon={a.icon} width={15} />
+              <Iconify icon={a.icon} width={16} />
             </ListItemIcon>
             <ListItemText
               primaryTypographyProps={{ fontSize: 12, fontWeight: 500 }}

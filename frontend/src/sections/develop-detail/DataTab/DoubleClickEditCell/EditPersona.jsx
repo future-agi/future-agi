@@ -24,6 +24,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { ShowComponent } from "src/components/show";
 import { PersonaChatSettings } from "src/sections/persona/PersonaCreateEdit/PersonaChatSettings";
 import { AGENT_TYPES } from "src/sections/agents/constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EditPersonaForm = ({
   editPersona,
@@ -142,8 +143,14 @@ const EditPersona = ({
 }) => {
   const simulationType =
     params?.colDef?.col?.metadata?.simulationType ?? AGENT_TYPES.VOICE;
+  const covered = useDrawerCovered(open);
   return (
-    <Drawer anchor="right" open={open} onClose={onClose}>
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      sx={coveredDrawerSx(covered)}
+    >
       <Box sx={{ width: "700px", height: "100vh", position: "relative" }}>
         <IconButton
           onClick={onClose}
@@ -154,7 +161,7 @@ const EditPersona = ({
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
         {simulationType && (
           <EditPersonaForm

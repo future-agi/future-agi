@@ -63,7 +63,7 @@ export default function AddFolder({ open, onClose }) {
       onSubmit={handleSubmit}
       isLoading={isPending}
       actionBtnTitle="Create"
-      modalWidth="500px"
+      modalWidth="560px"
     >
       <Divider
         sx={{

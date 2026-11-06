@@ -725,8 +725,8 @@ export default function AlertSettingsForm({
                   <CardWrapper
                     icon={"/assets/icons/ic_critical.svg"}
                     title="Critical"
-                    iconColor={"red.500"}
-                    bgColor="red.o5"
+                    iconColor={"status.danger.fg"}
+                    bgColor="status.danger.bg"
                   >
                     <Box
                       sx={{
@@ -841,8 +841,8 @@ export default function AlertSettingsForm({
                   <CardWrapper
                     icon={"/assets/icons/ic_warning.svg"}
                     title="Warning"
-                    iconColor="orange.400"
-                    bgColor="orange.o5"
+                    iconColor="status.warning.fg"
+                    bgColor="status.warning.bg"
                   >
                     <Box
                       sx={{

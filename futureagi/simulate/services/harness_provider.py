@@ -28,6 +28,7 @@ from simulate.models import (
     RunTest,
     TestExecution,
 )
+from simulate.selectors.runs import user_runs
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -1445,7 +1446,9 @@ class HostedHarnessProvider:
     def list(self, request) -> Response:
         organization = request_organization(request)
         jobs = scope_jobs(
-            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            HostedHarnessJob.no_workspace_objects.filter(
+                user_runs(), organization=organization
+            ),
             request,
         ).order_by("-created_at")[:100]
         return Response([serialize_job(job) for job in jobs])

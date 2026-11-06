@@ -255,7 +255,12 @@ vi.mock(
 );
 
 const originalRange = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
-const newRange = ["2026-09-02 00:00:00", "2026-09-12 00:00:00"];
+// September 2–12 selected in the local calendar: the API upper bound is
+// September 13 at local midnight, serialized as an exact UTC instant.
+const newRange = [
+  new Date(2026, 8, 2).toISOString(),
+  new Date(2026, 8, 13).toISOString(),
+];
 const canonicalFilter = (value) => [
   {
     column_id: "trace_name",
@@ -324,7 +329,7 @@ const saveViewButton = () =>
   screen.queryByRole("button", { name: "Save view" });
 
 async function editCustomRange() {
-  fireEvent.click(screen.getByRole("button", { name: "9/1/2026 - 9/10/2026" }));
+  fireEvent.click(screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }));
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Custom range" }),
   );
@@ -343,6 +348,19 @@ async function editCustomRange() {
 describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("keeps Save view hidden for an untouched hydrated custom range", async () => {
     await mountView();
+    expect(viewConfig().display.dateFilter.dateFilter).toEqual(originalRange);
+    expect(saveViewButton()).toBeNull();
+  });
+
+  it("keeps the exact stored bounds and stays clean after opening and accepting the calendar", async () => {
+    await mountView();
+    fireEvent.click(
+      screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Custom range" }));
+    expect(screen.getByLabelText("Start Date")).toHaveValue("2026-09-01");
+    expect(screen.getByLabelText("End Date")).toHaveValue("2026-09-09");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(viewConfig().display.dateFilter.dateFilter).toEqual(originalRange);
     expect(saveViewButton()).toBeNull();
   });
@@ -374,7 +392,7 @@ describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("switching to a preset still reveals Save view and updates the existing view id", async () => {
     await mountView();
     fireEvent.click(
-      screen.getByRole("button", { name: "9/1/2026 - 9/10/2026" }),
+      screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
     );
     fireEvent.click(await screen.findByRole("menuitem", { name: "Past 7D" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save view" }));

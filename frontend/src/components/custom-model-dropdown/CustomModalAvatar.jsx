@@ -25,7 +25,7 @@ const CustomModalAvatar = ({
     >
       <Typography
         variant="caption"
-        fontWeight="bold"
+        fontWeight="600"
         sx={{
           fontSize,
           lineHeight: 1,

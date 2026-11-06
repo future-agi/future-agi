@@ -8,7 +8,6 @@ import {
   List,
   ListItem,
   Button,
-  Chip,
   Box,
   Skeleton,
   Dialog,
@@ -21,6 +20,7 @@ import {
   useOrgConfigHistory,
   useActivateOrgConfig,
 } from "../providers/hooks/useOrgConfig";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ConfigHistoryDrawer = ({ open, onClose }) => {
   const { data: history, isLoading } = useOrgConfigHistory();
@@ -37,9 +37,12 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
     activateMutation.mutate(id);
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <>
       <Drawer
+        sx={coveredDrawerSx(covered)}
         anchor="right"
         open={open}
         onClose={onClose}
@@ -53,14 +56,14 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
         >
           <Typography variant="h6">Config History</Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" width={20} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
 
         {isLoading ? (
           <Stack spacing={1}>
             {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} variant="rounded" height={70} />
+              <Skeleton key={i} variant="rounded" height={48} />
             ))}
           </Stack>
         ) : versions.length === 0 ? (
@@ -78,10 +81,10 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
               <ListItem
                 key={cfg.id}
                 sx={{
-                  border: 1,
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  mb: 1,
+                  borderBottom: 1,
+                  borderColor: "border.subtle",
+                  py: 1,
+                  px: 1.5,
                   flexDirection: "column",
                   alignItems: "flex-start",
                 }}
@@ -93,15 +96,16 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
                   alignItems="center"
                 >
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <Typography variant="subtitle2">v{cfg.version}</Typography>
+                    <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+                      v{cfg.version}
+                    </Typography>
                     {cfg.is_active && (
-                      <Chip
-                        label="Active"
-                        size="small"
-                        color="success"
-                        variant="outlined"
-                        sx={{ height: 20, fontSize: "0.7rem" }}
-                      />
+                      <Typography
+                        component="span"
+                        sx={{ fontSize: 12, color: "status.success.fg" }}
+                      >
+                        Active
+                      </Typography>
                     )}
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
@@ -113,13 +117,13 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
                 {cfg.change_description && (
                   <Typography
                     variant="caption"
-                    color="text.secondary"
-                    sx={{ mt: 0.5 }}
+                    color="text.tertiary"
+                    sx={{ mt: 0.25 }}
                   >
                     {cfg.change_description}
                   </Typography>
                 )}
-                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
                   <Button
                     size="small"
                     variant="text"
@@ -148,7 +152,8 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
       <Dialog
         open={Boolean(viewConfig)}
         onClose={() => setViewConfig(null)}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>Config v{viewConfig?.version}</DialogTitle>

@@ -1,3 +1,4 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React from "react";
 import {
   Drawer,
@@ -15,9 +16,8 @@ import {
   TableRow,
   Skeleton,
   Alert,
-  Card,
-  CardContent,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useSessionDetail, useSessionRequests } from "./hooks/useSessions";
@@ -26,6 +26,17 @@ import {
   formatCost,
   formatTokens,
 } from "../utils/formatters";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 function formatMs(val) {
   if (val == null) return "\u2014";
@@ -40,8 +51,11 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
 
   const stats = session?.stats || {};
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
@@ -56,7 +70,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
         >
           <Typography variant="h5">Session Detail</Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" width={24} />
+            <Iconify icon="solar:close-linear" width={24} />
           </IconButton>
         </Stack>
 
@@ -94,46 +108,36 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
             </Stack>
 
             <Stack direction="row" spacing={2} mb={3}>
-              <Card sx={{ flex: 1 }}>
-                <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Requests
-                  </Typography>
-                  <Typography variant="h6">
-                    {stats.request_count ?? 0}
-                  </Typography>
-                </CardContent>
-              </Card>
-              <Card sx={{ flex: 1 }}>
-                <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Total Cost
-                  </Typography>
-                  <Typography variant="h6">
-                    {formatCost(stats.total_cost)}
-                  </Typography>
-                </CardContent>
-              </Card>
-              <Card sx={{ flex: 1 }}>
-                <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Tokens
-                  </Typography>
-                  <Typography variant="h6">
-                    {formatTokens(stats.total_tokens)}
-                  </Typography>
-                </CardContent>
-              </Card>
-              <Card sx={{ flex: 1 }}>
-                <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Avg Latency
-                  </Typography>
-                  <Typography variant="h6">
-                    {formatMs(stats.avg_latency_ms)}
-                  </Typography>
-                </CardContent>
-              </Card>
+              <Section variant="panel" sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Requests
+                </Typography>
+                <Typography variant="h6">{stats.request_count ?? 0}</Typography>
+              </Section>
+              <Section variant="panel" sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Total Cost
+                </Typography>
+                <Typography variant="h6">
+                  {formatCost(stats.total_cost)}
+                </Typography>
+              </Section>
+              <Section variant="panel" sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Tokens
+                </Typography>
+                <Typography variant="h6">
+                  {formatTokens(stats.total_tokens)}
+                </Typography>
+              </Section>
+              <Section variant="panel" sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Avg Latency
+                </Typography>
+                <Typography variant="h6">
+                  {formatMs(stats.avg_latency_ms)}
+                </Typography>
+              </Section>
             </Stack>
 
             {session.metadata && Object.keys(session.metadata).length > 0 && (
@@ -141,7 +145,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                 <Typography variant="subtitle2" mb={1}>
                   Metadata
                 </Typography>
-                <Card variant="outlined" sx={{ p: 1.5 }}>
+                <Section variant="panel" sx={{ p: 1.5 }}>
                   <Typography
                     variant="body2"
                     component="pre"
@@ -153,7 +157,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                   >
                     {JSON.stringify(session.metadata, null, 2)}
                   </Typography>
-                </Card>
+                </Section>
               </Box>
             )}
 
@@ -197,18 +201,22 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Chip
-                              label={req.status_code || "\u2014"}
-                              color={isError ? "error" : "success"}
-                              size="small"
+                            <StatusBadge
+                              status={req.status_code || "\u2014"}
+                              label={String(req.status_code || "\u2014")}
+                              role={CHIP_ROLE[isError ? "error" : "success"]}
                             />
                           </TableCell>
-                          <TableCell>
+                          <TableCell
+                            sx={{ fontVariantNumeric: "tabular-nums" }}
+                          >
                             <Typography variant="body2" color="text.secondary">
                               {formatMs(req.latency_ms)}
                             </Typography>
                           </TableCell>
-                          <TableCell>
+                          <TableCell
+                            sx={{ fontVariantNumeric: "tabular-nums" }}
+                          >
                             <Typography variant="body2" color="text.secondary">
                               {formatTokens(req.total_tokens)}
                             </Typography>

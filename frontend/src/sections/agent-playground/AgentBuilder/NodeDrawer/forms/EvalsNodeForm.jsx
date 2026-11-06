@@ -160,16 +160,10 @@ export default function EvalsNodeForm({ nodeId }) {
             variant="outlined"
             size="small"
             onClick={() => setOpenEvaluationDialog(true)}
-            sx={{
-              fontWeight: "fontWeightMedium",
-            }}
             startIcon={
               <SvgColor
                 src="/assets/icons/components/ic_add.svg"
-                sx={{
-                  height: "20px",
-                  width: "20px",
-                }}
+                width="20px"
               />
             }
           >

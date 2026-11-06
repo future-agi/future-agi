@@ -39,11 +39,11 @@ const CancelUploadDialog = ({ open, onClose, onConfirmCancel }) => {
           pl: 2,
         }}
       >
-        <Typography fontWeight="700" fontSize="16px" color="text.primary">
+        <Typography fontWeight="600" fontSize="16px" color="text.primary">
           Are you sure you want to cancel the upload?
         </Typography>
         <IconButton aria-label="close-cancel-upload" onClick={onClose}>
-          <Icon icon="material-symbols:close" color="black" />
+          <Icon icon="solar:close-linear" color="black" />
         </IconButton>
       </DialogTitle>
 
@@ -54,7 +54,7 @@ const CancelUploadDialog = ({ open, onClose, onConfirmCancel }) => {
         }}
       >
         <Typography
-          fontSize="14px"
+          fontSize="13px"
           color="text.secondary"
           sx={{
             pr: 4,
@@ -74,10 +74,7 @@ const CancelUploadDialog = ({ open, onClose, onConfirmCancel }) => {
           onClick={onClose}
           sx={{
             width: "90px",
-            paddingX: 2,
-            borderRadius: "8px",
             color: "text.disabled",
-            fontSize: "12px",
           }}
         >
           No
@@ -87,12 +84,9 @@ const CancelUploadDialog = ({ open, onClose, onConfirmCancel }) => {
           variant="contained"
           sx={{
             minWidth: "90px",
-            borderRadius: "8px",
-            paddingX: 2,
-            backgroundColor: "red.500",
-            fontSize: "12px",
+            backgroundColor: "status.danger.solid",
             "&:hover": {
-              backgroundColor: "red.500",
+              backgroundColor: "status.danger.solid",
             },
           }}
           onClick={onConfirmCancel}

@@ -41,7 +41,11 @@ def compose(
     if "docker-compose.distributed.dev.yml" in overlays:
         env.update(DEV_OVERLAY_ENV)
     env.update(overrides)
-    args = ["docker", "compose", "--env-file", os.devnull, "-f", base_file]
+    try:
+        from .compose_test_tools import compose_command
+    except ImportError:
+        from compose_test_tools import compose_command
+    args = [*compose_command(), "--env-file", os.devnull, "-f", base_file]
     for overlay in overlays:
         args.extend(["-f", overlay])
     result = subprocess.run(

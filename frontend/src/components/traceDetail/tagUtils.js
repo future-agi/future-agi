@@ -1,10 +1,11 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (user-pickable tag colours) */
 /**
  * Shared tag color utilities.
  * Tags can be plain strings (legacy) or objects { name, color }.
  */
 
 export const TAG_COLORS = [
-  "#8B5CF6", // purple
+  "#7857FC", // purple
   "#3B82F6", // blue
   "#06B6D4", // cyan
   "#22C55E", // green

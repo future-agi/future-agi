@@ -1,11 +1,11 @@
 import PropTypes from "prop-types";
-import { Chip } from "@mui/material";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 
 const STATUS_CONFIG = {
-  draft: { label: "Draft", color: "default" },
-  active: { label: "Active", color: "info" },
-  paused: { label: "Paused", color: "warning" },
-  completed: { label: "Completed", color: "success" },
+  draft: { label: "Draft", role: "neutral" },
+  active: { label: "Active", role: "success" },
+  paused: { label: "Paused", role: "warning" },
+  completed: { label: "Completed", role: "success" },
 };
 
 StatusBadge.propTypes = {
@@ -15,11 +15,6 @@ StatusBadge.propTypes = {
 export default function StatusBadge({ status }) {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
   return (
-    <Chip
-      label={config.label}
-      color={config.color}
-      size="small"
-      variant="soft"
-    />
+    <RunStatusBadge status={status} label={config.label} role={config.role} />
   );
 }

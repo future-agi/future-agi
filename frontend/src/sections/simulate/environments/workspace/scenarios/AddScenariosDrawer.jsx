@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, Checkbox, InputBase, Divider,
 } from "@mui/material";
@@ -11,12 +10,7 @@ import EmptyState from "../../components/EmptyState";
 import { ADD_COPY, addCandidates } from "./addScenarios.constants";
 import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
-const checkboxSx = {
-  p: 0,
-  color: "text.disabled",
-  "&.Mui-checked": { color: "text.primary" },
-  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
-};
+const checkboxSx = { p: 0 };
 
 // Add scenarios.
 //
@@ -64,11 +58,11 @@ export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd
   return (
     <SideDrawer open={open} onClose={close} width={720}>
       <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+        <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+          <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
             {ADD_COPY.title}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
             {ADD_COPY.subtitle}
           </Typography>
         </Box>
@@ -85,20 +79,20 @@ export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd
           <>
             <Stack
               direction="row" alignItems="center" spacing={1}
-              sx={{ px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+              sx={{ px: 3, py: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
             >
               <Iconify icon="solar:magnifer-linear" width={16} sx={{ color: "text.subtitle" }} />
               <InputBase
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={ADD_COPY.searchPlaceholder}
-                sx={{ typography: "s2", flex: 1 }}
+                sx={{ typography: "m3", flex: 1 }}
               />
             </Stack>
 
             <Stack
               direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 2.5, py: 1, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+              sx={{ px: 3, py: 1, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
             >
               <Checkbox
                 size="small"
@@ -108,7 +102,7 @@ export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd
                 inputProps={{ "aria-label": ADD_COPY.selectAll }}
                 sx={checkboxSx}
               />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: "fontWeightBold" }}>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: "fontWeightMedium" }}>
                 {ADD_COPY.routeLabel} · {shown.length}
               </Typography>
             </Stack>
@@ -125,16 +119,15 @@ export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd
 
         <Stack
           direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Button onClick={close} sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>
+          <Button onClick={close} size="small" variant="outlined" color="inherit">
             {ADD_COPY.cancel}
           </Button>
           <Button
             variant="contained" color="primary" size="small"
             disabled={picked.size === 0}
             onClick={confirm}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
           >
             {ADD_COPY.confirm(picked.size)}
           </Button>
@@ -159,8 +152,8 @@ function CandidateRow({ row, checked, onToggle }) {
       direction="row" alignItems="flex-start" spacing={1.5}
       onClick={onToggle}
       sx={{
-        px: 2.5, py: 1.5, cursor: "pointer",
-        bgcolor: checked ? (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03) : "transparent",
+        px: 3, py: 1.5, cursor: "pointer",
+        bgcolor: checked ? "action.selected" : "transparent",
         "&:hover": { bgcolor: "action.hover" },
       }}
     >
@@ -173,7 +166,7 @@ function CandidateRow({ row, checked, onToggle }) {
         sx={{ ...checkboxSx, mt: 0.25 }}
       />
       <Box flex={1} minWidth={0}>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+        <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
           {row.name}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>

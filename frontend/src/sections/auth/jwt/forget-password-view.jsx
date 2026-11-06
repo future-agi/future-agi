@@ -92,7 +92,7 @@ export default function ForgotPasswordView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -103,7 +103,7 @@ export default function ForgotPasswordView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           lineHeight: "36px",
           color: "text.secondary",
           maxWidth: "440px",
@@ -117,7 +117,7 @@ export default function ForgotPasswordView() {
 
   const renderForm = (
     <Stack
-      spacing={2.5}
+      spacing={2}
       display={"flex"}
       alignItems="center"
       maxWidth={"440px"}
@@ -130,7 +130,7 @@ export default function ForgotPasswordView() {
         We will email you a link to reset your password
       </Typography>
       <FormTextFieldV2
-        size="small"
+        size="medium"
         placeholder="Email"
         label="Email"
         control={control}
@@ -139,13 +139,14 @@ export default function ForgotPasswordView() {
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
           sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
             width: "100%",
           }}
         >
@@ -153,10 +154,10 @@ export default function ForgotPasswordView() {
         </Alert>
       )}
       <LoadingButton
+        size="large"
         fullWidth
         type="submit"
         variant="contained"
-        sx={{ height: "42px", borderRadius: 0.5 }}
         loading={sendingRequest}
         color="primary"
       >
@@ -172,7 +173,7 @@ export default function ForgotPasswordView() {
         variant="subtitle2"
         sx={{ alignItems: "center", display: "inline-flex" }}
       >
-        <Iconify icon="eva:arrow-ios-back-fill" width={16} />
+        <Iconify icon="solar:alt-arrow-left-linear" width={16} />
         Back to sign in
       </Link>
     </Stack>

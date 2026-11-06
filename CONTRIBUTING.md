@@ -14,6 +14,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 - 💬 [Join Discord](https://discord.com/invite/n2tCUKBkAw)
+- [Automatic-update developer guide](deploy/update/DEVELOPER_GUIDE.md) — requirements for migrations, configuration, startup, storage and recovery changes
 
 ---
 
@@ -168,6 +169,7 @@ Before requesting review:
 
 - [ ] PR description explains **what** and **why** (not just **how** — the diff shows that)
 - [ ] Tests added or updated
+- [ ] If changing migrations, configuration, startup or persistent storage, follow the [automatic-update developer checklist](deploy/update/DEVELOPER_GUIDE.md)
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
 - [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing

@@ -12,6 +12,7 @@ import { useRunsSummary } from "./useRunsSummary";
 import SummaryGraph from "./SummaryGraph";
 import SummaryLegend from "./SummaryLegend";
 import SummaryTable from "./SummaryTable";
+import { dataColor } from "../runs.constants";
 import { countCoveredScenarios } from "./summaryData";
 import RunCompare from "./RunCompare";
 import { COMPARE_COPY } from "../../workspace.constants";
@@ -30,7 +31,13 @@ const DEFAULT_SHOWN_EVALS = 5;
 const GRAPH_RUN_OPTIONS = [1, 2, 3, 4, 5];
 const DEFAULT_GRAPH_RUNS = 1;
 
-export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
+export default function RunsSummary({
+  env,
+  envState,
+  scenarioCount: scenarioCountProp,
+  onOpenRun,
+  onGo,
+}) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
   const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
@@ -70,7 +77,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
-    countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
+    countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
@@ -125,10 +132,10 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
             value={graphRuns}
             onChange={(e) => setGraphRuns(Number(e.target.value))}
             inputProps={{ "aria-label": "Runs in graph" }}
-            sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+            sx={{ width: 150, flexShrink: 0 }}
           >
             {GRAPH_RUN_OPTIONS.map((n) => (
-              <MenuItem key={n} value={n} sx={{ typography: "s2", py: 0.5 }}>
+              <MenuItem key={n} value={n}>
                 Latest {n} {n === 1 ? "run" : "runs"}
               </MenuItem>
             ))}
@@ -145,15 +152,15 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
                     ? `All ${evals.length} evals`
                     : `${ids.length} of ${evals.length} evals`,
               }}
-              sx={{ width: 200, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+              sx={{ width: 200, flexShrink: 0 }}
             >
               {evals.map((e) => {
                 const on = shown.some((x) => x.id === e.id);
                 return (
-                  <MenuItem key={e.id} value={e.id} sx={{ typography: "s2", py: 0.5 }}>
+                  <MenuItem key={e.id} value={e.id}>
                     <Checkbox size="small" checked={on} disabled={on && shown.length === 1} sx={{ p: 0.5, mr: 0.75 }} />
-                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: e.color, mr: 1, flexShrink: 0 }} />
-                    <ListItemText primaryTypographyProps={{ typography: "s2" }} primary={e.name} />
+                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: (t) => dataColor(t, e.colorIndex), mr: 1, flexShrink: 0 }} />
+                    <ListItemText primary={e.name} />
                   </MenuItem>
                 );
               })}
@@ -168,7 +175,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
           direction="row" alignItems="center" spacing={1}
           sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             Runs ({count})
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
@@ -180,14 +187,14 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
                 {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
               </Typography>
               {selected.length > 0 && (
-                <Button size="small" onClick={() => setSelected([])} sx={{ typography: "s2", flexShrink: 0 }}>
+                <Button size="small" onClick={() => setSelected([])} sx={{ flexShrink: 0 }}>
                   {COMPARE_COPY.clear}
                 </Button>
               )}
               <Button
                 variant="outlined" size="small" disabled={!comparable}
                 onClick={() => setComparing(true)}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+                sx={{ flexShrink: 0 }}
               >
                 {COMPARE_COPY.compare}
               </Button>
@@ -196,16 +203,15 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
           <Button
             variant="outlined" size="small" onClick={() => onGo?.("evals")}
             startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+            sx={{ flexShrink: 0 }}
           >
-            Add Evals
+            Add evals
           </Button>
           <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
             <span>
               <Button
                 variant="outlined" size="small" disabled
                 startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
               >
                 Choose winner
               </Button>
@@ -245,6 +251,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
 RunsSummary.propTypes = {
   env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string, versioning: PropTypes.object }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
+  scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,
 };

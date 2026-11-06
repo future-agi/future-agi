@@ -5,6 +5,7 @@ export const usePromptStore = create((set) => ({
   searchQuery: "",
   pageLimit: 10,
   totalPages: 1,
+  totalCount: null,
   page: 1,
   newPromptModal: false,
   selectTemplateDrawerOpen: false,
@@ -19,6 +20,7 @@ export const usePromptStore = create((set) => ({
   },
   setPageLimit: (limit) => set({ pageLimit: limit }),
   setTotalPages: (totalPages) => set({ totalPages }),
+  setTotalCount: (totalCount) => set({ totalCount }),
   setPage: (page) => set({ page }),
   setNewPromptModal: (newPromptModal) => set({ newPromptModal }),
   setSelectTemplateDrawerOpen: (selectTemplateDrawerOpen) =>
@@ -44,6 +46,7 @@ export const resetPromptState = () => {
     searchQuery: "",
     pageLimit: 10,
     totalPages: 1,
+    totalCount: null,
     page: 1,
     newPromptModal: false,
     selectTemplateDrawerOpen: false,

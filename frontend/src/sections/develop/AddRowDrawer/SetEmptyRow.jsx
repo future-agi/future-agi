@@ -83,7 +83,13 @@ const SetEmptyRow = ({
   };
 
   return (
-    <Dialog open={open} onClose={onCloseClick} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <Box padding={2}>
         <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           <Box
@@ -101,7 +107,7 @@ const SetEmptyRow = ({
               Add Empty Rows
             </Typography>
             <IconButton onClick={onCloseClick}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text="Add empty rows and columns to your dataset" />

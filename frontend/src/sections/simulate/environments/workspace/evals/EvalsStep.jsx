@@ -54,13 +54,14 @@ export default function EvalsStep({
   locked = false,
   backed = false,
   grading = false,
+  scenarioCount,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   // The id of the eval open for editing, or null.
   const [editingId, setEditingId] = useState(null);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
-  const needsScenarios = (envState?.scenarios?.length || 0) === 0;
+  const needsScenarios = (scenarioCount ?? (envState?.scenarios?.length || 0)) === 0;
 
   const store = useAppliedEvals(envState, patch);
   // Env-level "enable tool call evaluation". A backed env persists it through
@@ -205,14 +206,14 @@ export default function EvalsStep({
           px: 2,
           py: 1.5,
           mb: 3,
-          borderRadius: 1,
+          borderRadius: "8px",
           border: "1px solid",
           borderColor: "divider",
         }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+            sx={{ typography: "s1", fontWeight: 500 }}
           >
             {EVALS_COPY.toolCall.title}
           </Typography>
@@ -307,7 +308,6 @@ export default function EvalsStep({
                   startIcon={
                     <Iconify icon="solar:add-circle-linear" width={15} />
                   }
-                  sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
                 >
                   {EVALS_COPY.add}
                 </Button>
@@ -376,7 +376,6 @@ export default function EvalsStep({
                         <Iconify icon="solar:arrow-right-linear" width={15} />
                       ) : null
                     }
-                    sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
                   >
                     {needsScenarios ? EVALS_COPY.addScenarios : EVALS_COPY.add}
                   </Button>
@@ -506,6 +505,7 @@ export default function EvalsStep({
 }
 
 EvalsStep.propTypes = {
+  scenarioCount: PropTypes.number,
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,

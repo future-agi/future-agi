@@ -156,7 +156,11 @@ const JsonOutputRenderer = ({
               sx={{ p: 0, mr: 0.5 }}
             >
               <Iconify
-                icon={isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  isExpanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
               />
             </IconButton>
@@ -208,7 +212,11 @@ const JsonOutputRenderer = ({
               sx={{ p: 0, mr: 0.5 }}
             >
               <Iconify
-                icon={isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  isExpanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={16}
               />
             </IconButton>
@@ -298,17 +306,17 @@ const JsonOutputRenderer = ({
       <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
         <Tooltip title="Expand all">
           <IconButton size="small" onClick={expandAll}>
-            <Iconify icon="mdi:unfold-more-horizontal" width={18} />
+            <Iconify icon="solar:chevrons-up-down-linear" width={20} />
           </IconButton>
         </Tooltip>
         <Tooltip title="Collapse all">
           <IconButton size="small" onClick={collapseAll}>
-            <Iconify icon="mdi:unfold-less-horizontal" width={18} />
+            <Iconify icon="solar:chevrons-down-up-linear" width={20} />
           </IconButton>
         </Tooltip>
         <Tooltip title="Copy all">
           <IconButton size="small" onClick={() => handleCopyValue(parsedData)}>
-            <Iconify icon="basil:copy-outline" width={18} />
+            <Iconify icon="solar:copy-linear" width={20} />
           </IconButton>
         </Tooltip>
       </Box>
@@ -345,7 +353,7 @@ const JsonKeyValue = ({
         backgroundColor: isHovered
           ? (theme) => alpha(theme.palette.primary.main, 0.05)
           : "transparent",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         px: 0.5,
         "&:hover .copy-buttons": {
           opacity: 1,
@@ -383,7 +391,7 @@ const JsonKeyValue = ({
               onClick={() => onCopyPath(path)}
               sx={{ p: 0.25 }}
             >
-              <Iconify icon="mdi:code-braces" width={14} />
+              <Iconify icon="solar:code-linear" width={14} />
             </IconButton>
           </Tooltip>
           <Tooltip title="Copy value">
@@ -392,7 +400,7 @@ const JsonKeyValue = ({
               onClick={() => onCopyValue(value)}
               sx={{ p: 0.25 }}
             >
-              <Iconify icon="basil:copy-outline" width={14} />
+              <Iconify icon="solar:copy-linear" width={14} />
             </IconButton>
           </Tooltip>
         </Box>

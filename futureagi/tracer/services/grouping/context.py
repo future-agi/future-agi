@@ -6,7 +6,7 @@ from collections import defaultdict
 from django.db import transaction
 from django.db.models import F, Q
 
-from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSIONS
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingConstraint,
@@ -108,7 +108,7 @@ def build_claim_context(
         for item in snap["occurrences"]
     }
     if (
-        scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+        scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
         and attempt.pending_occurrence_ids
     ):
         pending_ids = set(attempt.pending_occurrence_ids)
@@ -354,7 +354,7 @@ def build_claim_context(
         (state for state in candidate_states if str(state.cluster_id) in issue_scores),
         key=lambda state: (-issue_scores[str(state.cluster_id)], str(state.cluster_id)),
     )
-    sampled = scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+    sampled = scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
     issues = []
     omitted = [
         {"issue_id": issue_id, "reason": "candidate_feature_not_current"}

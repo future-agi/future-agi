@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import CustomEvalDrawer from "../CustomEvalDrawer/CustomEvalDrawer";
 import EvaluationConfigureForm from "../EvalDetails/EvaluationConfigureForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const AddDatasetDrawer = ({
   open,
@@ -30,19 +31,23 @@ const AddDatasetDrawer = ({
     setSelectedEval(null);
   };
 
+  const covered = useDrawerCovered(open);
+  const configCovered = useDrawerCovered(Boolean(selectedEval));
+
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
         onClose={onClose}
+        sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "650px",
+            width: "640px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -71,12 +76,13 @@ const AddDatasetDrawer = ({
         anchor="right"
         open={Boolean(selectedEval)}
         onClose={onClickClose}
+        sx={coveredDrawerSx(configCovered)}
         PaperProps={{
           sx: {
             height: "100vh",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}

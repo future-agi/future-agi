@@ -65,7 +65,69 @@ def assert_window_replay(
         assert "toStartOfHour(start_time) < fromUnixTimestamp64Micro(" in scan
     else:
         assert "candidate_span_identities" in scan
-    assert "argMax(start_time, _version) AS latest_start_time" in latest
+    if "AS latest_usage_state" in latest:
+        # Nullable ownership/time and money flags must come from one winner.
+        state = latest.split("argMax(tuple(", 1)[1].split(
+            "), spans._version) AS latest_usage_state", 1
+        )[0]
+        values, depth, begin = [], 0, 0
+        for position, char in enumerate(state):
+            depth += (char == "(") - (char == ")")
+            if char == "," and depth == 0:
+                values.append(state[begin:position].strip())
+                begin = position + 1
+        values.append(state[begin:].strip())
+        assert len(values) == 14
+        assert values[:8] == [
+            f"spans.{column}"
+            for column in (
+                "end_user_id",
+                "start_time",
+                "end_time",
+                "cost",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+                "is_deleted",
+            )
+        ]
+        assert values[8].startswith("tuple(")
+        assert "spans.attrs_string['fi.usage.contribution']" in values[8]
+        assert "spans.attrs_string['fi.cost.kind'] = 'unknown'" in values[8]
+        assert "spans.cost != 0" in values[9]
+        assert "spans.observation_type = 'llm'" in values[9]
+        assert values[10] == "spans.parent_span_id"
+        assert values[11] == (
+            "if(spans.name = 'pydantic_ai.agent.run', 'pydantic_ai.agent.run', '')"
+        )
+        assert values[12] in {"spans.trace_session_id", "CAST(NULL, 'Nullable(UUID)')"}
+        assert values[13] == "spans.observation_type"
+        assert "), spans._version) AS latest_usage_state" in latest
+        fields = (
+            "end_user_id",
+            "start_time",
+            "end_time",
+            "cost",
+            "total_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+            "is_deleted",
+            "coverage",
+            "known_cost_fact",
+            "parent_span_id",
+            "name",
+            "trace_session_id",
+            "observation_type",
+        )
+        for position, field in enumerate(fields, 1):
+            assert (
+                f"tupleElement(latest_usage_state, {position}) AS latest_{field}"
+                in latest
+            )
+        assert "argMax(spans.end_user_id," not in latest
+        assert "argMax(spans.end_time," not in latest
+    else:
+        assert "argMax(start_time, _version) AS latest_start_time" in latest
     assert "latest_start_time >= fromUnixTimestamp64Micro(" in sql
     assert "latest_start_time < fromUnixTimestamp64Micro(" in sql
     assert set(re.findall(r"%\((\w+)\)s", sql)) <= params.keys()
@@ -75,7 +137,7 @@ def assert_window_replay(
 def test_candidate_usage_replays_every_version_before_window(workspace):
     sql, params = builder(workspace).build_candidate_page_query()
     assert_window_replay(sql, params)
-    usage = cte(sql, "exact_usage")
+    usage = cte(sql, "user_trace_usage")
     assert "latest_is_deleted = 0" in usage
     assert "latest_start_time >=" in usage
     assert params["user_window_end_us"] - params["user_window_start_us"] == 1

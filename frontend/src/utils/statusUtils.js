@@ -9,17 +9,17 @@ export const STATUS_TYPES = {
 export const STATUS_CONFIG = {
   [STATUS_TYPES.PASS]: {
     icon: "/assets/icons/status/success.svg",
-    color: "green.500",
-    bgColor: "green.o5",
-    borderColor: "green.500",
-    textColor: "green.500",
+    color: "status.success.fg",
+    bgColor: "status.success.bg",
+    borderColor: "status.success.border",
+    textColor: "status.success.fg",
   },
   [STATUS_TYPES.ERROR]: {
     icon: "/assets/icons/status/error.svg",
-    color: "red.500",
-    bgColor: "red.o5",
-    borderColor: "red.500",
-    textColor: "red.500",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
+    borderColor: "status.danger.border",
+    textColor: "status.danger.fg",
   },
   [STATUS_TYPES.UNSET]: {
     icon: "/assets/icons/status/unset.svg",
@@ -27,26 +27,6 @@ export const STATUS_CONFIG = {
     bgColor: "action.hover",
     borderColor: "text.disabled",
     textColor: "text.disabled",
-  },
-  // Stopped on purpose — neither a failure nor an unknown, so it gets its own hue rather
-  // than the grey UNSET treatment it used to blend into. No cancel glyph ships under
-  // icons/status, so the neutral one is reused.
-  [STATUS_TYPES.CANCELED]: {
-    icon: "/assets/icons/status/unset.svg",
-    color: "orange.500",
-    bgColor: "orange.o5",
-    borderColor: "orange.500",
-    // Light-mode value; CustomStatusChip swaps it for orange.300 in dark, where the
-    // deep orange would sit at roughly 2:1 against the page.
-    textColor: "orange.700",
-  },
-  // No in-progress glyph ships under icons/status, so the neutral one is reused.
-  [STATUS_TYPES.RUNNING]: {
-    icon: "/assets/icons/status/unset.svg",
-    color: "blue.500",
-    bgColor: "blue.o5",
-    borderColor: "blue.500",
-    textColor: "blue.500",
   },
 };
 

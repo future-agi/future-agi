@@ -1,4 +1,4 @@
-import { Box, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, Tab, Tabs } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
@@ -15,8 +15,6 @@ const IndividualExperimentBar = ({ rightSection }) => {
 
   const currentTab = location.pathname.split("/").pop();
 
-  const theme = useTheme();
-
   return (
     <Box
       sx={{
@@ -31,24 +29,6 @@ const IndividualExperimentBar = ({ rightSection }) => {
       <Box>
         <Tabs
           value={currentTab}
-          // sx={{ color: "primary.main" }}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
-          sx={{
-            minHeight: 32,
-            "& .MuiTab-root": {
-              minHeight: 32,
-              padding: "12px 12px",
-              marginRight: 0,
-              color: "text.disabled",
-            },
-            "& .MuiTab-root.Mui-selected": {
-              color: "primary.main",
-            },
-          }}
           onChange={(e, value) => {
             navigate(
               `/dashboard/develop/individual-experiment/${individualExperimentId}/${value}`,

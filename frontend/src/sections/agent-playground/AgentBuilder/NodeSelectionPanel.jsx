@@ -14,8 +14,8 @@ const NodeCardSkeleton = () => (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Skeleton
         variant="rounded"
-        width={36}
-        height={36}
+        width={28}
+        height={28}
         sx={{ flexShrink: 0 }}
       />
       <Stack sx={{ flex: 1 }} gap={0.5}>
@@ -127,7 +127,7 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
               onDragStart={(e) => handleDragStart(e, node)}
               draggable={isDraggable(node)}
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 overflow: "hidden",
                 cursor: disabled ? "not-allowed" : "pointer",
                 "&:hover": {

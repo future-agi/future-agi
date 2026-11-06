@@ -18,9 +18,10 @@ export const useGetTraceDetail = (
     ...(testExecutionId ? { test_execution_id: testExecutionId } : {}),
   };
   return useQuery({
-    queryKey: ["trace-detail", traceId, projectId, testExecutionId].filter(
-      Boolean,
-    ),
+    // Keep the trace-ID prefix used by narrow mutation invalidations.
+    queryKey: [
+      "trace-detail", traceId, projectId, testExecutionId, "capture-coverage-v1",
+    ].filter(Boolean),
     queryFn: () =>
       axios.get(endpoints.project.getTrace(traceId), {
         params: Object.keys(params).length ? params : undefined,

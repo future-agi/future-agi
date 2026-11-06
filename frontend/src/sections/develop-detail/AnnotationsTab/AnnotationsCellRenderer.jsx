@@ -1,25 +1,21 @@
-import { Box, Chip } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
-const statusColor = {
-  NotStarted: "default",
-  Running: "primary",
+const statusRole = {
+  NotStarted: "neutral",
+  Running: "info",
   Completed: "success",
-  Editing: "warning",
-  Inactive: "default",
-  Failed: "error",
+  Editing: "info",
+  Inactive: "neutral",
+  Failed: "danger",
 };
 
 const AnnotationsCellRenderer = ({ value }) => {
   return (
     <Box>
-      <Chip
-        variant="soft"
-        label={value}
-        size="small"
-        color={statusColor[value]}
-      />
+      <StatusBadge status={value} label={value} role={statusRole[value]} />
     </Box>
   );
 };

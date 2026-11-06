@@ -28,7 +28,7 @@ test('DATA-E2E-001: uploaded dataset values can be discovered and filtered', {
   page.setDefaultTimeout(UI_READY);
   const name = `e2e-data1-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click({ timeout: UI_READY });
+  await page.getByRole('button', { name: /^add dataset$/i }).first().click({ timeout: UI_READY });
   await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click({ timeout: UI_READY });
   const dialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(dialog.locator('input[type="file"]'), 'catalog-regions.csv');

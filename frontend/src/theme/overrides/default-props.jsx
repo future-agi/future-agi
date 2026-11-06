@@ -115,9 +115,9 @@ export function defaultProps(theme) {
       defaultProps: {
         iconMapping: {
           error: <Iconify icon="solar:danger-bold" width={24} />,
-          info: <Iconify icon="eva:info-fill" width={24} />,
-          success: <Iconify icon="eva:checkmark-circle-2-fill" width={24} />,
-          warning: <Iconify icon="eva:alert-triangle-fill" width={24} />,
+          info: <Iconify icon="solar:info-circle-linear" width={24} />,
+          success: <Iconify icon="solar:check-circle-bold" width={24} />,
+          warning: <Iconify icon="solar:danger-triangle-linear" width={24} />,
         },
       },
     },

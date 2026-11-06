@@ -95,12 +95,15 @@ const SelectRunsPopover = ({
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+                <Iconify
+                  icon="solar:magnifier-linear" width={16}
+                  sx={{ color: "divider" }}
+                />
               </InputAdornment>
             ),
           }}
         />
-        <Typography fontWeight={600} fontSize="12px" color="text.disabled">
+        <Typography fontWeight={600} fontSize="12px" color="text.tertiary">
           All runs
         </Typography>
         <Box
@@ -167,7 +170,7 @@ const RunItem = ({ item, selected, onChange }) => {
           <ListItemText
             primaryTypographyProps={{
               fontWeight: 500,
-              fontSize: "14px",
+              fontSize: "13px",
               borderRadius: "6px",
               maxWidth: "170px",
               overflow: "hidden",

@@ -486,6 +486,10 @@ class StartupComposeContractTests(unittest.TestCase):
 # the standalone install gets a plain `up -d` whose progress the readiness loop
 # reports (the app's first boot runs the migrations). Neither ever retries.
 FULL_UP = "up -d --build --wait --wait-timeout 1200"
+# A pinned fi-collector (bin/update's release image, pulled before the start) is
+# never rebuilt: every other service with `build:` is built by name first, and
+# the stack starts with --no-build.
+PINNED_UP = "up -d --no-build --wait --wait-timeout 1200"
 DEFAULT_UP = "up -d"
 INSTALL_MODES = {
     # mode: (the one compose call, phrases every failure message carries)
@@ -524,13 +528,20 @@ class InstallerStartupContractTests(unittest.TestCase):
 
     def test_both_installers_have_one_bounded_up_and_no_replay_or_cleanup(self):
         compose_up = {"install": r"\$DC up\b", "install.ps1": r"Invoke-Compose up\b"}
+        # The distributed `up`, its build flag chosen at runtime (--build, or
+        # --no-build for a pinned fi-collector; the runs below pin both).
+        # installer_code blanks bash's quoted "$build_flag".
+        bounded_up = {
+            "install": r'\$DC up -d "" --wait --wait-timeout 1200;',
+            "install.ps1": r"Invoke-Compose up -d \$buildFlag --wait --wait-timeout 1200\n",
+        }
         for name in ("install", "install.ps1"):
             with self.subTest(installer=name):
                 block = self.startup_block(name)
                 code = installer_code(block)
                 # One `up` per mode; the runs below prove the branches exclude
                 # each other and that each mode makes exactly one call.
-                self.assertEqual(code.count(FULL_UP), 1)
+                self.assertEqual(len(re.findall(bounded_up[name], code)), 1, code)
                 self.assertEqual(len(re.findall(compose_up[name], code)), 2)
                 self.assertNotRegex(
                     code, r"\b(?:until|while|for|foreach|sleep|Start-Sleep)\b"
@@ -582,15 +593,19 @@ class InstallerStartupContractTests(unittest.TestCase):
         else:
             self.assertEqual(notice, [], result.stdout)
 
-    def run_shell(self, mode, status, services=""):
+    def run_shell(self, mode, status, services="", pinned=False, build=()):
         preamble = """
 set -euo pipefail
 compose_status=$1
 DISTRIBUTED=$2
 PROJECT_SERVICES=$3
+collector_pinned=$4
+build_services=()
+if [[ -n "$5" ]]; then read -r -a build_services <<< "$5"; fi
 project_name=startup-test
 DC=mock_compose
 mock_compose() { printf 'COMPOSE:%s\\n' "$*"; return "$compose_status"; }
+log_only() { :; }
 project_has_service() {
   case " $PROJECT_SERVICES " in *" $1 "*) return 0 ;; esac
   return 1
@@ -612,6 +627,8 @@ die() { printf 'FAIL:%s\\n' "$*"; exit 1; }
                 str(status),
                 "1" if mode == "full" else "0",
                 services,
+                "1" if pinned else "0",
+                " ".join(build),
             ],
             env={"PATH": "/nonexistent"},
             capture_output=True,
@@ -633,15 +650,18 @@ die() { printf 'FAIL:%s\\n' "$*"; exit 1; }
                 self.assert_attempt(result, 0, mode)
                 self.assert_rabbitmq_notice(result, mode)
 
-    def run_powershell(self, mode, status, services=()):
+    def run_powershell(self, mode, status, services=(), pinned=False, build=()):
         is_full = "$true" if mode == "full" else "$false"
         service_list = ", ".join(f"'{name}'" for name in services)
+        build_list = ", ".join(f"'{name}'" for name in build)
         preamble = f"""
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 $script:ComposeStatus = {status}
 $IsDistributed = {is_full}
 $projectServices = @({service_list})
+$collectorPinned = {"$true" if pinned else "$false"}
+$buildServices = @({build_list})
 $projectName = 'startup-test'
 $DcText = 'docker compose'
 """
@@ -651,6 +671,7 @@ function Invoke-Compose {
   $global:LASTEXITCODE = $script:ComposeStatus
 }
 function Step { }
+function Append-Log { }
 function Ok { Write-Output ('OK:' + ($args -join ' ')) }
 function Warn { Write-Output ('WARN:' + ($args -join ' ')) }
 function Start-Sleep { }
@@ -690,6 +711,51 @@ function Die { Write-Output ('FAIL:' + ($args -join ' ')); exit 1 }
                 result = self.run_powershell(mode, 0, services=("app", "rabbitmq"))
                 self.assert_attempt(result, 0, mode)
                 self.assert_rabbitmq_notice(result, mode)
+
+    def assert_pinned_attempts(self, run):
+        # A pinned fi-collector: the distributed stack starts once with
+        # --no-build; services with `build:` are built by name first, and a
+        # failed build stops before anything starts. Standalone is unchanged.
+        for status in (0, 1, 124):
+            with self.subTest(pinned="no other build", status=status):
+                result = run("full", status, pinned=True)
+                calls = [
+                    line
+                    for line in result.stdout.splitlines()
+                    if line.startswith("COMPOSE:")
+                ]
+                self.assertEqual(calls, [f"COMPOSE:{PINNED_UP}"], result.stdout)
+                self.assertEqual("CONTINUED" in result.stdout, status == 0)
+                if status:
+                    self.assertIn("partial state retained", result.stdout)
+                    self.assertIn("no automatic retry", result.stdout)
+            with self.subTest(pinned="override builds", status=status):
+                result = run("full", status, pinned=True, build=("worker", "tool"))
+                calls = [
+                    line
+                    for line in result.stdout.splitlines()
+                    if line.startswith("COMPOSE:")
+                ]
+                expected = ["COMPOSE:build worker tool"]
+                if status == 0:
+                    expected.append(f"COMPOSE:{PINNED_UP}")
+                self.assertEqual(calls, expected, result.stdout + result.stderr)
+                self.assertEqual("CONTINUED" in result.stdout, status == 0)
+                if status:
+                    self.assertIn("build worker tool failed", result.stdout)
+            with self.subTest(pinned="standalone", status=status):
+                self.assert_attempt(
+                    run("default", status, pinned=True), status, "default"
+                )
+
+    def test_shell_pinned_collector_is_never_rebuilt(self):
+        self.assert_pinned_attempts(self.run_shell)
+
+    @unittest.skipUnless(
+        shutil.which("pwsh"), "pwsh unavailable; static contract still runs"
+    )
+    def test_powershell_pinned_collector_is_never_rebuilt(self):
+        self.assert_pinned_attempts(self.run_powershell)
 
 
 if __name__ == "__main__":

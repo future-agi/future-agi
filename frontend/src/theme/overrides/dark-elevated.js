@@ -12,7 +12,7 @@
 export function darkElevatedStyles(theme, { boxShadow, borderOnly } = {}) {
   if (theme.palette.mode === "light") return {};
 
-  const border = theme.palette.border?.hover || "#3f3f46";
+  const border = theme.palette.border?.default || "#303036";
 
   if (borderOnly) {
     return { border: `1px solid ${border}` };
@@ -20,9 +20,9 @@ export function darkElevatedStyles(theme, { boxShadow, borderOnly } = {}) {
 
   return {
     border: `1px solid ${border}`,
-    backgroundColor: theme.palette.background.neutral,
-    "--input-surface": theme.palette.background.neutral,
+    backgroundColor: theme.palette.background.overlay,
+    "--input-surface": theme.palette.background.overlay,
     backgroundImage: "none",
-    boxShadow: boxShadow || "0px 12px 32px -4px rgba(0, 0, 0, 0.6)",
+    boxShadow: boxShadow || theme.customShadows.dropdown,
   };
 }

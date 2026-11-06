@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { ORIGIN_KINDS } from "../buildEnvironment/provenance.constants";
 
@@ -16,7 +15,7 @@ export default function OriginChip({ origin, file, line, showPath = true }) {
       placement="top"
       title={
         <Box sx={{ maxWidth: 300, py: 0.5 }}>
-          <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", mb: 0.25 }}>{meta.label}</Typography>
+          <Typography sx={{ typography: "s3", fontWeight: 500, mb: 0.25 }}>{meta.label}</Typography>
           <Typography sx={{ typography: "s3" }}>{meta.note}</Typography>
           {file && (
             <Typography sx={{ typography: "s3", mt: 0.75, fontFamily: "ui-monospace, Menlo, monospace", opacity: 0.75 }}>
@@ -40,9 +39,9 @@ export default function OriginChip({ origin, file, line, showPath = true }) {
         )}
         <Typography
           sx={{
-            px: 0.75, py: 0.25, borderRadius: 0.5,
-            typography: "s3", fontWeight: "fontWeightBold", color: meta.color,
-            bgcolor: (t) => alpha(meta.color, t.palette.mode === "dark" ? 0.16 : 0.1),
+            px: 0.75, height: 18, display: "inline-flex", alignItems: "center", borderRadius: "4px",
+            typography: "s3", fontWeight: 500, color: "text.secondary",
+            bgcolor: "action.selected",
           }}
         >
           {meta.short}

@@ -244,7 +244,7 @@ const CompareDatasetsTop = ({
                   <Typography
                     sx={{
                       color: versionColors.tagForeground,
-                      fontSize: "11px",
+                      fontSize: "12px",
                       fontWeight: 500,
                     }}
                   >
@@ -288,7 +288,11 @@ const CompareDatasetsTop = ({
                         setIsChooseWinnerSelected(false);
                       }}
                     >
-                      <Iconify icon="akar-icons:cross" width={14} height={14} />
+                      <Iconify
+                        icon="solar:close-linear"
+                        width={14}
+                        height={14}
+                      />
                     </IconButton>
                   </Box>
                 )}
@@ -302,7 +306,7 @@ const CompareDatasetsTop = ({
                     pointerEvents: "none",
                   }}
                 >
-                  <Iconify icon="material-symbols:compare-arrows" />
+                  <Iconify icon="solar:transfer-horizontal-linear" />
                 </IconButton>
               )}
             </React.Fragment>
@@ -320,14 +324,11 @@ const CompareDatasetsTop = ({
                 pointerEvents: "none",
               }}
             >
-              <Iconify icon="material-symbols:compare-arrows" />
+              <Iconify icon="solar:transfer-horizontal-linear" />
             </IconButton> */}
             <Button
               size="small"
               sx={{
-                borderRadius: "4px",
-                fontSize: "12px",
-                fontWeight: 500,
                 color: "text.primary",
                 display: "flex",
                 flexDirection: "row",
@@ -349,7 +350,7 @@ const CompareDatasetsTop = ({
               </Typography>
               <Iconify
                 sx={{ color: "text.secondary" }}
-                icon="akar-icons:chevron-down"
+                icon="solar:alt-arrow-down-linear"
                 width={14}
                 height={14}
               />
@@ -361,7 +362,7 @@ const CompareDatasetsTop = ({
           sx={{ color: "text.secondary" }}
           onClick={() => setCompareDatasetDrawerVisible(true)}
         >
-          <Iconify icon="akar-icons:plus" height={"14px"} width={"14px"} />
+          <Iconify icon="solar:add-linear" height={"14px"} width={"14px"} />
         </IconButton>
 
         {/* Buttons aligned to the right */}
@@ -371,9 +372,7 @@ const CompareDatasetsTop = ({
             sx={{
               border: "1px solid",
               borderColor: "action.hover",
-              borderRadius: "8px",
               minWidth: "38px",
-              px: "8px",
             }}
             onClick={() => {
               setIsCompareDataset(false);

@@ -3,9 +3,9 @@ import json
 import re
 import traceback
 import uuid
-from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from types import SimpleNamespace
 
 import structlog
 
@@ -17,14 +17,10 @@ from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from agentic_eval.core.utils.functions import detect_input_type, is_uuid
 from agentic_eval.core.utils.model_config import ModelConfigs
-from tfc.telemetry import wrap_for_thread
-
-logger = structlog.get_logger(__name__)
-from accounts.models.organization import Organization
-from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
@@ -76,9 +72,10 @@ from model_hub.utils.json_path_resolver import (  # noqa: E402
     parse_json_safely,
     resolve_json_path,
 )
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
+from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
@@ -88,7 +85,8 @@ from tfc.utils.error_codes import (
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.parse_errors import parse_serialized_errors
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -792,9 +790,7 @@ def process_mapping(
                             # Get the user prompt from messages
                             prompt = "\n".join(
                                 [
-                                    runner._replace_dynamic_ids(
-                                        content["text"], row
-                                    )
+                                    runner._replace_dynamic_ids(content["text"], row)
                                     for message in prompt_column.messages
                                     if message["role"] == "user"
                                     for content in message["content"]
@@ -974,8 +970,10 @@ class EvaluationRunner:
         invalidated automatically when `self.eval_template` or
         `self._resolved_version` identity changes.
         """
-        cache_key = (id(getattr(self, "eval_template", None)),
-                     id(getattr(self, "_resolved_version", None)))
+        cache_key = (
+            id(getattr(self, "eval_template", None)),
+            id(getattr(self, "_resolved_version", None)),
+        )
         cached = getattr(self, "_effective_config_cache", None)
         if (
             cached is not None
@@ -1169,6 +1167,127 @@ class EvaluationRunner:
             input_type[key] = detect_input_type(value)
         return input_type
 
+    def _emit_cell_usage(self, eval_instance, api_call_log_row, row):
+        """Bill one evaluated cell. Billing never fails the cell, but a lost
+        charge is logged."""
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+
+                def token_usage_properties(token_usage):
+                    return {}
+
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
+            eval_cost = getattr(eval_instance, "cost", {})
+            llm_cost = eval_cost.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
+            actual_cost = llm_cost + per_run_fee
+            _token_usage = getattr(eval_instance, "token_usage", {})
+
+            # Also compute fallback cost for comparison logging
+            _fallback_cost = 0
+            try:
+                from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                    calculate_total_cost,
+                )
+
+                _model = self.user_eval_metric.model or "unknown"
+                _fallback = calculate_total_cost(_model, _token_usage)
+                _fallback_cost = _fallback.get("total_cost", 0)
+            except Exception:
+                pass
+
+            logger.info(
+                "eval_cost_breakdown",
+                eval_id=str(self.user_eval_metric.id),
+                model=self.user_eval_metric.model,
+                llm_cost=llm_cost,
+                per_run_fee=per_run_fee,
+                actual_cost=actual_cost,
+                fallback_calculated_cost=_fallback_cost,
+                token_usage=getattr(eval_instance, "token_usage", {}),
+            )
+
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
+            emit_org_id = str(
+                self.organization_id
+                or (
+                    self.user_eval_metric.organization.id
+                    if self.user_eval_metric
+                    else ""
+                )
+            )
+
+            try:
+                from ee.usage.schemas.event_types import BillingEventType
+            except ImportError:
+                BillingEventType = None
+
+            _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
+            eval_event_type = (
+                BillingEventType.CODE_EVALUATOR.value
+                if _is_code_eval and BillingEventType is not None
+                else _get_api_call_type(self.user_eval_metric.model)
+            )
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
+                # Jev is billed the one way every eval path bills it (the
+                # flat per-run fee, attempt-stable ids); anything else, or
+                # a build without the Jev module, is billed as before.
+                if not _emit_jev_usage(
+                    eval_instance,
+                    org_id=emit_org_id,
+                    run_id=(
+                        str(api_call_log_row.log_id)
+                        if api_call_log_row is not None
+                        else f"{self.replace_column_id}:{row.id}"
+                    ),
+                ):
+                    emit(
+                        UsageEvent(
+                            org_id=emit_org_id,
+                            event_type=eval_event_type,
+                            amount=credits,
+                            properties={
+                                "source": self.source,
+                                "source_id": str(
+                                    self.source_id
+                                    or (
+                                        str(self.user_eval_metric.template.id)
+                                        if self.user_eval_metric
+                                        else ""
+                                    )
+                                ),
+                                "raw_cost_usd": str(actual_cost),
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
+                    )
+        except Exception:
+            logger.warning("eval_usage_emit_failed", exc_info=True)
+
     def _process_eval_result(self, row, mappings):
         """Process evaluation for a single row"""
         config = self.update_config_list_values(
@@ -1224,7 +1343,12 @@ class EvaluationRunner:
                         response.get("reason"),
                         CellStatus.PASS.value,
                     )
-            value = self.format_output(response, row)
+            formatter = getattr(eval_instance, "format_result", None)
+            value = (
+                formatter(response, self.eval_template)
+                if callable(formatter)
+                else self.format_output(response, row)
+            )
 
             if api_call_log_row is not None:
                 config_dict = json.loads(api_call_log_row.config)
@@ -1257,112 +1381,7 @@ class EvaluationRunner:
                 self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
 
             # Post-eval cost-based usage emit
-            try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
-
-                billing_config = None
-                if BillingConfig is not None:
-                    billing_config = BillingConfig.get()
-                eval_cost = getattr(eval_instance, "cost", {})
-                llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = (
-                    billing_config.get_eval_per_run_fee() if billing_config else 0
-                )
-                actual_cost = llm_cost + per_run_fee
-                _token_usage = getattr(eval_instance, "token_usage", {})
-
-                # Also compute fallback cost for comparison logging
-                _fallback_cost = 0
-                try:
-                    from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                        calculate_total_cost,
-                    )
-
-                    _model = self.user_eval_metric.model or "unknown"
-                    _fallback = calculate_total_cost(_model, _token_usage)
-                    _fallback_cost = _fallback.get("total_cost", 0)
-                except Exception:
-                    pass
-
-                logger.info(
-                    "eval_cost_breakdown",
-                    eval_id=str(self.user_eval_metric.id),
-                    model=self.user_eval_metric.model,
-                    llm_cost=llm_cost,
-                    per_run_fee=per_run_fee,
-                    actual_cost=actual_cost,
-                    fallback_calculated_cost=_fallback_cost,
-                    token_usage=getattr(eval_instance, "token_usage", {}),
-                )
-
-                credits = (
-                    billing_config.calculate_ai_credits(actual_cost)
-                    if billing_config
-                    else 0
-                )
-                emit_org_id = str(
-                    self.organization_id
-                    or (
-                        self.user_eval_metric.organization.id
-                        if self.user_eval_metric
-                        else ""
-                    )
-                )
-
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-
-                _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
-                eval_event_type = (
-                    BillingEventType.CODE_EVALUATOR.value
-                    if _is_code_eval and BillingEventType is not None
-                    else _get_api_call_type(self.user_eval_metric.model)
-                )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-
-                    emit(
-                        UsageEvent(
-                            org_id=emit_org_id,
-                            event_type=eval_event_type,
-                            amount=credits,
-                            properties={
-                                "source": self.source,
-                                "source_id": str(
-                                    self.source_id
-                                    or (
-                                        str(self.user_eval_metric.template.id)
-                                        if self.user_eval_metric
-                                        else ""
-                                    )
-                                ),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(_token_usage),
-                            },
-                        )
-                    )
-            except Exception:
-                pass
+            self._emit_cell_usage(eval_instance, api_call_log_row, row)
 
             # Trigger error localization when enabled either on the dataset binding
             # (UserEvalMetric) or directly on the eval template.
@@ -1391,9 +1410,7 @@ class EvaluationRunner:
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
                     eval_config=(
-                        self.user_eval_metric.config
-                        if self.user_eval_metric
-                        else None
+                        self.user_eval_metric.config if self.user_eval_metric else None
                     ),
                 )
 
@@ -1415,7 +1432,7 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
-           
+
             usage_error_code = get_usage_error_code(e)
             if usage_error_code:
                 response["error_code"] = usage_error_code
@@ -1469,7 +1486,13 @@ class EvaluationRunner:
             if self.user_eval_metric
             else ModelChoices.TURING_LARGE.value
         )
-        api_call_type = _get_api_call_type(model)
+        api_call_type = _get_api_call_type(
+            model,
+            template=eval_template,
+            runtime_config=(
+                self.user_eval_metric.config if self.user_eval_metric else None
+            ),
+        )
 
         is_futureagi_eval = self.futureagi_eval
 
@@ -1691,13 +1714,6 @@ class EvaluationRunner:
                 final_mapping, final_required_field
             )
 
-            shot_count = (
-                len(few_shot_examples)
-                if isinstance(few_shot_examples, list)
-                else (1 if few_shot_examples else 0)
-            )
-            # print(f"[FEEDBACK INJECT] map_fields injecting fewshots : {few_shot_examples} for AgentEvaluator/CustomPromptEvaluator eval",flush=True)
-            # print(f"[FEEDBACK INJECT] map_fields injecting {shot_count} few-shot examples for eval_template={self.eval_template.id if self.eval_template else None}", flush=True)
             required_field.append("few_shots")
             mapping.append(few_shot_examples)
 
@@ -1881,11 +1897,7 @@ class EvaluationRunner:
             config = config.copy()
             for key, value in config.items():
                 # Check if the value is a comma-separated string
-                if (
-                    isinstance(value, str)
-                    and "," in value
-                    and key not in PROMPT_KEYS
-                ):
+                if isinstance(value, str) and "," in value and key not in PROMPT_KEYS:
                     # Split the string by commas and update the value as a list
                     config[key] = value.split(",")
                 # Check if the key is 'comparator' and if its value matches a known function
@@ -3237,9 +3249,7 @@ class EvaluationRunner:
                         _mark_cells_usage_limit_error,
                     )
 
-                    _mark_cells_usage_limit_error(
-                        self.user_eval_metric, usage_check
-                    )
+                    _mark_cells_usage_limit_error(self.user_eval_metric, usage_check)
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
@@ -3548,7 +3558,7 @@ class DatasetEvalStatsView(APIView):
         columns = Column.objects.filter(
             id__in=column_ids, dataset__organization_id=organization_id
         ).select_related("dataset")
-        dataset_ids = set(col.dataset_id for col in columns)
+        dataset_ids = {col.dataset_id for col in columns}
 
         # If we found datasets, filter metrics by those datasets
         if dataset_ids:
@@ -3564,7 +3574,7 @@ class DatasetEvalStatsView(APIView):
             )
 
         # Create a set of column_ids for faster lookup
-        column_id_set = set(str(cid) for cid in column_ids)
+        column_id_set = {str(cid) for cid in column_ids}
 
         # Filter metrics in Python - check if any column_id is used
         return [

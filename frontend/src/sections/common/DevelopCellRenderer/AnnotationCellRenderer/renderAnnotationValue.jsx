@@ -1,4 +1,4 @@
-import { Chip, Stack } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
 import React from "react";
 import Iconify from "src/components/iconify";
 
@@ -12,31 +12,20 @@ export const parseAnnotationValue = (value) => {
   }
 };
 
-const renderChips = (items, theme) =>
-  Array.isArray(items)
-    ? items.map((item) => (
-        <Chip
-          key={item}
-          label={item}
-          size="small"
-          color="primary"
-          sx={{
-            backgroundColor: theme.palette.action.hover,
-            color: theme.palette.primary.main,
-            fontWeight: 400,
-          }}
-        />
-      ))
-    : null;
+const renderChips = (items) =>
+  Array.isArray(items) ? (
+    <Typography variant="body2" color="text.primary">
+      {items.join(" · ")}
+    </Typography>
+  ) : null;
 
-export const renderAnnotationValue = (value, theme) => {
+export const renderAnnotationValue = (value, _theme) => {
   const parsed = parseAnnotationValue(value);
 
-  if (Array.isArray(parsed)) return renderChips(parsed, theme);
+  if (Array.isArray(parsed)) return renderChips(parsed);
 
   if (parsed && typeof parsed === "object") {
-    if (Array.isArray(parsed.selected))
-      return renderChips(parsed.selected, theme);
+    if (Array.isArray(parsed.selected)) return renderChips(parsed.selected);
 
     if (typeof parsed.rating === "number") {
       const count = Math.max(0, Math.floor(parsed.rating));
@@ -46,8 +35,8 @@ export const renderAnnotationValue = (value, theme) => {
             <Iconify
               key={i}
               icon="solar:star-bold"
-              width={18}
-              sx={{ color: "#ef4444" }}
+              width={20}
+              sx={{ color: "status.danger.fg" }}
             />
           ))}
         </Stack>
@@ -60,7 +49,7 @@ export const renderAnnotationValue = (value, theme) => {
         <Iconify
           icon={isUp ? "solar:like-bold" : "solar:dislike-bold"}
           width={20}
-          sx={{ color: isUp ? "#22c55e" : "#ef4444" }}
+          sx={{ color: isUp ? "status.success.fg" : "status.danger.fg" }}
         />
       );
     }

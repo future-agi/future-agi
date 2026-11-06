@@ -38,11 +38,11 @@ const UnsupportedFileDialog = ({ open, onClose, onUpload }) => {
           pl: 2,
         }}
       >
-        <Typography fontWeight="700" fontSize="16px" color="text.primary">
+        <Typography fontWeight="600" fontSize="16px" color="text.primary">
           Whoops! Not the right file type
         </Typography>
         <IconButton aria-label="close-dialogue" onClick={onClose}>
-          <Icon icon="material-symbols:close" color="black" />
+          <Icon icon="solar:close-linear" color="black" />
         </IconButton>
       </DialogTitle>
 
@@ -53,7 +53,7 @@ const UnsupportedFileDialog = ({ open, onClose, onUpload }) => {
         }}
       >
         <Typography
-          fontSize="14px"
+          fontSize="13px"
           color="text.secondary"
           sx={{
             pr: 4,
@@ -73,10 +73,7 @@ const UnsupportedFileDialog = ({ open, onClose, onUpload }) => {
           onClick={onClose}
           sx={{
             width: "90px",
-            paddingX: 2,
-            borderRadius: "8px",
             color: "text.disabled",
-            fontSize: "12px",
           }}
         >
           Cancel
@@ -86,10 +83,7 @@ const UnsupportedFileDialog = ({ open, onClose, onUpload }) => {
           variant="contained"
           sx={{
             minWidth: "90px",
-            borderRadius: "8px",
-            paddingX: 2,
             backgroundColor: "primary.main",
-            fontSize: "12px",
             "&:hover": {
               backgroundColor: "primary.main",
             },

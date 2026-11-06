@@ -11,7 +11,7 @@ export const Accordion = styled((props) => (
   <MuiAccordion disableGutters elevation={0} square {...props} />
 ))(({ theme }) => ({
   border: `1px solid ${theme.palette.divider}`,
-  borderRadius: "10px",
+  borderRadius: "8px",
   "&::before": {
     display: "none",
   },
@@ -24,7 +24,7 @@ export const AccordionSummary = styled((props) => (
   <MuiAccordionSummary
     expandIcon={
       <Iconify
-        icon="material-symbols:arrow-forward-ios-rounded"
+        icon="solar:alt-arrow-right-linear"
         sx={{ color: "text.secondary" }}
         width={16}
       />
@@ -33,10 +33,10 @@ export const AccordionSummary = styled((props) => (
   />
 ))(({ theme }) => ({
   backgroundColor: theme.palette.background.paper,
-  borderRadius: "10px",
+  borderRadius: "8px",
   flexDirection: "row-reverse",
   fontWeight: 500,
-  fontSize: "14px",
+  fontSize: "13px",
   color: "text.primary",
   "& .MuiAccordionSummary-expandIconWrapper.Mui-expanded": {
     transform: "rotate(90deg)",

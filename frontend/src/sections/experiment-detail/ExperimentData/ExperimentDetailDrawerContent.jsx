@@ -1,3 +1,4 @@
+import EmptyContent from "src/components/empty-content";
 import {
   Box,
   Chip,
@@ -89,12 +90,13 @@ export const StatusCellRenderer = (props) => {
   if (result.kind === "score") {
     const pct = result.score <= 1 ? result.score * 100 : result.score;
     return (
-      <Chip
-        variant="soft"
-        label={`${Math.round(pct)}%`}
-        size="small"
-        sx={chipSx(result.score)}
-      />
+      <Typography
+        variant="body2"
+        color="text.primary"
+        sx={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {`${Math.round(pct)}%`}
+      </Typography>
     );
   }
 
@@ -152,7 +154,7 @@ StatusCellRenderer.propTypes = {
 const EXPERIMENT_DRAWER_THEME_PARAMS = {
   headerColumnBorder: { width: "0px" },
   headerBackgroundColor: "background.paper",
-  fontSize: "14px",
+  fontSize: "13px",
 };
 
 export default function ExperimentDetailDrawerContent({
@@ -178,7 +180,7 @@ export default function ExperimentDetailDrawerContent({
   const [isDragging, setIsDragging] = useState(false);
   const [openDetailRow, setOpenDetailRow] = useState(null);
   const handleCopyRowId = () => {
-    if(!row?.rowId) return;
+    if (!row?.rowId) return;
     copyToClipboard(row.rowId);
     enqueueSnackbar("Copied to clipboard", { variant: "success" });
   };
@@ -292,17 +294,7 @@ export default function ExperimentDetailDrawerContent({
   }, [showDescription, row]);
   // Custom overlay for empty evaluation data
   const CustomNoRowsOverlay = () => (
-    <Box
-      sx={{
-        padding: 2,
-        textAlign: "center",
-        color: "text.primary",
-        fontSize: 14,
-        fontWeight: 400,
-      }}
-    >
-      No Evaluations Applied
-    </Box>
+    <EmptyContent title="No Evaluations Applied" />
   );
 
   // Default column configuration for AG Grid
@@ -598,7 +590,7 @@ export default function ExperimentDetailDrawerContent({
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <Typography variant="m3" fontWeight={700} color="text.primary">
+            <Typography variant="m3" fontWeight={600} color="text.primary">
               Experiments
             </Typography>
             <ShowComponent condition={!!row?.rowId}>
@@ -642,11 +634,15 @@ export default function ExperimentDetailDrawerContent({
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <SvgColor
                   src="/icons/datasets/diff_pencil.svg"
-                  sx={{ height: "16px", width: "16px", color: "red.500" }}
+                  sx={{
+                    height: "16px",
+                    width: "16px",
+                    color: "status.danger.fg",
+                  }}
                 />
                 <Typography
                   variant="s3"
-                  color="red.500"
+                  color="status.danger.fg"
                   fontWeight={"fontWeightRegular"}
                 >
                   Missing Text
@@ -655,11 +651,15 @@ export default function ExperimentDetailDrawerContent({
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <SvgColor
                   src="/icons/datasets/diff_pencil.svg"
-                  sx={{ height: "16px", width: "16px", color: "green.500" }}
+                  sx={{
+                    height: "16px",
+                    width: "16px",
+                    color: "status.success.fg",
+                  }}
                 />
                 <Typography
                   variant="s3"
-                  color="green.500"
+                  color="status.success.fg"
                   fontWeight={"fontWeightRegular"}
                 >
                   New Text
@@ -716,7 +716,7 @@ export default function ExperimentDetailDrawerContent({
               >
                 <Iconify
                   width={16}
-                  icon="material-symbols:info-outline-rounded"
+                  icon="solar:info-circle-linear"
                   sx={{ color: "text.disabled", marginLeft: 0.5 }}
                 />
               </CustomTooltip>
@@ -744,7 +744,7 @@ export default function ExperimentDetailDrawerContent({
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  color: "black.1000",
+                  color: "text.primary",
                   cursor: "pointer",
                 }}
               >
@@ -778,9 +778,6 @@ export default function ExperimentDetailDrawerContent({
               sx={{
                 border: "1px solid",
                 borderColor: "action.hover",
-                borderRadius: "4px",
-                py: "2px",
-                px: "16px",
                 "&.Mui-disabled": {
                   opacity: 0.4,
                 },
@@ -799,7 +796,7 @@ export default function ExperimentDetailDrawerContent({
                   color: "text.primary",
                   fontWeight: "fontWeightRegular",
                 }}
-                icon="material-symbols:expand-less-rounded"
+                icon="solar:alt-arrow-up-linear"
               />
             </LoadingButton>
             <LoadingButton
@@ -810,9 +807,6 @@ export default function ExperimentDetailDrawerContent({
               sx={{
                 border: "1px solid",
                 borderColor: "action.hover",
-                borderRadius: "4px",
-                py: "2px",
-                px: "16px",
                 "&.Mui-disabled": {
                   opacity: 0.4,
                 },
@@ -831,11 +825,11 @@ export default function ExperimentDetailDrawerContent({
                   color: "text.primary",
                   fontWeight: "fontWeightRegular",
                 }}
-                icon="material-symbols:expand-more-rounded"
+                icon="solar:alt-arrow-down-linear"
               />
             </LoadingButton>
             <IconButton onClick={onClose} size="small">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
         </Box>
@@ -974,9 +968,7 @@ export default function ExperimentDetailDrawerContent({
                         suppressContextMenu={true}
                         columnDefs={TabColumnDefs}
                         defaultColDef={defaultColDef}
-                        rowData={
-                          evalsData?.[col?.dataset_id] ?? []
-                        }
+                        rowData={evalsData?.[col?.dataset_id] ?? []}
                         domLayout="normal"
                         suppressRowDrag={true}
                         noRowsOverlayComponent={CustomNoRowsOverlay}

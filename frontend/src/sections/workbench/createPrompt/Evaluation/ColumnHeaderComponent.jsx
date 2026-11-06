@@ -26,12 +26,12 @@ const CustomWorkbenchEvaluationColumn = (props) => {
     if (col.originType === OriginTypes.EVALUATION) {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "green.500", flexShrink: 0 }}
+          icon="solar:check-circle-linear"
+          sx={{ color: "status.success.fg", flexShrink: 0 }}
         />
       );
     }
-    return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
+    return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
   };
 
   if (columnGroup) {
@@ -70,7 +70,7 @@ const CustomWorkbenchEvaluationColumn = (props) => {
                 buttonTitle="Select Model"
                 buttonIcon={
                   <Iconify
-                    icon="radix-icons:box-model"
+                    icon="solar:graph-linear"
                     width="16px"
                     height="16px"
                     sx={{
@@ -144,13 +144,10 @@ const CustomWorkbenchEvaluationColumn = (props) => {
           setCompareOpen(true);
         }}
         startIcon={
-          <SvgColor
+          <SvgColor width={16}
             src="/assets/icons/action_buttons/ic_add.svg"
             color="primary.main"
-            sx={{
-              height: theme.spacing(2),
-              width: theme.spacing(2),
-            }}
+            sx={{ }}
           />
         }
         fullWidth
@@ -216,13 +213,10 @@ const CustomWorkbenchEvaluationColumn = (props) => {
             )
           }
         >
-          <SvgColor
+          <SvgColor width={16}
             src="/assets/icons/ic_delete.svg"
             color="text.primary"
-            sx={{
-              height: theme.spacing(2),
-              width: theme.spacing(2),
-            }}
+            sx={{ }}
           />
         </IconButton>
       </ShowComponent>

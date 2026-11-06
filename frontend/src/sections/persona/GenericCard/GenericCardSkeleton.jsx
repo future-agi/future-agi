@@ -8,14 +8,14 @@ const GenericCardSkeleton = () => {
       sx={{
         padding: "1px",
         background: theme.palette.action.hover,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Box
         sx={{
           padding: 2,
           backgroundColor: "background.paper",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           display: "flex",
           flexDirection: "column",
           gap: "12px",
@@ -41,7 +41,7 @@ const GenericCardSkeleton = () => {
               variant="rectangular"
               width={200}
               height={22}
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
             />
           </Box>
         </Box>
@@ -51,7 +51,7 @@ const GenericCardSkeleton = () => {
             variant="rectangular"
             width="100%"
             height={44}
-            sx={{ borderRadius: 0.5 }}
+            sx={{ borderRadius: "4px" }}
           />
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             {Array.from({ length: 4 }).map((v) => (
@@ -60,7 +60,7 @@ const GenericCardSkeleton = () => {
                 variant="rectangular"
                 width={100}
                 height={28}
-                sx={{ borderRadius: 0.5 }}
+                sx={{ borderRadius: "4px" }}
               />
             ))}
           </Box>

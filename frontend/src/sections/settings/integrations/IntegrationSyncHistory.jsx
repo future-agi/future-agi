@@ -1,30 +1,17 @@
+import ErrorState from "src/components/error-state";
 import { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, Chip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { LoadingScreen } from "src/components/loading-screen";
 import { AgGridReact } from "ag-grid-react";
 import { useSyncLogs } from "src/api/integrations";
 import { fDateTime } from "src/utils/format-time";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 
-const STATUS_COLORS = {
-  success: "success",
-  partial: "warning",
-  failed: "error",
-  rate_limited: "warning",
-  no_new_data: "default",
-};
-
 // eslint-disable-next-line react/prop-types
 function StatusCellRenderer({ value }) {
-  return (
-    <Chip
-      size="small"
-      label={value || "unknown"}
-      color={STATUS_COLORS[value] || "default"}
-      variant="outlined"
-    />
-  );
+  return <StatusBadge status={value} label={value ? undefined : "unknown"} />;
 }
 
 export default function IntegrationSyncHistory({ connectionId }) {
@@ -47,12 +34,14 @@ export default function IntegrationSyncHistory({ connectionId }) {
       },
       {
         field: "spans_synced",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         headerName: "Spans",
         width: 100,
         valueFormatter: ({ value }) => value?.toLocaleString() || "0",
       },
       {
         field: "scores_synced",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         headerName: "Scores",
         width: 100,
         valueFormatter: ({ value }) => value?.toLocaleString() || "0",
@@ -74,13 +63,11 @@ export default function IntegrationSyncHistory({ connectionId }) {
   );
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ height: 400 }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ height: 400 }} />;
   }
 
   if (isError) {
-    return <Alert severity="error">Failed to load sync history.</Alert>;
+    return <ErrorState title="Failed to load sync history" />;
   }
 
   const rowData = Array.isArray(data) ? data : [];

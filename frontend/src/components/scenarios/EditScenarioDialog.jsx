@@ -79,7 +79,7 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
       fullWidth
       PaperProps={{
         sx: {
-          width: "500px",
+          width: "560px",
         },
       }}
     >
@@ -95,7 +95,7 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
             Edit Scenario
           </Typography>
           <IconButton onClick={handleClose} size="small" disabled={isEditing}>
-            <Iconify icon="eva:close-fill" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

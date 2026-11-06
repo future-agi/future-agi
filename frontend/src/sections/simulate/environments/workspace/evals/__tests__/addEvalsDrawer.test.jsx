@@ -113,12 +113,12 @@ describe("AddEvalsDrawer — multi-select batch", () => {
     const onClose = vi.fn();
     renderDrawer({ onAdd, onClose });
 
-    // Tick both evals → "Add Evaluations (2)".
+    // Tick both evals → "Add evaluations (2)".
     const boxes = screen.getAllByRole("checkbox");
     fireEvent.click(boxes[0]);
     fireEvent.click(boxes[1]);
     fireEvent.click(
-      screen.getByRole("button", { name: "Add Evaluations (2)" })
+      screen.getByRole("button", { name: "Add evaluations (2)" })
     );
 
     // Now walking the queue: first eval's config, primary reads "Next".

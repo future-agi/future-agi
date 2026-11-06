@@ -145,7 +145,7 @@ describe("BuilderConsole", () => {
 
     const title = screen.getByText("Understanding the agent");
     expect(title).toBeInTheDocument();
-    expect(title).toHaveStyle({ textTransform: "uppercase" });
+    expect(title).not.toHaveStyle({ textTransform: "uppercase" });
 
     expect(screen.getByText("Let me read the repository")).toBeInTheDocument();
     expect(screen.getByText("a plain note")).toBeInTheDocument();

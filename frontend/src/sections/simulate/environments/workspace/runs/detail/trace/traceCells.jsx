@@ -7,7 +7,6 @@ import CustomTooltip from "src/components/tooltip";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { TestRunExecutionStatus } from "src/sections/test-detail/common";
 
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { SCORING_STATUS } from "../../runs.constants";
 import { isBad } from "./traceTable.constants";
 
@@ -51,13 +50,13 @@ export function MetricValue({ metric, value, suffix = "", loading = false }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.625}>
       {bad && (
-        <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: BUILD_TONES.red, flexShrink: 0 }} />
+        <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: "status.danger.solid", flexShrink: 0 }} />
       )}
       <Typography
         component="span"
         sx={{
           typography: "s2", fontVariantNumeric: "tabular-nums",
-          color: bad ? BUILD_TONES.red : "text.secondary",
+          color: bad ? "status.danger.fg" : "text.secondary",
           fontWeight: bad ? 600 : 400,
         }}
       >
@@ -105,8 +104,8 @@ Score.propTypes = { result: PropTypes.object };
 // How a scoring state that ended without a value reads in a cell, and the tip
 // to fall back on when the server sent no reason.
 const ENDED_UNSCORED = {
-  [SCORING_STATUS.FAILED]: { text: "Failed", color: BUILD_TONES.red },
-  [SCORING_STATUS.TIMED_OUT]: { text: "Timed out", color: BUILD_TONES.amber },
+  [SCORING_STATUS.FAILED]: { text: "Failed", color: "status.danger.fg" },
+  [SCORING_STATUS.TIMED_OUT]: { text: "Timed out", color: "status.warning.fg" },
   [SCORING_STATUS.SKIPPED]: { text: "Not scored", color: "text.disabled" },
 };
 
@@ -207,7 +206,7 @@ export function Field({ icon, label, value }) {
     // in full; the icon and label stay pinned to its first line.
     <Stack
       direction="row" alignItems="flex-start" spacing={0.75}
-      sx={{ px: 1, py: 0.5, borderRadius: 0.75, bgcolor: "background.neutral" }}
+      sx={{ px: 1, py: 0.5, borderRadius: "4px", bgcolor: "background.neutral" }}
     >
       <Iconify icon={icon} width={13} sx={{ color: "text.subtitle", flexShrink: 0, mt: "3px" }} />
       <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>{label}:</Typography>

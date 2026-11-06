@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 
@@ -17,12 +16,14 @@ export default function DummyHeaderLabel({ label }) {
           component="span"
           sx={{
             px: 0.625,
-            py: 0.125,
-            borderRadius: 0.75,
+            height: 18,
+            display: "inline-flex",
+            alignItems: "center",
+            borderRadius: "4px",
             typography: "s3",
-            fontWeight: "fontWeightSemiBold",
+            fontWeight: 500,
             color: "text.secondary",
-            bgcolor: (t) => alpha(t.palette.text.primary, 0.08),
+            bgcolor: "action.selected",
           }}
         >
           Dummy

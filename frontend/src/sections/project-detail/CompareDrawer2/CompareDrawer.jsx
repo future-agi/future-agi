@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Drawer, Box, Tabs, Tab } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import CompareDrawerSkeleton from "src/sections/project-detail/CompareDrawer/Skeletons/CompareDrawerSkeleton";
 import { useQuery } from "@tanstack/react-query";
@@ -187,8 +188,8 @@ const CompareRunsDrawerChild = ({
             height: "6px !important",
           },
           "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            backgroundColor: "border.strong",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",
@@ -390,14 +391,6 @@ const CompareRunsDrawerChild = ({
                     value={activeTab}
                     onChange={(e, newValue) => setActiveTab(newValue)}
                     aria-label="compare tabs"
-                    sx={{
-                      "& .Mui-selected": {
-                        color: "primary.main",
-                      },
-                      "& .MuiTabs-indicator": {
-                        backgroundColor: "primary.main",
-                      },
-                    }}
                   >
                     <Tab label="Traces" />
                     <Tab label="Annotations" />
@@ -420,10 +413,12 @@ CompareRunsDrawerChild.propTypes = {
 };
 
 const CompareRunsDrawer = ({ open, onClose, selectedRows, projectDetail }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       ModalProps={{
         BackdropProps: {
           style: { backgroundColor: "transparent" },

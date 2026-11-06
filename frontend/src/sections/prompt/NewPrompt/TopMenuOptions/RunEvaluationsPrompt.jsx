@@ -5,6 +5,7 @@ import EvaluationListPage from "../../../develop-detail/Evaluation/EvaluationLis
 import EvaluationTypes from "../../../develop-detail/Common/EvaluationType/EvaluationTypes";
 import ConfiguredEvaluationType from "../../../develop-detail/Common/ConfiguredEvaluationType/ConfiguredEvaluationType";
 import EvaluationConfigureForm from "../../../develop-detail/Common/EvaluationConfigure/EvaluationConfigureForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const RunEvaluationChild = ({
   onClose,
@@ -111,17 +112,19 @@ const RunEvaluationsPrompt = ({
   setEvalsConfigs,
   hideSaveAndRun,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       // onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

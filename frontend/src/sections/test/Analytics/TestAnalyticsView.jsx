@@ -104,7 +104,7 @@ const TestAnalyticsView = () => {
             startIcon={
               <Iconify
                 // @ts-ignore
-                icon="material-symbols:compare-arrows"
+                icon="solar:transfer-horizontal-linear"
                 style={{
                   color: isCompare
                     ? theme.palette.primary.main
@@ -143,7 +143,7 @@ const TestAnalyticsView = () => {
                       : "background.paper",
                   cursor: "pointer",
                   padding: "6px",
-                  borderRadius: "5px",
+                  borderRadius: "6px",
                   "&:hover": { backgroundColor: "action.selected" },
                   alignItems: "center",
                 }}

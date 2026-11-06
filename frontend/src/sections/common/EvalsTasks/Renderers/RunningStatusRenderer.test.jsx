@@ -30,7 +30,7 @@ vi.mock("src/components/iconify", () => ({
   default: ({ icon }) => <span data-testid="icon">{icon}</span>,
 }));
 
-const RESUME_ICON = "material-symbols-light:resume-outline-rounded";
+const RESUME_ICON = "solar:play-linear";
 
 const renderStatus = (status) => {
   const api = {

@@ -41,7 +41,7 @@ const TemplateRow = ({ template, idx, count, isOutlined }) => {
             borderRadius: "12px",
             display: "flex",
             alignItems: "flex-start",
-            transition: "all 0.5s ease-in-out",
+            transition: "all 0.2s ease-in-out",
             overflow: "hidden",
             ...(isOutlined && {
               border: "1px solid",
@@ -53,7 +53,7 @@ const TemplateRow = ({ template, idx, count, isOutlined }) => {
           <Box
             sx={{
               flexGrow: 1,
-              transition: "max-height 0.3s ease-in-out",
+              transition: "max-height 0.2s ease-in-out",
               maxHeight: internalExpanded ? "1000px" : "24px", // Adjust these values based on your content
               overflow: "hidden",
             }}
@@ -108,15 +108,15 @@ const TemplateRow = ({ template, idx, count, isOutlined }) => {
                 });
               }}
             >
-              <Iconify icon="basil:copy-outline" />
+              <Iconify icon="solar:copy-linear" />
             </IconButton>
           )}
           <IconButton onClick={() => setInternalExpanded(!internalExpanded)}>
             <Iconify
               icon={
                 internalExpanded
-                  ? "eva:arrow-ios-upward-fill"
-                  : "eva:arrow-ios-downward-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
               sx={{ color: grey }}
             />
@@ -149,8 +149,8 @@ const TemplateAccordion = ({ templates, mode }) => {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
-        {/* <Iconify icon="fluent:calendar-template-20-filled" /> */}
-        <Typography fontWeight={500} fontSize="14px">
+        {/* <Iconify icon="solar:calendar-linear" /> */}
+        <Typography fontWeight={500} fontSize="13px">
           {templates?.length > 1
             ? `Top ${templates?.length} Templates`
             : "Top Template"}
@@ -202,6 +202,6 @@ export default TemplateAccordion;
 
 {
   /* <IconButton color="primary">
-<Iconify icon="basil:copy-outline" />
+<Iconify icon="solar:copy-linear" />
 </IconButton> */
 }

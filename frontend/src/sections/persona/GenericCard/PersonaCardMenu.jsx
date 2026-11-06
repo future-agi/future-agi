@@ -36,7 +36,7 @@ const PersonaCardMenu = ({
       PaperProps={{
         sx: {
           mt: 1,
-          minWidth: 140,
+          minWidth: 200,
           p: 0.5,
         },
       }}
@@ -100,10 +100,7 @@ const PersonaCardMenu = ({
       </MenuItem>
 
       <ShowComponent condition={!isPrebuilt && canWrite}>
-        <MenuItem
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
-          onClick={onDeleteClick}
-        >
+        <MenuItem sx={{ px: 1.25, py: 0.75 }} onClick={onDeleteClick}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"

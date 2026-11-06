@@ -2,6 +2,7 @@ import React from "react";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { palette } from "src/theme/palette";
 
 const {
   getMock,
@@ -523,7 +524,8 @@ describe("user page lists one id held by two projects (real AG Grid)", () => {
 
     expect(style(traceCopies[0])).toBeNull();
     expect(style(traceCopies[1])).toEqual({
-      backgroundColor: "rgba(120, 87, 252, 0.08)",
+      // Design system: the open row takes the theme's selected-row tint.
+      backgroundColor: palette("light").action.selected,
     });
   });
 
@@ -566,7 +568,11 @@ describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
   const themedSubject = (subject, { color = "#123456", weight = 500, spacing = 8 } = {}) => (
     <ThemeProvider
       theme={createTheme({
-        palette: { text: { primary: color } },
+        // Start from the app palette: the grids read palette.border.subtle.
+        palette: {
+          ...palette("light"),
+          text: { ...palette("light").text, primary: color },
+        },
         typography: { fontWeightMedium: weight },
         spacing,
       })}
@@ -1636,9 +1642,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     expect(params.fail).not.toHaveBeenCalled();
     if (kind === "trace") {
       expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
-      expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-        "No traces found",
-      );
+      expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     }
   });
 
@@ -2055,9 +2059,7 @@ describe("trace grid empty-state lifecycle", () => {
     });
 
     await waitFor(() => expect(gridState.props.loading).toBe(false));
-    expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-      "No traces found",
-    );
+    expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 });

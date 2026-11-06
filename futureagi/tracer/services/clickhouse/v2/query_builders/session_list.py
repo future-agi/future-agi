@@ -27,6 +27,10 @@ from tracer.services.clickhouse.query_builders.filter_seed_witness import (
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    source_summary_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -37,6 +41,18 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
     """Drop-in v2 SessionList builder."""
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+    _COST_ATTRIBUTE_MAP = "attrs_string"
+    _INPUT_LENGTH_SQL = "input_length"
+    _COST_AGGREGATE = SessionListQueryBuilder._COST_AGGREGATE.replace(
+        "span_attr_str", "attrs_string"
+    )
+    _AGGREGATE_SELECT = SessionListQueryBuilder._AGGREGATE_SELECT.replace(
+        SessionListQueryBuilder._COST_AGGREGATE, _COST_AGGREGATE
+    )
+    _SESSION_SCAN_COLS = tuple(
+        "attrs_string" if col == "span_attr_str" else col
+        for col in SessionListQueryBuilder._SESSION_SCAN_COLS
+    )
 
     # CH25 keeps booleans in their own typed map, so the page hydration carries
     # one array the legacy schema has no source for.
@@ -112,7 +128,8 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                 {time_scope}
         )"""
         roots = f"""{current}, resolved_roots AS (
-            SELECT toUUID(canonical_session_id) AS session_id, trace_id,
+            SELECT toUUID(canonical_session_id) AS session_id, project_id, trace_id,
+                attrs_string,
                 unit_start AS start_time, end_time, cost, total_tokens, input,
                 attributes_extra AS session_attribute_json,
                 attrs_string AS session_attribute_string,
@@ -125,16 +142,18 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             FROM current_members
             WHERE isNull(parent_span_id) OR parent_span_id = ''
         )"""
-        members = """session_members AS (
+        members = f"""session_members AS (
             SELECT toUUID(canonical_session_id) AS member_session_id,
                 project_id, observation_type, service_name, start_hour, trace_id,
                 span_id AS id, span_id AS latest_id,
                 parent_span_id AS latest_parent_span_id, name AS latest_name,
                 observation_type AS latest_observation_type,
-                prompt_tokens AS latest_prompt_tokens,
-                completion_tokens AS latest_completion_tokens,
-                unit_start AS latest_start_time, cost AS latest_cost,
-                total_tokens AS latest_total_tokens,
+                ifNull(prompt_tokens, 0) AS latest_prompt_tokens,
+                ifNull(completion_tokens, 0) AS latest_completion_tokens,
+                unit_start AS latest_start_time, ifNull(cost, 0) AS latest_cost,
+                ifNull(total_tokens, 0) AS latest_total_tokens,
+                {usage_coverage_sql(attrs="attrs_string")} AS latest_usage_coverage,
+                {source_summary_sql(attrs="attrs_string")} AS latest_source_summary_present,
                 (isNull(parent_span_id) OR parent_span_id = '') AS latest_is_root,
                 multiIf(
                     latest_is_root AND lengthUTF8(input) > 0, 0,
@@ -142,7 +161,11 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                     latest_is_root, 2, 3
                 ) AS message_rank
             FROM current_members
-        )"""
+            WHERE (project_id, toUUID(canonical_session_id)) IN (
+                SELECT project_id, session_id FROM hydration_member_scope
+            )
+        ),
+        {self._session_member_usage_cte(include_messages=True)}"""
         messages = """message_inputs AS (
             SELECT groupArray(message_key) AS message_keys,
                 groupArray(input) AS message_input_values
@@ -185,6 +208,10 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             f"toStartOfHour(fromUnixTimestamp64Micro(%({end_param})s - 1, 'UTC'))"
             " + INTERVAL 1 HOUR",
         )
+
+    def _replay_time_scope_sql(self, discovery_time_scope: str) -> str:
+        # Native discovery already rounds out to complete storage-hour keys.
+        return discovery_time_scope
 
     def build_candidate_slice_density_probe_query(
         self, *, slice_start: datetime, slice_end: datetime

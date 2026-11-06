@@ -1,4 +1,4 @@
-import { Box, Button, Collapse } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
@@ -16,7 +16,10 @@ import {
   getSpanListColumnDefs,
 } from "../traces-tab/common";
 import { useDebounce } from "src/hooks/use-debounce";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import {
+  ComplexFilterPanel,
+  inventoryToCatalogProps,
+} from "src/components/filter";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
@@ -27,7 +30,6 @@ import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
 import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
 import { parsePrototypeSpanListResponse } from "src/api/project/telemetry-list-contract";
 import { getSpanPhysicalRowId } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
-import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
 import { useCursorAttributeInventory } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readRunInsightListPage } from "../run_insight_list_read";
@@ -35,6 +37,8 @@ import {
   FILTER_VALUE_SEARCH_DEBOUNCE_MS,
   INTERACTIVE_TABLE_PAGE_SIZE,
 } from "src/config/runtime_limits";
+
+const FILTER_CATEGORY_LABELS = { attribute: "Attributes" };
 
 const defaultFilter = {
   column_id: "",
@@ -89,7 +93,7 @@ const SpanTab = React.forwardRef(
     const [filters, setFilters] = useState([
       { ...defaultFilter, id: getRandomId() },
     ]);
-    const [attributeSearch, setAttributeSearch] = useState("");
+    const [filterAnchorEl, setFilterAnchorEl] = useState(null);
     const preservedAttributeKeys = useMemo(
       () =>
         filters.flatMap((filter) =>
@@ -103,7 +107,6 @@ const SpanTab = React.forwardRef(
       useCursorAttributeInventory({
         projectId,
         discoveryMode: "filter",
-        search: attributeSearch,
         preservedKeys: preservedAttributeKeys,
       });
     const filterDefinition = useMemo(
@@ -127,13 +130,7 @@ const SpanTab = React.forwardRef(
     );
 
     useEffect(() => {
-      const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filter_config?.filter_value &&
-        Array.isArray(f.filter_config.filter_value)
-          ? f.filter_config.filter_value.length > 0
-          : f.filter_config.filter_value !== "",
-      );
-      setIsFilterApplied(hasActiveFilter);
+      setIsFilterApplied(debouncedValidatedFilters?.length || 0);
       trackEvent(Events.filterApplied);
     }, [debouncedValidatedFilters, setIsFilterApplied]);
 
@@ -302,24 +299,24 @@ const SpanTab = React.forwardRef(
 
     return (
       <>
-        <Collapse in={filterOpen}>
-          <Box sx={{ paddingX: "12px", paddingTop: "16px" }}>
-            <ComplexFilter
-              filters={filters}
-              defaultFilter={defaultFilter}
-              setFilters={setFilters}
-              filterDefinition={filterDefinition}
-              onClose={() => setFilterOpen(false)}
-              projectId={projectId}
-              onAttributeSearchChange={setAttributeSearch}
-            />
-            <AttributeInventoryControls
-              {...inventoryControlProps}
-              showSearch={false}
-              search={attributeSearch}
-            />
-          </Box>
-        </Collapse>
+        <Box ref={setFilterAnchorEl} sx={{ height: 0 }} />
+        <ComplexFilterPanel
+          anchorEl={filterAnchorEl}
+          open={Boolean(filterOpen && filterAnchorEl)}
+          onClose={() => setFilterOpen(false)}
+          filters={filters}
+          setFilters={setFilters}
+          filterDefinition={filterDefinition}
+          defaultFilter={defaultFilter}
+          projectId={projectId}
+          // Values come from the traces vocabulary; custom attributes are read from
+          // the span attribute inventory, as the old filter did.
+          source="traces"
+          attributeSource="spans"
+          freeSoloValues
+          categoryLabels={FILTER_CATEGORY_LABELS}
+          {...inventoryToCatalogProps(inventoryControlProps)}
+        />
         <Box
           className="ag-theme-quartz"
           style={{

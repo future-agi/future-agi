@@ -1,8 +1,9 @@
 import PropTypes from "prop-types";
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Skeleton, Typography } from "@mui/material";
+import { Box, Button, Skeleton, Typography } from "@mui/material";
 import { useAgentEnvironments } from "src/api/agents/agentDetail";
+import EmptyContent from "src/components/empty-content";
 import { paths } from "src/routes/paths";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
 import { Card, LineSkeleton, Row } from "./bits";
@@ -31,7 +32,7 @@ function LastResult({ env }) {
   return (
     <>
       {rate != null && (
-        <Box component="span" sx={{ fontWeight: 700, color: rateTone(rate) }}>
+        <Box component="span" sx={{ fontWeight: 500, color: rateTone(rate) }}>
           {`${rate}%`}
         </Box>
       )}
@@ -59,7 +60,7 @@ export default function AgentEnvironmentsTab() {
   if (isError && !envs) {
     body = (
       <Typography
-        sx={{ px: 2, py: 1.5, typography: "s2", color: "text.secondary" }}
+        sx={{ px: 1.5, py: 1.5, typography: "s1", color: "text.secondary" }}
       >
         {error?.message || "Couldn't load environments"}
       </Typography>
@@ -83,7 +84,7 @@ export default function AgentEnvironmentsTab() {
                 variant="rounded"
                 width={62}
                 height={24}
-                sx={{ borderRadius: 999 }}
+                sx={{ borderRadius: "4px" }}
               />,
               <LineSkeleton key="testing" width={24} />,
               <LineSkeleton key="last" width={150} />,
@@ -93,12 +94,30 @@ export default function AgentEnvironmentsTab() {
       </>
     );
   } else if (!envs?.length) {
-    body = (
-      <Typography
-        sx={{ px: 2, py: 1.5, typography: "s2", color: "text.secondary" }}
-      >
-        No environments test this agent yet
-      </Typography>
+    // Empty: the design-system empty state (icon tile, title, one sentence,
+    // one action) instead of an empty table card.
+    return (
+      <EmptyContent
+        filled
+        icon="solar:globe-linear"
+        title="Not used in any environment yet"
+        description="An environment gives this agent a world to act in: tools, seeded data, rules and scenarios to run."
+        action={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() =>
+              navigate(
+                `${paths.dashboard.simulate.environments.root}?tab=build`,
+              )
+            }
+          >
+            Build environment
+          </Button>
+        }
+        sx={{ height: "auto", flexGrow: 0, py: 5 }}
+      />
     );
   } else {
     body = (
@@ -111,7 +130,7 @@ export default function AgentEnvironmentsTab() {
               navigate(paths.dashboard.simulate.environments.detail(env.id))
             }
             cells={[
-              <Box component="span" key="name" sx={{ fontWeight: 600 }}>
+              <Box component="span" key="name" sx={{ fontWeight: 500 }}>
                 {env.name}
               </Box>,
               <Box

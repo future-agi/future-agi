@@ -155,11 +155,7 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
           >
             {/* Hour Display */}
             <Box onClick={handleHourClick} sx={{ cursor: "pointer" }}>
-              <Typography
-                fontWeight={500}
-                color="rgba(65, 65, 65, 1)"
-                fontSize="24px"
-              >
+              <Typography fontWeight={500} color="text.primary" fontSize="24px">
                 {String(formatHours(selectedDate.getHours())).padStart(2, "0")}
               </Typography>
             </Box>
@@ -174,21 +170,21 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
             >
               <IconButton onClick={increaseMinutes}>
                 <Iconify
-                  icon="octicon:chevron-up-24"
+                  icon="solar:alt-arrow-up-linear"
                   width="30px"
                   sx={{ color: "var(--text-primary)" }}
                 />
               </IconButton>
               <Typography
                 fontWeight={500}
-                color="rgba(160, 160, 160, 1)"
+                color="text.disabled"
                 fontSize="24px"
               >
                 {String(selectedDate.getMinutes()).padStart(2, "0")}
               </Typography>
               <IconButton onClick={decreaseMinutes}>
                 <Iconify
-                  icon="octicon:chevron-down-24"
+                  icon="solar:alt-arrow-down-linear"
                   width="30px"
                   sx={{ color: "var(--text-primary)" }}
                 />
@@ -202,7 +198,7 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
                 height: "40px",
                 backgroundColor: "var(--bg-paper)",
                 border: "2px solid var(--border-default)",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
@@ -211,14 +207,14 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
               <Typography
                 fontWeight={400}
                 color="var(--text-disabled)"
-                fontSize="14px"
+                fontSize="13px"
                 marginLeft="10px"
               >
                 {ampm}
               </Typography>
               <IconButton onClick={handleAmPmClick}>
                 <Iconify
-                  icon="octicon:chevron-down-24"
+                  icon="solar:alt-arrow-down-linear"
                   width="24px"
                   sx={{ color: "var(--text-muted)" }}
                 />
@@ -268,9 +264,8 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
         <LoadingButton
           onClick={handleClose}
           sx={{
-            backgroundColor: "rgba(98, 91, 113, 0.12)",
+            backgroundColor: "action.selected",
             width: "90px",
-            fontSize: "14px",
           }}
         >
           Cancel
@@ -279,7 +274,7 @@ const EditDate = ({ params, onClose, onCellValueChanged }) => {
           variant="contained"
           color="primary"
           type="submit"
-          sx={{ width: "90px", fontSize: "14px" }}
+          sx={{ width: "90px" }}
         >
           Save
         </LoadingButton>

@@ -140,7 +140,6 @@ const FormSelectMenus = ({
             border: "1px solid",
             borderColor: "action.hover",
             p: "12px",
-            boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
             maxHeight: `280px`,
             overflow: "hidden",
             display: "flex",
@@ -280,7 +279,6 @@ const FormSelectMenus = ({
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],
@@ -304,7 +302,7 @@ const FormSelectMenus = ({
                             typography: "s3",
                             fontWeight: "fontWeightMedium",
                             color: "text.primary",
-                            textTransform: "uppercase",
+                            textTransform: "none",
                           }),
                         }}
                       >
@@ -356,7 +354,7 @@ const FormSelectMenus = ({
                 },
               }}
             >
-              <Iconify icon="eva:plus-fill" /> &nbsp; {createLabel}
+              <Iconify icon="solar:add-linear" /> &nbsp; {createLabel}
             </LabelButton>
           </Box>
         )}

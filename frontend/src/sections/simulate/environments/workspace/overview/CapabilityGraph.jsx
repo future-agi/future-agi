@@ -1,12 +1,11 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useTheme, alpha } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import { Box, ButtonBase, Stack, Typography, Tab } from "@mui/material";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./overview.constants";
 import SectionCard from "../../components/SectionCard";
 
@@ -25,10 +24,10 @@ import SectionCard from "../../components/SectionCard";
  * and mangles SVG geometry.
  */
 const BRANCHES = [
-  { id: "tools", label: "Tools", color: BUILD_TONES.orange, icon: "solar:settings-minimalistic-linear" },
-  { id: "flows", label: "Flows", color: BUILD_TONES.blue, icon: "solar:route-linear" },
-  { id: "personas", label: "Personas", color: BUILD_TONES.accent, icon: "solar:users-group-rounded-linear" },
-  { id: "guardrails", label: "Guardrails", color: BUILD_TONES.red, icon: "solar:shield-check-linear" },
+  { id: "tools", label: "Tools", dataIndex: 0, icon: "solar:settings-minimalistic-linear" },
+  { id: "flows", label: "Flows", dataIndex: 1, icon: "solar:route-linear" },
+  { id: "personas", label: "Personas", dataIndex: 2, icon: "solar:users-group-rounded-linear" },
+  { id: "guardrails", label: "Guardrails", dataIndex: 3, icon: "solar:shield-check-linear" },
 ];
 
 // How many leaves a branch shows in the "All" view before it collapses to a
@@ -69,7 +68,11 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
     guardrails: contract.hardRules || [],
   };
 
-  const branches = BRANCHES.map((b) => ({ ...b, items: branchData[b.id] || [] }));
+  const branches = BRANCHES.map((b) => ({
+    ...b,
+    color: theme.palette.data[b.dataIndex],
+    items: branchData[b.id] || [],
+  }));
   const shown = focus ? branches.filter((b) => b.id === focus) : branches;
   // The focused tab shows its branch in full; the "All" view caps each branch at
   // MAX_LEAVES and surfaces the rest in a hover tooltip on "+N more" — no click,
@@ -107,7 +110,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
   const dim = theme.palette.text.secondary;
   const faint = theme.palette.text.disabled;
   const strong = theme.palette.text.primary;
-  const bold = theme.typography.fontWeightBold;
+  const medium = theme.typography.fontWeightMedium;
 
   if (!open) {
     return (
@@ -116,12 +119,12 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
         aria-expanded={false}
         sx={{
           ...focusRing, width: "100%", justifyContent: "flex-start", gap: 1,
-          px: 2, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider",
+          px: 1.5, py: 1, borderRadius: "8px", border: "1px solid", borderColor: "divider",
           "&:hover": { bgcolor: "action.hover" },
         }}
       >
         <Iconify icon="solar:graph-new-linear" width={15} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Capability graph</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>Capability graph</Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, textAlign: "left" }}>
           Tools, flows, personas and guardrails as one picture
         </Typography>
@@ -133,6 +136,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
   return (
     <Box>
     <SectionCard
+      dense
       title="Capability graph"
       subtitle="Everything read from your agent, as one object rather than four lists"
       action={
@@ -150,7 +154,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
         </SegmentedTabs>
       }
     >
-      <Box sx={{ p: 2.5, overflowX: "auto" }}>
+      <Box sx={{ p: 1.5, overflowX: "auto" }}>
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ maxWidth: "100%", height: "auto", display: "block" }}>
           {/* agent → hub edges */}
           {placed.map((b) => (
@@ -158,19 +162,20 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
               key={`e-${b.id}`}
               d={`M 150 ${agentY} C 200 ${agentY}, ${colX - 60} ${b.hubY}, ${colX - 10} ${b.hubY}`}
               fill="none"
-              stroke={alpha(b.color, 0.5)}
+              stroke={b.color}
+              strokeOpacity={0.5}
               strokeWidth={1.5}
             />
           ))}
 
           {/* the agent */}
           <rect x={16} y={agentY - 21} width={134} height={42} rx={8}
-            fill={alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.16 : 0.08)}
-            stroke={theme.palette.primary.main} strokeWidth={1} />
-          <text x={83} y={agentY - 3} textAnchor="middle" fill={strong} fontSize={12} fontWeight={bold}>
+            fill={theme.palette.action.selected}
+            stroke={theme.palette.divider} strokeWidth={1} />
+          <text x={83} y={agentY - 3} textAnchor="middle" fill={strong} fontSize={12} fontWeight={medium}>
             {env.name.length > 18 ? `${env.name.slice(0, 17)}…` : env.name}
           </text>
-          <text x={83} y={agentY + 12} textAnchor="middle" fill={dim} fontSize={10}>
+          <text x={83} y={agentY + 12} textAnchor="middle" fill={dim} fontSize={11}>
             read from your agent
           </text>
 
@@ -181,12 +186,12 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
               <g key={b.id}>
                 {/* hub */}
                 <rect x={colX - 10} y={b.top} width={130} height={headH - 6} rx={6}
-                  fill={alpha(b.color, theme.palette.mode === "dark" ? 0.16 : 0.09)}
-                  stroke={alpha(b.color, 0.45)} strokeWidth={1} />
-                <text x={colX + 2} y={b.top + 18} fill={b.color} fontSize={11} fontWeight={bold}>
+                  fill={theme.palette.background.neutral}
+                  stroke={b.color} strokeOpacity={0.45} strokeWidth={1} />
+                <text x={colX + 2} y={b.top + 18} fill={b.color} fontSize={11} fontWeight={medium}>
                   {b.label}
                 </text>
-                <text x={colX + 112} y={b.top + 18} textAnchor="end" fill={b.color} fontSize={11} fontWeight={bold}>
+                <text x={colX + 112} y={b.top + 18} textAnchor="end" fill={b.color} fontSize={11} fontWeight={medium}>
                   {b.items.length}
                 </text>
 
@@ -198,7 +203,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
                       d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${b.top + headH + 8}, ${leafX - 6} ${b.top + headH + 8}`}
                       fill="none" stroke={line} strokeWidth={1}
                     />
-                    <circle cx={leafX - 3} cy={b.top + headH + 8} r={2.5} fill={alpha(faint, 0.8)} />
+                    <circle cx={leafX - 3} cy={b.top + headH + 8} r={2.5} fill={faint} />
                     <text x={leafX + 8} y={b.top + headH + 12} fill={faint} fontSize={11} fontStyle="italic">
                       none yet
                     </text>
@@ -214,7 +219,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
                         d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${y}, ${leafX - 6} ${y}`}
                         fill="none" stroke={line} strokeWidth={1}
                       />
-                      <circle cx={leafX - 3} cy={y} r={2.5} fill={alpha(b.color, 0.8)} />
+                      <circle cx={leafX - 3} cy={y} r={2.5} fill={b.color} fillOpacity={0.8} />
                       <text x={leafX + 8} y={y + 4} fill={dim} fontSize={11}
                         fontFamily={b.id === "tools" ? "ui-monospace, Menlo, monospace" : "inherit"}>
                         {item.length > 74 ? `${item.slice(0, 73)}…` : item}
@@ -260,7 +265,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
                       y={b.top + headH + leaves.length * rowH + 12}
                       fill={b.color}
                       fontSize={11}
-                      fontWeight={bold}
+                      fontWeight={medium}
                       style={{ cursor: "default" }}
                     >
                       + {hidden.length} more
@@ -275,10 +280,10 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
 
       <Stack
         direction="row" spacing={1.25} alignItems="center"
-        sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+        sx={{ px: 1.5, py: 1, borderTop: "1px solid", borderColor: "divider" }}
       >
         <Iconify icon="solar:info-circle-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           Tools and guardrails are read from the source. Flows are derived from them. Personas
           are the callers the agent serves.
         </Typography>
@@ -288,7 +293,7 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
         onClick={() => setOpen(false)}
         aria-expanded
         sx={{
-          ...focusRing, mt: 0.75, px: 0.5, typography: "s3", fontWeight: 600,
+          ...focusRing, mt: 0.75, px: 0.5, typography: "s3", fontWeight: "fontWeightMedium",
           color: "text.secondary", borderRadius: 0.5, "&:hover": { color: "text.primary" },
         }}
       >

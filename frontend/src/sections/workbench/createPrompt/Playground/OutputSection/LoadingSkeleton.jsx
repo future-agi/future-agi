@@ -8,7 +8,7 @@ const LoadingSkeleton = ({ sx }) => {
       sx={{
         height: "200px",
         width: "100%",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         ...sx,
       }}
     />

@@ -45,7 +45,7 @@ export const PerformanceMetricsSkeleton = () => {
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 bgcolor: "background.paper",
                 minHeight: "102px",
                 padding: 1.5,
@@ -112,7 +112,7 @@ export const CompareConversationSkeleton = () => {
                     variant="rectangular"
                     width="24px"
                     height="24px"
-                    sx={{ borderRadius: 0.5 }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Skeleton variant="text" width="180px" height="20px" />
                 </Stack>
@@ -131,7 +131,7 @@ export const CompareConversationSkeleton = () => {
                     variant="rectangular"
                     width="24px"
                     height="24px"
-                    sx={{ borderRadius: 0.5 }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Skeleton variant="text" width="180px" height="20px" />
                 </Stack>

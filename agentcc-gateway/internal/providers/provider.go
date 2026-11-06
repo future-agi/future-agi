@@ -192,3 +192,15 @@ type VectorStoresProvider interface {
 	// No streaming, no OpenAI-Beta header needed (GA API).
 	ProxyVectorStoresRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) (respBody []byte, statusCode int, respHeaders http.Header, err error)
 }
+
+// SystemOneProvider is implemented by providers that serve structured
+// decisions in the System One format. The request body is forwarded as is.
+type SystemOneProvider interface {
+	SystemOne(ctx context.Context, req *models.DecisionRequest) (*models.DecisionResponse, error)
+}
+
+// DecisionsProvider is implemented by providers that serve OpenAI's
+// Decisions API. The request body is forwarded as is.
+type DecisionsProvider interface {
+	CreateDecision(ctx context.Context, req *models.DecisionRequest) (*models.DecisionResponse, error)
+}

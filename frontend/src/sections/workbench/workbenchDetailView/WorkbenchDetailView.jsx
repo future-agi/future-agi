@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import { Box, Button, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import PropTypes from "prop-types";
@@ -22,7 +23,6 @@ import DeletePrompt from "./DeletePrompt";
 import ShowPromptsComponents from "./ShowPromptsComponents";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-import SvgColor from "src/components/svg-color";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -227,87 +227,30 @@ const WorkbenchDetailView = forwardRef(({ setHasData }, ref) => {
         />
         <Box>
           {selected?.length ? (
-            <Box
-              sx={{
-                padding: "6px 16px",
-                gap: "16px",
-                borderRadius: "4px",
-                border: "1px solid",
-                borderColor: "divider",
-                display: "flex",
-              }}
-            >
-              <Typography
-                typography="s1"
-                fontWeight={"fontWeightRegular"}
-                color="primary.main"
-                sx={{
-                  paddingRight: "16px",
-                  borderRight: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                {selected?.length || 0} Selected
-              </Typography>
-              <Typography
-                typography="s1"
-                fontWeight={"fontWeightRegular"}
-                color={
-                  RolePermission.PROMPTS[PERMISSIONS.DELETE][role]
-                    ? "text.primary"
-                    : "text.disabled"
-                }
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  cursor: "pointer",
-                }}
-                onClick={() => {
-                  if (!RolePermission.PROMPTS[PERMISSIONS.DELETE][role]) return;
-                  setOpenDelete(true);
-                }}
-              >
-                <SvgColor
-                  sx={{
-                    height: "20px",
-                    width: "20px",
-                  }}
-                  src="/assets/icons/ic_delete.svg"
-                />
-                Delete
-              </Typography>
-
-              <Typography
-                typography="s1"
-                fontWeight={"fontWeightRegular"}
-                color="text.primary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  cursor: "pointer",
-                  pl: 2.5,
-                  borderLeft: "1px solid",
-                  borderColor: "divider",
-                }}
-                onClick={closeModal}
-              >
-                Cancel
-              </Typography>
-            </Box>
+            <SelectionBar
+              count={selected.length}
+              onCancel={closeModal}
+              actions={[
+                {
+                  label: "Delete",
+                  icon: "solar:trash-bin-trash-linear",
+                  disabled: !RolePermission.PROMPTS[PERMISSIONS.DELETE][role],
+                  onClick: () => {
+                    if (!RolePermission.PROMPTS[PERMISSIONS.DELETE][role])
+                      return;
+                    setOpenDelete(true);
+                  },
+                },
+              ]}
+            />
           ) : (
             <Button
               variant="contained"
               color="primary"
-              sx={{
-                px: "24px",
-                borderRadius: "8px",
-                height: "38px",
-              }}
               onClick={showPromptOption}
               endIcon={
                 <Iconify
-                  icon="akar-icons:chevron-down-small"
+                  icon="solar:alt-arrow-down-linear"
                   sx={{ color: "primary.contrastText" }}
                 />
               }

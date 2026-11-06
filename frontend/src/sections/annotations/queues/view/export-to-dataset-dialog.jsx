@@ -30,6 +30,7 @@ import {
   useDevelopDatasetList,
   useGetDatasetColumns,
 } from "src/api/develop/develop-detail";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // "all" (not "") is the sentinel for every status — an empty-string MenuItem
 // value makes MUI Select render blank (isFilled("") is false). The backend
@@ -328,14 +329,17 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
     }, 0);
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: { xs: "100vw", md: 760 },
+          width: { xs: "100vw", md: 960 },
           maxWidth: "100vw",
           height: "100vh",
           overflow: "hidden",
@@ -357,7 +361,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
           </Typography>
           <Tooltip title="Close">
             <IconButton onClick={onClose} aria-label="Close export drawer">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -376,7 +380,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: 0.75,
+                  borderRadius: "4px",
                   bgcolor: "action.hover",
                   px: 1.5,
                   py: 1.25,
@@ -514,7 +518,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                 <Button
                   size="small"
                   variant="outlined"
-                  startIcon={<Iconify icon="eva:plus-fill" />}
+                  startIcon={<Iconify icon="solar:add-linear" />}
                   onClick={handleAddColumn}
                   disabled={drawerBusy}
                 >
@@ -535,7 +539,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     p: 1,
                   }}
                 >
@@ -742,7 +746,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                                 onClick={() => handleMoveColumn(index, -1)}
                                 aria-label="Move column up"
                               >
-                                <Iconify icon="eva:arrow-ios-upward-fill" />
+                                <Iconify icon="solar:alt-arrow-up-linear" />
                               </IconButton>
                             </span>
                           </Tooltip>
@@ -756,7 +760,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                                 onClick={() => handleMoveColumn(index, 1)}
                                 aria-label="Move column down"
                               >
-                                <Iconify icon="eva:arrow-ios-downward-fill" />
+                                <Iconify icon="solar:alt-arrow-down-linear" />
                               </IconButton>
                             </span>
                           </Tooltip>
@@ -768,7 +772,7 @@ export default function ExportToDatasetDialog({ open, onClose, queueId }) {
                                 aria-label="Remove column"
                                 disabled={exportBusy}
                               >
-                                <Iconify icon="eva:trash-2-outline" />
+                                <Iconify icon="solar:trash-bin-trash-linear" />
                               </IconButton>
                             </span>
                           </Tooltip>

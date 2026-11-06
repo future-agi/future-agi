@@ -4,7 +4,7 @@ import Iconify from "src/components/iconify";
 import { MODALITY, UNIDENTIFIED_MODALITY } from "../agentTypes";
 
 const NUM_SX = {
-  typography: "s2",
+  typography: "s1",
   color: "text.secondary",
   fontVariantNumeric: "tabular-nums",
 };
@@ -40,7 +40,7 @@ export const AgentTypeCell = ({ getValue }) => {
       <Box sx={AGENT_ICON_SX}>
         <Iconify icon={m?.icon} width={13} />
       </Box>
-      <Typography noWrap sx={{ typography: "s2" }}>
+      <Typography noWrap sx={{ typography: "s1" }}>
         {m?.label}
       </Typography>
     </Stack>

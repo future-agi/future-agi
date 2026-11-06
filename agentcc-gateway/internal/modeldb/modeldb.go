@@ -18,6 +18,7 @@ const (
 	ModeAudioSpeech        ModelMode = "audio_speech"
 	ModeRerank             ModelMode = "rerank"
 	ModeModeration         ModelMode = "moderation"
+	ModeDecision           ModelMode = "decision"
 	ModeOCR                ModelMode = "ocr"
 	ModeVideoGeneration    ModelMode = "video_generation"
 	ModeSearch             ModelMode = "search"

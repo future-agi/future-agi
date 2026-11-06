@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, useTheme } from "@mui/material";
+import { Box, useTheme, Button } from "@mui/material";
 import {
   DndContext,
   closestCenter,
@@ -28,7 +28,6 @@ import { useLocation, useParams } from "react-router";
 import { useSocket } from "src/hooks/use-socket";
 import LoadingPromptSection from "../LoadingSkeleton/LoadingPromptSection";
 import { usePromptWorkbenchContext } from "../WorkbenchContext";
-import { AddMessageButton } from "./PromptContainerStyleComponent";
 import ModelContainer from "./ModelContainer";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
@@ -489,20 +488,21 @@ const PromptSection = ({
           </DndContext>
 
           <Box sx={{ display: "flex", gap: 2 }}>
-            <AddMessageButton
+            <Button
               variant="outlined"
+              color="inherit"
               onClick={onAddPrompt}
               startIcon={
                 <SVGColor
                   src="/assets/icons/components/ic_add.svg"
-                  sx={{ width: 16, height: 16 }}
+                  width={16}
                 />
               }
               sx={{ "& .MuiButton-startIcon": { marginRight: "4px" } }}
               disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
             >
               Add Message
-            </AddMessageButton>
+            </Button>
           </Box>
 
           <GeneratePromptDrawer

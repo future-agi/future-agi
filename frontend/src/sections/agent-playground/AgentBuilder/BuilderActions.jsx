@@ -136,16 +136,13 @@ export default function BuilderActions({ width, hasNodes = true }) {
             onClick={() => setShowStopConfirmDialog(true)}
             startIcon={
               <SvgColor
-                sx={{
-                  height: 20,
-                  width: 20,
-                  bgcolor: "red.600",
-                }}
+                width={20}
+                sx={{ bgcolor: "status.danger.solid" }}
                 src="/assets/icons/ic_stop.svg"
               />
             }
             sx={{
-              color: "red.600",
+              color: "status.danger.fg",
             }}
           >
             Stop
@@ -162,7 +159,7 @@ export default function BuilderActions({ width, hasNodes = true }) {
             }}
             size="small"
             onClick={handleStopWorkflow}
-            startIcon={<Iconify icon="mingcute:exit-door-line" width={20} />}
+            startIcon={<Iconify icon="solar:exit-linear" width={20} />}
           >
             Exit Workflow
           </Button>
@@ -190,13 +187,10 @@ export default function BuilderActions({ width, hasNodes = true }) {
                 }}
                 startIcon={
                   hasRun ? (
-                    <Iconify icon="mingcute:refresh-2-line" width={20} />
+                    <Iconify icon="solar:refresh-linear" width={20} />
                   ) : (
                     <SvgColor
-                      sx={{
-                        height: 20,
-                        width: 20,
-                      }}
+                      width={20}
                       src="/assets/icons/navbar/ic_get_started.svg"
                     />
                   )
@@ -216,13 +210,7 @@ export default function BuilderActions({ width, hasNodes = true }) {
             size="small"
             onClick={handleToggleOutput}
             startIcon={
-              <SvgColor
-                sx={{
-                  height: 16,
-                  width: 16,
-                }}
-                src={"/assets/icons/ic_outcome.svg"}
-              />
+              <SvgColor width={16} src={"/assets/icons/ic_outcome.svg"} />
             }
             sx={{
               backgroundColor: "background.paper",
@@ -259,7 +247,6 @@ export default function BuilderActions({ width, hasNodes = true }) {
               setShowUnsavedDialog(false);
               handleRunWorkflow({ skipDirtyCheck: true });
             }}
-            sx={{ paddingX: "24px" }}
           >
             Run Anyway
           </Button>

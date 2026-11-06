@@ -10,6 +10,19 @@ import Label from "src/components/label";
 
 // ----------------------------------------------------------------------
 
+const renderParts = (parts, baseColor) =>
+  parts.map((part, index) => (
+    <Box
+      key={index}
+      component="span"
+      sx={{
+        color: part.highlight ? "primary.main" : baseColor,
+      }}
+    >
+      {part.text}
+    </Box>
+  ));
+
 export default function ResultItem({ title, path, groupLabel, onClickItem }) {
   return (
     <ListItemButton
@@ -36,28 +49,8 @@ export default function ResultItem({ title, path, groupLabel, onClickItem }) {
           sx: { textTransform: "capitalize" },
         }}
         secondaryTypographyProps={{ typography: "caption" }}
-        primary={title.map((part, index) => (
-          <Box
-            key={index}
-            component="span"
-            sx={{
-              color: part.highlight ? "primary.main" : "text.primary",
-            }}
-          >
-            {part.text}
-          </Box>
-        ))}
-        secondary={path.map((part, index) => (
-          <Box
-            key={index}
-            component="span"
-            sx={{
-              color: part.highlight ? "primary.main" : "text.secondary",
-            }}
-          >
-            {part.text}
-          </Box>
-        ))}
+        primary={renderParts(title, "text.primary")}
+        secondary={renderParts(path, "text.secondary")}
       />
 
       {groupLabel && <Label color="info">{groupLabel}</Label>}

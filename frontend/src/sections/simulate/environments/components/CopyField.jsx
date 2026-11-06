@@ -15,7 +15,7 @@ const MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, monospace";
  * then resets. Used for the local-scaffold CLI steps.
  *
  * The value renders in a Typography (not an input) so the mono text sits at the
- * theme's s2 size — a MUI TextField input renders larger than the shorthand asks
+ * theme's s1 size — a MUI TextField input renders larger than the shorthand asks
  * for, which reads as oversized next to the surrounding copy.
  */
 export default function CopyField({ value, wrap = false }) {
@@ -43,7 +43,7 @@ export default function CopyField({ value, wrap = false }) {
       alignItems="center"
       spacing={1}
       sx={{
-        px: 1.5, py: 1, borderRadius: 1,
+        px: 1.5, py: 1, borderRadius: "4px",
         border: "1px solid", borderColor: "divider",
         bgcolor: "background.neutral",
       }}
@@ -52,7 +52,7 @@ export default function CopyField({ value, wrap = false }) {
         noWrap={!wrap}
         sx={{
           flex: 1, minWidth: 0,
-          typography: "s2",
+          typography: "s1",
           fontFamily: MONO_STACK,
           color: "text.primary",
           ...(wrap && { wordBreak: "break-all" }),
@@ -65,7 +65,7 @@ export default function CopyField({ value, wrap = false }) {
           <Iconify
             icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
             width={15}
-            sx={{ color: copied ? "success.main" : "text.subtitle" }}
+            sx={{ color: copied ? "status.success.fg" : "text.subtitle" }}
           />
         </IconButton>
       </Tooltip>

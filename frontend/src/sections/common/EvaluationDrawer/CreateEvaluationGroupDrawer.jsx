@@ -26,6 +26,7 @@ import { getUniqueEvalRequiredKeys } from "./common";
 import { ShowComponent } from "../../../components/show";
 import { useNavigate } from "react-router";
 import { useSearchParams } from "react-router-dom";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvalCard = ({ name, description, onRemove }) => {
   const theme = useTheme();
@@ -58,7 +59,6 @@ const EvalCard = ({ name, description, onRemove }) => {
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: theme.spacing(0.25),
           }}
           onClick={onRemove}
         >
@@ -401,6 +401,7 @@ export default function CreateEvaluationGroupDrawer({
 
   const isFormLoading = isPending || isUpdatingGroup || isUpdatingGroupEvalList;
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
@@ -412,7 +413,7 @@ export default function CreateEvaluationGroupDrawer({
           zIndex: 1,
           borderRadius: "0 !important",
           backgroundColor: "background.paper",
-          width: "600px",
+          width: "640px",
           padding: 2,
           display: "flex",
           flexDirection: "column",
@@ -424,6 +425,7 @@ export default function CreateEvaluationGroupDrawer({
         },
       }}
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleConfirmClose}
     >
       <Stack
@@ -461,10 +463,9 @@ export default function CreateEvaluationGroupDrawer({
             variant="outlined"
             startIcon={
               <SvgColor
+                width={16}
                 sx={{
                   rotate: "180deg",
-                  height: "16px",
-                  width: "16px",
                   color: "text.primary",
                 }}
                 src="/assets/icons/custom/lucide--chevron-right.svg"
@@ -474,7 +475,7 @@ export default function CreateEvaluationGroupDrawer({
             Back to Evaluations
           </Button>
           <IconButton disabled={isFormLoading} onClick={handleConfirmClose}>
-            <Iconify color="text.primary" icon="mingcute:close-line" />
+            <Iconify color="text.primary" icon="solar:close-linear" />
           </IconButton>
         </Stack>
         <Stack gap={0.25} sx={{ flexShrink: 0 }}>
@@ -601,9 +602,8 @@ export default function CreateEvaluationGroupDrawer({
                   variant="outlined"
                   startIcon={
                     <SvgColor
+                      width={12}
                       sx={{
-                        height: "12px !important",
-                        width: "12px !important",
                         color: "primary.main",
                       }}
                       src="/assets/icons/ic_pen.svg"
@@ -619,7 +619,7 @@ export default function CreateEvaluationGroupDrawer({
                   gap={1}
                   alignItems={"center"}
                   sx={{
-                    borderRadius: "2px",
+                    borderRadius: "4px",
                     border: "1px solid",
                     borderColor: "divider",
                     bgcolor: "background.neutral",

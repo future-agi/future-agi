@@ -22,12 +22,13 @@ import (
 
 // Provider implements the Provider interface for OpenAI-compatible APIs.
 type Provider struct {
-	id         string
-	baseURL    string
-	pathPrefix string
-	apiKey     string
-	httpClient *http.Client
-	semaphore  chan struct{}
+	id                 string
+	baseURL            string
+	pathPrefix         string
+	apiKey             string
+	httpClient         *http.Client
+	decisionHTTPClient *http.Client
+	semaphore          chan struct{}
 	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
@@ -70,23 +71,35 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
 		DialContext:         cfg.DialContext,
+		Proxy:               cfg.Proxy,
 	}
 	if cfg.SkipTLS {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // user-opted skip
 		slog.Warn("TLS verification disabled for provider", "provider", id)
 	}
 
+	client := &http.Client{Transport: transport, Timeout: timeout}
+	decisionClient := client
+	if cfg.DecisionProxy != nil || cfg.DecisionDialContext != nil {
+		decisionTransport := transport.Clone()
+		if cfg.DecisionProxy != nil {
+			decisionTransport.Proxy = cfg.DecisionProxy
+		}
+		if cfg.DecisionDialContext != nil {
+			decisionTransport.DialContext = cfg.DecisionDialContext
+		}
+		decisionClient = &http.Client{Transport: decisionTransport, Timeout: timeout}
+	}
+
 	return &Provider{
-		id:         id,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		pathPrefix: cfg.EffectiveAPIPathPrefix(),
-		apiKey:     cfg.APIKey,
-		httpClient: &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
-		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		openAIAPI: isOfficialAPI(cfg.BaseURL),
+		id:                 id,
+		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix:         cfg.EffectiveAPIPathPrefix(),
+		apiKey:             cfg.APIKey,
+		httpClient:         client,
+		decisionHTTPClient: decisionClient,
+		semaphore:          make(chan struct{}, maxConcurrent),
+		openAIAPI:          isOfficialAPI(cfg.BaseURL),
 	}, nil
 }
 
@@ -1028,6 +1041,9 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 // Close releases resources.
 func (p *Provider) Close() error {
 	p.httpClient.CloseIdleConnections()
+	if p.decisionHTTPClient != p.httpClient {
+		p.decisionHTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 

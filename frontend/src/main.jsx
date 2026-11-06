@@ -24,7 +24,11 @@ import {
   ServerSideRowModelModule,
   StatusBarModule,
 } from "ag-grid-enterprise";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import {
+  AllCommunityModule,
+  ModuleRegistry,
+  provideGlobalGridOptions,
+} from "ag-grid-community";
 
 ModuleRegistry.registerModules([
   AllCommunityModule,
@@ -37,6 +41,12 @@ ModuleRegistry.registerModules([
   ClipboardModule,
   CellSelectionModule,
 ]);
+
+// AG Grid's built-in pager says "Rows per page:", same as DataTablePagination.
+provideGlobalGridOptions(
+  { localeText: { pageSizeSelectorLabel: "Rows per page:" } },
+  "deep",
+);
 import { LicenseManager } from "ag-grid-enterprise";
 import {
   CURRENT_ENVIRONMENT,

@@ -59,11 +59,11 @@ const MessageEditorBlock = ({
   return (
     <Box
       sx={{
-        "& .ql-container": { border: "none !important", fontSize: "14px" },
+        "& .ql-container": { border: "none !important", fontSize: "13px" },
         "& .ql-editor": {
           minHeight,
           padding: "4px 12px 8px",
-          fontSize: "14px",
+          fontSize: "13px",
           lineHeight: 1.6,
         },
         "& .ql-editor.ql-blank::before": {

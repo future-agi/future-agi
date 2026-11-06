@@ -141,7 +141,9 @@ def test_finite_candidate_ids_narrow_identity_before_latest_replay():
     assert "end_user_id IN %(candidate_scan_end_user_ids)s" in sql
     assert params["candidate_scan_end_user_ids"] == tuple(candidate_ids)
     assert "latest_candidate_spans" in sql
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in sql
+    assert "tupleElement(latest_usage_state, 8) AS latest_is_deleted" in sql
+    assert "argMax(tuple(spans.end_user_id, spans.start_time, spans.end_time," in sql
+    assert "), spans._version) AS latest_usage_state" in sql
     assert "latest_is_deleted = 0" in sql
     compact = " ".join(sql.split())
     assert (
@@ -155,7 +157,7 @@ def test_finite_candidate_ids_narrow_identity_before_latest_replay():
     # immutable identity has been replayed.
     replay = sql.split("latest_candidate_spans AS", 1)[1]
     assert "end_user_id IN" not in replay.split("GROUP BY", 1)[0]
-    assert "argMax(tuple(end_user_id), _version)" in replay
+    assert "tupleElement(latest_usage_state, 1) AS latest_end_user_id" in replay
     curated = sql.split("filtered_end_users_raw AS", 1)[1].split(
         "filtered_end_users AS", 1
     )[0]
@@ -1512,8 +1514,9 @@ def test_cursor_page_embeds_requested_session_count_in_exact_usage_replay():
 
     assert builder.embedded_page_metric_fields == frozenset({"num_sessions"})
     assert "AS latest_trace_session_id" in sql
-    assert "uniqExactIf(" in sql
-    assert ") AS num_sessions" in sql
+    assert "uniqExactIfState(" in sql
+    assert ") AS session_count_state" in sql
+    assert "uniqExactIfMerge(session_count_state) AS num_sessions" in sql
     assert "num_sessions,\n            activated_at" in sql
     assert "trace_session_id_remap" not in sql
     assert "ts_survivor_map" not in sql

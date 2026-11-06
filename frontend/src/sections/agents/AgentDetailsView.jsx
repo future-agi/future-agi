@@ -1,4 +1,4 @@
-import { Box, Button, Stack, useTheme } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import VersionDetails from "src/sections/agents/VersionDetails/VersionDetails";
 import VersionManagement from "src/sections/agents/VersionManagement/VersionManagement";
@@ -16,7 +16,6 @@ const AgentDetailsView = () => {
   const { agentDefinitionId } = useParams();
   const navigate = useNavigate();
   const { pathname, state } = useLocation();
-  const theme = useTheme();
   const { selectedVersion, setSelectedVersion } = useAgentDetailsStore();
   const [openScenarioHelp, setOpenScenarioHelp] = useState(false);
   const isNewAgentRef = useRef(state?.newAgent);
@@ -82,7 +81,7 @@ const AgentDetailsView = () => {
             <Button
               startIcon={
                 <Iconify
-                  icon="line-md:chevron-left"
+                  icon="solar:alt-arrow-left-linear"
                   width={16}
                   height={16}
                   color={"text.primary"}
@@ -92,10 +91,6 @@ const AgentDetailsView = () => {
               variant="outlined"
               sx={{
                 color: "text.primary",
-                padding: theme.spacing(0.125, 1.5),
-                height: 32,
-                fontWeight: "fontWeightMedium",
-                borderRadius: theme.spacing(0.5),
                 borderColor: "action.selected",
               }}
             >
@@ -109,21 +104,12 @@ const AgentDetailsView = () => {
             variant="outlined"
             color="primary"
             onClick={() => setOpenScenarioHelp(true)}
-            sx={{
-              typography: "s2",
-              fontWeight: "fontWeightMedium",
-              flexShrink: 0,
-              borderRadius: theme.spacing(0.5),
-              padding: theme.spacing(0.75, 1.5),
-            }}
+            sx={{ flexShrink: 0 }}
             startIcon={
               <SvgColor
                 src="/assets/icons/ic_add.svg"
-                sx={{
-                  bgcolor: "primary.main",
-                  height: "16px",
-                  width: "16px",
-                }}
+                width="16px"
+                sx={{ bgcolor: "primary.main" }}
               />
             }
           >

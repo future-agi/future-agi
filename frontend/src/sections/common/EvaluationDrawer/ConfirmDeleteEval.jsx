@@ -27,7 +27,7 @@ const DeleteEvalConfirm = ({
       aria-describedby="confirm-dialog-description"
       PaperProps={{
         sx: {
-          minWidth: "581px",
+          minWidth: "560px",
         },
       }}
     >
@@ -46,26 +46,17 @@ const DeleteEvalConfirm = ({
             justifyContent: "space-between",
           }}
         >
-          <Typography fontSize={16} fontWeight={700} color={"text.primary"}>
+          <Typography fontSize={16} fontWeight={600} color={"text.primary"}>
             Are you sure you want delete this evaluation
           </Typography>
           <IconButton onClick={onClose} sx={{ p: 0, color: "text.primary" }}>
-            <Icon icon="mingcute:close-line" />
+            <Icon icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
 
       <DialogActions sx={{ paddingY: 2 }}>
-        <Button
-          onClick={onClose}
-          variant="outlined"
-          sx={{
-            fontSize: "12px",
-            fontWeight: 500,
-            paddingX: "24px",
-            paddingY: "6px",
-          }}
-        >
+        <Button onClick={onClose} variant="outlined">
           Cancel
         </Button>
 
@@ -76,15 +67,11 @@ const DeleteEvalConfirm = ({
           autoFocus
           color="error"
           sx={{
-            fontSize: "12px",
-            fontWeight: 500,
-            paddingX: "24px",
-            paddingY: "6px",
             border: "1px solid",
             borderColor: "error.main",
             "&:hover": {
               borderColor: "error.main",
-              backgroundColor: "red.o10",
+              backgroundColor: "status.danger.bg",
             },
           }}
         >
@@ -96,12 +83,6 @@ const DeleteEvalConfirm = ({
           variant="contained"
           autoFocus
           color="error"
-          sx={{
-            fontSize: "12px",
-            fontWeight: 500,
-            paddingX: "24px",
-            paddingY: "6px",
-          }}
         >
           Remove evaluation and result
         </LoadingButton>

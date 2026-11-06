@@ -297,16 +297,14 @@ const SingleResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_tag.svg"
@@ -331,16 +329,14 @@ const SingleResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_template.svg"

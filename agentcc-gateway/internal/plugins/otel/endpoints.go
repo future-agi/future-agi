@@ -88,6 +88,15 @@ func (p *Plugin) attachEndpointAttributes(span *otelpkg.Span, rc *models.Request
 				span.SetAttribute("gen_ai.retrieval.top_k", req.MaxResults)
 			}
 		}
+
+	case "decision":
+		// The shape of the call, never its content: the state and the
+		// questions' instructions are the customer's evaluation data.
+		if req := rc.DecisionRequest; req != nil {
+			setIfNotEmpty(span, "gen_ai.decision.format", req.Format)
+			span.SetAttribute("gen_ai.decision.question_count", len(req.QuestionIDs))
+			setIfNotEmpty(span, "gen_ai.decision.question_types", strings.Join(req.QuestionTypes, ","))
+		}
 	}
 }
 

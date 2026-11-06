@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'yaml';
 import { E2E } from '../lib/env';
-import { inspectManagedMock, managedMockInspectionError, MOCK_BASE, MOCK_MODEL, registerMockModel, validateBackgroundMockMounts, validateMockEnvironment, validateMockRouting } from '../lib/managed-mock';
+import { inspectManagedMock, managedMockInspectionError, MOCK_BASE, MOCK_MODEL, registerMockModel, validateApplicationMounts, validateBackgroundMockMounts, validateMockEnvironment, validateMockRouting } from '../lib/managed-mock';
 import { validateStandaloneAppEnvironment } from '../lib/managed-mock-standalone';
 import { test as isolatedTest } from '../lib/mock-model-fixtures';
 import type { TestActor } from '../lib/provisioning';
@@ -154,6 +155,74 @@ for (const evalBackground of [false, true]) {
   }
 }
 
+for (const stack of ['distributed', 'standalone']) {
+  test(`managed mock runner keeps unset status-directory behavior for ${stack}`, ({}, testInfo) => {
+    const home = testInfo.outputPath('home');
+    const binaries = testInfo.outputPath('bin');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(binaries, { recursive: true });
+    writeFileSync(`${binaries}/yarn`, '#!/bin/sh\nprintf "%s\\n" "${E2E_HOST_UPDATE_STATUS_DIR-unset}" "$@"\n', { mode: 0o755 });
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${binaries}:${process.env.PATH}`, E2E_STACK: stack,
+      E2E_COMPOSE_PROJECT: 'status-default-test' };
+    delete env.E2E_HOST_UPDATE_STATUS_DIR;
+    const output = execFileSync(fileURLToPath(new URL('../../bin/e2e', import.meta.url)),
+      ['test', 'flows/settings/host-update-status.spec.ts'], { encoding: 'utf8', env });
+    const directory = `${home}/.cache/futureagi-e2e/status-default-test/host-update-status`;
+    expect(output.trim().split('\n')).toEqual([
+      stack === 'distributed' ? directory : 'unset', 'playwright', 'test', 'flows/settings/host-update-status.spec.ts',
+    ]);
+    expect(existsSync(directory)).toBe(stack === 'distributed');
+    if (stack === 'distributed') expect(statSync(directory).mode & 0o777).toBe(0o755);
+  });
+}
+
+test('managed mock accepts exactly the public read-only backend status directory', ({}, testInfo) => {
+  const directory = testInfo.outputPath('status');
+  mkdirSync(directory, { recursive: true });
+  const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false };
+  validateApplicationMounts('backend', [mount], directory);
+  const alias = testInfo.outputPath('status-alias');
+  symlinkSync(directory, alias);
+  validateApplicationMounts('backend', [{ ...mount, Source: alias }], directory);
+  // The optional integration does not invalidate old mount-free installations.
+  validateApplicationMounts('backend', [], '');
+  validateApplicationMounts('worker', [], directory);
+});
+
+for (const [name, change] of [
+  ['writable status mount', { RW: true }],
+  ['non-bind status mount', { Type: 'volume' }],
+  ['wrong status destination', { Destination: '/app' }],
+  ['wrong existing status source', { Source: 'other' }],
+  ['missing status source', { Source: 'missing' }],
+  ['file instead of status directory', { Source: 'file' }],
+] as [string, Record<string, string | boolean>][]) {
+  test(`managed mock rejects ${name}`, ({}, testInfo) => {
+    const directory = testInfo.outputPath('status');
+    mkdirSync(directory, { recursive: true });
+    mkdirSync(testInfo.outputPath('other'));
+    writeFileSync(testInfo.outputPath('file'), '{}');
+    const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false,
+      ...change, ...(change.Source ? { Source: testInfo.outputPath(String(change.Source)) } : {}) };
+    expect(() => validateApplicationMounts('backend', [mount], directory)).toThrow('STOP: managed mock');
+  });
+}
+
+test('managed mock rejects extra, duplicate, unconfigured and worker status mounts', ({}, testInfo) => {
+  const directory = testInfo.outputPath('status');
+  mkdirSync(directory, { recursive: true });
+  const mount = { Type: 'bind', Source: directory, Destination: '/run/futureagi-host-update', RW: false };
+  for (const mounts of [[mount, mount], [mount, { ...mount, Destination: '/extra' }]]) {
+    expect(() => validateApplicationMounts('backend', mounts, directory)).toThrow('backend has application mounts');
+  }
+  expect(() => validateApplicationMounts('backend', [mount], '')).toThrow('backend has application mounts');
+  expect(() => validateApplicationMounts('backend', [mount], `${directory}/absent`)).toThrow('source mismatch');
+  const file = testInfo.outputPath('file');
+  writeFileSync(file, '{}');
+  expect(() => validateApplicationMounts('backend', [{ ...mount, Source: file }], file)).toThrow('source mismatch');
+  expect(() => validateApplicationMounts('worker', [mount], directory)).toThrow('worker has application mounts');
+});
+
 const gatewayMounts = [
   { Type: 'bind', Source: '/fixture/gateway.e2e.yaml', Destination: '/app/config.yaml', RW: false },
   { Type: 'bind', Source: '/dev/null', Destination: '/app/Vertex_AI_Creds.json', RW: false },
@@ -288,7 +357,9 @@ function composedStandaloneEnvironment(): Record<string, string> {
     .split('\n').filter(line => /^[A-Z_][A-Z0-9_]*=/.test(line))
     .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   const compose = parse(readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8'));
-  return Object.fromEntries(Object.entries(compose.services.app.environment as Record<string, unknown>)
+  const overlay = parse(readFileSync(new URL('../stack/docker-compose.standalone-e2e.yml', import.meta.url), 'utf8'));
+  const environment = { ...compose.services.app.environment, ...overlay.services.app.environment };
+  return Object.fromEntries(Object.entries(environment as Record<string, unknown>)
     .map(([key, value]) => [key, String(value ?? '').replace(/\$\{([A-Z0-9_]+)(?::?-([^}]*))?\}/g,
       (_, name: string, fallback?: string) => vars[name] || fallback || '')]));
 }
@@ -366,7 +437,11 @@ function fakeStack(stack: 'standalone' | 'distributed') {
   const services: FakeContainer[] = stack === 'standalone' ? [{ service: 'app', env: composedStandaloneEnvironment(),
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
-    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json']],
+    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json'],
+      [repoFile('stack/backend/settings_e2e.py'), '/app/backend/tfc/settings/e2e.py'],
+      [repoFile('stack/backend/urls_e2e.py'), '/app/backend/tfc/urls_e2e.py'],
+      [repoFile('stack/backend/e2e_clean_signup.py'), '/app/backend/accounts/views/e2e_clean_signup.py'],
+      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py']],
   }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
     mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,
@@ -396,10 +471,11 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/docker`, fakeDockerScript, { mode: 0o755 });
   for (const [name, body] of Object.entries(files)) writeFileSync(`${dir}/${name}`, typeof body === 'string' ? body : JSON.stringify(body));
-  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
+  mkdirSync(`${dir}/status`, { recursive: true });
+  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'E2E_HOST_UPDATE_STATUS_DIR', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
     .map(key => [key, process.env[key]]));
   Object.assign(process.env, { PATH: `${dir}:${process.env.PATH}`, DOCKER_CONTEXT: 'e2e-fake', E2E_STACK: stack,
-    FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
+    E2E_HOST_UPDATE_STATUS_DIR: `${dir}/status`, FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
   delete process.env.DOCKER_HOST;
   try {
     return inspect();
@@ -412,6 +488,26 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
 
 const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]
   .every(url => new URL(url).hostname === 'localhost');
+
+for (const variant of ['valid', 'writable', 'wrong-source', 'wrong-destination', 'non-bind', 'extra', 'worker'] as const) {
+  test(`managed mock offline inspection checks the ${variant} host status bind`, ({}, testInfo) => {
+    test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+    const dir = testInfo.outputPath('docker');
+    const files = fakeStack('distributed');
+    const containers = files['containers.json'];
+    const backend = containers.find((c: any) => c.Config.Labels['com.docker.compose.service'] === 'backend');
+    const worker = containers.find((c: any) => c.Config.Labels['com.docker.compose.service'] === 'worker');
+    const mount = { Type: variant === 'non-bind' ? 'volume' : 'bind',
+      Source: variant === 'wrong-source' ? dir : `${dir}/status`,
+      Destination: variant === 'wrong-destination' ? '/app' : '/run/futureagi-host-update',
+      RW: variant === 'writable' };
+    if (variant === 'worker') worker.Mounts = [mount];
+    else backend.Mounts = variant === 'extra' ? [mount, { ...mount, Destination: '/extra' }] : [mount];
+    const inspect = () => withFakeDocker(dir, 'distributed', files, () => inspectManagedMock());
+    if (variant === 'valid') expect(inspect().services.map(service => service.service)).toContain('backend');
+    else expect(inspect).toThrow('STOP: managed mock');
+  });
+}
 
 for (const stack of ['standalone', 'distributed'] as const) {
   test(`managed mock inspects a well-formed ${stack} stack offline`, ({}, testInfo) => {

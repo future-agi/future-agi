@@ -18,7 +18,6 @@ engine = session_fixture.engine
 
 @pytest.mark.parametrize("days", [7, 30, 365])
 def test_all_session_root_attributes_beyond_old_500_row_cutoff(engine, days):
-    engine.execute("ALTER TABLE spans ADD COLUMN attributes_extra String DEFAULT '{}'")
     session_id = str(UUID(int=100))
     engine.execute(
         """INSERT INTO spans (project_id, observation_type, service_name, start_time,

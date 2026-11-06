@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { computeDiff, matchConversationsByIndex } from "./compareUtils";
+import { statusColors } from "src/utils/runStatus";
 
 // Side-by-side baseline-vs-replay transcript with optional word-level diff.
 
@@ -27,9 +28,9 @@ const useSpeakerColors = () => {
         theme.palette.mode === "dark"
           ? theme.palette.primary.light
           : theme.palette.primary.main,
-      user: theme.palette.mode === "dark" ? "#FF9933" : "#E9690C",
-      system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
-      tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
+      user: statusColors(theme, "info").fg,
+      system: theme.palette.text.secondary,
+      tool: statusColors(theme, "warning").fg,
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -52,8 +53,6 @@ const ROLE_LABELS = {
 const DiffToken = ({ part, side }) => {
   // Theme-aware foreground / background so diff spans stay readable in
   // both light and dark modes.
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isRemoval = side === "A" && part.removed;
   const isAddition = side === "B" && part.added;
 
@@ -65,21 +64,8 @@ const DiffToken = ({ part, side }) => {
     );
   }
 
-  const bg = isRemoval
-    ? isDark
-      ? theme.palette.error.darker
-      : theme.palette.error.lighter
-    : isDark
-      ? theme.palette.success.darker
-      : theme.palette.success.lighter;
-
-  const fg = isRemoval
-    ? isDark
-      ? theme.palette.error.main
-      : theme.palette.error.darker
-    : isDark
-      ? theme.palette.success.main
-      : theme.palette.success.darker;
+  const bg = isRemoval ? "status.danger.bg" : "status.success.bg";
+  const fg = isRemoval ? "status.danger.fg" : "status.success.fg";
 
   return (
     <Box
@@ -90,7 +76,7 @@ const DiffToken = ({ part, side }) => {
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
         fontWeight: 600,
-        borderRadius: "2px",
+        borderRadius: "4px",
         px: 0.25,
       }}
     >
@@ -127,7 +113,7 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
         sx={{
           minHeight: 36,
           fontStyle: "italic",
-          fontSize: 11,
+          fontSize: 12,
           // `text.disabled` + opacity:0.4 was washing the placeholder
           // out completely on light backgrounds. `text.secondary` reads
           // clearly in both themes.
@@ -176,10 +162,10 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
           />
           <Typography
             sx={{
-              fontSize: 10,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
+              fontSize: 12,
+              fontWeight: 600,
+              textTransform: "none",
+              letterSpacing: 0,
               color: "text.secondary",
             }}
           >
@@ -187,7 +173,7 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
           </Typography>
         </Box>
         {turn.timeStamp && isValid(new Date(turn.timeStamp)) && (
-          <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             {format(new Date(turn.timeStamp), "HH:mm:ss")}
           </Typography>
         )}
@@ -227,13 +213,13 @@ const SpeakerLegend = ({ colors }) => (
           sx={{
             width: 8,
             height: 8,
-            borderRadius: "2px",
+            borderRadius: "4px",
             bgcolor: colors[role],
           }}
         />
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             textTransform: "capitalize",
           }}
@@ -247,41 +233,31 @@ const SpeakerLegend = ({ colors }) => (
 SpeakerLegend.propTypes = { colors: PropTypes.object.isRequired };
 
 const CountPill = ({ tone, count, label }) => {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const fg = (() => {
-    if (tone === "error") {
-      return isDark ? theme.palette.error.main : theme.palette.error.darker;
-    }
-    if (tone === "success") {
-      return isDark ? theme.palette.success.main : theme.palette.success.darker;
-    }
-    return theme.palette.text.secondary;
-  })();
-  const bg = (() => {
-    if (tone === "error") {
-      return isDark ? theme.palette.error.darker : theme.palette.error.lighter;
-    }
-    if (tone === "success") {
-      return isDark
-        ? theme.palette.success.darker
-        : theme.palette.success.lighter;
-    }
-    return theme.palette.action.hover;
-  })();
+  const fg =
+    tone === "error"
+      ? "status.danger.fg"
+      : tone === "success"
+        ? "status.success.fg"
+        : "text.secondary";
+  const bg =
+    tone === "error"
+      ? "status.danger.bg"
+      : tone === "success"
+        ? "status.success.bg"
+        : "action.hover";
   return (
     <Box
       sx={{
         display: "inline-flex",
         alignItems: "center",
         gap: 0.5,
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: 600,
         color: fg,
         bgcolor: bg,
         px: 0.75,
         py: 0.25,
-        borderRadius: "10px",
+        borderRadius: "8px",
       }}
     >
       {label} ({count})
@@ -317,7 +293,13 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
         const baselineContent = m.baseline?.content || "";
         const replayedContent = m.replayed?.content || "";
         if (!showDiff) {
-          return { ...m, baselineContent, replayedContent, diffA: null, diffB: null };
+          return {
+            ...m,
+            baselineContent,
+            replayedContent,
+            diffA: null,
+            diffB: null,
+          };
         }
         return {
           ...m,
@@ -448,7 +430,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="mdi:magnify"
+                    icon="solar:magnifier-linear"
                     width={14}
                     sx={{ color: "text.secondary" }}
                   />
@@ -500,7 +482,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
               sx={{ display: "inline-flex", alignItems: "center" }}
             >
               <Iconify
-                icon="mdi:information-outline"
+                icon="solar:info-circle-linear"
                 width={14}
                 sx={{ color: "text.disabled" }}
               />
@@ -542,11 +524,11 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
             >
               <Typography
                 sx={{
-                  fontSize: 11,
-                  fontWeight: 700,
+                  fontSize: 12,
+                  fontWeight: 600,
                   color: "text.primary",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                 }}
               >
                 Baseline
@@ -563,11 +545,11 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
             >
               <Typography
                 sx={{
-                  fontSize: 11,
-                  fontWeight: 700,
+                  fontSize: 12,
+                  fontWeight: 600,
                   color: "text.primary",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                 }}
               >
                 Replay

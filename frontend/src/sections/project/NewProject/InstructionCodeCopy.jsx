@@ -21,7 +21,7 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
         sx={{ position: "absolute", right: "2px", top: "8px", zIndex: 1 }}
         onClick={onCopyClick}
       >
-        <Iconify icon="basil:copy-outline" sx={{ color: "text.disabled" }} />
+        <Iconify icon="solar:copy-linear" sx={{ color: "text.disabled" }} />
       </IconButton>
       <SyntaxHighlighter
         useInlineStyles={false}

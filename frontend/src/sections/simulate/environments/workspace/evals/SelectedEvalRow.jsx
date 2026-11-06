@@ -14,7 +14,7 @@ export default function SelectedEvalRow({ item, action }) {
     <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ px: 2.5, py: 1.5 }}>
       <Box
         sx={{
-          width: 30, height: 30, borderRadius: 0.875,
+          width: 30, height: 30, borderRadius: "8px",
           display: "grid", placeItems: "center", flexShrink: 0,
           color: "text.secondary", bgcolor: "background.neutral",
         }}
@@ -23,7 +23,7 @@ export default function SelectedEvalRow({ item, action }) {
       </Box>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+          <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
             {item.name}
           </Typography>
           <EvalEntryChips entry={item} />
@@ -34,7 +34,7 @@ export default function SelectedEvalRow({ item, action }) {
           </Typography>
         )}
         <Box sx={{ mt: 1 }}>
-          <EvalInputs entry={item} heading="READS" />
+          <EvalInputs entry={item} heading="Reads" />
         </Box>
       </Box>
       <Box sx={{ flexShrink: 0 }}>{action}</Box>

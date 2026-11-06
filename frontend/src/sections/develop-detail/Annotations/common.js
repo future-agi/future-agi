@@ -21,15 +21,11 @@ export const AntSwitch = styled(Switch)(({ theme }) => ({
       color: theme.palette.common.white,
       "& + .MuiSwitch-track": {
         opacity: 1,
-        backgroundColor: "#1890ff",
-        ...theme.applyStyles("dark", {
-          backgroundColor: "#177ddc",
-        }),
+        backgroundColor: theme.palette.primary.main,
       },
     },
   },
   "& .MuiSwitch-thumb": {
-    boxShadow: "0 2px 4px 0 rgb(0 35 11 / 20%)",
     width: 12,
     height: 12,
     borderRadius: 6,
@@ -40,10 +36,7 @@ export const AntSwitch = styled(Switch)(({ theme }) => ({
   "& .MuiSwitch-track": {
     borderRadius: 16 / 2,
     opacity: 1,
-    backgroundColor: "rgba(0,0,0,.25)",
+    backgroundColor: theme.palette.text.disabled,
     boxSizing: "border-box",
-    ...theme.applyStyles("dark", {
-      backgroundColor: "rgba(255,255,255,.35)",
-    }),
   },
 }));

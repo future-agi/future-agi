@@ -46,7 +46,6 @@ export default function ScenarioToolbar({
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder={SCENARIOS_COPY.searchPlaceholder}
             InputProps={{
-              sx: { typography: "s2", height: 32 },
               startAdornment: (
                 <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
                   <Iconify icon="solar:magnifer-linear" width={14} />
@@ -61,20 +60,23 @@ export default function ScenarioToolbar({
             }}
           />
           <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
             onClick={(e) => setFilterAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="mdi:filter-outline" width={16} />}
-            sx={{
-              ...scenarioToolbarButtonSx,
-              ...(filterCount > 0 && { color: "primary.main", bgcolor: "action.selected" }),
-            }}
+            startIcon={<Iconify icon="solar:filter-linear" width={16} />}
+            sx={scenarioToolbarButtonSx}
           >
             {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
           </Button>
           <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
             aria-haspopup="dialog"
             aria-expanded={!!displayAnchor}
             onClick={(e) => setDisplayAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="mdi:tune-vertical" width={16} />}
+            startIcon={<Iconify icon="solar:tuning-2-linear" width={16} />}
             sx={scenarioToolbarButtonSx}
           >
             {SCENARIOS_COPY.displayLabel}

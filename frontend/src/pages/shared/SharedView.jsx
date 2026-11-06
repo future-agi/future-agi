@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import PropTypes from "prop-types";
@@ -6,7 +7,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   Stack,
   Typography,
@@ -25,6 +25,7 @@ import SharedVoiceView from "./SharedVoiceView";
 import SharedSimulationCallView from "./SharedSimulationCallView";
 import SharedErrorIssueView from "./SharedErrorIssueView";
 import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -147,10 +148,10 @@ export default function SharedView() {
             <Iconify
               icon={
                 status === 401
-                  ? "mdi:lock-outline"
+                  ? "solar:lock-linear"
                   : status === 403
-                    ? "mdi:shield-lock-outline"
-                    : "mdi:link-off"
+                    ? "solar:shield-keyhole-linear"
+                    : "solar:link-broken-linear"
               }
               width={48}
               sx={{ color: "text.disabled", mb: 2 }}
@@ -173,7 +174,7 @@ export default function SharedView() {
                   display: "inline-block",
                   mt: 2,
                   color: "primary.main",
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: 500,
                 }}
               >
@@ -232,22 +233,22 @@ export default function SharedView() {
             <Iconify
               icon={
                 isVoiceView
-                  ? "mdi:phone-outline"
+                  ? "solar:phone-linear"
                   : isChatCall
-                    ? "mdi:message-text-outline"
+                    ? "solar:chat-round-line-linear"
                     : isErrorIssue
-                      ? "mdi:bug-outline"
+                      ? "solar:bug-linear"
                       : resourceType === "dashboard"
-                        ? "mdi:view-dashboard-outline"
+                        ? "solar:widget-4-linear"
                         : resourceType === "project"
-                          ? "mdi:folder-outline"
-                          : "mdi:share-variant-outline"
+                          ? "solar:folder-linear"
+                          : "solar:share-linear"
               }
               width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
             >
               {isVoiceView
                 ? "Shared voice call"
@@ -290,7 +291,7 @@ export default function SharedView() {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : isErrorIssue ? (
           <SharedErrorIssueView token={token} data={resourceData} />
@@ -387,7 +388,7 @@ export default function SharedView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:cursor-default-click-outline"
+                    icon="solar:cursor-linear"
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
@@ -478,7 +479,7 @@ function SharedProjectView({ project }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -502,7 +503,9 @@ function SharedProjectView({ project }) {
             <Button
               href={projectUrl}
               variant="contained"
-              startIcon={<Iconify icon="mdi:open-in-new" width={16} />}
+              startIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
               sx={{ flexShrink: 0 }}
             >
               Open project
@@ -521,7 +524,7 @@ function SharedProjectView({ project }) {
         >
           <Box sx={{ p: 2.5 }}>
             <Typography
-              sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
             >
               Project details
             </Typography>
@@ -574,7 +577,7 @@ function SharedDashboardView({ dashboard }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -585,7 +588,7 @@ function SharedDashboardView({ dashboard }) {
               <Typography
                 sx={{
                   mt: 0.75,
-                  fontSize: 14,
+                  fontSize: 13,
                   color: "text.secondary",
                   maxWidth: 760,
                 }}
@@ -597,7 +600,7 @@ function SharedDashboardView({ dashboard }) {
           <Chip
             size="small"
             variant="outlined"
-            icon={<Iconify icon="mdi:view-grid-outline" width={16} />}
+            icon={<Iconify icon="solar:widget-4-linear" width={16} />}
             label={`${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`}
             sx={{ flexShrink: 0 }}
           />
@@ -619,26 +622,19 @@ function SharedDashboardView({ dashboard }) {
             ))}
           </Box>
         ) : (
-          <Box
+          <EmptyState
+            icon="solar:widget-4-linear"
+            title="No widgets yet"
+            description="This dashboard has no widgets."
             sx={{
-              py: 8,
-              px: 2,
-              textAlign: "center",
+              pt: 6,
+              pb: 6,
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
               borderRadius: 1,
             }}
-          >
-            <Iconify
-              icon="mdi:view-dashboard-outline"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography sx={{ fontSize: 14, color: "text.secondary" }}>
-              No widgets in this dashboard
-            </Typography>
-          </Box>
+          />
         )}
       </Box>
     </Box>
@@ -678,8 +674,8 @@ function DashboardWidgetPreview({ widget }) {
           <Box sx={{ minWidth: 0 }}>
             <Typography
               sx={{
-                fontSize: 15,
-                fontWeight: 700,
+                fontSize: 13,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -723,9 +719,9 @@ function DashboardWidgetPreview({ widget }) {
           sx={{
             mb: 1,
             fontSize: 11,
-            fontWeight: 700,
+            fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
+            textTransform: "none",
           }}
         >
           Metrics
@@ -757,9 +753,9 @@ function WidgetStat({ label, value }) {
       <Typography
         sx={{
           fontSize: 11,
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.disabled",
-          textTransform: "uppercase",
+          textTransform: "none",
         }}
       >
         {label}

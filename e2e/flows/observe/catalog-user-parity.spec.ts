@@ -961,7 +961,7 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByRole('tablist', { name: 'session drawer tabs' }) });
       const firstTrace = body.result.response[0].trace_id;
       await drawer.getByRole('button', { name: 'View Trace', exact: true }).first().click();
-      await expect(page.getByText(userFacts.find(f => f.seeded.traceId === firstTrace)!.seeded.spanIds[0], { exact: true }).first()).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText(userFacts.find(f => f.seeded.traceId === firstTrace)!.seeded.spanIds[0], { exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: UI_READY });
       // Return through the actual user detail and choose its Traces tab.
       await page.goto(`/dashboard/users/${encodeURIComponent(shared)}`, { waitUntil: 'domcontentloaded' });
       // FixedTab's inactive tooltip sets aria-label="Press 2"; match its exact visible Trace label within MAIN.

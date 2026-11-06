@@ -126,11 +126,14 @@ def _normalize_eval_ids(cfg):
         cfg.pop("eval_id", None)
 
 
-def _inject_guardrail_credentials(checks):
+def _inject_guardrail_credentials(checks, org_id):
     """
     Decrypt and inject real credentials into guardrail checks, replacing
     "__encrypted__" sentinel values with actual secrets from the policy's
     encrypted_check_configs blob.
+
+    Only the org's own policies are decrypted. A reference to another org's
+    policy is treated like a deleted one, so its credentials never leave it.
     """
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
     from integrations.services.credentials import CredentialManager
@@ -149,7 +152,7 @@ def _inject_guardrail_credentials(checks):
 
     # Bulk-load policies and decrypt their credential blobs
     policies = AgentccGuardrailPolicy.no_workspace_objects.filter(
-        id__in=policy_ids, deleted=False
+        id__in=policy_ids, organization_id=org_id, deleted=False
     ).only("id", "encrypted_check_configs")
     decrypted_map = {}  # {policy_id: {check_name: {key: value}}}
     for policy in policies:
@@ -210,7 +213,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as list (from guardrail_sync — merged policies)
     if isinstance(raw_checks, list) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         checks = {}
         for rule in raw_checks:
@@ -242,7 +245,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as dict (from frontend saves via OrgConfig)
     if isinstance(raw_checks, dict) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         mapped = {}
         for name, cfg in raw_checks.items():
@@ -265,7 +268,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         return guardrails_data
 
     # Inject decrypted guardrail credentials before transformation
-    _inject_guardrail_credentials(rules)
+    _inject_guardrail_credentials(rules, org_id)
 
     checks = {}
     for rule in rules:

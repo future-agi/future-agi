@@ -12,16 +12,30 @@ import threading
 
 from django.core.management.base import BaseCommand
 
+from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
+
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
 # much higher concurrency silently defeats that admission control.
 _DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
 
 
+# Blocking provider calls share these queues with the short polls that must keep running.
+_OWN_THREAD_ACTIVITY_QUEUES = frozenset({"simulation_runner"})
+
+
 def _generic_all_queues(registered_queues: list[str]) -> list[str]:
     """Return queues safe for the generic all-queues worker to poll."""
 
     return [queue for queue in registered_queues if queue not in _DEDICATED_TASK_QUEUES]
+
+
+def _activity_thread_kwargs(queue_name: str) -> dict[str, list]:
+    """Return the interceptors that give a queue's activities their own thread."""
+
+    if queue_name in _OWN_THREAD_ACTIVITY_QUEUES:
+        return {"interceptors": [OwnThreadActivityInterceptor()]}
+    return {}
 
 
 def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
@@ -344,6 +358,7 @@ class Command(BaseCommand):
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
                 kwargs.update(_workflow_cache_kwargs(queue_name))
+                kwargs.update(_activity_thread_kwargs(queue_name))
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.

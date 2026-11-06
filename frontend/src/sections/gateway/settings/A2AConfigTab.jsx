@@ -97,7 +97,7 @@ const A2AConfigTab = ({ a2a, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:robot-outline" width={24} />
+        <Icon icon="solar:bot-linear" width={24} />
         <Typography variant="h6">A2A (Agent-to-Agent)</Typography>
       </Stack>
 
@@ -122,7 +122,7 @@ const A2AConfigTab = ({ a2a, onChange }) => {
         <Stack spacing={3}>
           {/* ===== AGENT CARD ===== */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }}>
+            <Typography variant="subtitle1" fontWeight="600" sx={{ mb: 2 }}>
               Agent Card
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -171,7 +171,7 @@ const A2AConfigTab = ({ a2a, onChange }) => {
               alignItems="center"
               sx={{ mb: 2 }}
             >
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Typography variant="subtitle1" fontWeight="600">
                 External Agent Registry
               </Typography>
             </Stack>
@@ -198,14 +198,11 @@ const A2AConfigTab = ({ a2a, onChange }) => {
                       size="small"
                     />
                     <IconButton
+                      sx={{ color: "status.danger.fg" }}
                       size="small"
                       onClick={() => handleRemoveAgent(name)}
                     >
-                      <Icon
-                        icon="mdi:delete-outline"
-                        width={18}
-                        color="#d32f2f"
-                      />
+                      <Icon icon="solar:trash-bin-trash-linear" width={18} />
                     </IconButton>
                   </Stack>
 
@@ -303,14 +300,14 @@ const A2AConfigTab = ({ a2a, onChange }) => {
                       alignItems="center"
                       sx={{ mb: 1 }}
                     >
-                      <Typography variant="body2" fontWeight="bold">
+                      <Typography variant="body2" fontWeight="600">
                         Skills
                       </Typography>
                       <Button
                         size="small"
                         variant="text"
                         onClick={() => handleAddSkill(name)}
-                        startIcon={<Icon icon="mdi:plus" width={14} />}
+                        startIcon={<Icon icon="solar:add-linear" width={14} />}
                       >
                         Add Skill
                       </Button>
@@ -363,13 +360,13 @@ const A2AConfigTab = ({ a2a, onChange }) => {
                             sx={{ flex: 1 }}
                           />
                           <IconButton
+                            sx={{ color: "status.danger.fg" }}
                             size="small"
                             onClick={() => handleRemoveSkill(name, idx)}
                           >
                             <Icon
-                              icon="mdi:delete-outline"
+                              icon="solar:trash-bin-trash-linear"
                               width={16}
-                              color="#d32f2f"
                             />
                           </IconButton>
                         </Stack>

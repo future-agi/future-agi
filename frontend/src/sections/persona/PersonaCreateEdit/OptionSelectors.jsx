@@ -88,11 +88,10 @@ const OptionSelectors = ({
               key={value}
               sx={{
                 padding: "4px 12px",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 border: "1px solid",
                 borderColor: isSelected ? "primary.main" : "divider",
                 cursor: "pointer",
-                boxShadow: "2px 2px 4px 0px #00000014",
                 backgroundColor: isSelected
                   ? "action.hover"
                   : "background.paper",

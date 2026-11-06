@@ -121,7 +121,7 @@ const APIKeyReadOnlyView = ({
                   }
                 }}
               >
-                <Iconify icon="basil:copy-outline" sx={{ color: "text.disabled" }} />
+                <Iconify icon="solar:copy-linear" sx={{ color: "text.disabled" }} />
               </IconButton>
             </Tooltip>
 
@@ -163,7 +163,7 @@ const APIKeyReadOnlyView = ({
               }}
             >
               <Iconify
-                icon="basil:copy-outline"
+                icon="solar:copy-linear"
                 sx={{ color: "text.disabled" }}
               />
             </IconButton>

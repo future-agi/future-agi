@@ -46,7 +46,7 @@ type geminiPart struct {
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
 }
 
-// toolCallIDDelim separates the synthetic tool_call.id ("call_0") from the
+// toolCallIDDelim separates the synthetic tool_call.id ("call_<hex>") from the
 // base64 thoughtSignature Gemini returned on the corresponding part. The
 // signature has to round-trip back to Gemini verbatim on the next request
 // or thinking-enabled tool calling 400s with "missing thought_signature".
@@ -58,7 +58,7 @@ type geminiPart struct {
 // message. Anywhere we read the id we must split it back apart — recover the
 // signature for the assistant turn (see toolCallIDSignature), and strip it off
 // before using the id as a Gemini functionResponse.Name (see toolCallIDName),
-// otherwise the next turn sends "call_0::sig::<sig>" as the function name and
+// otherwise the next turn sends "call_<hex>::sig::<sig>" as the function name and
 // Gemini rejects it because it no longer matches the functionCall name.
 const toolCallIDDelim = "::sig::"
 
@@ -72,7 +72,7 @@ func toolCallIDSignature(id string) string {
 }
 
 // toolCallIDName strips the smuggled thoughtSignature suffix off a tool_call
-// id, yielding the original identifier ("call_0"). Safe on ids that never
+// id, yielding the original identifier ("call_<hex>"). Safe on ids that never
 // carried a signature — they pass through unchanged.
 func toolCallIDName(id string) string {
 	if idx := strings.Index(id, toolCallIDDelim); idx != -1 {
@@ -596,7 +596,7 @@ func translateMessage(msg models.Message, toolCallNames map[string]string) gemin
 		// look the id up against the function names from the assistant turn's
 		// tool_calls. Only as a last resort fall back to the id stem (with any
 		// smuggled thoughtSignature suffix stripped) so we never emit
-		// "call_0::sig::<sig>" as the name.
+		// "call_<hex>::sig::<sig>" as the name.
 		funcName := msg.Name
 		if funcName == "" {
 			funcName = toolCallNames[msg.ToolCallID]
@@ -844,7 +844,6 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 		var imageParts []geminiInlineData
 		var audioParts []geminiInlineData
 		var toolCalls []models.ToolCall
-		toolCallIdx := 0
 
 		for _, part := range candidate.Content.Parts {
 			// Thought summaries (returned when includeThoughts is set) surface
@@ -867,7 +866,9 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 				}
 			}
 			if part.FunctionCall != nil {
-				toolCallID := fmt.Sprintf("call_%d", toolCallIdx)
+				// Random, not the part index: clients keep ids across rounds,
+				// so a per-response "call_1" repeats in the conversation.
+				toolCallID := models.NewToolCallID()
 				// Smuggle thoughtSignature through the id so it survives the
 				// OpenAI SDK round-trip and we can restore it on the next
 				// request — Gemini rejects subsequent turns otherwise.
@@ -882,7 +883,6 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 						Arguments: string(part.FunctionCall.Args),
 					},
 				})
-				toolCallIdx++
 			}
 		}
 

@@ -3769,7 +3769,7 @@ class TestSessionListQueryBuilder:
         assert "argMin(input, start_time) AS first_message" in query
         assert "argMax(input, start_time) AS last_message" in query
         assert (
-            "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, input"
+            "SELECT project_id, trace_session_id, trace_id, start_time, end_time, cost, total_tokens, span_attr_str, input"
             in query
         )
         assert "ORDER BY first_message ASC" in query
@@ -3824,16 +3824,38 @@ class TestSessionListQueryBuilder:
         query, params = builder.build_page_hydration_query(["session-1"])
 
         assert "trace_session_id IN %(candidate_session_ids)s" in query
-        # Legacy start_time is a replacement-key column: precise acquisition
-        # is safe, but native exclusions still bind only after latest replay.
-        # Root acquisition + replay, member acquisition + replay, and the
-        # page's message read: each is pruned to the window.
-        assert (
-            query.count(
+        # CDC start_time can change under the same created-day storage key.
+        # Bound root/member discovery, never replay; only winners are tested
+        # against the exact request window and its exclusions.
+        for cte, following in (
+            ("candidate_root_identities", "latest_roots"),
+            ("candidate_member_identities", "session_members"),
+        ):
+            discovery = query.split(f"{cte} AS (", 1)[1].split(f"{following} AS (", 1)[
+                0
+            ]
+            assert "toDate(created_at) AS created_day" in discovery
+            assert (
                 "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+                in discovery
             )
-            == 5
-        )
+            assert (
+                "AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+                in discovery
+            )
+        for cte, following in (
+            ("latest_roots", "resolved_roots"),
+            ("session_members", "member_trace_usage"),
+            ("message_inputs", None),
+        ):
+            replay = query.split(f"{cte} AS (", 1)[1]
+            if following:
+                replay = replay.split(f"{following} AS (", 1)[0]
+            assert "PREWHERE project_id = %(project_id)s" in replay
+            assert "(project_id, toDate(created_at), trace_id, id) IN (" in replay
+            assert "GROUP BY project_id, toDate(created_at), trace_id, id" in replay
+            assert "AND start_time >=" not in replay
+            assert "AND start_time <" not in replay
         assert (
             "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
             in query
@@ -3906,17 +3928,30 @@ class TestSessionListQueryBuilder:
         assert "latest_is_deleted = 0" in query
         assert query.count("build_page_hydration_query_latest_time_0_start") == 1
         assert query.count("build_page_hydration_query_latest_time_0_end") == 1
-        latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
+        latest = query.split("latest_roots AS (", 1)[1].split("resolved_roots AS (", 1)[
+            0
+        ]
         assert "build_page_hydration_query_latest_time_0_start" not in latest
-        # Root acquisition + replay, member acquisition + replay, and the
-        # page's message read: each is pruned to the window.
-        assert (
-            query.count(
+        # Mutable start_time bounds discovery and winners, not CDC replay.
+        assert "GROUP BY project_id, toDate(created_at), trace_id, id" in latest
+        assert "AND start_time >=" not in latest
+        assert "AND start_time <" not in latest
+        for cte, following in (
+            ("candidate_root_identities", "latest_roots"),
+            ("candidate_member_identities", "session_members"),
+        ):
+            discovery = query.split(f"{cte} AS (", 1)[1].split(f"{following} AS (", 1)[
+                0
+            ]
+            assert "toDate(created_at) AS created_day" in discovery
+            assert (
                 "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+                in discovery
             )
-            == 5
-        )
-        assert "GROUP BY project_id, trace_id, id, start_time" in query
+            assert (
+                "AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+                in discovery
+            )
         assert (
             "argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted" in query
         )
@@ -7883,9 +7918,7 @@ class TestVoiceCallListPhase1bMigration:
 
         query, _ = VoiceCallListQueryBuilderV2(
             project_id=self._ROOT_IDENTITY[0]
-        ).build_content_query(
-            ["root-1"], root_identities=[self._ROOT_IDENTITY]
-        )
+        ).build_content_query(["root-1"], root_identities=[self._ROOT_IDENTITY])
         assert "AS span_attributes" in query
         assert "AS attrs_string" in query
         assert "AS attrs_number" in query

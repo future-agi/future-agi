@@ -59,7 +59,7 @@ export default function BuildEnvironmentTab() {
         </Box>
         <Box>
           <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", letterSpacing: 0.4, textTransform: "uppercase" }}>
+            <Typography sx={{ typography: "s1_2", fontWeight: 500 }}>
               {ENVIRONMENTS_HEADER.connectHeading}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>

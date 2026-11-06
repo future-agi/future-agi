@@ -12,7 +12,7 @@
 ### The OpenAI-compatible gateway for production AI.
 
 **One gateway, every modality.**
-Text · chat · embeddings · images · audio (speech + TTS) · video · OCR · rerank · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
+Text · chat · embeddings · images · audio (speech + TTS) · video · OCR · rerank · structured decisions · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
 Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI API.
 
 <p>
@@ -452,9 +452,9 @@ Corrections welcome — open an issue or send a PR.
 
 ## 📋 Capabilities in detail
 
-**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
+**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · structured decisions · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
 
-**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
+**Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
 ### 🌈 Modalities
 
@@ -471,6 +471,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Video generation | `/v1/videos` · `/v1/videos/{id}` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
+| Structured decisions (your own provider key) | `/v1/systemone` · `/v1/decisions` · `/v1/decisions/models` |
 | OCR | `/v1/ocr` |
 | Search | `/v1/search` |
 | Tool calling | on all chat endpoints (provider-native schemas preserved) |
@@ -479,7 +480,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
 | Batch (async) | `/-/batches` |
 
-### 🔌 Endpoints — 109 routes across 23 categories
+### 🔌 Endpoints — 112 routes across 24 categories
 
 <table>
 <tr><th>Category</th><th>Endpoints</th><th>Highlights</th></tr>
@@ -492,6 +493,11 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <td><b>Embeddings &amp; Rerank</b></td>
 <td><code>POST /v1/embeddings</code><br><code>POST /v1/rerank</code></td>
 <td>OpenAI, Cohere, Voyage, Jina; text + image embeddings; batch mode</td>
+</tr>
+<tr>
+<td><b>Decisions</b></td>
+<td><code>POST /v1/systemone</code><br><code>POST /v1/decisions</code><br><code>GET /v1/decisions/models</code></td>
+<td>System One (TypeSafe Jev, Perplexity Decider, any System One endpoint) and OpenAI Decisions · body forwarded byte for byte · always the customer's own provider key</td>
 </tr>
 <tr>
 <td><b>Audio</b></td>
@@ -703,7 +709,7 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `alerting` | Always | Fire alerts on SLO breach / guardrail violation |
 | `logging` | Always | Structured JSON access log with redaction |
 
-### 🌐 Provider formats — 10 native (100+ upstreams)
+### 🌐 Provider formats — 11 native (100+ upstreams)
 
 One gateway HTTP endpoint, each provider's native protocol preserved — we don't lossy-convert provider-specific features.
 
@@ -716,6 +722,7 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 | **Vertex AI** | Google Vertex AI | — | SigV4-style SA auth, `/v1beta/models/{action}:{verb}` native routing |
 | **Bedrock** | AWS Bedrock (all model families: Anthropic, Meta, Cohere, AI21, Mistral, Amazon) | — | SigV4 signing, inference profiles, cross-region invocations |
 | **Cohere** | Cohere · AWS Bedrock (Cohere) | — | command-R family, embed-v3, rerank-3 |
+| **System One** (`systemone`, alias `typesafe`) | TypeSafe (Jev) · Perplexity Decider | any System One endpoint: Microsoft Foundry, Strands, vLLM | `noul` / `choice` / `score` questions and any new type passed through untouched, vendor-reported usage |
 | **Google (gauth)** | Vertex, Gemini, PaLM | — | service-account + workload-identity auth flows |
 | **Deepgram** (`api_format: deepgram`) | Deepgram | — | streaming speech-to-text and Aura text-to-speech over Deepgram's own WebSocket API |
 | **Cartesia** (`api_format: cartesia`) | Cartesia | — | streaming Sonic text-to-speech and Ink speech-to-text over Cartesia's own WebSocket API |
@@ -974,6 +981,91 @@ routing:
 ```
 
 See [`config.example.yaml`](./config.example.yaml) for the full reference.
+
+### Structured decisions (bring your own key)
+
+Decision models answer typed questions about a state (a yes/no probability, a
+choice, a score) instead of generating text. The gateway serves them on three
+routes, none streaming:
+
+| Route | Body |
+|---|---|
+| `POST /v1/systemone` | System One: `{model, state, questions: {<id>: {type, instructions?, criteria?}}}` |
+| `POST /v1/decisions` | `questions` as an array is OpenAI Decisions, sent to an `openai` provider's `/v1/decisions`; as an object it is System One, served as `/v1/systemone` serves it |
+| `GET /v1/decisions/models` | The decision models the caller's organization holds a key for, with their price per million input tokens |
+
+```json
+{"model":"typesafe/jev-1.13.0","state":{"ticket":"Charged twice","reply":"Refunded the duplicate."},
+ "questions":{"resolved":{"type":"noul","instructions":"Did the reply resolve the issue?"}}}
+```
+
+The body goes to the vendor byte for byte; the only rewrite strips the
+`<provider>/` prefix from `model`. The vendor's 200 body comes back unchanged
+with the usual `x-agentcc-*` headers. The gateway checks only the envelope (an
+object, a `model`, a non-null `state`, a non-empty `questions` whose entries
+carry a string `type`), so new question types and fields pass through. A body
+in one format sent to a provider that speaks the other gets `422
+format_mismatch`; nothing is translated. Bodies are capped at the server limit
+or 32 MiB, whichever is smaller.
+
+**Keys.** Third-party decision models run only on the customer's own provider
+key. Future AGI holds no decision-model key, and a decision call never draws
+Future AGI credits, on a managed key included: the vendor bills the customer's
+key directly, and `x-agentcc-cost` is informational.
+
+- Customers add the key under **Gateway > Providers**, with the TypeSafe,
+  Perplexity Decider or Custom System One endpoint preset (`api_format:
+  systemone`, a fixed model list, never probed for models). OpenAI Decisions
+  (`gpt-6-luna`) use the organization's existing OpenAI provider.
+- A `byok` or `managed` key is served only from its organization's own
+  providers, in provider ID order. A `<provider>/` prefix or a provider lock
+  narrows that to one of them; a lock naming any other provider is refused.
+  No organization key means `403 decision_provider_not_configured`; so does a
+  provider that holds the vendor's key but does not list the model, and the
+  message then names that provider and says to add the model to it. One saved
+  with a format that serves no decisions means `403
+  decision_provider_wrong_format`. An enabled Generic System One provider with
+  an explicit, valid organization-owned `base_url` may be keyless, for a
+  self-hosted endpoint that needs no authentication. TypeSafe, Perplexity and
+  OpenAI providers still require the organization's credentials.
+- An internal key must send the end customer's own key in
+  `x-agentcc-provider-key` and name the vendor in the model
+  (`typesafe/…`, `perplexity/…`, `openai/…`); without it the call is refused
+  with `403 byok_required`. The key is used for that one call. It is never
+  logged, never put in metadata, request logs, mirrors or spans, and the
+  provider built for it is cached under a hash of it. The vendor's default
+  upstream is used, or only the `base_url` of a configured provider for that
+  vendor; a configured provider's own key is never used. Customer keys may not
+  send the header (`400 provider_key_header_not_allowed`).
+- Licence tokens are refused: decision models are never a managed service.
+- With auth off (a self-host with no key store), the configured provider that
+  lists the model serves it with its configured key, which there is the
+  operator's own.
+
+Decisions never use conditional routes, model fallbacks, failover, retries or
+the mirror. Vendor errors map onto the usual error envelope, with
+`x-agentcc-upstream-status` set: a rejected key is `403 provider_key_rejected`,
+`429` and `503 provider_overloaded` pass on `Retry-After`, timeouts are `504
+gateway_timeout`, and a vendor's `400`/`422` text is passed on only when it
+echoes neither the key nor the request's content. Organization calls are
+request-logged with the question IDs and types, the state's size, the answers
+and the usage; full bodies only when body logging is on and privacy mode
+allows. Spans are evaluator spans carrying the format, question count and
+question types, never the state or the instructions.
+
+**Outbound proxy.** All System One and OpenAI decision calls follow the
+gateway's `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, including configured
+providers, organization providers and internal callers' own keys. Chat
+connections remain direct, even on an OpenAI provider that also serves
+decisions. An organization provider with its own `base_url` keeps its address
+checks: its host must resolve, from the gateway, only to addresses the gateway
+allows. That is checked before every call over HTTP/1.1, including a pooled
+connection: a transient DNS failure fails the request even when that connection
+is live. Over HTTP/2 the check runs whenever a connection is opened; a call on
+an open connection reuses that check. A direct connection (a `NO_PROXY` host)
+is checked again when it is dialled. These checks fail closed to preserve SSRF
+protection. The proxy resolves the host again for itself, so its own egress
+rules still apply.
 
 ---
 

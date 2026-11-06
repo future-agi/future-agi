@@ -7,7 +7,7 @@ describe("FixedTab", () => {
   const defaultProps = {
     tabKey: "traces",
     label: "Trace",
-    icon: "mdi:link-variant",
+    icon: "solar:link-linear",
     shortcut: "1",
     isActive: false,
     onClick: vi.fn(),

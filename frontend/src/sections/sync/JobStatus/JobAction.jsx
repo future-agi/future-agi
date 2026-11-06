@@ -1,4 +1,10 @@
-import { Box, CircularProgress, TableCell, Typography } from "@mui/material";
+import {
+  Box,
+  ButtonBase,
+  CircularProgress,
+  TableCell,
+  Typography,
+} from "@mui/material";
 import React from "react";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
@@ -38,14 +44,9 @@ const JobAction = ({
 
 const DeleteAction = ({ onClick }) => {
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 0.5,
-        flexDirection: "column",
-        alignItems: "center",
-        cursor: "pointer",
-      }}
+    <ButtonBase
+      className="row-hover-action"
+      sx={{ gap: 0.5, flexDirection: "column", borderRadius: 1 }}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
@@ -55,7 +56,7 @@ const DeleteAction = ({ onClick }) => {
       <Typography fontSize={12} fontWeight={400} color="text.primary">
         Delete
       </Typography>
-    </div>
+    </ButtonBase>
   );
 };
 
@@ -69,21 +70,19 @@ const StatusAction = ({ status, onStatusChange, loading, visibility }) => {
       return <CircularProgress size={20} />;
     }
     return status ? (
-      <Iconify color="secondary.light" icon="material-symbols:pause" />
+      <Iconify color="secondary.light" icon="solar:pause-linear" />
     ) : (
-      <Iconify color="secondary.light" icon="material-symbols:resume-outline" />
+      <Iconify color="secondary.light" icon="solar:play-linear" />
     );
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
+    <ButtonBase
+      className="row-hover-action"
+      sx={{
         gap: 0.5,
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
+        borderRadius: 1,
         visibility: visibility ? undefined : "hidden",
       }}
       onClick={(e) => {
@@ -96,7 +95,7 @@ const StatusAction = ({ status, onStatusChange, loading, visibility }) => {
       <Typography fontSize={12} fontWeight={400} color="text.primary">
         {status ? "Pause" : "Resume"}
       </Typography>
-    </div>
+    </ButtonBase>
   );
 };
 

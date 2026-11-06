@@ -18,7 +18,7 @@ export default function LocalScaffoldCard({ template }) {
 
   return (
     <SectionCard title={LOCAL_CARD.title} subtitle={LOCAL_CARD.subtitle}>
-      <Stack sx={{ p: 2.5 }} spacing={0}>
+      <Stack sx={{ p: 1.5 }} spacing={0}>
         {steps.map((step, i) => (
           <Stack key={step.n} direction="row" spacing={1.75}>
             <Stack alignItems="center" sx={{ flexShrink: 0 }}>
@@ -26,7 +26,7 @@ export default function LocalScaffoldCard({ template }) {
                 sx={{
                   width: 24, height: 24, borderRadius: "50%", display: "grid", placeItems: "center",
                   border: "1px solid", borderColor: "divider",
-                  typography: "s3", fontWeight: "fontWeightBold", color: "text.secondary",
+                  typography: "s3", fontWeight: 500, color: "text.secondary",
                 }}
               >
                 {step.n}
@@ -36,7 +36,7 @@ export default function LocalScaffoldCard({ template }) {
               )}
             </Stack>
             <Box sx={{ flex: 1, minWidth: 0, pb: i < steps.length - 1 ? 2.25 : 0 }}>
-              <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
                 {step.title}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
@@ -48,7 +48,7 @@ export default function LocalScaffoldCard({ template }) {
         ))}
       </Stack>
       <Divider />
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.75 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1.25 }}>
         <Iconify icon="solar:book-linear" width={14} sx={{ color: "text.subtitle" }} />
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
           Not installed?{" "}
@@ -57,7 +57,7 @@ export default function LocalScaffoldCard({ template }) {
           </Box>
         </Typography>
         {/* TODO: point at the CLI docs URL once it exists. */}
-        <Button size="small" disabled sx={{ typography: "s3", fontWeight: "fontWeightBold", color: "text.secondary" }}>
+        <Button size="small" color="inherit" disabled>
           Docs
         </Button>
       </Stack>

@@ -93,9 +93,6 @@ const PersonaView = ({
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "38px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"
@@ -107,19 +104,11 @@ const PersonaView = ({
           <Button
             variant="contained"
             color="primary"
-            sx={{
-              padding: "8px 12px",
-              borderRadius: "4px",
-              height: "38px",
-            }}
             startIcon={
               <Iconify
-                icon="octicon:plus-24"
+                width={20}
+                icon="solar:add-linear"
                 color="background.paper"
-                sx={{
-                  width: "20px",
-                  height: "20px",
-                }}
               />
             }
             disabled={

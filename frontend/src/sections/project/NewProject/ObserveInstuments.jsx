@@ -1,4 +1,5 @@
 import React from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Box,
   LinearProgress,
@@ -6,15 +7,10 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  useTheme,
+  Tab,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 
 import InstructionCodeCopy from "./InstructionCodeCopy";
 
@@ -26,8 +22,6 @@ const ObserveInstruments = ({
   languageTab,
   onLanguageChange,
 }) => {
-  const theme = useTheme();
-
   const tabOptions = [
     { label: "Python", value: "python", disabled: false },
     { label: "TypeScript", value: "typescript", disabled: false },
@@ -156,24 +150,15 @@ const ObserveInstruments = ({
                     <AccordionDetails sx={{ minWidth: 0 }}>
                       <Box sx={{ minWidth: 0 }}>
                         {filteredTabs.length > 0 && (
-                          <TabWrapper sx={{ alignSelf: "flex-start" }}>
-                            <CustomTabs
-                              textColor="primary"
+                          <Box sx={{ mb: 1.5 }}>
+                            <SegmentedTabs
                               value={effectiveLanguage}
                               onChange={(event, newValue) =>
                                 onLanguageChange(newValue)
                               }
-                              TabIndicatorProps={{
-                                style: {
-                                  backgroundColor: theme.palette.primary.main,
-                                  opacity: 0.08,
-                                  height: "100%",
-                                  borderRadius: "8px",
-                                },
-                              }}
                             >
                               {filteredTabs.map((tab) => (
-                                <CustomTab
+                                <Tab
                                   key={`${key}-${tab.value}`}
                                   label={tab.label}
                                   value={tab.value}
@@ -182,8 +167,8 @@ const ObserveInstruments = ({
                                   }
                                 />
                               ))}
-                            </CustomTabs>
-                          </TabWrapper>
+                            </SegmentedTabs>
+                          </Box>
                         )}
                         <Box
                           sx={{
@@ -200,7 +185,7 @@ const ObserveInstruments = ({
                             },
                             "&::-webkit-scrollbar-thumb": {
                               backgroundColor: "var(--scrollbar-thumb)",
-                              borderRadius: "3px",
+                              borderRadius: "4px",
                             },
                             "&::-webkit-scrollbar-thumb:hover": {
                               backgroundColor: "var(--scrollbar-thumb)",

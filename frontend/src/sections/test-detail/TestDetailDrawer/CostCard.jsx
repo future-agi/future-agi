@@ -35,7 +35,7 @@ const CostCard = ({
           alignItems: "center",
           backgroundColor: iconBgColor,
           padding: 0.5,
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       >
         <SvgColor

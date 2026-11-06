@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
 import { STATUS_META, runStateFor } from "../runs.constants";
 
 describe("STATUS_META", () => {
-  it("colours the header's mixed-result Completed green, same as a finished run", () => {
-    expect(STATUS_META.completed.color).toBe(BUILD_TONES.green);
-    expect(STATUS_META.completed.color).toBe(STATUS_META.finished.color);
+  it("gives the header's mixed-result Completed the same role as a finished run", () => {
+    expect(STATUS_META.completed.role).toBe(STATUS_META.finished.role);
   });
 
-  it("keeps an all-failed run red", () => {
-    expect(STATUS_META.failed.color).toBe(BUILD_TONES.red);
+  it("keeps an all-failed run in the danger role", () => {
+    expect(STATUS_META.failed.role).toBe("danger");
   });
 });
 

@@ -132,7 +132,7 @@ const MemberRow = React.memo(
               size="small"
               label="Role"
               showClear={false}
-              sx={{ flex: 1.5, minWidth: 110, borderRadius: 0.5 }}
+              sx={{ flex: 1.5, minWidth: 110, borderRadius: "4px" }}
               options={roleOptions}
             />
           )}
@@ -655,7 +655,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               fullWidth
               sx={{
                 "& .MuiOutlinedInput-root": {
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   bgcolor: "background.paper",
                 },
               }}
@@ -774,6 +774,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           )}
 
           <LoadingButton
+            size="large"
             fullWidth
             type="submit"
             color="primary"
@@ -781,7 +782,6 @@ const SetupOrganization = ({ getStarted = false }) => {
             disabled={!IsOrgFormValid}
             loading={isFetchingInitialData || isCreating}
             sx={{
-              borderRadius: 0.5,
               mx: getStarted && "auto",
               maxWidth: "100%",
             }}
@@ -801,7 +801,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"15px"}
+              fontSize={"13px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now
@@ -821,7 +821,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -832,7 +832,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -871,7 +871,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   helperText={error?.message}
                   sx={{
                     backgroundColor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                 />
               )}
@@ -895,7 +895,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -906,7 +906,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -930,7 +930,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               ))}
             </Stack>
             <LoadingButton
-              sx={{ borderRadius: 0.5 }}
+              size="large"
               variant="contained"
               loading={isSavingUserData}
               disabled={isSavingUserData || (!roleValue && !customRoleValue)}
@@ -972,7 +972,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -983,7 +983,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -1007,7 +1007,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -1018,7 +1018,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",

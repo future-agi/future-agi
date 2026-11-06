@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 // Standalone's stack for inspectManagedMock (lib/managed-mock.ts), used only
 // when E2E_STACK=standalone (bin/e2e targets docker-compose.yml +
 // e2e/stack/docker-compose.standalone-e2e.yml, project futureagi-e2e-standalone).
@@ -23,7 +24,7 @@ import { containerEnvironment, gatewayFile, mockFile, requiredMockValues, requir
 
 // docker-compose.yml app: the gateway, the API it syncs from and Temporal share the container.
 const STANDALONE: MockTopology = { gateway: 'http://127.0.0.1:8080', controlPlane: 'http://127.0.0.1:8000',
-  temporal: '127.0.0.1:7233', settingsModule: 'tfc.settings.settings' };
+  temporal: '127.0.0.1:7233', settingsModule: 'tfc.settings.e2e' };
 
 export function validateStandaloneAppEnvironment(env: Record<string, string>, evalBackground: boolean): void {
   // One container runs the gateway and the workers, so the strict checks always apply.
@@ -45,6 +46,13 @@ export function standaloneMockStack(evalBackground: boolean): MockStack {
       ['postgres', '5432/tcp', E2E.pgUrl], ['clickhouse', '8123/tcp', E2E.chUrl],
     ],
     sources: [
+      ...([
+        ['settings_e2e.py', '/app/backend/tfc/settings/e2e.py'],
+        ['urls_e2e.py', '/app/backend/tfc/urls_e2e.py'],
+        ['e2e_clean_signup.py', '/app/backend/accounts/views/e2e_clean_signup.py'],
+        ['e2e_feed_issue.py', '/app/backend/tracer/views/e2e_feed_issue.py'],
+      ] as [string, string][]).map(([source, destination]): [string, string, string] =>
+        ['app', destination, fileURLToPath(new URL(`../stack/backend/${source}`, import.meta.url))]),
       ['app', '/etc/futureagi/secrets/agentcc.yaml', gatewayFile],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
     ],

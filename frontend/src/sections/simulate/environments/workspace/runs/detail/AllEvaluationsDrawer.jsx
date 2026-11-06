@@ -153,7 +153,7 @@ export default function AllEvaluationsDrawer({
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ p: 3, pb: 1 }}>
           <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold", pr: 4 }}
+            sx={{ typography: "m2", fontWeight: 500, pr: 4 }}
           >
             All Evaluations
           </Typography>
@@ -180,7 +180,7 @@ export default function AllEvaluationsDrawer({
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               onClick={() => onAddEvaluations?.()}
             >
-              Add Evaluations
+              Add evaluations
             </Button>
           </Stack>
         </Box>

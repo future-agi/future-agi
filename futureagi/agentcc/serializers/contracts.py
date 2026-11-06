@@ -290,31 +290,26 @@ class GatewayMutationResponseSerializer(serializers.Serializer):
 
 
 class GatewayConfigPatchRequestSerializer(serializers.Serializer):
-    guardrails = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    routing = serializers.DictField(child=serializers.JSONField(), required=False)
-    cache = serializers.DictField(child=serializers.JSONField(), required=False)
-    rate_limiting = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    budgets = serializers.DictField(child=serializers.JSONField(), required=False)
-    cost_tracking = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    ip_acl = serializers.DictField(child=serializers.JSONField(), required=False)
-    alerting = serializers.DictField(child=serializers.JSONField(), required=False)
-    privacy = serializers.DictField(child=serializers.JSONField(), required=False)
-    tool_policy = serializers.DictField(
-        child=serializers.JSONField(), required=False
-    )
-    mcp = serializers.DictField(child=serializers.JSONField(), required=False)
-    a2a = serializers.DictField(child=serializers.JSONField(), required=False)
-    audit = serializers.DictField(child=serializers.JSONField(), required=False)
+    guardrails = serializers.DictField(child=JsonValueField(), required=False)
+    routing = serializers.DictField(child=JsonValueField(), required=False)
+    cache = serializers.DictField(child=JsonValueField(), required=False)
+    rate_limiting = serializers.DictField(child=JsonValueField(), required=False)
+    budgets = serializers.DictField(child=JsonValueField(), required=False)
+    cost_tracking = serializers.DictField(child=JsonValueField(), required=False)
+    ip_acl = serializers.DictField(child=JsonValueField(), required=False)
+    alerting = serializers.DictField(child=JsonValueField(), required=False)
+    privacy = serializers.DictField(child=JsonValueField(), required=False)
+    tool_policy = serializers.DictField(child=JsonValueField(), required=False)
+    mcp = serializers.DictField(child=JsonValueField(), required=False)
+    a2a = serializers.DictField(child=JsonValueField(), required=False)
+    audit = serializers.DictField(child=JsonValueField(), required=False)
+    # Object values only, on purpose: the section's one key is the
+    # `overrides` map (the gateway's ModelDatabaseOrgConfig, and
+    # OrgConfigSerializer.validate_model_database requires an object).
     model_database = serializers.DictField(
         child=serializers.JSONField(), required=False
     )
-    model_map = serializers.DictField(child=serializers.JSONField(), required=False)
+    model_map = serializers.DictField(child=JsonValueField(), required=False)
 
 
 class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
@@ -344,7 +339,7 @@ class GatewayPlaygroundTestRequestSerializer(serializers.Serializer):
 
 class GatewayBudgetSetRequestSerializer(serializers.Serializer):
     level = serializers.CharField()
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayBudgetRemoveRequestSerializer(serializers.Serializer):
@@ -353,7 +348,7 @@ class GatewayBudgetRemoveRequestSerializer(serializers.Serializer):
 
 class GatewayBatchSubmitRequestSerializer(serializers.Serializer):
     requests = serializers.ListField(
-        child=serializers.DictField(child=serializers.JSONField())
+        child=serializers.DictField(child=JsonValueField())
     )
     max_concurrency = serializers.IntegerField(required=False, min_value=1, default=5)
 
@@ -364,7 +359,7 @@ class GatewayBatchRequestSerializer(serializers.Serializer):
 
 class GatewayMCPServerUpdateRequestSerializer(serializers.Serializer):
     server_id = serializers.CharField()
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
@@ -372,13 +367,13 @@ class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
 
 
 class GatewayMCPGuardrailsUpdateRequestSerializer(serializers.Serializer):
-    config = serializers.DictField(child=serializers.JSONField())
+    config = serializers.DictField(child=JsonValueField())
 
 
 class GatewayMCPToolTestRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     arguments = serializers.DictField(
-        child=serializers.JSONField(), required=False, default=dict
+        child=JsonValueField(), required=False, default=dict
     )
 
 

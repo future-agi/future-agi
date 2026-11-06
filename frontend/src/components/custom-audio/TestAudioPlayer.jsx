@@ -483,7 +483,7 @@ const TestAudioPlayer = ({
       onMouseDown={(event) => event.stopPropagation()}
     >
       {showFileName && (
-        <Typography sx={{ fontSize: "14px", ml: "5px", color: "text.primary" }}>
+        <Typography sx={{ fontSize: "13px", ml: "5px", color: "text.primary" }}>
           {audioData?.fileName}
         </Typography>
       )}
@@ -511,7 +511,7 @@ const TestAudioPlayer = ({
             minWidth={0}
           >
             <Iconify
-              icon="mdi:alert-circle-outline"
+              icon="solar:danger-circle-linear"
               sx={{
                 width: 16,
                 height: 16,
@@ -545,7 +545,6 @@ const TestAudioPlayer = ({
             title="Reload"
             sx={{
               flexShrink: 0,
-              p: 0.5,
               "&:hover": {
                 backgroundColor: "error.lighter",
               },
@@ -575,11 +574,11 @@ const TestAudioPlayer = ({
             onMouseDown={(event) => {
               event.stopPropagation();
             }}
-            sx={{ padding: "8px", color: "text.primary" }}
+            sx={{ color: "text.primary" }}
             disabled={isLoading}
           >
             <Icon
-              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              icon={isPlaying ? "solar:pause-linear" : "solar:play-linear"}
               width={20}
               height={20}
               style={{ pointerEvents: "none" }}
@@ -665,11 +664,15 @@ const TestAudioPlayer = ({
                 // @ts-ignore
                 window.__audioClick = true;
               }}
-              sx={{ padding: "8px", color: "text.primary" }}
+              sx={{ color: "text.primary" }}
               disabled={isLoading}
             >
               <Icon
-                icon={isMuted ? "lucide:volume-x" : "lucide:volume-2"}
+                icon={
+                  isMuted
+                    ? "solar:volume-cross-linear"
+                    : "solar:volume-loud-linear"
+                }
                 width={22}
                 height={22}
                 style={{ pointerEvents: "none" }}

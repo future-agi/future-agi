@@ -3,6 +3,7 @@ from typing import Container
 import numpy as np
 
 from simulate.models import CallExecution, SimulateEvalConfig
+from simulate.selectors.runs import user_executions
 
 
 def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
@@ -69,7 +70,7 @@ def _get_completed_call_executions_for_agent_version(agent_version):
 def _get_completed_call_executions(run_test, execution_id):
     """Get completed call executions with eval outputs"""
     base_query = {
-        "test_execution__run_test": run_test,
+        "test_execution__in": user_executions().filter(run_test=run_test),
         "status": "completed",
         "eval_outputs__isnull": False,
     }

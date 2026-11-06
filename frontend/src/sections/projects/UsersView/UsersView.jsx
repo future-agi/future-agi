@@ -41,9 +41,14 @@ const PrimaryGraph = lazy(
   () => import("../LLMTracing/GraphSection/PrimaryGraph"),
 );
 
+// Instant eval / Insights
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { USER_FILTER_FIELDS } from "../observeFilterConfig";
+import { dateLabel, viewSeed } from "../observeScope";
+
 // User-specific
 import useUsersStore from "./Store/usersStore";
-import { getUsersColumnConfig } from "./common";
+import { buildUsersRequestFilters, getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
 import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
@@ -56,55 +61,6 @@ import {
   getDefaultObserveListDateRangeForMode,
 } from "../dateRangeDefaults";
 
-// ---------------------------------------------------------------------------
-// User filter fields for TraceFilterPanel
-// ---------------------------------------------------------------------------
-const USER_FILTER_FIELDS = [
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  {
-    id: "num_traces",
-    name: "No. of Traces",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_sessions",
-    name: "No. of Sessions",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_cost",
-    name: "Total Cost ($)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_tokens",
-    name: "Total Tokens",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "avg_trace_latency",
-    name: "Avg Latency / Trace (ms)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_llm_calls",
-    name: "No. of LLM Calls",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "eval_score",
-    name: "Evals Pass Rate (%)",
-    category: "system",
-    type: "number",
-  },
-];
-
 // Default filter and date range
 const defaultFilterBase = [
   {
@@ -115,12 +71,9 @@ const defaultFilterBase = [
 
 const getDefaultDateRange = () => getDefaultObserveListDateRangeForMode(false);
 
-const getDateLabel = (dateFilter) => {
-  if (!dateFilter) return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
-  return dateFilter.dateOption === "Custom"
-    ? "Custom range"
-    : dateFilter.dateOption || `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
-};
+// "Past 7D", "Today", "Custom range": the toolbar's words for the date.
+export const getDateLabel = (dateFilter) =>
+  dateLabel(dateFilter?.dateOption || DEFAULT_OBSERVE_LIST_DATE_OPTION);
 
 const noopExtraProperties = () => ({});
 
@@ -271,6 +224,27 @@ const UsersView = ({
     return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the users the grid lists (UsersGrid sends
+  // buildUsersRequestFilters(finalFilters), date window included).
+  // Both open with the view's date preset and filters, editable there.
+  const userViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "users",
+        filters: buildUsersRequestFilters(finalFilters),
+        dateFilter,
+        search: searchQuery,
+      }),
+    [finalFilters, dateFilter, searchQuery],
+  );
+  // Evaluate → Ask a question: the Ask page, about the users in view.
+  const openAsk = useCallback(() => {
+    navigate(askLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
   // --- Row height ---
   const [cellHeight, setCellHeight] = useUrlState("userCellHeight", "Short");
 
@@ -875,6 +849,8 @@ const UsersView = ({
               }
             : undefined
         }
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
       {/* Filter chips. Inject `display_name` so chips render the column's

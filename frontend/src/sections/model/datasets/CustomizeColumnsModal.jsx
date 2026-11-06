@@ -81,7 +81,13 @@ const CustomizeColumnsModal = ({
   };
 
   return (
-    <Dialog open={open} fullWidth maxWidth="xs" onClose={onClose}>
+    <Dialog
+      open={open}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      onClose={onClose}
+    >
       <DialogTitle
         sx={{
           display: "flex",
@@ -90,11 +96,11 @@ const CustomizeColumnsModal = ({
         }}
       >
         <Box sx={{ gap: 2, display: "flex", alignItems: "center" }}>
-          <Iconify icon="ic:round-dashboard-customize" />
+          <Iconify icon="solar:widget-4-linear" />
           Customize columns
         </Box>
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent>
@@ -189,12 +195,7 @@ const ColumnItem = ({ column, id, enabled, setEnabled }) => {
 
   return (
     <Paper
-      sx={{
-        borderRadius: 0,
-        border: "none",
-        paddingX: "12px",
-        paddingY: "18px",
-      }}
+      sx={{ paddingX: "12px", paddingY: "18px" }}
       elevation={1}
       ref={setNodeRef}
       style={style}
@@ -214,13 +215,13 @@ const ColumnItem = ({ column, id, enabled, setEnabled }) => {
             sx={{ padding: 0 }}
             color="secondary"
           />
-          <Typography fontSize="14px" fontWeight={400} color="text.primary">
+          <Typography fontSize="13px" fontWeight={400} color="text.primary">
             {column?.label}
           </Typography>
         </Box>
         <Box {...listeners} {...attributes}>
           <Iconify
-            icon="heroicons:bars-2-16-solid"
+            icon="solar:hamburger-menu-linear"
             sx={{
               color: "text.disabled",
               cursor: isDragging ? "grabbing" : "grab",

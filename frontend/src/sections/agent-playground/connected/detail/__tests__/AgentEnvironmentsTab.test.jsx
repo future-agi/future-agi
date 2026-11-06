@@ -157,7 +157,10 @@ describe("AgentEnvironmentsTab", () => {
     envState.current = { isLoading: false, isError: false, data: [] };
     renderTab();
     expect(
-      screen.getByText("No environments test this agent yet"),
+      screen.getByText("Not used in any environment yet"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
     ).toBeInTheDocument();
   });
 

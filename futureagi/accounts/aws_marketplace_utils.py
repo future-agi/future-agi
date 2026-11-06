@@ -174,6 +174,18 @@ def _create_user_account(email, full_name, aws_customer):
         organization_role=OrganizationRoles.OWNER,
     )
 
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+
+    OrganizationMembership.objects.get_or_create(
+        user=user,
+        organization=aws_customer.organization,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
     return user, generated_password
 
 

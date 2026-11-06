@@ -16,13 +16,13 @@ import {
   Stack,
   TextField,
   Typography,
-  alpha,
 } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import PanelSection from "src/components/section";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
@@ -111,15 +111,9 @@ const providerCredentialName = (connector) =>
 
 function Section({ title, description, children }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Typography variant="subtitle2">{title}</Typography>
-      {description && (
-        <Typography variant="caption" color="text.secondary">
-          {description}
-        </Typography>
-      )}
-      <Box sx={{ mt: 1.5 }}>{children}</Box>
-    </Paper>
+    <PanelSection variant="panel" title={title} description={description}>
+      {children}
+    </PanelSection>
   );
 }
 
@@ -134,24 +128,20 @@ function SourceTile({ icon, title, description, selected, onSelect }) {
         alignItems: "flex-start",
         // ButtonBase centres its content; these tiles read as labelled rows, not buttons.
         justifyContent: "flex-start",
-        gap: 1.25,
-        p: 1.75,
-        borderRadius: 1,
+        gap: 1.5,
+        p: 1.5,
+        borderRadius: "8px",
         textAlign: "left",
         border: 1,
-        borderColor: selected ? "accent.brand" : "divider",
-        bgcolor: selected
-          ? alpha(theme.palette.primary.main, 0.08)
-          : "transparent",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "transparent",
         transition: theme.transitions.create([
           "border-color",
           "background-color",
         ]),
         "&:hover": {
-          borderColor: selected ? "accent.brand" : "text.disabled",
-          bgcolor: selected
-            ? alpha(theme.palette.primary.main, 0.12)
-            : "action.hover",
+          borderColor: selected ? "text.primary" : "text.disabled",
+          bgcolor: selected ? "action.selected" : "action.hover",
         },
       })}
     >
@@ -161,7 +151,7 @@ function SourceTile({ icon, title, description, selected, onSelect }) {
         sx={{
           mt: 0.25,
           flexShrink: 0,
-          color: selected ? "accent.brand" : "text.secondary",
+          color: selected ? "text.primary" : "text.secondary",
         }}
       />
       <Box sx={{ minWidth: 0 }}>
@@ -646,7 +636,7 @@ export default function HarnessCreate() {
         <Box sx={{ width: { md: 280 }, flexShrink: 0 }}>
           <Typography
             variant="body2"
-            fontWeight={600}
+            fontWeight={500}
             sx={{ fontFamily: "monospace", wordBreak: "break-all" }}
           >
             {item.environment_name}
@@ -803,7 +793,7 @@ export default function HarnessCreate() {
                 size="small"
                 color="inherit"
                 onClick={() => navigate(paths.dashboard.simulate.harness.root)}
-                startIcon={<Iconify icon="eva:arrow-back-fill" width={18} />}
+                startIcon={<Iconify icon="solar:arrow-left-linear" width={18} />}
                 sx={{ color: "text.secondary", px: 1, ml: -1, minWidth: 0 }}
               >
                 All environments
@@ -861,7 +851,7 @@ export default function HarnessCreate() {
                       onSelect={() => selectSource("upload")}
                     />
                     <SourceTile
-                      icon="mdi:github"
+                      icon="simple-icons:github"
                       title="GitHub repository"
                       description="Check out a branch the runner can reach."
                       selected={sourceMode === "github"}
@@ -877,7 +867,7 @@ export default function HarnessCreate() {
                         alignItems="center"
                         sx={{
                           p: 1.5,
-                          borderRadius: 1,
+                          borderRadius: "8px",
                           border: 1,
                           borderColor: "divider",
                           bgcolor: "background.neutral",
@@ -886,10 +876,10 @@ export default function HarnessCreate() {
                         <Iconify
                           icon="solar:folder-with-files-bold"
                           width={24}
-                          sx={{ color: "accent.brand", flexShrink: 0 }}
+                          sx={{ color: "text.secondary", flexShrink: 0 }}
                         />
                         <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography variant="body2" fontWeight={600} noWrap>
+                          <Typography variant="body2" fontWeight={500} noWrap>
                             {uploadedSource.name}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -932,7 +922,7 @@ export default function HarnessCreate() {
                           gap: 0.75,
                           px: 2,
                           py: 4,
-                          borderRadius: 1,
+                          borderRadius: "8px",
                           border: "1px dashed",
                           borderColor: "divider",
                           cursor:
@@ -944,7 +934,7 @@ export default function HarnessCreate() {
                             "background-color",
                           ]),
                           "&:hover": {
-                            borderColor: "accent.brand",
+                            borderColor: "text.secondary",
                             bgcolor: "action.hover",
                           },
                         })}
@@ -1058,7 +1048,7 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
-              <Paper variant="outlined" sx={{ p: 2 }}>
+              <PanelSection variant="panel">
                 <Stack
                   direction="row"
                   spacing={1.5}
@@ -1215,7 +1205,6 @@ export default function HarnessCreate() {
                           }
                           sx={{
                             px: 0.5,
-                            fontWeight: 400,
                             color: "text.secondary",
                           }}
                         >
@@ -1231,7 +1220,7 @@ export default function HarnessCreate() {
                     )}
                   </Stack>
                 )}
-              </Paper>
+              </PanelSection>
 
               <Section
                 title="Additional environment values"
@@ -1638,21 +1627,21 @@ export default function HarnessCreate() {
               </Stack>
             </Stack>
 
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography variant="subtitle2">What ALK will do</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Every stage runs without operator prompts once the run starts.
-              </Typography>
-              <Stack spacing={1.2} sx={{ mt: 1.5 }}>
+            <PanelSection
+              variant="panel"
+              title="What ALK will do"
+              description="Every stage runs without operator prompts once the run starts."
+            >
+              <Stack spacing={1.5}>
                 {stages.map((stage) => (
                   <Stack
                     key={stage}
                     direction="row"
-                    spacing={1.2}
+                    spacing={1.5}
                     alignItems="center"
                   >
                     <Iconify
-                      icon="solar:record-circle-linear"
+                      icon="solar:circle-linear"
                       color="text.secondary"
                       sx={{ opacity: 0.6 }}
                     />
@@ -1666,7 +1655,7 @@ export default function HarnessCreate() {
                   </Stack>
                 ))}
               </Stack>
-            </Paper>
+            </PanelSection>
           </Box>
         </Stack>
       </Box>

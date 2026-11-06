@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **gateway:** retest fixes for streams, cost, request logs, tools, providers, budgets, guardrails and alerts ([45fa428](https://github.com/future-agi/future-agi/commit/45fa4280e82a9742c64e4b0c4c73617f57a1b14b))
+* **gateway:** retest fixes for streams, cost, request logs, tools, providers, budgets, guardrails and alerts ([7d7a959](https://github.com/future-agi/future-agi/commit/7d7a95900321794fc4a176974bc0c5db3150ddad))
+
+## [1.56.0](https://github.com/future-agi/future-agi/compare/v1.55.0...v1.56.0) (2026-10-27)
+
+
+### Features
+
+* **mcp:** add error feed read tools (TH-8798) ([3330cfa](https://github.com/future-agi/future-agi/commit/3330cfa4424e5fd11c5e6dd84422c531b82041eb))
+
+
+### Bug Fixes
+
+* **observe:** OpenRouter Broadcast list/session fallbacks, users, small costs, pricing, span types [TH-8787] ([8ce2e1c](https://github.com/future-agi/future-agi/commit/8ce2e1c10d3fa4264504c3a340423beb2f09512e))
+* **pricing:** refresh the model catalogue without losing entries or capability flags ([783e3d3](https://github.com/future-agi/future-agi/commit/783e3d3173ffef1dc3a4521300a998b2cb4d8f14))
+
 ## [1.55.0](https://github.com/future-agi/future-agi/compare/v1.54.0...v1.55.0) (2026-10-27)
 
 

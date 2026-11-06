@@ -3,7 +3,6 @@ import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
 function formatFileSize(bytes) {
@@ -14,22 +13,19 @@ function formatFileSize(bytes) {
 }
 
 function getFileIcon(contentType) {
-  if (!contentType) return "mdi:file-outline";
-  if (contentType.startsWith("image/")) return "mdi:file-image-outline";
+  if (!contentType) return "solar:document-text-linear";
+  if (contentType.startsWith("image/")) return "solar:gallery-linear";
   if (contentType === "application/pdf") return "mdi:file-pdf-box";
-  if (contentType === "application/json") return "mdi:code-json";
+  if (contentType === "application/json") return "solar:code-linear";
   if (contentType.includes("spreadsheet") || contentType === "text/csv")
     return "mdi:file-table-outline";
   if (contentType.includes("wordprocessing")) return "mdi:file-word-outline";
   if (contentType === "text/html") return "mdi:language-html5";
   if (contentType === "text/markdown") return "mdi:language-markdown-outline";
-  return "mdi:file-document-outline";
+  return "solar:document-text-linear";
 }
 
 export default function AttachedFileChip({ file, onRemove, readOnly }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   const handleClick = () => {
     if (file.url) {
       window.open(file.url, "_blank", "noopener,noreferrer");
@@ -50,20 +46,14 @@ export default function AttachedFileChip({ file, onRemove, readOnly }) {
         gap: 0.75,
         px: 1.25,
         py: 0.5,
-        borderRadius: "10px",
-        bgcolor: isDark
-          ? alpha(theme.palette.common.white, 0.06)
-          : alpha(theme.palette.common.black, 0.04),
+        borderRadius: "8px",
+        bgcolor: "background.neutral",
         border: "1px solid",
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.08)
-          : alpha(theme.palette.common.black, 0.08),
+        borderColor: "divider",
         cursor: file.url ? "pointer" : "default",
         transition: "background-color 0.15s ease",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.1)
-            : alpha(theme.palette.common.black, 0.07),
+          bgcolor: "action.hover",
         },
         maxWidth: 240,
       }}
@@ -87,7 +77,7 @@ export default function AttachedFileChip({ file, onRemove, readOnly }) {
       </Typography>
       <Typography
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           flexShrink: 0,
         }}
@@ -102,13 +92,12 @@ export default function AttachedFileChip({ file, onRemove, readOnly }) {
             onRemove(file.id);
           }}
           sx={{
-            p: 0.25,
             ml: -0.25,
             color: "text.disabled",
             "&:hover": { color: "text.secondary" },
           }}
         >
-          <Iconify icon="mdi:close" width={14} />
+          <Iconify icon="solar:close-linear" width={14} />
         </IconButton>
       )}
     </Box>

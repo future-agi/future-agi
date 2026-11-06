@@ -441,7 +441,6 @@ export default function ModelOptionsState({
               sx={{
                 borderColor: "divider",
                 color: "text.primary",
-                textTransform: "none",
               }}
             >
               Clear
@@ -452,9 +451,6 @@ export default function ModelOptionsState({
               size="small"
               onClick={onApply}
               disabled={disableActions}
-              sx={{
-                textTransform: "none",
-              }}
             >
               Apply
             </Button>

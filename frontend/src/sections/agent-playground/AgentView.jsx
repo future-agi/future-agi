@@ -59,8 +59,10 @@ function AgentEmptyState() {
   return (
     <EmptyLayout
       icon="/assets/icons/navbar/ic_agents.svg"
-      title="Create your first agent"
-      description="Break down complex tasks into sequential steps that build upon each other."
+      title="No agents yet"
+      description="Build an agent as a graph of steps, each one building on the last, then test it here."
+      link="https://docs.futureagi.com/docs/agent-playground"
+      linkText="Read the docs"
       action={
         <CustomTooltip
           show={!canCreateAgent}
@@ -78,7 +80,7 @@ function AgentEmptyState() {
               variant="contained"
               color="primary"
             >
-              Start creating
+              Create agent
             </LoadingButton>
           </span>
         </CustomTooltip>

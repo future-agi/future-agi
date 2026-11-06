@@ -33,6 +33,7 @@ import { useImprovePromptStore, useRunPromptStoreShallow } from "../../states";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ImprovePrompt = () => {
   const { improvePrompt: data, setImprovePrompt } = useImprovePromptStore();
@@ -42,17 +43,19 @@ const ImprovePrompt = () => {
   };
   const setOpenRunPrompt = useRunPromptStoreShallow((s) => s.setOpenRunPrompt);
   const allColumns = useDatasetColumnConfig(dataset);
+  const covered = useDrawerCovered(Boolean(data));
   return (
     <Drawer
       anchor="right"
       open={Boolean(data)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -430,14 +433,14 @@ const LeftSection = ({
         }}
       >
         <Typography
-          fontWeight={700}
-          sx={{ fontSize: "14px" }}
+          fontWeight={600}
+          sx={{ fontSize: "13px" }}
           color="text.primary"
         >
           Improve AI
         </Typography>
         <IconButton onClick={onClose} size="small">
-          {/* <Iconify icon="mingcute:close-line" /> */}
+          {/* <Iconify icon="solar:close-linear" /> */}
         </IconButton>
       </Box>
       {availableRunPrompt ? (
@@ -485,7 +488,7 @@ const LeftSection = ({
             {promptData && (
               <Box
                 sx={{
-                  backgroundColor: "rgba(147, 143, 163, 0.08)",
+                  backgroundColor: "background.neutral",
                   padding: "8px 10px",
                   borderRadius: "8px",
                   marginLeft: "50px",
@@ -497,14 +500,14 @@ const LeftSection = ({
                     name={"improvement_requirements"}
                   />
                 ) : (
-                  <Typography sx={{ fontSize: "14px" }}>
+                  <Typography sx={{ fontSize: "13px" }}>
                     {promptData}
                   </Typography>
                 )}
                 <Box sx={{ textAlign: "right" }}>
                   {!edit ? (
                     <Iconify
-                      icon="material-symbols:edit"
+                      icon="solar:pen-linear"
                       color="text.secondary"
                       sx={{ cursor: "pointer" }}
                       onClick={() => setEdit(true)}
@@ -521,19 +524,13 @@ const LeftSection = ({
                     >
                       <Button
                         sx={{
-                          padding: "0px 5px",
                           backgroundColor: "action.selected",
                           color: "text.primary",
                         }}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        variant="contained"
-                        color="primary"
-                        sx={{ padding: "0px 5px" }}
-                        type="submit"
-                      >
+                      <Button variant="contained" color="primary" type="submit">
                         Update
                       </Button>
                     </Box>
@@ -554,7 +551,7 @@ const LeftSection = ({
             paddingBottom: "10px",
           }}
         >
-          <Typography sx={{ fontSize: "14px" }}>
+          <Typography sx={{ fontSize: "13px" }}>
             To run the Improvement, It has to be run prompt only.
           </Typography>
         </Box>
@@ -680,8 +677,8 @@ const RightSection = ({
         }}
       >
         <Typography
-          fontWeight={700}
-          sx={{ fontSize: "14px" }}
+          fontWeight={600}
+          sx={{ fontSize: "13px" }}
           color="text.secondary"
         >
           Prompt Improvement
@@ -703,7 +700,7 @@ const RightSection = ({
               disabled={!selectedPrompt?.promptData?.prompt}
               size="small"
             >
-              <Iconify icon="basil:copy-outline" />
+              <Iconify icon="solar:copy-linear" />
             </IconButton>
           </Tooltip>
           <LoadingButton
@@ -718,7 +715,7 @@ const RightSection = ({
             Apply
           </LoadingButton>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </Box>
@@ -733,10 +730,10 @@ const RightSection = ({
           paddingTop: isGenerateVisible && "0px",
           overflow: "auto",
           lineHeight: "24px",
-          fontSize: "14px",
+          fontSize: "13px",
           // paddingBottom: "10px",
           borderRadius: "8px",
-          backgroundColor: "rgba(147, 143, 163, 0.08)",
+          backgroundColor: "background.neutral",
         }}
       >
         {isGenerateVisible ? (
@@ -773,8 +770,8 @@ const AllInputField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "14px",
-            fontWeight: "700",
+            fontSize: "13px",
+            fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
             color: "text.secondary",

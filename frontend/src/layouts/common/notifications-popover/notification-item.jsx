@@ -32,7 +32,6 @@ export default function NotificationItem({ notification }) {
       {notification.avatar_url ? (
         <Avatar
           src={notification.avatar_url}
-          sx={{ bgcolor: "background.neutral" }}
         />
       ) : (
         <Stack
@@ -42,7 +41,6 @@ export default function NotificationItem({ notification }) {
             width: 40,
             height: 40,
             borderRadius: "50%",
-            bgcolor: "background.neutral",
           }}
         >
           <Box
@@ -60,31 +58,33 @@ export default function NotificationItem({ notification }) {
     </ListItemAvatar>
   );
 
+  const renderMeta = (
+    <Stack
+      direction="row"
+      alignItems="center"
+      sx={{ typography: "caption", color: "text.disabled" }}
+      divider={
+        <Box
+          sx={{
+            width: 2,
+            height: 2,
+            bgcolor: "currentColor",
+            mx: 0.5,
+            borderRadius: "50%",
+          }}
+        />
+      }
+    >
+      {fToNow(notification.created_at)}
+      {notification.category}
+    </Stack>
+  );
+
   const renderText = (
     <ListItemText
       disableTypography
       primary={reader(notification.title)}
-      secondary={
-        <Stack
-          direction="row"
-          alignItems="center"
-          sx={{ typography: "caption", color: "text.disabled" }}
-          divider={
-            <Box
-              sx={{
-                width: 2,
-                height: 2,
-                bgcolor: "currentColor",
-                mx: 0.5,
-                borderRadius: "50%",
-              }}
-            />
-          }
-        >
-          {fToNow(notification.created_at)}
-          {notification.category}
-        </Stack>
-      }
+      secondary={renderMeta}
     />
   );
 
@@ -119,7 +119,7 @@ export default function NotificationItem({ notification }) {
         sx={{
           p: 1.5,
           my: 1.5,
-          borderRadius: 1.5,
+          borderRadius: "8px",
           color: "text.secondary",
           bgcolor: "background.neutral",
         }}
@@ -135,6 +135,39 @@ export default function NotificationItem({ notification }) {
     </Stack>
   );
 
+  const fileName = (
+    <Typography
+      variant="subtitle2"
+      component="div"
+      sx={{ color: "text.secondary" }}
+      noWrap
+    >
+      design-suriname-2015.mp3
+    </Typography>
+  );
+
+  const fileMeta = (
+    <Stack
+      direction="row"
+      alignItems="center"
+      sx={{ typography: "caption", color: "text.disabled" }}
+      divider={
+        <Box
+          sx={{
+            mx: 0.5,
+            width: 2,
+            height: 2,
+            borderRadius: "50%",
+            bgcolor: "currentColor",
+          }}
+        />
+      }
+    >
+      <span>2.3 GB</span>
+      <span>30 min ago</span>
+    </Stack>
+  );
+
   const fileAction = (
     <Stack
       spacing={1}
@@ -143,7 +176,7 @@ export default function NotificationItem({ notification }) {
         pl: 1,
         p: 1.5,
         mt: 1.5,
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.neutral",
       }}
     >
@@ -160,37 +193,8 @@ export default function NotificationItem({ notification }) {
       >
         <ListItemText
           disableTypography
-          primary={
-            <Typography
-              variant="subtitle2"
-              component="div"
-              sx={{ color: "text.secondary" }}
-              noWrap
-            >
-              design-suriname-2015.mp3
-            </Typography>
-          }
-          secondary={
-            <Stack
-              direction="row"
-              alignItems="center"
-              sx={{ typography: "caption", color: "text.disabled" }}
-              divider={
-                <Box
-                  sx={{
-                    mx: 0.5,
-                    width: 2,
-                    height: 2,
-                    borderRadius: "50%",
-                    bgcolor: "currentColor",
-                  }}
-                />
-              }
-            >
-              <span>2.3 GB</span>
-              <span>30 min ago</span>
-            </Stack>
-          }
+          primary={fileName}
+          secondary={fileMeta}
         />
 
         <Button size="small" variant="outlined">

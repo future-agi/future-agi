@@ -299,6 +299,15 @@ def test_catalog_exposes_actual_pagination_and_typed_dataset_rows():
     # contract must keep accepting it; cells themselves stay typed.
     assert rows.is_valid({"dataset_id": tool_id, "rows": [{}]})
     assert not rows.is_valid(
+        {"dataset_id": tool_id, "rows": [{"input": "must not be discarded"}]}
+    )
+    assert not rows.is_valid(
+        {
+            "dataset_id": tool_id,
+            "rows": [{"cells": [{"column_name": "input", "values": "typo"}]}],
+        }
+    )
+    assert not rows.is_valid(
         {"dataset_id": tool_id, "rows": [{"cells": [{"value": "hello"}]}]}
     )
     assert not rows.is_valid({"dataset_id": tool_id, "rows": [{"cells": "hello"}]})

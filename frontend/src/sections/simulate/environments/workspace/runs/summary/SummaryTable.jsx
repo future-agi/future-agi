@@ -1,11 +1,11 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Checkbox, Table, TableHead, TableBody,
   TableRow, TableCell,
 } from "@mui/material";
 import { fDateTime, formatDuration } from "src/utils/format-time";
 import CustomTooltip from "src/components/tooltip";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
@@ -31,8 +31,8 @@ export default function SummaryTable({ rows, evals, onOpenRun, selectedIds = [],
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        borderBottomLeftRadius: 12,
-        borderBottomRightRadius: 12,
+        borderBottomLeftRadius: 8,
+        borderBottomRightRadius: 8,
       }}
     >
     {/* Takes the card's remaining height and scrolls both ways under a
@@ -82,7 +82,6 @@ SummaryTable.propTypes = {
 };
 
 function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelect }) {
-  const color = runColor(row.ordinal);
   const clickable = !!row.executionId;
   const open = () => clickable && onOpenRun?.(row);
 
@@ -97,7 +96,7 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
       onClick={open}
       sx={{
         cursor: clickable ? "pointer" : "default",
-        "& td": { border: 0, borderTop: "1px solid", borderColor: "divider", py: 1.25, whiteSpace: "nowrap" },
+        "& td": { border: 0, borderTop: "1px solid", borderColor: "divider", py: 0.5, height: ROW_HEIGHT.twoLine, whiteSpace: "nowrap" },
       }}
     >
       {onToggleSelect && (
@@ -122,10 +121,10 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
         <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
           <Box
             sx={{
-              width: 22, height: 22, borderRadius: 0.75, flexShrink: 0,
+              width: 22, height: 22, borderRadius: "4px", flexShrink: 0,
               display: "grid", placeItems: "center",
-              bgcolor: (t) => alpha(color, t.palette.mode === "dark" ? 0.2 : 0.12),
-              color, typography: "s3", fontWeight: "fontWeightBold",
+              bgcolor: "action.selected", color: runColor(row.ordinal),
+              typography: "s3", fontWeight: 500,
             }}
           >
             {row.ordinal}
@@ -186,7 +185,7 @@ function NumCell({ value, bold, muted }) {
       align="right"
       sx={{
         typography: "s2",
-        fontWeight: bold ? "fontWeightBold" : "fontWeightMedium",
+        fontWeight: bold ? "fontWeightSemiBold" : "fontWeightMedium",
         color: muted ? "text.subtitle" : "text.primary",
         fontVariantNumeric: "tabular-nums",
       }}

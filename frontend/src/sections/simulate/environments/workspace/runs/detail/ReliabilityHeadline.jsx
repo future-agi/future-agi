@@ -15,7 +15,7 @@ function Stat({ label, value, help }) {
       <Box sx={{ minWidth: 0 }}>
         <Typography
           noWrap
-          sx={{ fontSize: 10, color: "text.secondary", lineHeight: 1.2 }}
+          sx={{ typography: "s3", color: "text.secondary" }}
         >
           {label}
         </Typography>
@@ -23,7 +23,7 @@ function Stat({ label, value, help }) {
           noWrap
           sx={{
             typography: "s2",
-            fontWeight: 700,
+            fontWeight: 500,
             fontVariantNumeric: "tabular-nums",
           }}
         >

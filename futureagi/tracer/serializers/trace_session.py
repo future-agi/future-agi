@@ -18,6 +18,10 @@ from tracer.serializers.filters import (
     session_bounded_filter_list_query_param_field,
     session_filter_list_query_param_field,
 )
+from tracer.serializers.usage_coverage import (
+    CaptureCoverageSerializer,
+    CostCoverageSerializer,
+)
 
 
 class TraceSessionSerializer(serializers.ModelSerializer):
@@ -155,6 +159,8 @@ class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
 
 class TraceSessionDetailResultSerializer(serializers.Serializer):
     session_metadata = JsonObjectField()
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     response = serializers.ListField(child=JsonObjectField())
     next = serializers.BooleanField()
 

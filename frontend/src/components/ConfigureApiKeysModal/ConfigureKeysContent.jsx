@@ -80,19 +80,19 @@ export default function ConfigureKeysContent({
                 },
                 "&:hover fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                 },
                 "& input": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                   outline: "none",
                 },
               },
@@ -147,7 +147,8 @@ export default function ConfigureKeysContent({
             startIcon={
               <SvgColor
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                width={2}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }

@@ -3,7 +3,7 @@ import { test, expect } from '../lib/fixtures';
 import { E2E } from '../lib/env';
 import { provisionActor, type UserInfo } from '../lib/provisioning';
 
-test('provisionActor creates an isolated, API-usable tenant', async () => {
+test('provisionActor creates an isolated, API-usable tenant without demo seeding', async ({ probe }) => {
   const req = await request.newContext({ baseURL: E2E.apiUrl });
   const actor = await provisionActor(req, 'selftest');
   expect(actor.organizationId).toMatch(/^[0-9a-f-]{36}$/);
@@ -13,6 +13,14 @@ test('provisionActor creates an isolated, API-usable tenant', async () => {
   // The authed client works and is scoped to the fresh org.
   const info = await actor.api.get<{ organization: { id: string } }>('/accounts/user-info/');
   expect(info.organization.id).toBe(actor.organizationId);
+  // No pending work can populate this supposedly empty tenant later.
+  const rows = await probe.pg<{ projects: string; datasets: string; intents: string }>(`
+    SELECT
+      (SELECT count(*) FROM tracer_project WHERE organization_id = $1) AS projects,
+      (SELECT count(*) FROM model_hub_dataset WHERE organization_id = $1) AS datasets,
+      (SELECT count(*) FROM accounts_demoseedrequest WHERE organization_id = $1) AS intents`,
+    [actor.organizationId]);
+  expect(rows).toEqual([{ projects: '0', datasets: '0', intents: '0' }]);
   // Two actors never share a tenant.
   const actor2 = await provisionActor(req, 'selftest2');
   expect(actor2.organizationId).not.toBe(actor.organizationId);

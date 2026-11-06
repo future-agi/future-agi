@@ -4,7 +4,6 @@ import { Box, Stack, Typography } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { rateTone } from "./format";
 
-const NEUTRAL_BAR = "rgba(161,161,170,.75)";
 // TestExecution.ExecutionStatus: pending, running, evaluating, cancelling,
 // completed, failed, cancelled.
 const IN_PROGRESS = ["pending", "running", "evaluating", "cancelling"];
@@ -48,15 +47,15 @@ export function PassRateCell({ run }) {
               rate == null
                 ? "transparent"
                 : rate < 50
-                  ? "#DC2626"
-                  : NEUTRAL_BAR,
+                  ? "status.danger.solid"
+                  : "status.neutral.solid",
           }}
         />
       </Box>
       <Typography
         sx={{
           typography: "s3",
-          fontWeight: 600,
+          fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
           width: 76,
           textAlign: "right",

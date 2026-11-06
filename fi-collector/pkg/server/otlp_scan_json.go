@@ -515,7 +515,7 @@ func (j *jsonScan) event(sp *spanAccum) error {
 			nameLen += info.decoded
 			return err
 		case "attributes":
-			return j.keyValues(kvOther, nil, nil, 0)
+			return j.keyValues(kvEvent, nil, sp, 0)
 		}
 		return j.skip()
 	})
