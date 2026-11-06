@@ -187,3 +187,148 @@ def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_
     assert auth_client.get(f"{BASE}/{earlier.id}/actors/").json()[
         "actor_models"
     ] == list(harness_actors.ACTOR_MODELS)
+
+
+def _upload(auth_client, environment, name, content, **extra):
+    return auth_client.post(
+        f"{BASE}/{environment.id}/files/",
+        {"file": SimpleUploadedFile(name, content), "kind": "knowledge", **extra},
+        format="multipart",
+    )
+
+
+def test_an_uploaded_file_lands_in_its_kind_s_folder_whatever_path_its_name_carries(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-upload-paths")
+    before = drafts.edit_sides(environment)["environment"]
+    for name in ("../../scenario.json", "a/b.md"):
+        assert (
+            _upload(
+                auth_client,
+                environment,
+                name,
+                b'{"x": 1}' if name.endswith(".json") else b"text",
+            ).status_code
+            == 200
+        )
+    files = drafts.edit_sides(environment)["environment"]
+    added = sorted(set(files) - set(before))
+    assert added == ["knowledge/b.md", "knowledge/scenario.json"]
+    assert all(files[path] == before[path] for path in before)
+    # The service strips a path itself, whatever the transport did to the name first.
+    from simulate.services.harness_actors import upload_environment_file
+
+    upload_environment_file(
+        environment,
+        kind="knowledge",
+        name="..\\..\\../notes/raw.md",
+        content=b"text",
+        user=user,
+        expected_revision=None,
+    )
+    assert "knowledge/raw.md" in drafts.edit_sides(environment)["environment"]
+
+
+def test_a_file_only_the_evaluator_reads_is_never_uploaded_for_an_actor(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-upload-evaluator")
+    refused = _upload(auth_client, environment, "sub_goals.json", b"[]")
+    assert (
+        refused.status_code == 400
+        and "may not be given a file by this name" in refused.json()["message"]
+    )
+
+
+def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_replaces_the_file(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-upload-revision")
+    assert (
+        _upload(
+            auth_client, environment, "policy.md", b"first", expected_revision=0
+        ).status_code
+        == 200
+    )
+    stale = _upload(
+        auth_client, environment, "policy.md", b"stale", expected_revision=0
+    )
+    assert stale.status_code == 409 and stale.json()["error"] == "draft_changed"
+    again = _upload(
+        auth_client, environment, "policy.md", b"second", expected_revision=1
+    )
+    assert again.status_code == 200
+    assert again.json()["knowledge_sources"]["files"].count("knowledge/policy.md") == 1
+    assert (
+        drafts.edit_sides(environment)["environment"]["knowledge/policy.md"]
+        == b"second"
+    )
+
+
+def test_another_workspace_s_environment_takes_no_upload_and_no_limits_here(
+    user, workspace, storage, auth_client
+):
+    from accounts.models.workspace import Workspace
+
+    other = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    environment = _built(user, other, "actor-upload-other-workspace")
+    limits = auth_client.put(
+        f"{BASE}/{environment.id}/actor-limits/", {"limits": {}}, format="json"
+    )
+    assert [
+        _upload(auth_client, environment, "policy.md", b"x").status_code,
+        limits.status_code,
+    ] == [404, 404]
+
+
+def test_a_limits_save_keeps_the_actors(user, workspace, storage, auth_client):
+    environment = _built(user, workspace, "actor-limits-keep")
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    saved = auth_client.put(
+        f"{BASE}/{environment.id}/actor-limits/",
+        {"limits": {"max_active": 2}, "expected_revision": 1},
+        format="json",
+    )
+    assert saved.status_code == 200 and [
+        one["id"] for one in saved.json()["actors"]
+    ] == ["manager"]
+
+
+def test_an_amend_to_a_scenario_whose_actor_the_list_no_longer_has_is_refused_with_the_reason(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    environment = _built(user, workspace, "actor-amend-unknown")
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    first, *rest = suite_documents(drafts.edit_sides(environment)["suite"])
+    drafts.write_suite_edit(
+        environment, [{**first, "actors": [{"id": "manager"}]}, *rest], user=user
+    )
+    monkeypatch.setattr(drafts, "actor_ids", lambda files: set())
+    # An amend cannot set actors; editing another field of that scenario meets the guard.
+    amend = auth_client.post(
+        f"/simulate/api/harness-jobs/{environment.id}/scenarios/amend/",
+        {
+            "changes": [
+                {
+                    "op": "set_field",
+                    "scenario": first["name"],
+                    "field": "tests",
+                    "value": "edited",
+                }
+            ]
+        },
+        format="json",
+    )
+    # An amend answers each change with a receipt: refused, with the reason.
+    [receipt] = amend.json()["receipts"]
+    assert amend.status_code == 200 and receipt["outcome"] == "refused"
+    assert "manager is not an actor in this environment" in receipt["why"]
