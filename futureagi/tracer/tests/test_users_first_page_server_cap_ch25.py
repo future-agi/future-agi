@@ -12,7 +12,9 @@ v2 schema, then reads what the server saw from ``system.query_log``:
 
 * the candidate statement and its survivor statement are logged with
   ``max_execution_time`` = what was left of the request's analytics wall
-  (positive, at most the wall, above the refill's eight-second hint);
+  (positive, at most the wall); the candidate, sent as the wall starts,
+  carries more than the refill's eight-second hint, and the survivor no
+  more than the candidate left it;
 * when one millisecond of that wall is left, the SERVER stops the candidate
   statement and the page raises a read-budget failure instead of publishing.
 """
