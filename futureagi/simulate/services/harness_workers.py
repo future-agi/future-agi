@@ -1043,11 +1043,11 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
         "collection": (
             "unavailable"
             if unavailable
-            else (
-                "partial"
-                if partial
-                else "complete" if (spans or traced_calls) else "no_evidence"
-            )
+            else "partial"
+            if partial
+            else "complete"
+            if (spans or traced_calls)
+            else "no_evidence"
         ),
     }
     if not timeline["workers"] and not any(
