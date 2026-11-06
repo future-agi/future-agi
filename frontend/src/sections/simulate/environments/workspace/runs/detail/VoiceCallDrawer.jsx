@@ -139,6 +139,7 @@ export default function VoiceCallDrawer({
               label: CALL_WORKERS_COPY.tab,
               value: "workers",
               icon: "solar:users-group-two-rounded-linear",
+              keepMounted: true,
               content: (
                 <Box {...ownsArrowKeys} sx={{ outline: "none" }}>
                   <CallWorkersPanel

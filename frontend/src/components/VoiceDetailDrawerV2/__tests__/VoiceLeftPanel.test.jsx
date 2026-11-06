@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
@@ -27,7 +28,47 @@ describe("VoiceLeftPanel path tabs", () => {
   });
 });
 
+// Stands for a panel the reader opened something in.
+function Expandable() {
+  const [open, setOpen] = useState(false);
+  return (
+    <button type="button" aria-pressed={open} onClick={() => setOpen(true)}>
+      expand row
+    </button>
+  );
+}
+
 describe("VoiceLeftPanel extra tabs", () => {
+  it("keeps a tab that asks for it mounted, hidden, while another tab shows", async () => {
+    const user = userEvent.setup();
+    render(
+      <VoiceLeftPanel
+        data={data}
+        hidePathTabs
+        extraTabs={[
+          {
+            label: "Participants",
+            value: "workers",
+            keepMounted: true,
+            content: <Expandable />,
+          },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "expand row" })).toBeNull();
+
+    await user.click(screen.getByText("Participants"));
+    await user.click(screen.getByRole("button", { name: "expand row" }));
+    await user.click(screen.getByText("Transcript"));
+    expect(screen.queryByRole("button", { name: "expand row" })).toBeNull();
+    await user.click(screen.getByText("Participants"));
+
+    expect(screen.getByRole("button", { name: "expand row" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("adds a host's tab after Transcript and shows its content when picked", async () => {
     const user = userEvent.setup();
     render(

@@ -9,6 +9,7 @@ import { useLLMTracingStore } from "src/sections/projects/LLMTracing/states";
 const mocks = vi.hoisted(() => ({
   traces: { projectId: null, traces: [], isError: false },
   hasWorkers: false,
+  voiceTabs: [],
 }));
 
 vi.mock("src/components/iconify", () => ({ default: () => <span /> }));
@@ -79,6 +80,7 @@ vi.mock("src/components/VoiceDetailDrawerV2", async () => {
       hasPrev,
       hasNext,
     }) {
+      mocks.voiceTabs = leftPanelTabs ?? [];
       // Follows a tab its host holds, as VoiceLeftPanel does.
       const [ownTab, setOwnTab] = useState("transcript");
       const tab = leftPanelTab ?? ownTab;
@@ -324,6 +326,14 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
       traceId: "trace-1",
       spanId: "span-7",
     });
+  });
+
+  it("asks the voice panel to keep Participants mounted across tabs, and not Traces", () => {
+    renderVoice();
+    const kept = Object.fromEntries(
+      mocks.voiceTabs.map((tab) => [tab.value, Boolean(tab.keepMounted)]),
+    );
+    expect(kept).toEqual({ traces: false, workers: true });
   });
 
   it("offers no Open in Traces for a trace the call does not list, on chat and voice", async () => {
