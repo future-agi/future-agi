@@ -2671,11 +2671,11 @@ function SealedCopyOffer({ providerName, onSave }) {
                   toolCodeUploaded: true,
                   toolCodeFiles: files.map((f) => f.name),
                 },
-                "Testing a sealed copy — its tools answer from the seeded world.",
+                "Testing a simulated copy — its tools answer from the seeded world.",
               )
             }
           >
-            Use the sealed copy
+            Use the simulated copy
           </Button>
         </Box>
       )}

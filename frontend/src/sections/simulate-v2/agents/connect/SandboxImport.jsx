@@ -49,7 +49,7 @@ export default function SandboxImport({
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            Test a sealed copy instead
+            Test a simulated copy instead
           </Typography>
           <Typography
             component="div"

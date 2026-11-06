@@ -186,7 +186,7 @@ export const toolReachOf = (tool, { agent, calls }) => {
     return {
       kind: "blocked",
       label: "Agent can't see it",
-      tip: `${agent.name || "The agent"} runs live, so it only has the tools set up where it runs. Add this MCP server to the agent there, or test a sealed copy from the agent's Connections.`,
+      tip: `${agent.name || "The agent"} runs live, so it only has the tools set up where it runs. Add this MCP server to the agent there, or test a simulated copy from the agent's Connections.`,
     };
   }
   return { kind: "offered", label: "Offered to the agent", tip: `Runs give ${agent.name || "the agent"} this tool here. Its own setup doesn't change.` };

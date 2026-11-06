@@ -195,7 +195,7 @@ export default function TemplateBuildPanel({
                 sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
               />
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {`${agent.name} is tested live and calls its own tools; this world only grades it. Test a sealed copy for simulated tools.`}
+                {`${agent.name} is tested live and calls its own tools; this world only grades it. Test a simulated copy for simulated tools.`}
               </Typography>
             </Stack>
           )}
