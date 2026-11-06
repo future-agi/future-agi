@@ -1652,9 +1652,9 @@ class ConditionalColumnView(APIView):
             else:
                 return None, None
 
-        except LiteralSpeechMediaVariableError:
-            # Surface as the row's error instead of an empty result.
-            raise
+        except LiteralSpeechMediaVariableError as e:
+            # Report it as this row's error instead of an empty result.
+            return str(e), {"reason": str(e)}
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error processing branch: {str(e)}")
