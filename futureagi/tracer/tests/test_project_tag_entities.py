@@ -55,7 +55,10 @@ class _Span:
         self.end_time = self.start_time + timedelta(milliseconds=20)
         self.tags = list(tags or [])
         self.deleted = False
-        self.service_name = service_name
+        # The span adapter takes service_name from the OTel resource.
+        self.resource_attributes = (
+            {"service.name": service_name} if service_name else {}
+        )
 
 
 def _trace_row(project, trace_id, tags=(), created_at=None):
