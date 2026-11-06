@@ -14,11 +14,13 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "5"
+RULES_VERSION = "6"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
 Finding = Literal["passed", "failed", "limited", "not_applicable", "not_run"]
+# The four kinds of repair a blocker sends the user to.
+FixCategory = Literal["startup", "message_mapping", "tool_routing", "evidence"]
 # An area, and the answer, read as their worst row.
 WORST_FIRST: tuple[Status, ...] = (
     "blocked",
@@ -114,6 +116,7 @@ class FixRecheck(TypedDict):
 
 class Fix(TypedDict):
     type: str
+    category: FixCategory | None
     target: str | None
     action: str
     would: str
@@ -137,6 +140,8 @@ class RowView(TypedDict):
     evidence: list[EvidenceCheck]
     checked_at: str | None
     fix: Fix | None
+    # What the status means for the cases, their spend and their independence.
+    consequence: str
 
 
 @dataclass(frozen=True)
