@@ -23,10 +23,11 @@ const usageLines = (rows, name) => {
     const key = `${one.actor}\u0000${one.model || ""}`;
     groups.set(key, [...(groups.get(key) || []), one]);
   }
-  const lines = [...groups.values()].map((some) =>
-    C.usageBy(name(some[0].actor), some[0].model, C.usage(...sum(some))),
-  );
-  return [...lines, C.usageTotal(C.usage(...sum(rows)))];
+  const lines = [...groups].map(([key, some]) => ({
+    key,
+    text: C.usageBy(name(some[0].actor), some[0].model, C.usage(...sum(some))),
+  }));
+  return [...lines, { key: "all", text: C.usageTotal(C.usage(...sum(rows))) }];
 };
 
 // A trial's world changes per participant (the agent and each actor), and what each actor chose. Kept apart:
@@ -124,8 +125,8 @@ export default function TrialChangesPanel({ trialState }) {
             {C.usageHeading}
           </Typography>
           {usageLines(usage, name).map((line) => (
-            <Typography key={line} sx={quiet}>
-              {line}
+            <Typography key={line.key} sx={quiet}>
+              {line.text}
             </Typography>
           ))}
         </Box>
