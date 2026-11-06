@@ -3848,7 +3848,8 @@ TTS_UPLOAD = (
     "upload_audio_to_s3"
 )
 TTS_AUDIO_VARIABLE_ERROR = (
-    "openai/tts-1 speaks text only. Remove the audio column variable from the prompt."
+    'openai/tts-1 speaks text only. Remove the audio column variable "Recording" '
+    "from the prompt."
 )
 TTS_ORG_KEY = "sk-th2356-org-level-synthetic"
 TTS_WORKSPACE_KEY = "sk-th2356-workspace-level-synthetic"
@@ -4115,7 +4116,7 @@ class TestLiteralTTSScriptRoutes:
 
     # -- Audio-column variables (TTS-01) ------------------------------------
 
-    def _recording_column(self, dataset, row):
+    def _recording_column(self, dataset, row, value="https://media.example/recording.wav"):
         recording = Column.objects.create(
             name="Recording",
             dataset=dataset,
@@ -4124,19 +4125,30 @@ class TestLiteralTTSScriptRoutes:
         )
         dataset.column_order.append(str(recording.id))
         dataset.save()
-        Cell.objects.create(
-            dataset=dataset,
-            column=recording,
-            row=row,
-            value="https://media.example/recording.wav",
-        )
+        Cell.objects.create(dataset=dataset, column=recording, row=row, value=value)
+        return recording
 
-    @pytest.mark.parametrize("user_text", ["{{Recording}}", "Please listen. {{Recording}}"])
+    @pytest.mark.parametrize(
+        ("user_text", "cell_value"),
+        [
+            ("{{Recording}}", "https://media.example/recording.wav"),
+            ("Please listen. {{Recording}}", "https://media.example/recording.wav"),
+            ("{{ Recording }}", "https://media.example/recording.wav"),
+            ("Please listen. {{Recording}}", ""),
+        ],
+    )
     def test_preview_rejects_audio_variable_before_fetch_or_speech(
-        self, auth_client, dataset, row, openai_provider_key, speech_boundary, user_text
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        user_text,
+        cell_value,
     ):
         speech, upload = speech_boundary
-        self._recording_column(dataset, row)
+        self._recording_column(dataset, row, value=cell_value)
 
         with patch("model_hub.views.run_prompt.safe_fetch") as fetch:
             response = self._preview(auth_client, dataset, user_text)
@@ -4186,6 +4198,47 @@ class TestLiteralTTSScriptRoutes:
         upload.assert_not_called()
         run_prompter.refresh_from_db()
         assert run_prompter.messages == stored_messages
+
+    @pytest.mark.parametrize(
+        ("model", "rejected"),
+        [
+            ("openai/tts-1", True),
+            ("eleven_multilingual_v2", True),
+            ("vertex_ai/gemini-2.5-flash-preview-tts", False),
+            ("whisper-1", False),
+            ("gpt-4o", False),
+        ],
+    )
+    def test_only_literal_tts_rejects_audio_variables(self, dataset, row, model, rejected):
+        from model_hub.views.run_prompt import reject_media_variables_for_literal_tts
+
+        recording = self._recording_column(dataset, row)
+        messages = tts_messages("Please listen. {{Recording}}")
+
+        if rejected:
+            with pytest.raises(ValueError, match="speaks text only"):
+                reject_media_variables_for_literal_tts(
+                    messages, dataset, [str(recording.id)], model
+                )
+        else:
+            reject_media_variables_for_literal_tts(
+                messages, dataset, [str(recording.id)], model
+            )
+
+    def test_audio_variable_outside_the_user_script_is_not_rejected(
+        self, dataset, row
+    ):
+        from model_hub.views.run_prompt import reject_media_variables_for_literal_tts
+
+        recording = self._recording_column(dataset, row)
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": "{{Recording}}"}]},
+            {"role": "user", "content": [{"type": "text", "text": "Hello."}]},
+        ]
+
+        reject_media_variables_for_literal_tts(
+            messages, dataset, [str(recording.id)], "openai/tts-1"
+        )
 
     # -- Storage failure (AC-12) ---------------------------------------------
 

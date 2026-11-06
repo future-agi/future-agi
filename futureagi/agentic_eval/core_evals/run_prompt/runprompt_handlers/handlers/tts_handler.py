@@ -14,6 +14,7 @@ Features:
 """
 
 import time
+from typing import Optional
 
 import structlog
 
@@ -51,16 +52,37 @@ def requires_completion_audio(model: str) -> bool:
     return False
 
 
-def speaks_text_literally(model: str) -> bool:
+def tts_lane(model: str, provider: Optional[str]) -> str:
     """
-    Check if a text-to-speech model reads its script aloud.
+    Name the sub-handler TTSHandler uses for this model and provider.
+
+    Returns "custom" when the provider has a registered speech handler,
+    "completion" for models that must use AudioPreviewHandler, and
+    "speech" for SpeechAPIHandler.
+    """
+    from agentic_eval.core_evals.run_prompt.other_services.manager import (
+        OtherServicesManager,
+    )
+
+    if provider and OtherServicesManager().get_speech_handler(provider):
+        return "custom"
+    if requires_completion_audio(model):
+        return "completion"
+    return "speech"
+
+
+def speaks_text_literally(model: str, provider: Optional[str]) -> bool:
+    """
+    Check if text-to-speech for this model reads the script aloud.
 
     True for custom speech providers and SpeechAPIHandler models. False for
-    completion audio: the models above, and provider-qualified
-    gpt-4o-audio-preview names that SpeechAPIHandler hands to the
-    completion fallback.
+    completion audio, including provider-qualified gpt-4o-audio-preview
+    names that SpeechAPIHandler hands to the completion fallback.
     """
-    return not requires_completion_audio(model) and "gpt-4o-audio-preview" not in model
+    lane = tts_lane(model, provider)
+    if lane == "custom":
+        return True
+    return lane == "speech" and "gpt-4o-audio-preview" not in model
 
 
 class TTSHandler(BaseModelHandler):
@@ -93,24 +115,20 @@ class TTSHandler(BaseModelHandler):
         if self._sub_handler is not None:
             return self._sub_handler
 
-        # Import OtherServicesManager to check for custom handlers
-        from agentic_eval.core_evals.run_prompt.other_services.manager import (
-            OtherServicesManager,
-        )
+        lane = tts_lane(self.context.model, self.context.provider)
 
-        other_services_manager = OtherServicesManager()
-
-        # 1. Check if custom provider handler exists
-        provider = self.context.provider
-        if provider and other_services_manager.get_speech_handler(provider):
+        # 1. Custom provider handler (ElevenLabs, Cartesia, ...)
+        if lane == "custom":
             from .tts.custom_tts_handler import CustomTTSHandler
 
-            self.logger.info(f"Routing to CustomTTSHandler for provider: {provider}")
+            self.logger.info(
+                f"Routing to CustomTTSHandler for provider: {self.context.provider}"
+            )
             self._sub_handler = CustomTTSHandler(self.context)
             return self._sub_handler
 
-        # 2. Check if audio-preview model
-        if self._is_audio_preview_model():
+        # 2. Audio-preview model
+        if lane == "completion":
             from .tts.audio_preview_handler import AudioPreviewHandler
 
             self.logger.info(

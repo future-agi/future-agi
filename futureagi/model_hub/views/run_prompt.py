@@ -31,6 +31,7 @@ from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManage
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
     speaks_text_literally,
+    tts_lane,
 )
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
@@ -496,6 +497,77 @@ class JsonStr(dict):
         return self._raw
 
 
+# Column types whose values are media rather than text a speech model reads.
+MEDIA_COLUMN_TYPES = ("audio", "image", "images", "document")
+
+
+def _user_texts(messages):
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            yield content
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    yield part["text"]
+
+
+def _references_column(text, column):
+    """True if a template tag in text names the column, with any spacing or filter."""
+    for token in {column.name, str(column.id), sanitize_uuid_for_jinja(str(column.id))}:
+        pattern = r"\{[{%][^{}]*?(?<![\w.])" + re.escape(token) + r"(?![\w])[^{}]*?[}%]\}"
+        if re.search(pattern, text):
+            return True
+    return False
+
+
+def _speaks_text_literally(model_name, organization_id):
+    """Whether a run of this model is literal text-to-speech.
+
+    Resolves the provider as RunPrompt does and applies TTSHandler's routing.
+    """
+    model_mode = get_model_mode(model_name)
+    if model_mode == "stt":
+        return False
+    try:
+        provider = LiteLLMModelManager(
+            model_name, organization_id=organization_id
+        ).get_provider(model_name=model_name, organization_id=organization_id)
+    except Exception:
+        provider = None
+    if model_mode != "tts" and tts_lane(model_name, provider) != "custom":
+        return False
+    return speaks_text_literally(model_name, provider)
+
+
+def reject_media_variables_for_literal_tts(messages, dataset, column_ids, model_name):
+    """Refuse media column variables in a literal text-to-speech script.
+
+    Such a model speaks the user's text, so a media value would reach it only
+    as a generated label or a raw URL (TH-2356). This runs before any template
+    is rendered or media is fetched.
+    """
+    texts = [text for text in _user_texts(messages) if "{{" in text or "{%" in text]
+    if not texts:
+        return
+    referenced = [
+        column
+        for column in Column.objects.filter(
+            id__in=column_ids, data_type__in=MEDIA_COLUMN_TYPES
+        )
+        if any(_references_column(text, column) for text in texts)
+    ]
+    if not referenced or not _speaks_text_literally(model_name, dataset.organization_id):
+        return
+    column = referenced[0]
+    raise ValueError(
+        f"{model_name} speaks text only. Remove the {column.data_type} column "
+        f'variable "{column.name}" from the prompt.'
+    )
+
+
 def populate_placeholders(
     messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
 ):
@@ -599,6 +671,9 @@ def populate_placeholders(
         image_counter = 0
         processed_messages = []
         try:
+            reject_media_variables_for_literal_tts(
+                messages, dataset, column_ids, model_name
+            )
             for message in messages:
                 content = message.get("content")
                 processed_content = []
@@ -936,14 +1011,6 @@ def process_media_markers(text, image_markers, model_name):
         elif info["type"] == "audio":
             # Allow audio for models explicitly marked as audio (tts) or stt
             model_mode = get_model_mode(model_name)
-            # A text-to-speech model that reads its script aloud cannot use
-            # audio input; any label added below would be spoken (TH-2356).
-            # Completion-audio models still get the audio.
-            if model_mode == "tts" and speaks_text_literally(model_name):
-                raise ValueError(
-                    f"{model_name} speaks text only. Remove the audio column "
-                    "variable from the prompt."
-                )
             if model_mode not in (
                 "audio",
                 "stt",
