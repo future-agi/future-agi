@@ -538,9 +538,10 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
   const [open, setOpen] = useState(false);
   const name = names.ofBlock(block);
   const worker = names.workerOf(block.worker_id);
-  // The worker's own model and the tokens its model calls spent, when the app sent traces.
+  // The worker's own model and the tokens its model calls spent, when the app sent traces. They are its total, so
+  // they show once, on its first hand-off.
   const usage =
-    worker?.model || worker?.tokens
+    names.firstOf(block) && (worker?.model || worker?.tokens)
       ? C.modelTokens(worker.model, worker.tokens)
       : "";
   const end = handOffEnd(block, cutOff);
@@ -763,6 +764,7 @@ export default function CallWorkersPanel({
     ofBlock: (block) => workers[block.worker_id]?.name || C.unknown,
     ofWorker: (id) => (id ? workers[id]?.name || id : coordinator),
     workerOf: (id) => workers[id],
+    firstOf: (block) => firstRow[block.worker_id] === block.key,
   };
   const start = data.started_at;
   const hasHandOffs = data.events.some(isHandOff);
@@ -773,6 +775,8 @@ export default function CallWorkersPanel({
     data.collection === "partial" ||
     data.collection === "unavailable";
   const rows = handOffRows(tree.items);
+  const firstRow = {};
+  for (const row of rows) firstRow[row.worker_id] ??= row.key;
   // With no hand-off there is nothing to tabulate, so the steps are the whole story.
   const showSteps = rawEvents || !rows.length;
   const outside = (items) =>

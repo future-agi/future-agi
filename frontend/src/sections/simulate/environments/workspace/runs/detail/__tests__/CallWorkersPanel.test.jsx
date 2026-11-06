@@ -648,7 +648,7 @@ describe("CallWorkersPanel", () => {
       );
     });
 
-    it("shows a worker's model and tokens under its name when the app sent them", () => {
+    it("shows a worker's model and tokens once, under its first hand-off, when the app sent them", () => {
       result = {
         data: {
           ...twoTurns(),
@@ -662,8 +662,12 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
+      // The total of all its hand-offs, so it is not repeated as if each cost that much.
       expect(screen.getAllByText("worker-model · 1,200 tokens")).toHaveLength(
-        2,
+        1,
+      );
+      expect(screen.getAllByTestId("turn")[0]).toHaveTextContent(
+        "worker-model · 1,200 tokens",
       );
     });
 
