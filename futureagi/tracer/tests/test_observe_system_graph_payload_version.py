@@ -271,6 +271,18 @@ def _cached_payload(metric_id, **extra):
                 "timestamp": "2026-06-01T00:00:00+00:00",
                 "value": _OLD_WORKER_VALUE,
                 "primary_traffic": 3,
+                **(
+                    {
+                        "cost_coverage": {
+                            "status": "complete",
+                            "known_subtotal": _OLD_WORKER_VALUE * 3,
+                            "known_fact_count": 3,
+                            "unknown_fact_count": 0,
+                        }
+                    }
+                    if metric_id == "cost"
+                    else {}
+                ),
             }
         ],
         "query_complete": True,
@@ -422,15 +434,26 @@ def test_latency_snapshot_marked_mean_is_served(monkeypatch, module, read_graph)
 def test_non_latency_snapshot_without_a_marker_is_still_served(
     monkeypatch, module, read_graph, metric_id
 ):
-    # Only latency is guarded. Cost is a mean too, and an unmarked cost
-    # snapshot is still served: keying the guard on the statistic's name
-    # instead of on the latency series would turn every cached cost chart
-    # into a miss.
+    # The statistic marker is required only for latency. Cost must still
+    # carry the independent monetary-coverage companion seeded by the helper.
     _seed_cache_on_first_read(monkeypatch, module, _cached_payload(metric_id))
     payload = read_graph(monkeypatch, metric_id)
 
     assert payload.get("query_status") == "complete", payload
     assert _served_values(payload) == [_OLD_WORKER_VALUE]
+
+
+@pytest.mark.usefixtures("clean_cache")
+@pytest.mark.parametrize("read_graph", [_trace_graph, _users_graph])
+def test_price_only_cost_snapshot_is_a_miss(monkeypatch, read_graph):
+    old = _cached_payload("cost", metric_statistic="mean")
+    del old["data"][0]["cost_coverage"]
+    _seed_cache_on_first_read(monkeypatch, graph_dispatch, old)
+    payload = read_graph(monkeypatch, "cost")
+
+    assert payload.get("query_status") != "complete", payload
+    assert _OLD_WORKER_VALUE not in _served_values(payload)
+    assert payload.get("query_cached") is not True
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, CircularProgress, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import ImagineTab from "src/components/imagine/ImagineTab";
@@ -22,18 +23,23 @@ import {
 
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
+import { LEFT_PANEL_TAB_SHAPE } from "./constants";
 import VoiceRightPanel from "./VoiceRightPanel";
 import { shareResourceFor } from "./shareResource";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const VOICE_IMAGINE_PROMPTS = [
-  { label: "Summarize this call", icon: "mdi:text-box-outline" },
-  { label: "Show the conversation flow", icon: "mdi:message-text-outline" },
-  { label: "Analyze speaker turn distribution", icon: "mdi:chart-bar" },
-  { label: "What's the latency breakdown?", icon: "mdi:timer-outline" },
-  { label: "Show the cost breakdown", icon: "mdi:currency-usd" },
+  { label: "Summarize this call", icon: "solar:notes-linear" },
+  { label: "Show the conversation flow", icon: "solar:chat-round-line-linear" },
+  { label: "Analyze speaker turn distribution", icon: "solar:chart-2-linear" },
+  { label: "What's the latency breakdown?", icon: "solar:clock-circle-linear" },
+  {
+    label: "Show the cost breakdown",
+    icon: "solar:dollar-minimalistic-linear",
+  },
   {
     label: "Evaluate call quality",
-    icon: "mdi:checkbox-marked-circle-outline",
+    icon: "solar:check-circle-linear",
   },
 ];
 
@@ -73,11 +79,13 @@ const VoiceDetailDrawerV2 = ({
   embedded = false,
   hiddenActionIds = [],
   hidePathTabs = false,
+  leftPanelTabs,
   hideAnnotationTab = false,
   showFixWithFalcon = true,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const projectId = observeId || data?.project_id;
   const shareResource = shareResourceFor(data);
 
@@ -90,6 +98,10 @@ const VoiceDetailDrawerV2 = ({
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
   const [drawerWidth, setDrawerWidth] = useState(60);
+  const handleClose = useCallback(() => {
+    removeEvalFocus();
+    onClose();
+  }, [onClose, removeEvalFocus]);
 
   // ── Saved views (Imagine tabs) ────────────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -108,7 +120,7 @@ const VoiceDetailDrawerV2 = ({
       {
         id: "voice",
         label: "Voice",
-        icon: "mdi:phone-outline",
+        icon: "solar:phone-linear",
         isDefault: true,
       },
     ];
@@ -118,7 +130,7 @@ const VoiceDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -130,7 +142,7 @@ const VoiceDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -333,7 +345,7 @@ const VoiceDetailDrawerV2 = ({
       {!embedded && (
         <VoiceDrawerHeader
           callId={data?.provider_call_id || data?.id || data?.trace_id}
-          onClose={onClose}
+          onClose={handleClose}
           onPrev={onPrev}
           onNext={onNext}
           hasPrev={hasPrev}
@@ -399,7 +411,7 @@ const VoiceDetailDrawerV2 = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : isImagineActive ? (
           <ImagineTab
@@ -460,6 +472,7 @@ const VoiceDetailDrawerV2 = ({
                 data={data}
                 scenarioId={scenarioId}
                 hidePathTabs={hidePathTabs}
+                extraTabs={leftPanelTabs}
               />
             </Box>
 
@@ -514,6 +527,7 @@ const VoiceDetailDrawerV2 = ({
                 hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
                 showFixWithFalcon={showFixWithFalcon}
+                initialEvalFocus={evalFocus === true}
               />
             </Box>
           </>
@@ -631,6 +645,7 @@ VoiceDetailDrawerV2.propTypes = {
   embedded: PropTypes.bool,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hidePathTabs: PropTypes.bool,
+  leftPanelTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
   hideAnnotationTab: PropTypes.bool,
   showFixWithFalcon: PropTypes.bool,
 };

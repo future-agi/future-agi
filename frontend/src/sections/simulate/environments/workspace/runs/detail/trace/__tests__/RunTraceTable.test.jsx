@@ -9,6 +9,22 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
   useRunCalls: (...args) => useRunCalls(...args),
 }));
 
+// The eval column menu owns its own data; here it only has to receive the
+// right column, and the run page's actions as they were handed in.
+vi.mock("../../EvalColumnActions", () => ({
+  default: ({ menuFor, runTestId, rerunPending, onRerun, onEdit }) => (
+    <div data-testid="eval-actions">
+      {`eval-actions:${menuFor?.evalId ?? "-"}:${runTestId}:${rerunPending}`}
+      <button type="button" onClick={() => onRerun([{ id: "eval-1" }])}>
+        menu re-run
+      </button>
+      <button type="button" onClick={() => onEdit({ id: "eval-1" })}>
+        menu edit
+      </button>
+    </div>
+  ),
+}));
+
 const { default: RunTraceTable } = await import("../RunTraceTable");
 const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
 const { TRACE_COLUMNS, VOICE_ONLY_COLUMNS } = await import(
@@ -120,6 +136,8 @@ const FACETS = {
     { value: "error", count: 1 },
   ],
 };
+// The status chips' counts, which the API sends apart from the facets.
+const STATUS_COUNTS = { passed: 1, failed: 1, error: 1 };
 
 const renderTable = (props = {}) =>
   render(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} {...props} />);
@@ -181,6 +199,7 @@ describe("RunTraceTable", () => {
         columns: COLUMNS,
         groups: groupsFor(tasks, opts.groupBy),
         facets: FACETS,
+        statusCounts: STATUS_COUNTS,
         count: tasks.length,
         totalPages: 1,
         isLoading: false,
@@ -204,6 +223,7 @@ describe("RunTraceTable", () => {
         columns: COLUMNS,
         groups: groupsFor([{ ...TASKS[0], status: outcome }]),
         facets: { status: [{ value: outcome, count: 1 }] },
+        statusCounts: { [outcome]: 1 },
         count: 1,
         totalPages: 1,
         isLoading: false,
@@ -312,6 +332,7 @@ describe("RunTraceTable", () => {
       columns: COLUMNS,
       groups: [group],
       facets: FACETS,
+      statusCounts: STATUS_COUNTS,
       count: 3,
       totalPages: 2,
       isLoading: false,
@@ -502,6 +523,7 @@ describe("RunTraceTable", () => {
         ...FACETS,
         status: [...FACETS.status, { value: "inconclusive", count: 1 }],
       },
+      statusCounts: { ...STATUS_COUNTS, inconclusive: 1 },
     }));
     renderTable();
 
@@ -757,6 +779,7 @@ describe("RunTraceTable", () => {
           columns: COLUMNS,
           groups: groupsFor(tasks, opts.groupBy),
           facets: FACETS,
+          statusCounts: STATUS_COUNTS,
           count: handedOver ? 51 : TASKS.length,
           totalPages: handedOver ? 2 : 1,
           isLoading: false,
@@ -806,6 +829,7 @@ describe("RunTraceTable", () => {
           columns: COLUMNS,
           groups: groupsFor(tasks, opts.groupBy),
           facets: FACETS,
+          statusCounts: STATUS_COUNTS,
           count: 51,
           totalPages: 2,
           isLoading: false,
@@ -857,6 +881,98 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("sends Is not filters to the server", () => {
+    renderTable({
+      initialFilters: {
+        goal_not: ["Refund a double charge"],
+        subGoal_not: ["Refund created"],
+        status_not: ["failed"],
+      },
+    });
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: {
+          goal_not: ["Refund a double charge"],
+          sub_goal_not: ["Refund created"],
+          status_not: ["failed"],
+        },
+      }),
+    );
+  });
+
+  it("counts the status chips from the server's status counts", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: { passed: 2, failed: 7 },
+    }));
+    renderTable();
+
+    expect(
+      within(screen.getByRole("button", { name: "Failed" })).getByText("7"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("button", { name: "All" })).getByText("9"),
+    ).toBeInTheDocument();
+  });
+
+  it("lets a status chip replace the panel's status filter", async () => {
+    const user = userEvent.setup();
+    renderTable({
+      initialFilters: {
+        goal: ["Refund a double charge"],
+        status_not: ["passed"],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Error" }));
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { goal: ["Refund a double charge"], status: ["error"] },
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { goal: ["Refund a double charge"] },
+      }),
+    );
+  });
+
+  it.each([
+    [{ status: ["failed"] }, "Failed"],
+    [{}, "All"],
+    [{ status: ["failed", "error"] }, null],
+    [{ status_not: ["failed"] }, null],
+  ])("lights the chip that alone describes %j", (initialFilters, lit) => {
+    renderTable({ initialFilters });
+
+    const pressed = ["All", "Failed", "Error", "Passed"].filter(
+      (name) =>
+        screen.getByRole("button", { name }).getAttribute("aria-pressed") ===
+        "true",
+    );
+    expect(pressed).toEqual(lit ? [lit] : []);
+  });
+
+  it("counts a chip's status in the Filter badge and shows it in the panel", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: "Failed" }));
+    const filterButton = screen.getByRole("button", { name: /Filter/ });
+    expect(filterButton).toHaveTextContent("1");
+
+    await user.click(filterButton);
+    const [fieldPicker] = screen.getAllByRole("combobox");
+    expect(fieldPicker).toHaveTextContent("Status");
+  });
+
   it("exposes later server pages for runs with more than 100 trials", async () => {
     const user = userEvent.setup();
     const finalTrial = {
@@ -872,6 +988,7 @@ describe("RunTraceTable", () => {
         columns: COLUMNS,
         groups: groupsFor(tasks, opts.groupBy),
         facets: FACETS,
+        statusCounts: STATUS_COUNTS,
         count: 200,
         totalPages: 2,
         isLoading: false,
@@ -898,6 +1015,7 @@ describe("RunTraceTable", () => {
       columns: COLUMNS,
       groups: groupsFor(TASKS, opts.groupBy),
       facets: FACETS,
+      statusCounts: STATUS_COUNTS,
       count: 200,
       totalPages: 2,
       isLoading: false,
@@ -1281,7 +1399,7 @@ describe("RunTraceTable", () => {
     expect(screen.queryByPlaceholderText(/Ask AI/)).toBeNull();
   });
 
-  it("offers only Goal, Sub goal, and Status filters", async () => {
+  it("offers only Use case, Sub-goal, and Status filters", async () => {
     const user = userEvent.setup();
     renderTable();
 
@@ -1289,9 +1407,11 @@ describe("RunTraceTable", () => {
 
     const [fieldPicker] = screen.getAllByRole("combobox");
     await user.click(fieldPicker);
-    expect(screen.getByRole("option", { name: "Goal" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Sub goal" }),
+      screen.getByRole("option", { name: "Use case" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Sub-goal" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Status" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Persona" })).toBeNull();
@@ -1326,5 +1446,42 @@ describe("RunTraceTable", () => {
     renderTable();
     expect(screen.getByText(/Couldn't load calls/i)).toBeInTheDocument();
     expect(screen.queryByText(/No calls match that filter/)).toBeNull();
+  });
+
+  it("adds no column menu without eval actions", () => {
+    renderTable();
+    expect(
+      screen.queryByRole("button", { name: "Actions for Tone" }),
+    ).toBeNull();
+    expect(screen.queryByTestId("eval-actions")).toBeNull();
+  });
+
+  it("opens the eval column's menu for that column, with the run page's actions", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    const onEdit = vi.fn();
+    renderTable({
+      evalActions: {
+        runTestId: "rt1",
+        canRun: true,
+        grading: false,
+        rerunPending: true,
+        onRerun,
+        onEdit,
+      },
+    });
+    expect(screen.getByText("eval-actions:-:rt1:true")).toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Actions for Tone" });
+    expect(button.closest("th")).toHaveTextContent("Tone");
+    await user.click(button);
+    expect(
+      screen.getByText("eval-actions:eval-1:rt1:true"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "menu re-run" }));
+    expect(onRerun).toHaveBeenCalledWith([{ id: "eval-1" }]);
+    await user.click(screen.getByRole("button", { name: "menu edit" }));
+    expect(onEdit).toHaveBeenCalledWith({ id: "eval-1" });
   });
 });

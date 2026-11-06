@@ -55,6 +55,10 @@ bootstrap:
       mountPath: /etc/pg-ca
       readOnly: true
 fiCollector:
+  ingestBudgetMiB: 300
+  maxBodyMiB: 8
+  grpcMaxRecvMiB: 12
+  maxConnections: 512
   extraEnv:
     PGSSLROOTCERT: /etc/pg-ca/ca.crt
   extraVolumes:

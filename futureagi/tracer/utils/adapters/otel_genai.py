@@ -26,6 +26,7 @@ from tracer.utils.adapters.base import (
     set_io_value,
 )
 from tracer.utils.otel import SpanAttributes
+from tracer.utils.semantic_conventions import AttributeRegistry
 
 # gen_ai.operation.name → span kind
 _OPERATION_KIND_MAP = {
@@ -136,12 +137,31 @@ class OtelGenAIAdapter(BaseTraceAdapter):
         output_messages = _extract_indexed_messages(attributes, _COMPLETION_RE)
 
         # --- Determine span kind ---
-        span_kind = attributes.get("gen_ai.span.kind", "")
+        span_kind = next(
+            (
+                attributes[k]
+                for k in (
+                    "fi.span.kind",
+                    "gen_ai.span.kind",
+                    "llm.request.type",
+                    "openinference.span.kind",
+                )
+                if attributes.get(k)
+            ),
+            "",
+        )
         if not span_kind and operation_name in _OPERATION_KIND_MAP:
             span_kind = _OPERATION_KIND_MAP[operation_name]
         elif not span_kind and model:
             span_kind = "LLM"
 
+        # Use the same alias/case rules as downstream observation conversion.
+        # An explicit non-LLM (including an unknown kind) still beats the model.
+        normalized_kind = AttributeRegistry.normalize_span_kind(span_kind)
+        if normalized_kind != "unknown":
+            span_kind = normalized_kind.upper()
+        else:
+            span_kind = _OPERATION_KIND_MAP.get(span_kind.lower().strip(), span_kind)
         if span_kind:
             attributes[SpanAttributes.SPAN_KIND] = span_kind
         is_llm = span_kind == "LLM"

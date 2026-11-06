@@ -123,6 +123,10 @@ def _request_settings():
 def test_public_dispatch_then_bounded_maintenance_restores_same_pool(
     monkeypatch, lane, ceiling, original_timeout
 ):
+    # Test dispatch and restoration without spending the 1 ms budget on CI scheduling.
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.client.time", SimpleNamespace(monotonic=lambda: 0.0)
+    )
     owner, native, connection = _native_client(
         monkeypatch, original_timeout=original_timeout
     )
