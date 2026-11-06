@@ -61629,8 +61629,11 @@ export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
 };
 
 /**
- * One harness job. A coding agent key reads its own run narrowly: its status,
-results and ids, never the stage outputs, which name every case of the suite.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const simulateApiHarnessJobsRead = async (
   id: string,

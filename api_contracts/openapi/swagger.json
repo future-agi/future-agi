@@ -52989,7 +52989,7 @@
         "/simulate/api/harness-jobs/{id}/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
-                "description": "One harness job. A coding agent key reads its own run narrowly: its status,\nresults and ids, never the stage outputs, which name every case of the suite.",
+                "description": "One harness job. A coding agent key reads its own run narrowly, outside\nthis schema: only `status` (its failure as domain, stage, code and a fixed\nmessage), `receipts`, `consumption`, `platform`, and `job` with its ids and\nfive metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or\n`job.source`, which name every case of the suite.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -142433,6 +142433,7 @@
             "required": [
                 "job_id",
                 "run_id",
+                "source",
                 "metadata",
                 "run_test_id",
                 "test_execution_id"
@@ -143088,6 +143089,9 @@
             "required": [
                 "job",
                 "status",
+                "events",
+                "stage_outputs",
+                "scenarios",
                 "receipts",
                 "platform"
             ],
@@ -155973,12 +155977,12 @@
                 "csat",
                 "ended_reason",
                 "error_message",
-                "failure_domain",
-                "failure_code",
                 "evaluations",
                 "scoring_status",
                 "csat_status",
-                "csat_reason"
+                "csat_reason",
+                "failure_domain",
+                "failure_code"
             ],
             "type": "object",
             "properties": {
@@ -156150,26 +156154,6 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
-                "failure_domain": {
-                    "title": "Failure domain",
-                    "type": "string",
-                    "enum": [
-                        "agent",
-                        "simulator",
-                        "environment",
-                        "connectivity",
-                        "infrastructure",
-                        "grading",
-                        "platform_sync"
-                    ],
-                    "x-nullable": true
-                },
-                "failure_code": {
-                    "title": "Failure code",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
                 "evaluations": {
                     "type": "array",
                     "items": {
@@ -156201,6 +156185,26 @@
                 },
                 "csat_reason": {
                     "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "platform_sync"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

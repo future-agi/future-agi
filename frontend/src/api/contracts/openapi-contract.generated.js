@@ -67399,7 +67399,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessJobRead: {
-      required: ["job", "status", "receipts", "platform"],
+      required: [
+        "job",
+        "status",
+        "events",
+        "stage_outputs",
+        "scenarios",
+        "receipts",
+        "platform",
+      ],
       type: "object",
       properties: {
         job: {
@@ -102966,6 +102974,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "job_id",
         "run_id",
+        "source",
         "metadata",
         "run_test_id",
         "test_execution_id",
@@ -110639,12 +110648,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "csat",
         "ended_reason",
         "error_message",
-        "failure_domain",
-        "failure_code",
         "evaluations",
         "scoring_status",
         "csat_status",
         "csat_reason",
+        "failure_domain",
+        "failure_code",
       ],
       type: "object",
       properties: {
@@ -110817,26 +110826,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
-        failure_domain: {
-          title: "Failure domain",
-          type: "string",
-          enum: [
-            "agent",
-            "simulator",
-            "environment",
-            "connectivity",
-            "infrastructure",
-            "grading",
-            "platform_sync",
-          ],
-          "x-nullable": true,
-        },
-        failure_code: {
-          title: "Failure code",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
         evaluations: {
           type: "array",
           items: {
@@ -110868,6 +110857,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         csat_reason: {
           title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        failure_domain: {
+          title: "Failure domain",
+          type: "string",
+          enum: [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync",
+          ],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
           type: "string",
           minLength: 1,
           "x-nullable": true,

@@ -20261,7 +20261,7 @@ export type HarnessJobInfoApiRuntime = { [key: string]: string };
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
-  source?: HarnessJobInfoApiSource;
+  source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
   runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
@@ -20476,9 +20476,9 @@ export interface HarnessVersioningFlagsApi {
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
-  events?: HarnessJobEventApi[];
-  stage_outputs?: HarnessStageOutputApi[];
-  scenarios?: HarnessScenarioApi[];
+  events: HarnessJobEventApi[];
+  stage_outputs: HarnessStageOutputApi[];
+  scenarios: HarnessScenarioApi[];
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
@@ -25795,19 +25795,6 @@ export const RunCallApiOutcome = {
   error: "error",
 } as const;
 
-export type RunCallApiFailureDomain =
-  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
-
-export const RunCallApiFailureDomain = {
-  agent: "agent",
-  simulator: "simulator",
-  environment: "environment",
-  connectivity: "connectivity",
-  infrastructure: "infrastructure",
-  grading: "grading",
-  platform_sync: "platform_sync",
-} as const;
-
 export type RunCallApiScoringStatus =
   (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
 
@@ -25829,6 +25816,19 @@ export const RunCallApiCsatStatus = {
   failed: "failed",
   timed_out: "timed_out",
   skipped: "skipped",
+} as const;
+
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
 } as const;
 
 export interface RunCallApi {
@@ -25876,14 +25876,14 @@ export interface RunCallApi {
   ended_reason: string;
   /** @minLength 1 */
   error_message: string;
-  failure_domain: RunCallApiFailureDomain;
-  /** @minLength 1 */
-  failure_code: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;
   csat_status: RunCallApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };

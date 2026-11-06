@@ -41804,7 +41804,7 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
-    source: zod.record(zod.string(), zod.string()).optional(),
+    source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
@@ -41826,42 +41826,36 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
   }),
-  events: zod
-    .array(
-      zod.object({
-        event_id: zod.string().min(1),
-        sequence: zod.number(),
-        stage: zod.string().min(1),
-        type: zod.string().min(1),
-        payload: zod.object({}).passthrough(),
-        emitted_at: zod.string().min(1),
-      }),
-    )
-    .optional(),
-  stage_outputs: zod
-    .array(
-      zod.object({
-        id: zod.string().uuid(),
-        title: zod.string().min(1),
-        summary: zod.string(),
-        kind: zod.string().min(1),
-        data: zod.object({}).passthrough(),
-      }),
-    )
-    .optional(),
-  scenarios: zod
-    .array(
-      zod.object({
-        scenario_key: zod.string().min(1),
-        scenario_id: zod.string().uuid(),
-        name: zod.string(),
-        instruction: zod.string().optional(),
-        use_case: zod.string().optional(),
-        call_execution_id: zod.string().uuid().optional(),
-        status: zod.string().min(1).optional(),
-      }),
-    )
-    .optional(),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
   receipts: zod.array(zod.object({}).passthrough()),
   platform: zod.object({
     run_test_id: zod.string().uuid(),
@@ -42791,8 +42785,11 @@ export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
 });
 
 /**
- * One harness job. A coding agent key reads its own run narrowly: its status,
-results and ids, never the stage outputs, which name every case of the suite.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
@@ -42812,7 +42809,7 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
-    source: zod.record(zod.string(), zod.string()).optional(),
+    source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
@@ -42834,42 +42831,36 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
   }),
-  events: zod
-    .array(
-      zod.object({
-        event_id: zod.string().min(1),
-        sequence: zod.number(),
-        stage: zod.string().min(1),
-        type: zod.string().min(1),
-        payload: zod.object({}).passthrough(),
-        emitted_at: zod.string().min(1),
-      }),
-    )
-    .optional(),
-  stage_outputs: zod
-    .array(
-      zod.object({
-        id: zod.string().uuid(),
-        title: zod.string().min(1),
-        summary: zod.string(),
-        kind: zod.string().min(1),
-        data: zod.object({}).passthrough(),
-      }),
-    )
-    .optional(),
-  scenarios: zod
-    .array(
-      zod.object({
-        scenario_key: zod.string().min(1),
-        scenario_id: zod.string().uuid(),
-        name: zod.string(),
-        instruction: zod.string().optional(),
-        use_case: zod.string().optional(),
-        call_execution_id: zod.string().uuid().optional(),
-        status: zod.string().min(1).optional(),
-      }),
-    )
-    .optional(),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
   receipts: zod.array(zod.object({}).passthrough()),
   platform: zod.object({
     run_test_id: zod.string().uuid(),
@@ -43041,7 +43032,7 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
-    source: zod.record(zod.string(), zod.string()).optional(),
+    source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
@@ -43063,42 +43054,36 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
   }),
-  events: zod
-    .array(
-      zod.object({
-        event_id: zod.string().min(1),
-        sequence: zod.number(),
-        stage: zod.string().min(1),
-        type: zod.string().min(1),
-        payload: zod.object({}).passthrough(),
-        emitted_at: zod.string().min(1),
-      }),
-    )
-    .optional(),
-  stage_outputs: zod
-    .array(
-      zod.object({
-        id: zod.string().uuid(),
-        title: zod.string().min(1),
-        summary: zod.string(),
-        kind: zod.string().min(1),
-        data: zod.object({}).passthrough(),
-      }),
-    )
-    .optional(),
-  scenarios: zod
-    .array(
-      zod.object({
-        scenario_key: zod.string().min(1),
-        scenario_id: zod.string().uuid(),
-        name: zod.string(),
-        instruction: zod.string().optional(),
-        use_case: zod.string().optional(),
-        call_execution_id: zod.string().uuid().optional(),
-        status: zod.string().min(1).optional(),
-      }),
-    )
-    .optional(),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
   receipts: zod.array(zod.object({}).passthrough()),
   platform: zod.object({
     run_test_id: zod.string().uuid(),
@@ -53971,16 +53956,6 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       csat: zod.number(),
       ended_reason: zod.string().min(1),
       error_message: zod.string().min(1),
-      failure_domain: zod.enum([
-        "agent",
-        "simulator",
-        "environment",
-        "connectivity",
-        "infrastructure",
-        "grading",
-        "platform_sync",
-      ]),
-      failure_code: zod.string().min(1),
       evaluations: zod.array(
         zod.object({
           id: zod.string().min(1),
@@ -54015,6 +53990,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "skipped",
       ]),
       csat_reason: zod.string().min(1),
+      failure_domain: zod.enum([
+        "agent",
+        "simulator",
+        "environment",
+        "connectivity",
+        "infrastructure",
+        "grading",
+        "platform_sync",
+      ]),
+      failure_code: zod.string().min(1),
     }),
   ),
   groups: zod.array(
