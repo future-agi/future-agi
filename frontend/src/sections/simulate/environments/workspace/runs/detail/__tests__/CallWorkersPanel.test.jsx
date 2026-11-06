@@ -734,6 +734,8 @@ describe("CallWorkersPanel", () => {
       expect(
         screen.getByText(/Nothing was recorded for this call's participants/),
       ).toBeInTheDocument();
+      // No empty step list under the note.
+      expect(screen.queryByTestId("raw-events")).toBeNull();
     });
 
     it.each(["partial", "unavailable"])(

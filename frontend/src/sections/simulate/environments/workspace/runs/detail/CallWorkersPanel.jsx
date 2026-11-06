@@ -828,14 +828,16 @@ export default function CallWorkersPanel({
         </Typography>
       ) : null}
       {showSteps ? (
-        <EventList
-          bordered
-          events={events}
-          start={start}
-          openJson={() => openAll}
-          onOpenTrace={onOpenTrace}
-          traceIds={traceIds}
-        />
+        events.length ? (
+          <EventList
+            bordered
+            events={events}
+            start={start}
+            openJson={() => openAll}
+            onOpenTrace={onOpenTrace}
+            traceIds={traceIds}
+          />
+        ) : null
       ) : (
         tree.rounds.map((round) => {
           const label = turnLabel(round, tree.rounds);
