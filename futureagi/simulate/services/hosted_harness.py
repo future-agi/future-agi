@@ -1615,9 +1615,9 @@ def _apply_parallelism_admission(
     admitted, clamped = clamp_parallelism(requested, snapshot_digest)
     from simulate.services.harness_capacity import configured_capacity
 
-    # An in-run re-run executes only its chosen calls, so W is bounded by those.
-    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
-    admitted = min(admitted, capacity.parallelism)
+    # The marker describes the Run's admission. An in-run re-run or a relaunch of lost
+    # calls runs fewer of the Run's calls, and running fewer calls is no clamp.
+    admitted = min(admitted, configured_capacity(job.payload).parallelism)
     clamped = admitted != requested
     metadata = dict(job.payload.get("metadata") or {})
     changed = False
@@ -1634,7 +1634,9 @@ def _apply_parallelism_admission(
         payload["metadata"] = metadata
         job.payload = payload
         job.save(update_fields=["payload", "updated_at"])
-    return admitted
+    # An in-run re-run executes only its chosen calls, so W is bounded by those.
+    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
+    return min(admitted, capacity.parallelism)
 
 
 def register_attempt(

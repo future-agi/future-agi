@@ -30,6 +30,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.test_execution import CallExecution
+from simulate.selectors.agent_fix import ran_at
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
@@ -2933,7 +2934,9 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.terminal_failure is None
 
 
-def _delivered_run(organization, key: str, *, receipts: int) -> HostedHarnessAttempt:
+def _delivered_run(
+    organization, key: str, *, receipts: int, parallelism: int = 1
+) -> HostedHarnessAttempt:
     """A two-call Run of a saved environment holding its first ``receipts`` results and no
     acknowledged manifest."""
     environment, _ = create_hosted_job(
@@ -2941,6 +2944,8 @@ def _delivered_run(organization, key: str, *, receipts: int) -> HostedHarnessAtt
     )
     payload = _payload()
     payload["scenario_count"] = 2
+    # Enough CPU for that many worlds side by side.
+    payload["runtime"].update(parallelism=parallelism, cpu_units=2 * parallelism)
     job, _ = create_hosted_job(organization, payload, idempotency_key=key)
     attempt = register_attempt(
         job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
@@ -3167,6 +3172,42 @@ def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
     update_execution_counts(job)
     job.refresh_from_db()
     assert (job.completed_count, job.failed_count) == (2, 0)
+
+
+@override_settings(
+    HARNESS_PARALLELISM_ENABLED=True, ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile"
+)
+@pytest.mark.django_db
+def test_relaunch_of_one_lost_call_keeps_the_runs_parallelism(
+    organization, monkeypatch
+):
+    first = _delivered_run(
+        organization, "run-missing-relaunch-w2", receipts=1, parallelism=2
+    )
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    )
+    _receive(
+        second.attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second.attempt, "completed")
+    job = gateway.reconcile_completed(second.attempt)
+
+    # The relaunch runs its one call alone, but the Run's calls ran two at a time:
+    # running fewer calls is no clamp.
+    assert second.admitted_parallelism == 1
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert ran_at(job) == 2
+    assert "parallelism_clamped" not in job.payload["metadata"]
 
 
 @pytest.mark.django_db
