@@ -69609,22 +69609,35 @@
         "/tracer/observation-span/update-tags/": {
             "post": {
                 "operationId": "tracer_observation-span_update_tags",
-                "description": "Update tags for an observation span.",
+                "summary": "Replace one span's tags, including a span only ClickHouse has.",
+                "description": "``project_id`` is optional. Without it the span is looked up in the\nprojects the caller can access. Only that span's row changes.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ObservationSpan"
+                            "$ref": "#/definitions/SpanTagsUpdateRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ObservationSpan"
+                            "$ref": "#/definitions/TagAssignmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -69636,7 +69649,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -71304,6 +71319,142 @@
                 "tags": [
                     "tracer"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/project/{id}/tag-definitions/": {
+            "get": {
+                "operationId": "tracer_project_tag-definitions_read",
+                "description": "List the project's tags: stored definitions plus every name assigned to a span or trace, including names only an SDK set.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ProjectTagDefinitionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_project_tag-definitions_partial_update",
+                "description": "Recolour and/or rename a project tag. A rename rewrites the name in every assignment in the project and merges into an existing tag of the new name, e.g. {\"name\": \"prod\", \"new_name\": \"production\"}.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ProjectTagDefinitionUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ProjectTagDefinitionUpdateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_project_tag-definitions_delete",
+                "description": "Delete a project tag and remove the name from every assignment in the project, e.g. DELETE /tracer/project/{id}/tag-definitions/?name=prod.",
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "query",
+                        "description": "The tag to delete. It is also removed from every assignment.",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ProjectTagDefinitionDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -74984,7 +75135,8 @@
         "/tracer/trace/{id}/tags/": {
             "patch": {
                 "operationId": "tracer_trace_update_tags",
-                "description": "Update tags for a trace.",
+                "summary": "Replace a trace's tags, including a trace only ClickHouse has.",
+                "description": "``?project_id=`` is optional. Without it the trace is looked up in the\nprojects the caller can access. Colours are saved on the project tag;\nthe response lists the assigned names.",
                 "parameters": [
                     {
                         "name": "data",
@@ -74999,7 +75151,19 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/TraceTagsUpdate"
+                            "$ref": "#/definitions/TagAssignmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -75012,7 +75176,8 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -81283,7 +81448,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "",
+                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
                 "parameters": [
                     {
                         "name": "data",
@@ -169864,6 +170029,75 @@
                 }
             }
         },
+        "SpanTagsUpdateRequest": {
+            "required": [
+                "tags",
+                "span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "description": "Replaces the current tags. Each item is a name (\"prod\") or {\"name\": \"prod\", \"color\": \"#22C55E\"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "x-string-or-object": true,
+                        "description": "String or JSON object."
+                    }
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "The span's project. Optional; needed only when the span id exists in more than one project you can access.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "TagAssignmentResult": {
+            "required": [
+                "id",
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "description": "The names now assigned.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "TagAssignmentResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/TagAssignmentResult"
+                }
+            }
+        },
         "ObservationSpanDetailResult": {
             "required": [
                 "observation_span",
@@ -170967,6 +171201,152 @@
                 },
                 "result": {
                     "$ref": "#/definitions/ProjectDetailResult"
+                }
+            }
+        },
+        "ProjectTagDefinition": {
+            "required": [
+                "name",
+                "color",
+                "usage_count"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "color": {
+                    "title": "Color",
+                    "description": "\"#RRGGBB\", or \"\" when no colour is set.",
+                    "type": "string"
+                },
+                "usage_count": {
+                    "title": "Usage count",
+                    "description": "Rows in this project carrying the name: spans, or trace rows when more traces than spans carry it (a trace tag is on both its trace row and its root span and counts once).",
+                    "type": "integer"
+                }
+            }
+        },
+        "ProjectTagDefinitionListResult": {
+            "required": [
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ProjectTagDefinition"
+                    }
+                }
+            }
+        },
+        "ProjectTagDefinitionListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ProjectTagDefinitionListResult"
+                }
+            }
+        },
+        "ProjectTagDefinitionUpdateRequest": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "description": "The tag to change.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "new_name": {
+                    "title": "New name",
+                    "description": "Rename. Rewrites every assignment in the project; renaming onto an existing tag merges into it.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "color": {
+                    "title": "Color",
+                    "description": "Recolour. \"#RRGGBB\", or \"\" when no colour is set. Assignments are not touched.",
+                    "type": "string",
+                    "maxLength": 7
+                }
+            }
+        },
+        "ProjectTagDefinitionResult": {
+            "required": [
+                "name",
+                "color"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "color": {
+                    "title": "Color",
+                    "description": "\"#RRGGBB\", or \"\" when no colour is set.",
+                    "type": "string"
+                }
+            }
+        },
+        "ProjectTagDefinitionUpdateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ProjectTagDefinitionResult"
+                }
+            }
+        },
+        "ProjectTagDefinitionDeleteResult": {
+            "required": [
+                "deleted"
+            ],
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ProjectTagDefinitionDeleteResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ProjectTagDefinitionDeleteResult"
                 }
             }
         },
@@ -175366,10 +175746,12 @@
             "type": "object",
             "properties": {
                 "tags": {
+                    "description": "Replaces the current tags. Each item is a name (\"prod\") or {\"name\": \"prod\", \"color\": \"#22C55E\"}. A colour is saved on the project tag, never on the assignment; an omitted colour keeps the existing one.",
                     "type": "array",
                     "items": {
-                        "type": "string",
-                        "minLength": 1
+                        "type": "object",
+                        "x-string-or-object": true,
+                        "description": "String or JSON object."
                     }
                 }
             }
@@ -179132,6 +179514,22 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
+                },
+                "autoreload_maxcharge": {
+                    "title": "Autoreload maxcharge",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "autoreload_consent": {
+                    "title": "Autoreload consent",
+                    "type": "boolean",
+                    "default": false
+                },
+                "autoreload_charge_now": {
+                    "title": "Autoreload charge now",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
