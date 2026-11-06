@@ -140793,6 +140793,7 @@
         "HarnessCapabilityFix": {
             "required": [
                 "type",
+                "category",
                 "target",
                 "action",
                 "would",
@@ -140804,6 +140805,18 @@
                     "title": "Type",
                     "type": "string",
                     "minLength": 1
+                },
+                "category": {
+                    "title": "Category",
+                    "description": "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                    "type": "string",
+                    "enum": [
+                        "startup",
+                        "message_mapping",
+                        "tool_routing",
+                        "evidence"
+                    ],
+                    "x-nullable": true
                 },
                 "target": {
                     "title": "Target",
@@ -140877,6 +140890,7 @@
                 "evidence",
                 "checked_at",
                 "fix",
+                "consequence",
                 "needed_by",
                 "affected"
             ],
@@ -140983,6 +140997,12 @@
                 },
                 "fix": {
                     "$ref": "#/definitions/HarnessCapabilityFix"
+                },
+                "consequence": {
+                    "title": "Consequence",
+                    "description": "What the status means for the cases, their spend and their independence.",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "needed_by": {
                     "title": "Needed by",
@@ -156665,7 +156685,8 @@
                 "was",
                 "evidence",
                 "checked_at",
-                "fix"
+                "fix",
+                "consequence"
             ],
             "type": "object",
             "properties": {
@@ -156770,6 +156791,12 @@
                 },
                 "fix": {
                     "$ref": "#/definitions/HarnessCapabilityFix"
+                },
+                "consequence": {
+                    "title": "Consequence",
+                    "description": "What the status means for the cases, their spend and their independence.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
