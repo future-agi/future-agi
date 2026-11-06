@@ -111,13 +111,24 @@ USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE = 64
 USER_LIST_ATTRIBUTE_SEED_TIMEOUT_MS = 1_500
 # A cursor page's refill walk stops at this wall and publishes the rows found
 # so far plus the last proven checkpoint, disclosed as a degraded page. The
-# first batch runs as before (it has no checkpoint to resume from yet); the
-# hydration after the walk carries no wall; numbered pages never start one and
-# the export opts out (``page_wall=False``) so it still fills its bounded page.
+# first batch is not stopped by it (it has no checkpoint to resume from yet;
+# ``USER_LIST_FIRST_BATCH_WALL_MS`` bounds it instead); the hydration after
+# the walk carries no wall; numbered pages never start one and the export opts
+# out (``page_wall=False``) so it still fills its bounded page.
 # The matching-activity walk (``users_matching_walk``) reads the same setting
 # for the wall it owns on the filtered page it serves (a plain-text exact
 # filter, or a number/boolean filter that is the only item on its key).
 USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
+# A cursor page's first batch has no proven checkpoint, so stopping it at the
+# page wall could not resume exactly. Its whole-window candidate statement,
+# and the survivor statement after it, are instead stopped by the server at
+# what is left of the request's analytics wall. The UI stops waiting for a
+# page at that wall (``ANALYTICS_REQUEST_TIMEOUT_MS``), so reading past it
+# only holds a worker and a ClickHouse slot for a result nobody receives.
+# A stop publishes nothing: it raises ``ReadDeadlineExceeded``, which the
+# route answers with its retryable 503. The export opts out with the page
+# wall (``page_wall=False``).
+USER_LIST_FIRST_BATCH_WALL_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 
 _USER_LIST_READ_SETTINGS = {
     "max_threads": 1,
@@ -232,15 +243,24 @@ def _statement_timeout(
     return {"timeout_ms": timeout_ms}
 
 
-def _candidate_statement_timeout(deadline: ReadDeadline | None) -> dict[str, Any]:
+def _candidate_statement_timeout(
+    deadline: ReadDeadline | None, first_batch_wall: ReadDeadline | None = None
+) -> dict[str, Any]:
     """The whole-window candidate statement's timeout, and its server cap.
 
     A refill runs under the page wall: the server stops the statement at
     ``USER_LIST_QUERY_TIMEOUT_MS`` or what is left of that wall, whichever is
     less, and the page is published as it stands, resuming from its last
-    proven checkpoint (``_is_page_wall_stop``). The first batch has no
-    deadline and runs as before.
+    proven checkpoint (``_is_page_wall_stop``). The first batch has no page
+    wall (``deadline`` is None); under ``first_batch_wall`` the server stops
+    it at what is left of that wall, with no tighter per-statement hint, and
+    the stop propagates (``USER_LIST_FIRST_BATCH_WALL_MS``). With neither
+    (the export) it carries no cap.
     """
+    if deadline is None and first_batch_wall is not None:
+        return _statement_timeout(
+            replace(first_batch_wall, enforce_on_server=True), None
+        )
     return _statement_timeout(
         replace(deadline, enforce_on_server=True) if deadline is not None else None,
         USER_LIST_QUERY_TIMEOUT_MS,
@@ -1562,7 +1582,13 @@ class UsersListManager:
         before_end_user_id: str | None,
         window_start: datetime,
         window_end: datetime,
+        first_batch_wall: ReadDeadline | None = None,
     ) -> list[dict]:
+        """One batch of canonical candidates in activity order, with aliases.
+
+        ``deadline`` is a refill's page wall; ``first_batch_wall`` bounds the
+        first batch, which has none (``_candidate_statement_timeout``).
+        """
         if self.empty_scope:
             return []
         builder = UserListQueryBuilderV2(
@@ -1583,7 +1609,7 @@ class UsersListManager:
         result = analytics.execute_ch_query(
             query,
             params,
-            **_candidate_statement_timeout(deadline),
+            **_candidate_statement_timeout(deadline, first_batch_wall),
             settings=_page_read_settings(max_result_rows=limit),
         )
         raw_rows = list(result.data or [])
@@ -1596,7 +1622,7 @@ class UsersListManager:
         remap_result = analytics.execute_ch_query(
             remap_query,
             remap_params,
-            **_candidate_statement_timeout(deadline),
+            **_candidate_statement_timeout(deadline, first_batch_wall),
             settings=_page_read_settings(max_result_rows=_USER_LIST_ATTR_RESULT_ROWS),
         )
         aliases_by_survivor: dict[str, set[str]] = {}
@@ -2230,8 +2256,12 @@ class UsersListManager:
         With ``page_wall`` the refill walk after the first proven checkpoint
         stops at ``USER_LIST_PAGE_WALL_MS`` and the page is published as it
         stands: exact rows in order, ``has_more`` and the checkpoint, with
-        ``query_status`` ``degraded``. ``page_wall=False`` (the export) keeps
-        the walk unbounded. A filter the matching-activity walk serves (a
+        ``query_status`` ``degraded``. The first batch's candidate and
+        survivor statements are stopped by the server at
+        ``USER_LIST_FIRST_BATCH_WALL_MS`` instead; with no checkpoint to
+        publish, that stop propagates (``ReadDeadlineExceeded``).
+        ``page_wall=False`` (the export) keeps the walk unbounded, its first
+        batch included. A filter the matching-activity walk serves (a
         plain-text exact filter, or a number/boolean filter that is the only
         item on its key) never reaches that refill walk:
         ``walk_matching_activity_page`` serves it and owns its own wall and
@@ -2318,10 +2348,16 @@ class UsersListManager:
         # above owns the filtered page it serves and starts its own wall. Here
         # the refill walk after the first batch runs at the page wall, and its
         # candidate statements ask the server to stop there
-        # (``_candidate_statement_timeout``); the first batch runs unbounded
-        # as before.
+        # (``_candidate_statement_timeout``); the first batch's candidate
+        # statements ask the server to stop at the analytics wall instead
+        # (``USER_LIST_FIRST_BATCH_WALL_MS``).
         page_wall_deadline = (
             ReadDeadline.start(USER_LIST_PAGE_WALL_MS) if page_wall else None
+        )
+        first_batch_wall = (
+            ReadDeadline.start(USER_LIST_FIRST_BATCH_WALL_MS, enforce_on_server=True)
+            if page_wall
+            else None
         )
         wall_stopped = False
         published: list[dict] = []
@@ -2352,7 +2388,9 @@ class UsersListManager:
             else:
                 candidate_batch_size = USER_LIST_CANDIDATE_BATCH_SIZE
             # Only a refill after a proven checkpoint can stop at the wall and
-            # still resume exactly; the first batch runs unbounded as before.
+            # still resume exactly. The first batch has nothing to publish if
+            # its candidate statements are stopped, so that stop propagates
+            # (``batch_deadline`` is None below).
             batch_deadline = page_wall_deadline if checkpoint is not None else None
             if batch_deadline is not None and _page_wall_stopped(batch_deadline):
                 wall_stopped = True
@@ -2360,6 +2398,7 @@ class UsersListManager:
             try:
                 candidate_rows = self._read_dimension_candidates(
                     deadline=batch_deadline,
+                    first_batch_wall=first_batch_wall if checkpoint is None else None,
                     limit=candidate_batch_size + 1,
                     before_first_seen=before_first_seen,
                     before_end_user_id=before_end_user_id,

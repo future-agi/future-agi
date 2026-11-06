@@ -14,6 +14,7 @@ from tracer.services.clickhouse.query_builders.user_list import UserListQueryBui
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.users_list_manager import (
     USER_LIST_CURSOR_ORDER,
+    USER_LIST_FIRST_BATCH_WALL_MS,
     USER_LIST_PAGE_WALL_MS,
     UsersListManager,
 )
@@ -295,14 +296,15 @@ def test_native_filters_walk_exact_order_and_prove_exhaustion(
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),
         patch(
             "tracer.services.users_list_manager.ReadDeadline.start",
-            side_effect=lambda total_ms: (
-                started.append(total_ms) or real_start(total_ms)
+            side_effect=lambda total_ms, **kwargs: (
+                started.append(total_ms) or real_start(total_ms, **kwargs)
             ),
         ),
     ):
         page = m.list_cursor_payload(page_size=2)
-    # No admission wall: the only wall the walk starts is the route's page wall.
-    assert started == [USER_LIST_PAGE_WALL_MS]
+    # No admission wall: the walk starts the route's page wall for refills,
+    # and the first batch's server-enforced wall (TH-6934), nothing else.
+    assert started == [USER_LIST_PAGE_WALL_MS, USER_LIST_FIRST_BATCH_WALL_MS]
     assert [row["total_cost"] for row in page.payload["table"]] == expected
     assert page.payload["query_exact"] is True
     assert page.payload["ordering_exact"] is True
