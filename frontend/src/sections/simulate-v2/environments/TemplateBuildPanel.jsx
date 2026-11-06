@@ -17,7 +17,6 @@ import { getSurface } from "../_mock/surfaces";
 import { useConnectedAgents } from "../store";
 import { SectionCard } from "../components/primitives";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
-import ClosableDialog from "../components/ClosableDialog";
 import { HintLine } from "../agents/connect/replicationBits";
 import WorldAgentPicker from "./AgentChoice";
 import WorldFitReport from "./WorldFitReport";
@@ -63,9 +62,6 @@ export default function TemplateBuildPanel({
   const [agentId, setAgentId] = useState(null);
   const agent = agents.find((a) => a.id === agentId) || null;
   const [dialogOpen, setDialogOpen] = useState(false);
-  /* catalogue.md §3 Review adoption: the copy is confirmed on its own,
-     after the agent is chosen and before anything is copied or started. */
-  const [adopting, setAdopting] = useState(null);
   const build = useBuildForAgent();
   /* The tool binding the person reviewed; null until they change one. */
   const [binding, setBinding] = useState(null);
@@ -455,79 +451,9 @@ export default function TemplateBuildPanel({
           defaultVersion={agent.production || agent.latest}
           onBuild={(choice) => {
             setDialogOpen(false);
-            setAdopting(choice);
+            startBuild(choice);
           }}
         />
-      )}
-      {adopting && (
-        <ClosableDialog
-          open
-          onClose={() => setAdopting(null)}
-          PaperProps={{ sx: { maxWidth: 480, width: "100%", p: 2.5 } }}
-        >
-          <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-            Review adoption
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.secondary",
-              mt: 0.25,
-              mb: 1.5,
-            }}
-          >
-            {`A private copy of ${template.name} for ${agent?.name || "your agent"}. The catalogue release stays unchanged.`}
-          </Typography>
-          <Stack spacing={0.75}>
-            <Line
-              label="Source"
-              value={
-                entry
-                  ? `${template.name} · release ${entry.release.version}`
-                  : template.name
-              }
-            />
-            <Line
-              label="Data copied"
-              value={`${(template.seed?.tables || []).length} tables · ${rows.toLocaleString()} rows`}
-            />
-            <Line
-              label="Scenarios copied"
-              value={`${scenarioCount} · ${picked.name}`}
-            />
-            <Line label="Visibility" value="Private to this workspace" />
-            <Line
-              label="Agent"
-              value={`${agent?.name || "—"} · ${adopting.version}`}
-            />
-          </Stack>
-          <Stack
-            direction="row"
-            justifyContent="flex-end"
-            spacing={1}
-            sx={{ mt: 2 }}
-          >
-            <Button
-              size="small"
-              onClick={() => setAdopting(null)}
-              sx={{ color: "text.secondary" }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => {
-                const choice = adopting;
-                setAdopting(null);
-                startBuild(choice);
-              }}
-            >
-              Create private copy
-            </Button>
-          </Stack>
-        </ClosableDialog>
       )}
     </Stack>
   );

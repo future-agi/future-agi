@@ -1352,21 +1352,27 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >
-                          {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
+                          {/* A limit, not an estimate — pre-run cost is Later
+                              (plan improve §4, costFlags). */}
+                          {SHOW_RUN_COST
+                            ? `Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`
+                            : `Up to ${estimate.runs} candidates · stops at ${creditsLabel(spend)} or ${spendMinutes >= 60 ? `${Math.floor(spendMinutes / 60)} h${spendMinutes % 60 ? ` ${spendMinutes % 60} min` : ""}` : `${spendMinutes} min`}, whichever comes first`}
                         </Typography>
                         <Typography
                           sx={{
                             typography: "s3",
                             color:
-                              overBudget || overTime
+                              SHOW_RUN_COST && (overBudget || overTime)
                                 ? "text.primary"
                                 : "text.subtitle",
                             mt: 0.25,
                           }}
                         >
-                          {overBudget || overTime
+                          {SHOW_RUN_COST && (overBudget || overTime)
                             ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials; you'll get the best it found.`
-                            : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`}
+                            : SHOW_RUN_COST
+                              ? `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`
+                              : stopEarlyNote(estimate.runs)}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}
                         {SHOW_RUN_COST && (

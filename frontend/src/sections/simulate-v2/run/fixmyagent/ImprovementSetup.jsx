@@ -927,12 +927,17 @@ export default function ImprovementSetup({
                 </Box>
               </Stack>
             </ConfirmRow>
-            <ConfirmRow k={SHOW_RUN_COST ? "Cost" : "Budget"}>
+            <ConfirmRow k={SHOW_RUN_COST ? "Cost" : "Stops at"}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {/* The budget is a limit the fix keeps to; an estimate before
                     it starts is Later (plan improve §4, costFlags). */}
                 {!SHOW_RUN_COST
-                  ? `Up to ${trials} candidates · stops at ${creditsLabel(spend)} or ${estimate.minutes} min.`
+                  ? `Up to ${trials} candidates · ${creditsLabel(spend)} or ${(() => {
+                      const m = limits.budget.minutes || 0;
+                      return m >= 60
+                        ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`
+                        : `${m} min`;
+                    })()}, whichever comes first.`
                   : overBudget
                     ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)}. The full plan needs about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
                     : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`}

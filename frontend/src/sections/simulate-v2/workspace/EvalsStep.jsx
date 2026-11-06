@@ -1,3 +1,4 @@
+import { SHOW_RUN_COST } from "../_mock/costFlags";
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
@@ -586,7 +587,9 @@ export default function EvalsStep({
         </Typography>
       )}
 
-      {appliedEvals.length > 0 && (
+      {/* A per-run estimate is pre-run cost — Later (costFlags); the
+          per-call rate stays on each row. */}
+      {SHOW_RUN_COST && appliedEvals.length > 0 && (
         <Typography
           sx={{
             typography: "s2",
