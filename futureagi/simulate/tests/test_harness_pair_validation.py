@@ -1330,25 +1330,40 @@ WORLD_SEED = (
 )
 
 
-def _failure(cause, tail=""):
+def _guest(error, agent=(), phase="runtime"):
+    """The guest's entrypoint log as ALK writes it for a failed check: the phase line,
+    the agent's output after it, then the final error and the output again."""
+    output = "".join(f"{line}\n" for line in agent)
+    return (
+        "certify-only: source model rebuilt for this agent version's source\n"
+        f"runtime validation: {phase}: {error}\n{output}"
+        "runtime validation: repair failed (RuntimeValidationError)\n"
+        f"RuntimeValidationError: {error}\n{output}"
+    )
+
+
+def _failure(error, agent=(), phase="runtime", tail=None):
     return {
         "code": "authoring_runtime_validation_failed",
-        "message": _CHECK + cause if cause else _CHECK.rstrip(": "),
-        "details": {"guest_log_tail": tail},
+        "message": _CHECK + error,
+        "details": {
+            "guest_log_tail": _guest(error, agent, phase) if tail is None else tail
+        },
     }
+
+
+_AGENT_CRASH = (
+    "ProcessRuntimeError: depends_on/spawn_failed (agent): agent: exited before"
+    " readiness probe passed; last output:"
+)
 
 
 class TestCheckUnavailable:
     @pytest.mark.parametrize(
-        ("cause", "cause_code"),
+        ("error", "cause_code"),
         [
             # ALK's own fingerprint check failed the canonical seed.
             (WORLD_SEED, "seed_failed"),
-            (
-                "seed/seed_failed (world-db): canonical World IR could not be compiled or"
-                " applied: source_model_fingerprint_mismatch; agent: KeyError: 'id'",
-                "seed_failed",
-            ),
             # The agent's own migration or seed content, applied to world-db.
             (
                 "seed/seed_failed (world-db): 0042_orders.sql: exited 1: syntax error",
@@ -1395,43 +1410,77 @@ class TestCheckUnavailable:
             ),
             ("spawn/spawn_failed (world-api): exited 1", None),
             ("spawn/spawn_failed (tool-proxy-v2): exited 1", None),
-            ("spawn/spawn_failed (agent): ModuleNotFoundError", None),
+            (_AGENT_CRASH, None),
             ("build/build_failed (agent): pip failed", None),
-            # Only the head of the cause is read, never the agent's text after it.
-            (
-                "spawn/spawn_failed (agent): exited 1; agent: ProcessRuntimeError:"
-                " render/store_statement_failed: x",
-                None,
-            ),
             ("RuntimeError: boom render/store_statement_failed: x", None),
             ("the agent did not answer the test message", None),
             ("", None),
         ],
     )
-    def test_only_a_failure_alk_owns_is_ours(self, cause, cause_code):
-        assert validation.platform_failure(_failure(cause)) == cause_code
+    def test_only_a_failure_alk_owns_is_ours(self, error, cause_code):
+        assert validation.platform_failure(_failure(error)) == cause_code
 
-    def test_alk_s_infrastructure_phase_is_ours_and_any_other_phase_reads_the_cause(
-        self,
-    ):
-        cause = (
+    @pytest.mark.parametrize(
+        "printed",
+        [
+            "runtime validation: infrastructure: x",
+            "ProcessRuntimeError: render/store_statement_failed: x",
+            "RuntimeValidationError: a/internal_bug: x",
+            "ProcessRuntimeError: spawn/spawn_failed (world-db): x",
+            f"runtime validation: runtime: {WORLD_SEED}",
+        ],
+    )
+    def test_what_the_agent_prints_is_never_read(self, printed):
+        failure = _failure(_AGENT_CRASH, agent=["Starting agent", printed])
+
+        assert validation.platform_failure(failure) is None
+
+    def test_only_the_first_phase_line_counts_and_only_before_the_agent_s_output(self):
+        forged = _guest(_AGENT_CRASH, ["x"]).replace(
+            "certify-only",
+            f"x; last output:\nruntime validation: runtime: {WORLD_SEED}\n",
+        )
+        # A repaired phase's error can carry the agent's replies; a later line is unknown.
+        repaired = _guest(WORLD_SEED, phase="scenarios")
+        cut = "x" * 8000 + _guest(WORLD_SEED)
+
+        for tail in (forged, repaired, cut):
+            assert validation.platform_failure(_failure(WORLD_SEED, tail=tail)) is None
+        assert validation.platform_failure(_failure(WORLD_SEED, tail="")) is None
+
+    def test_an_untrusted_certificate_is_ours_only_in_alk_s_own_error(self):
+        certificate = (
             "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
         )
-        tail = (
-            "runtime validation: environment: ConnectError: earlier\n"
-            f"runtime validation: infrastructure: {cause}\n"
-            f"RuntimeValidationError: {cause}\n"
+        ours = _failure(certificate, phase="infrastructure")
+        # The agent failed its own TLS at boot: ALK sets the phase from its output.
+        agent_tls = _failure(
+            _AGENT_CRASH,
+            agent=["ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED]"],
+            phase="infrastructure",
         )
-        assert validation.platform_failure(_failure(cause, tail)) == "infrastructure"
+        agent_quiet = _failure(
+            "ProcessRuntimeError: spawn/spawn_failed (agent): CERTIFICATE_VERIFY_FAILED",
+            phase="infrastructure",
+        )
+
+        with_output = _failure(
+            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] x; last output:",
+            agent=["booting"],
+            phase="infrastructure",
+        )
+
+        assert validation.platform_failure(ours) == "infrastructure"
+        assert validation.platform_failure(with_output) is None
+        assert validation.platform_failure(agent_tls) is None
+        assert validation.platform_failure(agent_quiet) is None
         assert (
             validation.platform_failure(
-                _failure(cause, tail.replace("infrastructure", "runtime"))
+                _failure("ConnectError: x", phase="infrastructure")
             )
             is None
         )
-        # Only the last phase is the check's ending; an earlier attempt's is not.
-        retried = f"runtime validation: infrastructure: {cause}\nruntime validation: runtime: {cause}\n"
-        assert validation.platform_failure(_failure(cause, retried)) is None
+        assert validation.platform_failure(_failure(certificate)) is None
 
     def test_a_failed_action_probe_is_the_agent_s(self):
         assert (
@@ -1490,7 +1539,7 @@ class TestCheckUnavailable:
         assembly.mark_failed(job, _failure(WORLD_SEED))
 
         assert _row(environment).state == "pending"
-        assembly.mark_failed(job, _failure("the agent did not answer the test message"))
+        assembly.mark_failed(job, _failure(_AGENT_CRASH))
         assert _row(environment).state == "failed"
 
     def test_an_ordinary_run_s_test_world_failure_still_fails_its_bundle(
@@ -1559,19 +1608,27 @@ def _checks(environment):
     ).count()
 
 
+def _move(environment):
+    return _start(environment, purpose="agent_move")
+
+
+def _settle_unavailable(job, failure):
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state="failed", failure=failure
+    )
+    assert validation.finish_validation(job.id) == "unavailable"
+
+
 class TestUnavailableReuse:
-    def test_a_repeating_cause_is_reused_until_the_template_changes(
+    def test_a_repeating_cause_is_reused_by_a_move_until_the_template_changes(
         self, user, workspace, storage, settings
     ):
         _template(settings, "b1")
         environment = _pending(user, workspace, storage, "pv-reuse")
-        job = _start(environment).job
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-            state="failed", failure=_failure(WORLD_SEED)
-        )
-        assert validation.finish_validation(job.id) == "unavailable"
+        job = _move(environment).job
+        _settle_unavailable(job, _failure(WORLD_SEED))
 
-        again = _start(environment)
+        again = _move(environment)
 
         assert again.state == "check_unavailable" and again.ready
         assert again.job is None and _checks(environment) == 1
@@ -1581,7 +1638,37 @@ class TestUnavailableReuse:
         }
         assert again.as_view()["job_id"] == str(job.id)
         _template(settings, "b2")
-        assert _start(environment).state == "validating"
+        assert _move(environment).state == "validating"
+        assert _checks(environment) == 2
+
+    def test_an_alk_bug_is_reused_too(self, user, workspace, storage, settings):
+        _template(settings, "b1")
+        environment = _pending(user, workspace, storage, "pv-reuse-internal")
+        bug = "ProcessRuntimeError: render/internal_invariant_violated: x"
+        _settle_unavailable(_move(environment).job, _failure(bug))
+
+        assert _move(environment).state == "check_unavailable"
+        assert _checks(environment) == 1
+
+    def test_a_re_check_always_checks_afresh(self, user, workspace, storage, settings):
+        _template(settings, "b1")
+        environment = _pending(user, workspace, storage, "pv-reuse-recheck")
+        _settle_unavailable(_move(environment).job, _failure(WORLD_SEED))
+
+        assert _start(environment, purpose="recheck").state == "validating"
+        assert _checks(environment) == 2
+
+    def test_the_template_is_the_one_the_check_launched_on(
+        self, user, workspace, storage, settings
+    ):
+        _template(settings, "old")
+        environment = _pending(user, workspace, storage, "pv-reuse-launch")
+        job = _move(environment).job
+        _template(settings, "fixed")
+        _settle_unavailable(job, _failure(WORLD_SEED))
+
+        assert _row(environment).error["last_attempt"]["template"] == "alk-hosted:old"
+        assert _move(environment).state == "validating"
         assert _checks(environment) == 2
 
     def test_a_move_lands_on_a_reused_result_without_a_check(
@@ -1591,10 +1678,7 @@ class TestUnavailableReuse:
         environment, a1, a2 = _with_a2(user, workspace, storage, "pv-reuse-move")
         move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
         job = _move_job(environment, a2)
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-            state="failed", failure=_failure(WORLD_SEED)
-        )
-        assert validation.finish_validation(job.id) == "unavailable"
+        _settle_unavailable(job, _failure(WORLD_SEED))
         environment.refresh_from_db()
         move_agent_default(environment, a1.id, expected_default_id=a2.id, user=user)
         environment.refresh_from_db()
@@ -1611,16 +1695,26 @@ class TestUnavailableReuse:
             == 1
         )
 
-    def test_a_passing_cause_checks_again(self, user, workspace, storage, settings):
+    @pytest.mark.parametrize(
+        ("error", "phase"),
+        [
+            (
+                "ProcessRuntimeError: admission/resource_capacity_unavailable: no world fits",
+                "runtime",
+            ),
+            (
+                "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] verify failed",
+                "infrastructure",
+            ),
+        ],
+    )
+    def test_any_other_cause_checks_again(
+        self, user, workspace, storage, settings, error, phase
+    ):
         _template(settings, "b1")
-        environment = _pending(user, workspace, storage, "pv-reuse-transient")
-        job = _start(environment).job
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-            state="failed",
-            failure=_failure("admission/resource_capacity_unavailable: no world fits"),
-        )
-        assert validation.finish_validation(job.id) == "unavailable"
+        environment = _pending(user, workspace, storage, f"pv-reuse-{phase}")
+        _settle_unavailable(_move(environment).job, _failure(error, phase=phase))
         assert "template" not in _row(environment).error["last_attempt"]
 
-        assert _start(environment).state == "validating"
+        assert _move(environment).state == "validating"
         assert _checks(environment) == 2

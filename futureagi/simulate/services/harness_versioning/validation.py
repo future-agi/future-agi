@@ -78,34 +78,65 @@ _INFRASTRUCTURE_CODES = frozenset(
 # failure is the agent's migration or seed content.
 _CANONICAL_SEED = "canonical World IR could not be compiled or applied: "
 _OWNED_SEED_DIAGNOSTICS = frozenset({"source_model_fingerprint_mismatch"})
-# ALK's typed failure at the head of the guest's cause: ``stage/code (process): detail``.
-_CAUSE_HEAD = re.compile(
-    r"(?:ProcessRuntimeError: )?[a-z_]+/([a-z_]+)(?: \(([^)]+)\))?: (.*)", re.S
+# ALK's typed failure: ``stage/code (process): detail``.
+_TYPED = re.compile(
+    r"(?:ProcessRuntimeError: )?[a-z_]+/([a-z_]+)(?: \(([^)]+)\))?: (.*)"
 )
-# ALK prints each failed validation's phase, the last one being the check's ending.
-_PHASE_LINE = re.compile(r"^runtime validation: ([a-z_]+): ", re.M)
+# The line ALK prints for a failed validation, before the error and the agent's output.
+_PHASE_LINE = re.compile(r"runtime validation: ([a-z_]+): (.*)")
+# A runtime or infrastructure phase ends the check at once; a repaired phase may not.
+_ENDING_PHASES = frozenset({"runtime", "infrastructure"})
+# ALK ends a failure's own text with this and prints the agent's output lines after it
+# (process_runtime ``_output_tail``).
+_AGENT_OUTPUT = "; last output:"
+# The one infrastructure phase ALK sets (authoring_runtime_validation).
+_UNTRUSTED_CERTIFICATE = "CERTIFICATE_VERIFY_FAILED"
 # Causes that end every check of the same pairing on the same template the same way.
-_REPEATING_CAUSES = frozenset({"seed_failed", "infrastructure"})
+_REPEATING_CAUSES = frozenset({"seed_failed"})
+
+
+def _ending(tail: str) -> tuple[str, str] | None:
+    """ALK's phase line for the check's ending, as ``(phase, error)``: the first phase
+    line, read only before any of the agent's output. ``None`` when that cannot be
+    told: the log's start was cut off, the agent's output comes first, or the first
+    phase line is one ALK repairs (a later one may be the agent's)."""
+    from simulate.services.hosted_harness_gateway import GUEST_LOG_CHARS
+
+    if len(tail) >= GUEST_LOG_CHARS:
+        return None
+    for line in tail.splitlines():
+        phase = _PHASE_LINE.fullmatch(line)
+        if phase is not None:
+            return phase.groups() if phase.group(1) in _ENDING_PHASES else None
+        if _AGENT_OUTPUT in line:
+            return None
+    return None
 
 
 def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
     """Why a failed check ended on our side, or ``None`` when the agent failed it.
 
-    Ours: ALK's own validation phase was ``infrastructure``; or ALK's typed failure at
-    the head of the cause is an ``internal_*`` code (an ALK bug), an infrastructure-only
-    code, or a failure of a process ALK owns (a canonical seed only for ALK's own
-    fingerprint check). A failed action probe, or anything else, is the agent's."""
+    Read only from ALK's phase line for the ending (see ``_ending``), never from the
+    agent's output after it. Ours: an ``infrastructure`` phase for an untrusted
+    certificate in ALK's own error text; or ALK's typed failure on that line is an
+    ``internal_*`` code (an ALK bug), an infrastructure-only code, or a failure of a
+    process ALK owns (a canonical seed only for ALK's own fingerprint check). A failed
+    action probe, or anything else, is the agent's."""
     if failed_actions or not failure:
         return None
-    tail = str((failure.get("details") or {}).get("guest_log_tail") or "")
-    phases = _PHASE_LINE.findall(tail)
-    if phases and phases[-1] == "infrastructure":
-        return "infrastructure"
-    cause = str(failure.get("message") or "").partition(": ")[2]
-    head = _CAUSE_HEAD.fullmatch(cause.split("; agent: ")[0])
-    if head is None:
+    ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
+    if ending is None:
         return None
-    code, process, detail = head.groups()
+    phase, error = ending
+    typed = _TYPED.fullmatch(error)
+    if phase == "infrastructure":
+        own = _AGENT_OUTPUT not in error and (
+            typed is None or typed.group(2) in _OWNED_PROCESSES
+        )
+        return "infrastructure" if own and _UNTRUSTED_CERTIFICATE in error else None
+    if typed is None:
+        return None
+    code, process, detail = typed.groups()
     if code.startswith("internal_") or code in _INFRASTRUCTURE_CODES:
         return code
     if process not in _OWNED_PROCESSES:
@@ -128,7 +159,8 @@ def _template() -> str | None:
 
 def repeats_unavailable(bundle: HarnessAssembledBundle) -> bool:
     """Whether this pending pairing's last check ended on our side for a cause that
-    would end a new check the same way: same versions (the bundle) and same template."""
+    would end a new check the same way: same versions (the bundle) and the template the
+    last check ran on."""
     last = (bundle.error or {}).get("last_attempt") or {}
     template = _template()
     return (
@@ -354,7 +386,7 @@ def start_validation(
                 caller=move["caller"] if move else None,
             )
             return Validation("ready", bundle, purpose)
-        if repeats_unavailable(bundle):
+        if purpose != "recheck" and repeats_unavailable(bundle):
             logger.info(
                 "harness_pair_check_unavailable_reused",
                 environment_id=str(locked.id),
@@ -461,6 +493,7 @@ def _create_job(
             "environment_job_id": str(locked.id),
             "certify_only": True,
             "validation_purpose": purpose,
+            "check_template": _template(),
             "assembly": assembly.RunAssembly(
                 bundle=bundle, key=bundle.assembly_key, cached=False, defaults=False
             ).as_metadata(),
@@ -642,7 +675,9 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
                 "job_id": str(job.id),
             }
             if cause in _REPEATING_CAUSES or cause.startswith("internal_"):
-                last["template"] = _template()
+                last["template"] = (job.payload.get("metadata") or {}).get(
+                    "check_template"
+                )
             bundle.error = {"last_attempt": last}
             bundle.save(update_fields=["error", "updated_at"])
         logger.warning("harness_pair_check_unavailable", **_check_log(job), cause=cause)
