@@ -1647,6 +1647,17 @@ del _runtime_numeric_settings
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
+# Operational SQL workbench budgets, not edition/pricing entitlements.
+from .sql_workbench import (  # noqa: E402,F401
+    SQL_WORKBENCH_AUDIT_RETENTION_DAYS,
+    SQL_WORKBENCH_ESTIMATES_PER_MINUTE,
+    SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H,
+    SQL_WORKBENCH_MAX_ORG_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H,
+    SQL_WORKBENCH_RESULT_CACHE_SECONDS,
+)
+
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
 #   "clickhouse" — reads span data from CH 25.3 via the hybrid loader

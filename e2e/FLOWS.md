@@ -2316,6 +2316,30 @@
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
 
+### OBS-E2E-059 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
