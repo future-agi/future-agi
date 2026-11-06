@@ -132,6 +132,8 @@ class RunDashboardTaskSerializer(serializers.Serializer):
     value = serializers.FloatField()
     modality = serializers.CharField(allow_null=True)
     provider = serializers.CharField(allow_null=True)
+    # When the call ended, so a call opened from here checks again for its worker record while it arrives.
+    completed_at = serializers.DateTimeField(allow_null=True)
 
 
 class RunDashboardUnavailableSerializer(serializers.Serializer):

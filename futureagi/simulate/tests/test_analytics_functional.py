@@ -13,6 +13,7 @@ from django.core.cache import cache
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
@@ -2980,6 +2981,22 @@ class TestRunResultsV3Views:
         }
         target = response.json()["dashboard"]["agent_response_time"]["target_ms"]
         assert target == 3000
+
+    def test_dashboard_tail_calls_say_when_they_ended(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        ended = timezone.now().replace(microsecond=0)
+        slowest = analytics_call_executions[0]
+        slowest.duration_seconds = 600
+        slowest.completed_at = ended
+        slowest.save(update_fields=["duration_seconds", "completed_at"])
+
+        tails = self._dashboard(auth_client, test_execution)["slowest_tasks"]
+
+        # A call opened from Analytics checks again for its worker record, which lands after it ends.
+        assert tails[0]["id"] == str(slowest.id)
+        assert parse_datetime(tails[0]["completed_at"]) == ended
+        assert all("completed_at" in row for row in tails)
 
     def _dashboard(self, auth_client, test_execution):
         response = auth_client.get(
