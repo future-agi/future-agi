@@ -268,16 +268,9 @@ export function projectConversation(conversation) {
     }
   }
 
-  // A persistent "working autonomously" cue while the run is active and not
-  // blocked on the user — rendered as a step so the composer stays enabled for
-  // interjections (unlike the composer-blocking `running` flag).
   const active = ACTIVE_CONVERSATION_STATES.has(conversation.state);
   const waiting = conversation.state === "waiting_for_user" || Boolean(blocking);
-  if (active && !waiting) {
-    const b = startBuilder();
-    const since = events.length ? events[events.length - 1].emitted_at : undefined;
-    b.steps.push({ id: "heartbeat", kind: "heartbeat", since });
-  } else {
+  if (!active || waiting) {
     // Not actively working (stopped, failed, or waiting on the user): nothing is
     // in flight, so no tool dot should keep pulsing. Finalize any lingering
     // "running" step across every turn (the last one is never ended otherwise).

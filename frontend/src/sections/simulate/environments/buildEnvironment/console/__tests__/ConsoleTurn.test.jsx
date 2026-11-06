@@ -40,15 +40,13 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText("ALK moved to Build")).toBeInTheDocument();
   });
 
-  it("renders error, cancelled and heartbeat steps", () => {
+  it("renders error and cancelled steps", () => {
     render(<Turn turn={builder([
       { id: "e1", kind: "error", text: "It broke" },
       { id: "c1", kind: "cancelled", text: "Stopped." },
-      { id: "h1", kind: "heartbeat" },
     ])} />);
     expect(screen.getByText("It broke")).toBeInTheDocument();
     expect(screen.getByText("Stopped.")).toBeInTheDocument();
-    expect(screen.getByText(/working autonomously/i)).toBeInTheDocument();
   });
 
   it("renders a Rebuild's opening line as a step kind it knows", () => {

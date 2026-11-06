@@ -5,8 +5,7 @@
 // its messages + events into the BuilderConsole turn/step model, and posts user
 // turns back through POST …/conversation/messages/. Poll parity, not streaming:
 // assistant_delta is ignored; a whole assistant_message renders on the next poll,
-// with a "working" cue in between (the projector's heartbeat step + the brief
-// mutation-pending pulse).
+// with a "working" cue in between (the ring around the composer's Stop button).
 //
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
@@ -385,8 +384,7 @@ export function useWorkspaceChat(env, { source } = {}) {
   }, [turns, pending, retry]);
 
   // `running` blocks the composer only for the brief POST round-trip, so the user
-  // can still interject while the agent works autonomously (the heartbeat step is
-  // the persistent cue).
+  // can still interject while the agent works autonomously.
   const running = mutation.isPending;
 
   // A live job always accepts messages (they queue until its sandbox can run chat), so

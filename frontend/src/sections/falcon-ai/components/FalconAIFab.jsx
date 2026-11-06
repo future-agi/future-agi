@@ -6,7 +6,7 @@ import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
-function FalconIcon(props) {
+export function FalconIcon(props) {
   return (
     <SvgIcon {...props} viewBox="0 0 24 24">
       {/* Falcon spaceship — pointing UP, geometric, matches brand */}
