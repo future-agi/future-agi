@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
@@ -38,7 +38,8 @@ export default function CallTracesPanel({
     );
   }, [traces, projectId, setVisibleTraces]);
 
-  useEffect(() => {
+  // Before the effects below can open a trace: an open trace with no panel mounted is cleared as stale.
+  useLayoutEffect(() => {
     onMountedChange?.(true);
     return () => {
       onMountedChange?.(false);

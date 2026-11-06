@@ -8,6 +8,7 @@ import { useLLMTracingStore } from "src/sections/projects/LLMTracing/states";
 // data hooks and the two heavy drawers' bodies are stood in for.
 const mocks = vi.hoisted(() => ({
   traces: { projectId: null, traces: [], isError: false },
+  hasWorkers: false,
 }));
 
 vi.mock("src/components/iconify", () => ({ default: () => <span /> }));
@@ -18,7 +19,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   return {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
-    useHasWorkers: () => false,
+    useHasWorkers: () => mocks.hasWorkers,
     useCallExecutionV3Detail: () => ({
       data: { id: "voice-1", transcript: [] },
       isPending: false,
@@ -53,17 +54,33 @@ vi.mock("src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer", async ()
   };
 });
 
+// A Participants step asks for its trace, as the real panel's Open in Traces does.
+vi.mock("../CallWorkersPanel", () => ({
+  default: function WorkersStub({ onOpenTrace }) {
+    return (
+      <button type="button" onClick={() => onOpenTrace("trace-1")}>
+        open step trace
+      </button>
+    );
+  },
+}));
+
 vi.mock("src/components/VoiceDetailDrawerV2", async () => {
   const { useState } = await import("react");
   return {
     default: function VoiceStub({
       leftPanelTabs,
+      leftPanelTab,
+      onLeftPanelTabChange,
       onPrev,
       onNext,
       hasPrev,
       hasNext,
     }) {
-      const [tab, setTab] = useState("transcript");
+      // Follows a tab its host holds, as VoiceLeftPanel does.
+      const [ownTab, setOwnTab] = useState("transcript");
+      const tab = leftPanelTab ?? ownTab;
+      const setTab = onLeftPanelTabChange ?? setOwnTab;
       const active = (leftPanelTabs ?? []).find((t) => t.value === tab);
       return (
         <div data-testid="voice-drawer">
@@ -120,6 +137,7 @@ const renderVoice = (props = {}) =>
 
 beforeEach(() => {
   mocks.traces = { projectId: "hidden-project", traces: ROWS, isError: false };
+  mocks.hasWorkers = false;
 });
 
 afterEach(() => {
@@ -268,5 +286,36 @@ describe("CallDrawer — Escape", () => {
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CallDrawer: Open in Traces from a Participants step", () => {
+  beforeEach(() => {
+    mocks.hasWorkers = true;
+  });
+
+  it("opens the step's trace over a chat call and keeps it open", async () => {
+    const user = userEvent.setup();
+    renderChat();
+
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+
+    expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
+    expect(urlHasTrace()).toBe(true);
+    expect(useLLMTracingStore.getState().traceDetailDrawerOpen).toMatchObject({
+      traceId: "trace-1",
+    });
+  });
+
+  it("opens the step's trace over a voice call and keeps it open", async () => {
+    const user = userEvent.setup();
+    renderVoice();
+
+    await user.click(screen.getByRole("button", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+
+    expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
+    expect(urlHasTrace()).toBe(true);
   });
 });
