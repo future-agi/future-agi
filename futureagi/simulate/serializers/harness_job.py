@@ -12,6 +12,11 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from simulate.services.microsoft_agents import (
+    MICROSOFT_CONNECTOR_ALIASES,
+    MICROSOFT_CONNECTORS,
+    microsoft_config_error,
+)
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -145,7 +150,14 @@ class HarnessSourceSerializer(serializers.Serializer):
 VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 
 # Connectors that reach an already-running agent, so the run carries no source tree.
-PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
+PROVIDER_TARGET_CONNECTORS = {
+    "vapi",
+    "retell",
+    "retell_chat",
+    "phone",
+    "livekit",
+    *MICROSOFT_CONNECTORS,
+}
 
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
@@ -174,7 +186,15 @@ TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
+        choices=(
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            *MICROSOFT_CONNECTORS,
+        )
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -271,6 +291,14 @@ class HarnessAgentSerializer(serializers.Serializer):
                     )
                 }
             )
+        if connector in MICROSOFT_CONNECTORS:
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "Microsoft agents support connect_only only"}
+                )
+            if error := microsoft_config_error(connector, config):
+                raise serializers.ValidationError({"config": error})
+            return attrs
         if "phone_number" in config and connector != "phone":
             if connector not in {"vapi", "retell"} or mode != "connect_only":
                 raise serializers.ValidationError(
@@ -765,6 +793,12 @@ def missing_provider_credentials(agent, detected_connectors=()):
     # family cannot satisfy ``complete_provider_families`` for every other connector.
     if connector == "phone":
         return []
+    if connector in MICROSOFT_CONNECTOR_ALIASES:
+        return [
+            alias
+            for alias in MICROSOFT_CONNECTOR_ALIASES[connector]
+            if alias not in present
+        ]
     if connector != "auto":
         return [alias for alias in CONNECTOR_ALIASES[connector] if alias not in present]
     detected = [name for name in detected_connectors if name in CONNECTOR_ALIASES]
