@@ -84,8 +84,8 @@ class EngineBrief(BaseModel):
     base_commit: str
     request: FixRequest
     inventory: list[InventoryScenario]
-    # The models earlier launches stopped using because their calls were lost: a relaunch
-    # starts without them.
+    # The models earlier launches stopped using in the last hour because their calls were
+    # lost: a relaunch starts without them.
     lost_models: list[str] = Field(default_factory=list)
     # Where a relaunched engine picks up: its attempts are numbered after the last candidate
     # an earlier launch sent, and its budget starts from what the fix has committed.

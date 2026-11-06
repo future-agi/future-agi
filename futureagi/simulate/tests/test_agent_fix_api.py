@@ -26,13 +26,10 @@ from simulate.models import (
 )
 from simulate.models import TestExecution as Execution
 from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.selectors.agent_fix import LOST_MODELS_SKIPPED_FOR
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
-from simulate.services.agent_fix_runs import (
-    RETRY_SKIPS_LOST_MODELS_FOR,
-    close_fix_run,
-    retry_fix_run,
-)
+from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_row,
@@ -2148,6 +2145,16 @@ def _revision_state(**kwargs):
     return True, physical_count, True
 
 
+def _lost_ago(fix_run, ago):
+    """Move every loss the fix noted back by ``ago``; returns the new loss time."""
+    fix_run.refresh_from_db()
+    lost_at = (timezone.now() - ago).isoformat()
+    notes = fix_run.engine_notes
+    notes["lost_models"] = dict.fromkeys(notes["lost_models"], lost_at)
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(engine_notes=notes)
+    return lost_at
+
+
 class TestEngineMemory:
     """What a fix keeps from its engines' reports across launches. It lives in the fix's
     engine notes: ``report`` stays the engine's final report, null until it comes."""
@@ -2200,10 +2207,8 @@ class TestEngineMemory:
             "failure": None,
             "winner_candidate_id": None,
         }
-        assert fix_run.engine_notes == {
-            "lost_models": ["deepseek/flash"],
-            "last_error": "hung",
-        }
+        assert list(fix_run.engine_notes["lost_models"]) == ["deepseek/flash"]
+        assert fix_run.engine_notes["last_error"] == "hung"
 
     def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
         self, api_client, source_run
@@ -2217,9 +2222,28 @@ class TestEngineMemory:
 
         brief = _engine(api_client, "get", fix_run, "brief/").json()
 
-        assert brief["lost_models"] == ["deepseek/flash", "luna/coder"]
+        # A set to the engine; the notes are jsonb, which keeps no key order.
+        assert sorted(brief["lost_models"]) == ["deepseek/flash", "luna/coder"]
         fix_run.refresh_from_db()
-        assert fix_run.engine_notes["lost_models"] == ["deepseek/flash", "luna/coder"]
+        assert sorted(fix_run.engine_notes["lost_models"]) == [
+            "deepseek/flash",
+            "luna/coder",
+        ]
+
+    def test_a_model_named_again_keeps_the_time_it_was_lost(
+        self, api_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+        lost_at = _lost_ago(fix_run, LOST_MODELS_SKIPPED_FOR + timedelta(minutes=1))
+        # The engine names its brief's models in every report, long after the loss.
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert brief["lost_models"] == []
+        fix_run.refresh_from_db()
+        assert fix_run.engine_notes["lost_models"] == {"deepseek/flash": lost_at}
 
     def test_a_first_launch_s_brief_has_no_lost_models(self, api_client, source_run):
         fix_run = _armed(_fix_run(source_run))
@@ -2235,10 +2259,10 @@ class TestEngineMemory:
         self._report(api_client, fix_run, last_error=None)
 
         fix_run.refresh_from_db()
-        assert fix_run.engine_notes == {"lost_models": [], "last_error": "x" * 500}
+        assert fix_run.engine_notes == {"lost_models": {}, "last_error": "x" * 500}
 
     def _retry_of_a_fix_that_lost_a_model(
-        self, api_client, source_run, user, *, ended_ago
+        self, api_client, source_run, user, *, lost_ago
     ):
         failed = _armed(_fix_run(source_run))
         self._report(
@@ -2252,9 +2276,7 @@ class TestEngineMemory:
             AgentFixRun.State.FAILED,
             failure={"code": "fix_engine_died", "message": "m"},
         )
-        AgentFixRun.no_workspace_objects.filter(id=failed.id).update(
-            finished_at=timezone.now() - ended_ago
-        )
+        _lost_ago(failed, lost_ago)
         retried = retry_fix_run(
             AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
         )
@@ -2272,25 +2294,23 @@ class TestEngineMemory:
             api_client,
             source_run,
             user,
-            ended_ago=RETRY_SKIPS_LOST_MODELS_FOR - timedelta(minutes=1),
+            lost_ago=LOST_MODELS_SKIPPED_FOR - timedelta(minutes=1),
         )
 
         assert brief["lost_models"] == ["deepseek/flash"]
         # The failed fix's error is its own: the retry's failure must not name it.
         assert retried.report is None
-        assert retried.engine_notes == {
-            "lost_models": ["deepseek/flash"],
-            "last_error": None,
-        }
+        assert list(retried.engine_notes["lost_models"]) == ["deepseek/flash"]
+        assert retried.engine_notes["last_error"] is None
 
-    def test_a_retry_of_a_fix_that_failed_long_ago_starts_clean(
+    def test_a_retry_skips_no_model_lost_long_before_the_fix_failed(
         self, api_client, source_run, user, temporal
     ):
         retried, brief = self._retry_of_a_fix_that_lost_a_model(
             api_client,
             source_run,
             user,
-            ended_ago=RETRY_SKIPS_LOST_MODELS_FOR + timedelta(minutes=1),
+            lost_ago=LOST_MODELS_SKIPPED_FOR + timedelta(minutes=1),
         )
 
         assert brief["lost_models"] == []

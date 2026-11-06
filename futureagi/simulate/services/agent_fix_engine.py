@@ -480,12 +480,17 @@ LAST_ERROR_CHARS = 500
 def _engine_notes(
     stored: dict[str, Any] | None, report: EngineReport
 ) -> dict[str, Any]:
-    """Every model a launch lost, for the next launch's brief, and the last error an
-    engine sent, for the failure of a fix whose launches all stopped."""
+    """Every model a launch lost, with when it was first reported lost, for the next
+    launch's brief, and the last error an engine sent, for the failure of a fix whose
+    launches all stopped. The engine names its brief's models again in every report, so
+    a model already noted keeps its time."""
     stored = stored or {}
-    lost = [*(stored.get("lost_models") or []), *report.lost_models]
+    now = timezone.now().isoformat()
+    lost = dict(stored.get("lost_models") or {})
+    for model in report.lost_models:
+        lost.setdefault(model, now)
     return {
-        "lost_models": list(dict.fromkeys(lost)),
+        "lost_models": lost,
         "last_error": (report.last_error or "")[:LAST_ERROR_CHARS]
         or stored.get("last_error"),
     }
