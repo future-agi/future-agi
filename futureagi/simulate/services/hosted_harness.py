@@ -515,7 +515,8 @@ def create_selected_harness_run(
             "conversation_checkpoints",
             "draft_saves",
             "observability_refusal",
-            # The run's sandbox must never hold the held-back case keys.
+            # The run's payload never names which cases are held back; its sandbox
+            # still holds every case of the suite.
             HELD_BACK_METADATA_KEY,
         ):
             child_metadata.pop(key, None)

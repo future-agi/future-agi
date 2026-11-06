@@ -4,6 +4,10 @@ it gets back when it verifies an agent version on them.
 The set is stored on the environment's payload metadata, beside the default suite
 version it was last carried to. A coding agent reads only that suite, without those
 cases, cannot run them, and learns how a version did on them only as counts.
+
+The cases are hidden from the API only. A run's sandbox holds every case of its suite,
+and the agent under test runs there as the same OS user as the harness, so a hostile
+candidate can read them and speak them into a transcript the key reads.
 """
 
 from collections.abc import Collection, Mapping
