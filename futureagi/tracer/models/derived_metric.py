@@ -2017,6 +2017,7 @@ class MetricReadManifest(models.Model):
         token,
         cursors: dict | None = None,
         visibility_receipts: dict | None = None,
+        source_cut=None,
         now: datetime | None = None,
     ) -> MetricReadManifest:
         """Commit a verified attempt and move the project head, in one transaction.
@@ -2125,6 +2126,21 @@ class MetricReadManifest(models.Model):
                     )
                 if parent is None or parent.revoked_at is not None:
                     raise MetricStateConflict("checkpoint source was revoked")
+            # A01 evidence is opt-in and is never inherited by scalar work.
+            # Bind it inside the SAME existing lifecycle/publication transaction.
+            visibility_receipts = dict(visibility_receipts or {})
+            if "source_cut" in visibility_receipts:
+                raise MetricLedgerConflict("source receipt must come from the adapter")
+            if source_cut is None and "a01_source_cut" in attempt.source_ceilings:
+                raise MetricLedgerConflict("frozen source cut requires publication evidence")
+            if source_cut is not None:
+                from tracer.services.derived_metrics.base_list_current_source_publication import (
+                    bind_source_publication_cut,
+                )
+
+                visibility_receipts["source_cut"] = bind_source_publication_cut(
+                    source_cut, attempt=attempt, visibility_receipts=visibility_receipts,
+                )
             committed = MetricRefreshAttempt.objects.filter(
                 id=attempt.id,
                 state=MetricRefreshAttempt.State.VERIFIED,
@@ -2141,6 +2157,8 @@ class MetricReadManifest(models.Model):
                 ],
                 "deltas": [[str(a), g] for a, g in deltas],
             }
+            if source_cut is not None:
+                body["visibility_receipts"] = visibility_receipts
             manifest = cls.objects.create(
                 project_id=attempt.project_id,
                 generation=attempt.generation,

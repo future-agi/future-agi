@@ -397,10 +397,10 @@ class RefreshWriter:
             **self.lease.check(),
         )
 
-    def stage_and_publish(self, attempt):
+    def stage_and_publish(self, attempt, *, source_cut=None):
         """Do not publish a frozen plan that violates the CURRENT policy."""
         try:
-            manifest = self._stage_and_publish(attempt)
+            manifest = self._stage_and_publish(attempt, source_cut=source_cut)
             if (
                 attempt.purpose == "compaction"
                 and "manifest" in attempt.source_ceilings
@@ -452,9 +452,16 @@ class RefreshWriter:
                 )
             raise
 
-    def _stage_and_publish(self, attempt):
+    def _stage_and_publish(self, attempt, *, source_cut=None):
         """Idempotent after partial staging OR a lost publish acknowledgement."""
         attempt.refresh_from_db()
+        if source_cut is not None or "a01_source_cut" in attempt.source_ceilings:
+            from tracer.services.derived_metrics.base_list_current_source_publication import (
+                source_cut_ceilings,
+            )
+
+            if attempt.source_ceilings.get("a01_source_cut") != source_cut_ceilings(source_cut)["a01_source_cut"]:
+                raise MetricLedgerConflict("frozen source cut changed on replay")
         if attempt.state == "committed":
             return MetricReadManifest.objects.get(published_by=attempt)
         self.lease.check()
@@ -598,6 +605,7 @@ class RefreshWriter:
             manifest = MetricReadManifest.publish(
                 attempt.id,
                 cursors=cursors,
+                source_cut=source_cut,
                 visibility_receipts={
                     "shard": self.store.identity(),
                     "batches": receipts,

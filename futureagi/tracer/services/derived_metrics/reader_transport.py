@@ -144,7 +144,15 @@ class MetricsReadTransport:
             bound = sql % escape_params(params, context)
         else:
             bound = sql
-        query = {"database": self.database, "default_format": "JSONCompact", **settings}
+        query = {
+            "database": self.database,
+            "default_format": "JSONCompact",
+            # This envelope is consumed by Python, not a JavaScript number
+            # parser. Keep Int64/UInt64 exact without converting numeric-looking
+            # String values or Bool values to integers after decoding.
+            "output_format_json_quote_64bit_integers": 0,
+            **settings,
+        }
         if receipt:
             query["query_id"] = receipt.query_id
         host = f"[{self.host}]" if ":" in self.host else self.host
