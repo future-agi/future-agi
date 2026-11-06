@@ -57,6 +57,8 @@ ORDER BY (org_id, project_id, field_id, field_version, level, unit_id, generatio
 -- DCM7: compaction writes a NEW frozen checkpoint attempt with the same complete
 -- payload. Pinned checkpoints coexist until publication/GC proves them unreachable.
 -- No user-ordered projection (DCM6). There are no user-level stored rows.
+-- Existing tables need a reviewed copy/cutover; IF NOT EXISTS is not a migration.
+-- Never drop a nonempty predecessor or any reachable/pinned checkpoint.
 CREATE TABLE IF NOT EXISTS metric_field_values_checkpoint
 (
     org_id UUID,
@@ -100,5 +102,5 @@ CREATE TABLE IF NOT EXISTS metric_field_values_checkpoint
     INDEX ix_user user_id TYPE bloom_filter GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(_version)
-PARTITION BY cityHash64(project_id) % 32
+PARTITION BY (cityHash64(project_id) % 32, cityHash64(unit_id) % 8)
 ORDER BY (org_id, project_id, field_id, field_version, level, unit_id, generation, attempt_id);

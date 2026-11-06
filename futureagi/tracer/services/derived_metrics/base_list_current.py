@@ -7,6 +7,8 @@ qualification flag here. Sessions uses native exact selection and hydration
 until BL01-Q supplies and verifies a durable source/remap fence contract.
 """
 
+from uuid import UUID
+
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.storage import (
     LIST_CURRENT_MEMBERS,
@@ -29,6 +31,12 @@ class CurrentFactsRead:
     def permits(self, project_id):
         # No source-fenced provider exists yet. Neither a successful publication,
         # a live pin nor booleans supplied by a caller can change this result.
+        return False
+
+    def permits_user_activity(self, project_id: str | UUID) -> bool:
+        # Schema 036 coverage cannot qualify the later by-user index. BL01-Q
+        # must fence its complete backfill, user-key retractions and live delta
+        # on this SAME pin before enabling schema 037 reads.
         return False
 
     def rows(self, *, members=False):

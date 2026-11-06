@@ -218,4 +218,15 @@ def freeze_changes(writer, attempt, head, *, keys, as_of, cutoff=None):
             )
             if table == LIST_CURRENT_MEMBERS:
                 member_payloads = frozen
+        from tracer.services.derived_metrics.user_list_current_clickhouse import (
+            freeze_user_activity,
+        )
+
+        freeze_user_activity(
+            writer,
+            attempt,
+            head,
+            member_payloads=member_payloads,
+            keys=params["current_keys"],
+        )
     return True

@@ -337,10 +337,17 @@ def collect_history(project_id, *, now=None, limit=1000):
         # after collection is safe; unresolved submissions are independent roots
         # and survive even when their private attempt/manifest has been removed.
         MetricErasureRequest.objects.filter(
+            Q(receipts__synchronous_response__drained=1)
+            | Q(receipts__terminal_query__drained=1),
             project_key=project_id,
             store_payload__protocol="metric_submission",
             status="done",
-            receipts__synchronous_response__drained=1,
+        ).delete()
+        MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_checkpoint_layout",
+            status="done",
+            receipts__layout__drained=1,
         ).delete()
         refresh = MetricProjectRefresh.objects.select_for_update().get(
             project_id=project_id

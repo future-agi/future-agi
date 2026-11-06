@@ -18,6 +18,7 @@ from tracer.services.derived_metrics.storage import (
     LIST_CURRENT_MEMBERS,
     LIST_CURRENT_ROOTS,
     LIST_CURRENT_TABLES,
+    LIST_USER_ACTIVITY,
 )
 from tracer.tests._base_list_parity import (
     FixtureAuthority,
@@ -266,8 +267,15 @@ def test_current_only_subject_erasure_preserves_unrelated_sessions(current_write
     assert [r[-2] for r in facts(writer, head)] == ["retained"]
     for table in LIST_CURRENT_TABLES:
         assert writer.store.execute(
+            f"SELECT count() FROM {table.name} WHERE raw_user_id = %(erased)s "
+            "OR canonical_user_id = %(erased)s",
+            {"erased": str(user)},
+        ) == [(0,)]
+    for table in (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS):
+        assert writer.store.execute(
             f"SELECT count() FROM {table.name} WHERE input = 'private'"
         ) == [(0,)]
+    assert "input" not in LIST_USER_ACTIVITY.columns
 
 
 @pytest.mark.django_db(transaction=True)
@@ -315,8 +323,18 @@ def test_root_payload_uses_frozen_member_even_when_source_changes_mid_prepare(
     monkeypatch.setattr(writer.store, "freeze_select", freeze)
     head = publish_current(writer, [("trace-a", "root")])
     assert changed
-    for table in LIST_CURRENT_TABLES:
+    for table in (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS):
         assert facts(writer, head, table)[0][4:6] == (0, "frozen member")
+    activity, params = committed_rows_select(
+        LIST_USER_ACTIVITY,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    assert writer.store.execute(
+        f"SELECT is_deleted, source_version, canonical_session_id FROM ({activity})",
+        params,
+    ) == [(0, 1, str(session))]
 
 
 @pytest.mark.django_db(transaction=True)

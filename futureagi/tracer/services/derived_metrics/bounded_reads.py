@@ -12,11 +12,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from clickhouse_driver.util.escape import escape_param
 
-from tracer.services.derived_metrics.storage import FIELD_VALUES, TABLES
+from tracer.services.derived_metrics.storage import (
+    FIELD_CHECKPOINT,
+    FIELD_CHECKPOINT_BUCKETS,
+    FIELD_VALUES,
+    TABLES,
+)
 
 MAX_KEY_IN_ITEMS = 1000
 MAX_KEY_IN_BYTES = 64 * 1024
@@ -504,8 +509,11 @@ def capture_source_output(
         "CAST(" + name + ", '" + kind.replace("'", "\\'") + "')"
         for name, kind in SOURCE_SCHEMA
     )
-    # Check before hex expansion/transport; small server blocks prevent a full
-    # wide result being buffered by clickhouse-driver before Python can inspect it.
+    # Check each row before hex expansion and bound the whole server result.
+    # max_block_size also controls upstream source scans: setting it to one
+    # makes a broad revision-complete scan execute millions of tiny blocks.
+    # Keep the normal writer block size, result overflow=throw, and consume one
+    # output row at a time. No partial capture is exposed on a final server error.
     query = (
         f"SELECT level, unit_id, hex(encoded) FROM (SELECT level, unit_id, "
         f"formatRow('RowBinary', {columns}) AS encoded FROM ({sql})) "
@@ -513,14 +521,20 @@ def capture_source_output(
     )
     settings = {
         **WRITE_SETTINGS,
-        "max_block_size": 1,
+        "max_block_size": MAX_BATCH_ROWS,
         "preferred_block_size_bytes": 64 * 1024,
         "max_result_rows": 2 * candidate_count,
         "max_result_bytes": 2 * SOURCE_CAPTURE_BYTES + 1024 * 1024,
         "result_overflow_mode": "throw",
     }
     rows, seen, size = [], {}, 0
-    iterator = stream(query, params, settings=settings, chunk_size=1)
+    iterator = stream(
+        query,
+        params,
+        settings=settings,
+        chunk_size=1,
+        query_id="metric-source-capture-" + uuid4().hex,
+    )
     try:
         for level, unit, encoded in iterator:
             if len(rows) >= 2 * candidate_count:
@@ -562,6 +576,51 @@ def capture_source_output(
     return CapturedSourceOutput(
         field_id, field_version, tuple(rows), digest.hexdigest()
     )
+
+
+def checkpoint_unit_predicate(table, key_in, *, prefix, bucket=None):
+    """Compiler-derived partition pruning; never hashes a mutable owner/time.
+
+    Keep the original exact key membership too. A hash collision is a pruning
+    false positive, not authority to read another unit, attempt or tenant. Hash
+    on the server in the physical String type, not Python's process-local hash.
+    """
+    validate_prefix(prefix)
+    if bucket is not None and (
+        type(bucket) is not int or not 0 <= bucket < FIELD_CHECKPOINT_BUCKETS
+    ):
+        raise ValueError("invalid checkpoint unit bucket")
+    if table != FIELD_CHECKPOINT:
+        return "", {}
+    for columns, values in normalize_key_in(table, key_in).items():
+        names = (columns,) if isinstance(columns, str) else columns
+        if "unit_id" not in names:
+            continue
+        if not values:
+            return " AND 0", {}
+        units = (
+            values
+            if isinstance(columns, str)
+            else tuple(value[names.index("unit_id")] for value in values)
+        )
+        name = f"{prefix}_unit_partitions"
+        if bucket is not None:
+            # A single global IN set makes every partition seek every requested
+            # id, including ids that cannot live there. Correlate the exact unit
+            # set with a constant physical bucket before primary-key pruning.
+            # Keep hashing in CH: its String hash is the DDL's routing contract.
+            return (
+                f" AND cityHash64(unit_id) %% {FIELD_CHECKPOINT_BUCKETS} = {bucket}"
+                f" AND unit_id IN (SELECT unit FROM (SELECT arrayJoin(%({name})s) AS unit) "
+                f"WHERE cityHash64(unit) %% {FIELD_CHECKPOINT_BUCKETS} = {bucket})",
+                {name: list(dict.fromkeys(units))},
+            )
+        return (
+            f" AND cityHash64(unit_id) %% {FIELD_CHECKPOINT_BUCKETS} IN "
+            f"(SELECT cityHash64(arrayJoin(%({name})s)) %% {FIELD_CHECKPOINT_BUCKETS})",
+            {name: list(dict.fromkeys(units))},
+        )
+    return "", {}
 
 
 def committed_branches(
@@ -632,15 +691,19 @@ def committed_branches(
             name = f"{prefix}_base" if is_checkpoint else f"{prefix}_deltas"
             params[name] = tuple(selected)
             physical = physical_table(table, checkpoint=is_checkpoint)
+            pruning, bound = checkpoint_unit_predicate(physical, key_in, prefix=prefix)
+            params = merge_bindings(params, bound)
             branches.append(
-                f"SELECT {projection} FROM {physical.name} PREWHERE {scope} WHERE (generation, attempt_id) IN %({name})s"
+                f"SELECT {projection} FROM {physical.name} PREWHERE {scope}{pruning} WHERE (generation, attempt_id) IN %({name})s"
             )
     if overlay is not None:
         params[f"{prefix}_overlay"] = UUID(str(overlay.id))
         params[f"{prefix}_overlay_generation"] = overlay.generation
         physical = physical_table(table, checkpoint=overlay.purpose == "compaction")
+        pruning, bound = checkpoint_unit_predicate(physical, key_in, prefix=prefix)
+        params = merge_bindings(params, bound)
         branches.append(
-            f"SELECT {projection} FROM {physical.name} PREWHERE {scope} WHERE attempt_id = %({prefix}_overlay)s AND generation = %({prefix}_overlay_generation)s"
+            f"SELECT {projection} FROM {physical.name} PREWHERE {scope}{pruning} WHERE attempt_id = %({prefix}_overlay)s AND generation = %({prefix}_overlay_generation)s"
         )
     return branches, merge_bindings(
         params, key_relation.params

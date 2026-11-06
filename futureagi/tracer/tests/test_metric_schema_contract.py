@@ -119,12 +119,33 @@ def test_only_owned_additive_tables_and_numbers():
         "034_metric_source_dependencies.sql",
         "035_metric_bucket_retired_parts.sql",
         "036_list_current_root_facts.sql",
+        "037_list_current_user_activity.sql",
     )
     for filename in storage.SCHEMA_FILES:
         assert len(list(SCHEMA_DIR.glob(filename[:3] + "_*.sql"))) == 1
-    assert not any("user" in name for name in storage.TABLES)
+    # Only span activity is persisted, never per-window/per-user metric totals.
+    assert {name for name in storage.TABLES if "user" in name} == {
+        "list_current_user_activity"
+    }
+    assert "span_id" in storage.LIST_USER_ACTIVITY.logical_key
+    assert "unit_start" not in storage.LIST_USER_ACTIVITY.logical_key
+    assert "field_id" not in storage.LIST_USER_ACTIVITY.columns
     # Attempt preimages are a write-once PG ledger, not a CH state-transition copy.
     assert not any("attempt" in name or "ledger" in name for name in storage.TABLES)
+
+
+def test_only_field_checkpoint_subpartitions_by_immutable_unit():
+    assert storage.FIELD_CHECKPOINT_BUCKETS == 8
+    assert storage.FIELD_CHECKPOINT.partition_by == (
+        "(cityHash64(project_id) % 32, cityHash64(unit_id) % 8)"
+    )
+    assert "unit_id" in storage.FIELD_CHECKPOINT.logical_key
+    assert storage.FIELD_VALUES.partition_by == storage.PROJECT_PARTITION
+    assert storage.PROJECT_PARTITION == "cityHash64(project_id) % 32"
+    for table in storage.TABLES.values():
+        if table != storage.FIELD_CHECKPOINT:
+            assert "unit_id" not in table.partition_by
+    assert storage.PROJECT_SHARD_KEY == "cityHash64(project_id)"
 
 
 def test_published_snapshot_schema_is_unchanged():
@@ -166,7 +187,11 @@ def test_complete_field_evidence_and_immutable_partition(table):
         ("population_size", "Nullable(UInt64)"),
     ):
         assert schema[column] == data_type
-    assert table.partition_by == "cityHash64(project_id) % 32"
+    assert table.partition_by == (
+        storage.FIELD_CHECKPOINT_PARTITION
+        if table == storage.FIELD_CHECKPOINT
+        else storage.PROJECT_PARTITION
+    )
     assert not {"unit_start", "bucket_start", "user_id", "session_id"} & set(
         table.order_by
     )
@@ -218,7 +243,11 @@ def test_checkpoints_keep_complete_payload_and_pinned_attempt_identity():
     ):
         assert checkpoint.schema == delta.schema
         assert checkpoint.order_by == delta.order_by
-        assert checkpoint.partition_by == delta.partition_by
+        assert checkpoint.partition_by == (
+            storage.FIELD_CHECKPOINT_PARTITION
+            if checkpoint == storage.FIELD_CHECKPOINT
+            else delta.partition_by
+        )
         assert checkpoint.version_column == delta.version_column
         assert checkpoint.name != delta.name
 
@@ -308,7 +337,7 @@ def live_store():
             name: scoped.command(f"SHOW CREATE TABLE {name}") for name in storage.TABLES
         }
         assert before == after
-        assert scoped.query("SELECT count() FROM schema_versions").first_row == (6,)
+        assert scoped.query("SELECT count() FROM schema_versions").first_row == (7,)
         yield scoped
     finally:
         if scoped is not None:

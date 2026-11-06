@@ -185,7 +185,13 @@ def _attempts(manifest) -> tuple[str | None, tuple[str, ...]]:
 
 
 def _committed_rows_sql(
-    scope: Scope, field_id, field_version: int, manifest, unit_predicate: str
+    scope: Scope,
+    field_id,
+    field_version: int,
+    manifest,
+    unit_predicate: str,
+    *,
+    checkpoint_unit_ids=None,
 ) -> tuple[str, dict]:
     """Allowlisted attempts first, immutable-key collapse second, nothing else.
 
@@ -211,10 +217,29 @@ def _committed_rows_sql(
     columns = ", ".join(FIELD_VALUES.columns)
     branches = []
     if checkpoint:
-        branches.append(
-            f"SELECT {columns} FROM {FIELD_CHECKPOINT.name} PREWHERE {prewhere} "
-            "WHERE attempt_id = %(field_read_checkpoint)s AND workspace_id = %(workspace_id)s"
+        from tracer.services.derived_metrics.bounded_reads import (
+            checkpoint_unit_predicate,
         )
+        from tracer.services.derived_metrics.storage import FIELD_CHECKPOINT_BUCKETS
+
+        # Page reads need each requested id to seek only its own physical tuple.
+        # A global hash IN set alone still seeks every id in all eight parts.
+        # Larger server-side relations retain the single broad, correct branch.
+        buckets = range(FIELD_CHECKPOINT_BUCKETS) if checkpoint_unit_ids else (None,)
+        for bucket in buckets:
+            pruning, bindings = checkpoint_unit_predicate(
+                FIELD_CHECKPOINT,
+                {"unit_id": checkpoint_unit_ids}
+                if checkpoint_unit_ids is not None
+                else None,
+                prefix="field_read",
+                bucket=bucket,
+            )
+            params.update(bindings)
+            branches.append(
+                f"SELECT {columns} FROM {FIELD_CHECKPOINT.name} PREWHERE {prewhere}{pruning} "
+                "WHERE attempt_id = %(field_read_checkpoint)s AND workspace_id = %(workspace_id)s"
+            )
     if deltas:
         branches.append(
             f"SELECT {columns} FROM {FIELD_VALUES.name} PREWHERE {prewhere} "
@@ -247,10 +272,16 @@ def committed_unit_values_select(
     This pure SQL builder never reads a project head or substitutes CH max(version).
     Only immutable scope/field/unit keys are pushed inside the collapse (DCM3).
     """
+    ids = _ids(unit_ids)
     latest, params = _committed_rows_sql(
-        scope, field_id, field_version, manifest, "unit_id IN %(field_read_units)s"
+        scope,
+        field_id,
+        field_version,
+        manifest,
+        "unit_id IN %(field_read_units)s",
+        checkpoint_unit_ids=ids,
     )
-    params["field_read_units"] = _ids(unit_ids)
+    params["field_read_units"] = ids
     deleted = "" if include_deleted else " WHERE is_deleted = 0"
     return f"SELECT * FROM ({latest}){deleted}", params
 

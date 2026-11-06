@@ -13,6 +13,7 @@ M2/T16 still require representative scale measurements before deployment.
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from uuid import UUID
 
 from django.db import connection, transaction
@@ -51,14 +52,17 @@ from tracer.services.derived_metrics.publication import (
     MAX_BATCH_ROWS,
     MAX_COMPACTION_ROWS,
     FrozenRows,
+    MetricCheckpointLayoutPending,
     committed_rows_select,
     physical_table,
 )
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
+    FIELD_CHECKPOINT,
     FIELD_VALUES,
     LIST_CURRENT_MEMBERS,
     LIST_CURRENT_ROOTS,
+    LIST_USER_ACTIVITY,
     RETIRED_PARTS,
     SOURCE_DEPENDENCIES,
     UNIT_STATE,
@@ -75,6 +79,7 @@ TABLE_KINDS = {
     "bucket_retired_parts": RETIRED_PARTS,
     "list_current_root_facts": LIST_CURRENT_ROOTS,
     "list_current_members": LIST_CURRENT_MEMBERS,
+    "list_current_user_activity": LIST_USER_ACTIVITY,
 }
 TABLE_KIND = {table.name: kind for kind, table in TABLE_KINDS.items()}
 
@@ -400,8 +405,34 @@ class RefreshWriter:
                 attempt.purpose == "compaction"
                 and "manifest" in attempt.source_ceilings
             ):
-                self.lease.keepalive()
-                self.store.consolidate_checkpoint(attempt.project_id)
+                try:
+                    from tracer.models.derived_metric import MetricErasureRequest
+
+                    # Qualify only controls already present before maintenance.
+                    # A concurrent later publication must keep its own work.
+                    controls = list(
+                        MetricErasureRequest.objects.filter(
+                            project_key=attempt.project_id,
+                            store_payload__protocol="metric_checkpoint_layout",
+                            store_payload__kind="checkpoint",
+                        )
+                        .exclude(status="done")
+                        .values_list("id", flat=True)
+                    )
+                    self.lease.keepalive()
+                    self.store.consolidate_checkpoint(
+                        attempt.project_id,
+                        deadline=getattr(self, "_compaction_deadline", None),
+                    )
+                    MetricErasureRequest.objects.filter(id__in=controls).update(
+                        status="done",
+                        completed_at=self.lease.clock(),
+                        receipts={"layout": {"drained": 1}},
+                    )
+                except Exception as exc:
+                    # The head switch has committed. Never report this as a
+                    # failed publication or allocate a new attempt on replay.
+                    raise MetricCheckpointLayoutPending() from exc
             return manifest
         except MetricRetentionChanged:
             from tracer.services.derived_metrics.deletion_protocol import _intent
@@ -438,6 +469,16 @@ class RefreshWriter:
             )
         elif attempt.state not in {"staging", "verified"}:
             raise MetricStateConflict("attempt is not recoverable")
+        range_receipts = []
+        if attempt.source_ceilings.get("range_compaction"):
+            from tracer.services.derived_metrics.compaction_ranges import (
+                stage_ranges,
+                visibility_receipts,
+            )
+
+            if attempt.state != "verified":
+                stage_ranges(self, attempt)
+            range_receipts = visibility_receipts(attempt)
         receipts = []
         for plan in self.plans(attempt):
             self.lease.keepalive()
@@ -511,7 +552,24 @@ class RefreshWriter:
             )
             if attempt.purpose != "compaction" and parent_receipts:
                 self.store.assert_visible(attempt.parent_manifest)
+                from tracer.services.derived_metrics.compaction_ranges import (
+                    RECEIPT_BYTES,
+                    canonical,
+                )
+
+                # Bound inherited metadata BEFORE allocating concatenated lists.
+                if (
+                    sum(
+                        len(canonical(value))
+                        for value in (parent_receipts, receipts, range_receipts)
+                    )
+                    > RECEIPT_BYTES
+                ):
+                    raise MetricLedgerConflict(
+                        "metric visibility receipt budget exceeded"
+                    )
                 receipts = parent_receipts["batches"] + receipts
+                range_receipts = parent_receipts.get("ranges", []) + range_receipts
             from tracer.services.derived_metrics.backfill import (
                 apply_publication,
                 check_backfill_publication,
@@ -543,10 +601,35 @@ class RefreshWriter:
                 visibility_receipts={
                     "shard": self.store.identity(),
                     "batches": receipts,
+                    **(
+                        {"format": 2, "ranges": range_receipts}
+                        if range_receipts
+                        else {}
+                    ),
                 },
                 **self.lease.check(),
             )
             apply_publication(self, attempt, controls[0])
+            if (
+                attempt.purpose == "compaction"
+                and "manifest" in attempt.source_ceilings
+            ):
+                from tracer.services.derived_metrics.deletion_protocol import _intent
+
+                # Commit the remaining maintenance work WITH the head switch.
+                # A crash between publication and its first OPTIMIZE must not
+                # turn the next compact() call into a second publication.
+                _intent(
+                    organization_id=self.org_id,
+                    project_id=attempt.project_id,
+                    scope="history",
+                    deletion_key=f"checkpoint-layout:{attempt.id}",
+                    store_payload={
+                        "protocol": "metric_checkpoint_layout",
+                        "kind": "checkpoint",
+                        "attempt": str(attempt.id),
+                    },
+                )
             if self.retention_days is not None and (
                 attempt.source_ceilings.get("logical_expiry")
                 or "as_of" in attempt.source_ceilings
@@ -573,6 +656,12 @@ class RefreshWriter:
         evidence. Ordinary compaction is a copy of the old state, not discovery;
         its successor refresh performs the integrated expiry transition.
         """
+        if attempt.source_ceilings.get("range_compaction"):
+            from tracer.services.derived_metrics.compaction_ranges import (
+                check_range_policy,
+            )
+
+            return check_range_policy(self, attempt)
         if self.retention_days is None or (
             attempt.purpose == "compaction"
             and not attempt.source_ceilings.get("logical_expiry")
@@ -686,8 +775,18 @@ class RefreshWriter:
         earlier ambiguous submission. Exclusion fences all later registrations.
         """
         from tracer.models.derived_metric import MetricErasureRequest
+        from tracer.services.derived_metrics.compaction import (
+            checkpoint_gate,
+            require_layout_drained,
+        )
         from tracer.services.derived_metrics.deletion_protocol import _intent
 
+        shard = self.store.identity()
+        group = (
+            self.store.checkpoint_group(attempt.project_id)
+            if table == FIELD_CHECKPOINT
+            else None
+        )
         with transaction.atomic(durable=True), serialized_project(attempt.project_id):
             MetricRefreshAttempt._locked_open(
                 attempt.id, **self.lease.check(), state="staging"
@@ -702,10 +801,24 @@ class RefreshWriter:
                     "generation": attempt.generation,
                     "batch": batch.batch_no,
                     "table": table.name,
-                    "shard": self.store.identity(),
+                    "shard": shard,
+                    "checkpoint_group": group,
                 },
             )
-        self.store.insert(table, payload)
+        if group is None:
+            self.store.insert(table, payload)
+        else:
+            submitted = False
+            try:
+                with checkpoint_gate(group, shard):
+                    require_layout_drained(group, shard)
+                    submitted = True
+                    self.store.insert(table, payload)
+            finally:
+                if not submitted:
+                    # This process knows it never called the transport. A crash
+                    # before here remains conservatively unresolved instead.
+                    MetricErasureRequest.objects.filter(id=submission.id).delete()
         # No lease requirement: this acknowledges transport completion, NOT
         # permission to publish. It remains valid after writer exclusion.
         MetricErasureRequest.objects.filter(id=submission.id).update(
@@ -741,8 +854,54 @@ class RefreshWriter:
             )
         return entries
 
-    def compact(self):
-        """Checkpoint every store, including tombstones; never copy a revoked base."""
+    def _publish_compaction(self, attempt, *, deadline):
+        # Preserve stage_and_publish's replay/interleaving API. Scope the total
+        # wall budget to this invocation; a later maintenance retry gets a new
+        # budget rather than inheriting an expired clock from the original job.
+        previous = getattr(self, "_compaction_deadline", None)
+        self._compaction_deadline = deadline
+        try:
+            return self.stage_and_publish(attempt)
+        finally:
+            self._compaction_deadline = previous
+
+    def compact(self, *, server_side=False):
+        """Checkpoint every store, including tombstones; never copy a revoked base.
+
+        Server-side ranges remain opt-in while the complete range/crash and
+        deployment-topology qualification is outstanding. Legacy callers keep
+        their exact payload receipt semantics.
+        """
+        if server_side:
+            from tracer.services.derived_metrics.compaction_ranges import compact_ranges
+
+            return compact_ranges(self)
+        deadline = monotonic() + 600
+        self.store.assert_checkpoint_schema()
+        from tracer.models.derived_metric import MetricErasureRequest
+
+        with serialized_project(self.lease.project_id):
+            previous = MetricProjectRefresh.objects.get(
+                project_id=self.lease.project_id
+            ).head_manifest
+            resume = (
+                previous is not None
+                and previous.revoked_at is None
+                and MetricErasureRequest.objects.filter(
+                    deletion_key=f"checkpoint-layout:{previous.checkpoint_attempt_id}",
+                )
+                .exclude(status="done")
+                .exists()
+            )
+        if resume:
+            try:
+                self._publish_compaction(previous.checkpoint_attempt, deadline=deadline)
+                if previous.published_by_id == previous.checkpoint_attempt_id:
+                    return previous
+                # A descendant delta still needs normal compaction after its
+                # checkpoint's maintenance has been reconciled.
+            finally:
+                transaction.on_commit(self.collect_garbage)
         with serialized_project(self.lease.project_id):
             head = MetricProjectRefresh.objects.get(
                 project_id=self.lease.project_id
@@ -784,7 +943,7 @@ class RefreshWriter:
                 )
             self.seal(attempt, publication={"retire_versions": obsolete})
         try:
-            return self.stage_and_publish(attempt)
+            return self._publish_compaction(attempt, deadline=deadline)
         finally:
             # Consolidation runs after manifest publication and may reject a
             # shared partition. A committed checkpoint still needs its durable

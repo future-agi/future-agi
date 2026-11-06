@@ -440,11 +440,11 @@ def test_contiguous_and_scattered_page_pruning_at_one_million(publication_store)
         allowed_attempts=lambda: [(1, attempt)],
     )
     params = {"org": org, "project": project, "field": field, "attempt": attempt}
-    # Keep the measured part/granule domain stable and avoid background merge
-    # memory competing with the one-GiB sidecar's foreground assertion.
+    # Keep ingestion fragmentation deterministic, then qualify the required
+    # one-part-per-tuple layout before measuring point-read pruning.
     store.client.execute(f"SYSTEM STOP MERGES {checkpoint.name}")
-    # Each insert stays below the sidecar's one-GiB RSS cap even though the
-    # complete fixture still contains one million independently sorted keys.
+    # Keep each insert bounded even though the complete fixture has one million
+    # independently sorted keys across the eight immutable subpartitions.
     for offset in range(0, 1_000_000, 10_000):
         store.client.execute(
             f"INSERT INTO {checkpoint.name} (org_id, project_id, field_id, field_version, level, unit_id, generation, attempt_id, _version) "
@@ -453,6 +453,20 @@ def test_contiguous_and_scattered_page_pruning_at_one_million(publication_store)
             {**params, "offset": offset},
             settings=WRITE_SETTINGS,
         )
+    # A hundred small inserts produce 800 overlapping parts after N=8. With
+    # five 256-row marks per small part, scattered probes legitimately read the
+    # entire fragmented fixture. Do not disguise that as successful pruning.
+    # This is an isolated diagnostic database, not the publication/GC protocol;
+    # that protocol and real pins are exercised by checkpoint_partitioning tests.
+    store.client.execute(f"SYSTEM START MERGES {checkpoint.name}")
+    for part in store.checkpoint_layout(project):
+        assert part.active_parts <= 512 and part.bytes_on_disk <= 2 * 1024**3
+        if part.active_parts > 1:
+            store.optimize_checkpoint(
+                part.partition_id, "pruning-layout-" + uuid4().hex, 60
+            )
+    layout = store.checkpoint_layout(project)
+    assert len(layout) == 8 and all(part.active_parts == 1 for part in layout)
     legacy, lp = committed_rows_select(
         FIELD_VALUES, head, org_id=org, project_id=project
     )
@@ -510,6 +524,27 @@ def test_contiguous_and_scattered_page_pruning_at_one_million(publication_store)
         )
         explain = store.execute(f"EXPLAIN indexes=1 SELECT unit_id FROM ({pushed})", pp)
         assert any("PrimaryKey" in row[0] for row in explain)
+        from tracer.services.derived_metrics.queries import Scope
+        from tracer.services.derived_metrics.unit_reads import _committed_rows_sql
+
+        routed, rp = _committed_rows_sql(
+            Scope(org, UUID(int=0), project),
+            field,
+            1,
+            head,
+            "unit_id IN %(field_read_units)s",
+            checkpoint_unit_ids=ids,
+        )
+        rp["field_read_units"] = tuple(ids)
+        routed_rows, routed_receipt = _read_receipt(
+            store, f"SELECT unit_id FROM ({routed})", rp
+        )
+        assert _result(routed_rows) == _result(new_rows)
+        # At most the useful mark and its boundary neighbor for each requested
+        # cell, plus one boundary per nonempty tuple; no eightfold id fan-out.
+        assert routed_receipt["selected_marks"] <= 2 * len(ids) + 8
+        if label == "scattered":
+            assert routed_receipt["read_rows"] < new_receipt["read_rows"] / 2
         print(
             json.dumps(
                 {
@@ -517,6 +552,7 @@ def test_contiguous_and_scattered_page_pruning_at_one_million(publication_store)
                     "page": label,
                     "broad_baseline_contiguous": broad_receipt,
                     "pushed": new_receipt,
+                    "bucket_routed": routed_receipt,
                 }
             )
         )
@@ -2052,21 +2088,48 @@ def test_large_checkpoint_crash_replay_byte_parity_and_partition_overlap(
         from tracer.services.derived_metrics.publication import FrozenRows
 
         original_insert(FIELD_CHECKPOINT, FrozenRows.from_plan(plans[0]))
-        assert writer.store.checkpoint_layout(writer.lease.project_id)[1] >= 2
+        assert any(
+            part.active_parts >= 2
+            for part in writer.store.checkpoint_layout(writer.lease.project_id)
+        )
         original_consolidate = writer.store.consolidate_checkpoint
         overlaps = []
 
-        def consolidate(project):
-            overlaps.append(writer.store.checkpoint_layout(project)[1])
-            original_consolidate(project)
+        def consolidate(project, *, deadline=None):
+            overlaps.append(
+                sum(p.active_parts for p in writer.store.checkpoint_layout(project))
+            )
+            original_consolidate(project, deadline=deadline)
 
         with monkeypatch.context() as patch:
             patch.setattr(writer.store, "consolidate_checkpoint", consolidate)
             # OPTIMIZE can execute an explicit merge while background merges are stopped.
             writer.store.client.execute(f"SYSTEM START MERGES {FIELD_CHECKPOINT.name}")
+            from tracer.models.derived_metric import MetricErasureRequest
+            from tracer.services.derived_metrics.publication import (
+                MetricCheckpointLayoutPending,
+            )
+
+            with pytest.raises(MetricCheckpointLayoutPending):
+                writer.stage_and_publish(attempt)
+            # The second INSERT's success does NOT drain the first submission.
+            # This harness saw original_insert return synchronously before the
+            # injected crash, so simulate that transport owner's late durable
+            # acknowledgement. Production cannot infer this from empty queries.
+            old_submission = MetricErasureRequest.objects.get(
+                store_payload__protocol="metric_submission",
+                store_payload__attempt=str(attempt.id),
+                status="queued",
+            )
+            MetricErasureRequest.objects.filter(id=old_submission.id).update(
+                status="done",
+                completed_at=writer.lease.clock(),
+                receipts={"synchronous_response": {"drained": 1}},
+            )
             compacted = writer.stage_and_publish(attempt)
         assert _field_payload_bytes(writer, compacted) == expected
-        assert writer.store.checkpoint_layout(writer.lease.project_id)[1] == 1
+        layout = writer.store.checkpoint_layout(writer.lease.project_id)
+        assert layout and all(part.active_parts == 1 for part in layout)
         assert overlaps and overlaps[0] >= 1
         # Compare with the previous 500-row compactor, not just a logical-value oracle.
         legacy = writer.begin(purpose="compaction")
@@ -2427,7 +2490,8 @@ def test_checkpoint_throughput_receipt(live_writer):
     )[0]
     assert receipt[0] == len(calls)
     assert receipt[2] <= WRITE_SETTINGS["max_memory_usage"]
-    assert writer.store.checkpoint_layout(writer.lease.project_id)[1] == 1
+    layout = writer.store.checkpoint_layout(writer.lease.project_id)
+    assert layout and all(part.active_parts == 1 for part in layout)
     from tracer.services.derived_metrics.queries import Scope
     from tracer.services.derived_metrics.unit_reads import committed_unit_values_select
 

@@ -20,6 +20,12 @@ from types import MappingProxyType
 PROJECT_PARTITION = "cityHash64(project_id) % 32"
 PROJECT_SHARD_KEY = "cityHash64(project_id)"
 BUCKET_PARTITION = "toYYYYMM(bucket_start)"
+# Only field checkpoints hold a complete unit population per pinned generation.
+# unit_id is immutable in their logical key; ownership and timestamps are not.
+FIELD_CHECKPOINT_BUCKETS = 8
+FIELD_CHECKPOINT_PARTITION = (
+    f"(cityHash64(project_id) % 32, cityHash64(unit_id) % {FIELD_CHECKPOINT_BUCKETS})"
+)
 
 FIELD_VALUE_SCHEMA = (
     ("org_id", "UUID"),
@@ -248,7 +254,7 @@ FIELD_CHECKPOINT = MetricTable(
     FIELD_VALUES.schema_file,
     FIELD_VALUE_SCHEMA,
     "_version",
-    PROJECT_PARTITION,
+    FIELD_CHECKPOINT_PARTITION,
     FIELD_VALUE_KEY,
 )
 BUCKET_TOTALS = MetricTable(
@@ -352,7 +358,31 @@ LIST_CURRENT_MEMBERS = MetricTable(
     PROJECT_PARTITION,
     LIST_CURRENT_KEY,
 )
-LIST_CURRENT_TABLES = (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS)
+# A user reassignment retracts the old user-key and inserts the new key in the
+# same publication. Time, deletion and usage stay payload, never pruning keys.
+LIST_USER_ACTIVITY_SCHEMA = tuple(
+    column
+    for column in LIST_CURRENT_SCHEMA
+    if column[0]
+    not in {
+        "parent_span_id",
+        "name",
+        "input",
+        "attributes_extra",
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+    }
+)
+LIST_USER_ACTIVITY = MetricTable(
+    "list_current_user_activity",
+    "037_list_current_user_activity.sql",
+    LIST_USER_ACTIVITY_SCHEMA,
+    "_version",
+    PROJECT_PARTITION,
+    (*LIST_CURRENT_KEY[:2], "canonical_user_id", *LIST_CURRENT_KEY[2:]),
+)
+LIST_CURRENT_TABLES = (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS, LIST_USER_ACTIVITY)
 
 TABLES = MappingProxyType(
     {
