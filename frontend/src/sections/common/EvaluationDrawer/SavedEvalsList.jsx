@@ -85,6 +85,7 @@ const EvalRow = ({
   onEdit,
   onDelete,
   showRun,
+  showCheckbox,
   hideStatus,
   isProjectEvals,
   allColumns,
@@ -153,7 +154,7 @@ const EvalRow = ({
           py: 0.85,
         }}
       >
-        {showRun && !isProjectEvals && (
+        {showCheckbox && !isProjectEvals && (
           <Checkbox
             size="small"
             checked={selected}
@@ -705,6 +706,8 @@ const SavedEvalsList = ({
   onAddClick,
   isProjectEvals = false,
   showRun = true,
+  showSelection = false,
+  onSelectionChange,
   hideStatus = false,
   hideHeader = false,
   allColumns,
@@ -743,6 +746,12 @@ const SavedEvalsList = ({
     onAutoSelectApplied(applied.map(({ token }) => token));
   }, [evals, autoSelectRequests, onAutoSelectApplied]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const showCheckbox = (showRun || showSelection) && !isProjectEvals;
+
+  useEffect(() => {
+    onSelectionChange?.(sel);
+  }, [sel, onSelectionChange]);
+
   const toggle = (item) =>
     setSel((p) => {
       const n = new Set(p);
@@ -786,7 +795,7 @@ const SavedEvalsList = ({
             gap: 0.75,
           }}
         >
-          {showRun && !isProjectEvals && evals.length > 0 && (
+          {showCheckbox && evals.length > 0 && (
             <Checkbox
               size="small"
               checked={sel.size === evals.length && evals.length > 0}
@@ -839,6 +848,7 @@ const SavedEvalsList = ({
             onEdit={onEditEvalClick}
             onDelete={onDeleteEvalClick}
             showRun={showRun}
+            showCheckbox={showCheckbox}
             hideStatus={hideStatus}
             isProjectEvals={isProjectEvals}
             allColumns={allColumns}
@@ -933,6 +943,8 @@ SavedEvalsList.propTypes = {
   onAddClick: PropTypes.func,
   isProjectEvals: PropTypes.bool,
   showRun: PropTypes.bool,
+  showSelection: PropTypes.bool,
+  onSelectionChange: PropTypes.func,
   hideStatus: PropTypes.bool,
   hideHeader: PropTypes.bool,
   allColumns: PropTypes.array,

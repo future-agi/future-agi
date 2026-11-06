@@ -22,6 +22,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
 import { useSimulationExecutionsGridStoreShallow } from "./states";
 import CustomTooltip from "src/components/tooltip";
+import { resolveEvalsToRun } from "./evalRunSelection";
 
 const SimulationEvaluationPage = ({
   onClose,
@@ -48,6 +49,7 @@ const SimulationEvaluationPage = ({
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
   const [openConfirmRunEvaluations, setOpenConfirmRunEvaluations] =
     useState(false);
+  const [selectedEvalIds, setSelectedEvalIds] = useState(() => new Set());
 
   const { mutate: deleteEval, isPending: isDeleting } = useMutation({
     mutationFn: (evalId) =>
@@ -112,6 +114,11 @@ const SimulationEvaluationPage = ({
         selected: true,
       })),
     [simulation],
+  );
+
+  const evalsForConfirm = useMemo(
+    () => resolveEvalsToRun(evals, selectedEvalIds),
+    [evals, selectedEvalIds],
   );
 
   const handleDeleteEval = (evalId) => {
@@ -209,6 +216,8 @@ const SimulationEvaluationPage = ({
             onEditEvalClick={(evalItem) => onEditEvaluation?.(evalItem)}
             onDeleteEvalClick={(evalItem) => handleDeleteEval(evalItem.id)}
             showRun={false}
+            showSelection
+            onSelectionChange={setSelectedEvalIds}
           />
         </ShowComponent>
       </Box>
@@ -292,7 +301,7 @@ const SimulationEvaluationPage = ({
       <ConfirmRunEvaluations
         open={openConfirmRunEvaluations}
         onClose={() => setOpenConfirmRunEvaluations(false)}
-        selectedUserEvalList={evals}
+        selectedUserEvalList={evalsForConfirm}
         loading={isRunningEvals}
         onConfirm={(evalsToRun) => {
           runEvals({
