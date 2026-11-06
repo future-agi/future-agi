@@ -67,6 +67,9 @@ export default function ChatMarkdown({ text, dim, sx }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm, htmlAsText]}
         rehypePlugins={[rehypeSanitize]}
+        // An image loads as soon as the chat opens, so model-written text could
+        // send data to any site through its URL.
+        disallowedElements={["img"]}
       >
         {text || ""}
       </ReactMarkdown>

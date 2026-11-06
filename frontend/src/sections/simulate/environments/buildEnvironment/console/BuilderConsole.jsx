@@ -32,7 +32,9 @@ function composerReducer(state, action) {
   }
 }
 
-const NEAR_BOTTOM_PX = 120;
+// Tight on purpose: rows are about 34px, so anything wider pulls back someone
+// reading the last few rows.
+const NEAR_BOTTOM_PX = 8;
 
 // Things worth reading. Tool rows and other progress only keep the dots going,
 // or the new-message arrow would replace them almost at once.
@@ -84,7 +86,7 @@ export default function BuilderConsole({
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { draft, scaffolds } = state;
   const listRef = useRef(null);
-  const lastScrollTopRef = useRef(0);
+  const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
   const messageCount = countMessages(turns);
   const [seenMessages, setSeenMessages] = useState(messageCount);
@@ -126,12 +128,13 @@ export default function BuilderConsole({
     const { scrollTop, scrollHeight, clientHeight } = list;
     if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
       setFollowing(true);
-    } else if (scrollTop < lastScrollTopRef.current) {
+    } else if (scrollTop < lastScrollRef.current.top && scrollHeight === lastScrollRef.current.height) {
       // Only moving up counts as leaving: a big event can land mid smooth scroll
-      // and put the list far from the bottom without the user doing anything.
+      // and put the list far from the bottom without the user doing anything. A
+      // changed height means text rewrapped and moved the list, not the user.
       setFollowing(false);
     }
-    lastScrollTopRef.current = scrollTop;
+    lastScrollRef.current = { top: scrollTop, height: scrollHeight };
   };
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It

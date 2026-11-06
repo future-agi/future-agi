@@ -120,10 +120,10 @@ describe("BuilderConsole", () => {
     let original;
 
     // jsdom has no layout, so give the list one and fire the event a browser would.
-    const scrollList = (scrollTop) => {
+    const scrollList = (scrollTop, scrollHeight = 2000) => {
       const list = screen.getByTestId("builder-console-list");
       Object.defineProperties(list, {
-        scrollHeight: { configurable: true, value: 2000 },
+        scrollHeight: { configurable: true, value: scrollHeight },
         clientHeight: { configurable: true, value: 500 },
         scrollTop: { configurable: true, writable: true, value: scrollTop },
       });
@@ -159,6 +159,24 @@ describe("BuilderConsole", () => {
       const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
       scrollList(100);
       scrollList(400);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops following after a small scroll up, while reading the last rows", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(1500);
+      scrollList(1440);
+      scrollTo.mockClear();
+      rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("keeps following when text rewraps and moves the list", () => {
+      const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
+      scrollList(1500);
+      scrollList(1200, 2600);
       scrollTo.mockClear();
       rerender(<BuilderConsole turns={[toolTurn(2)]} running={false} canStop />);
       expect(scrollTo).toHaveBeenCalledTimes(1);
@@ -200,7 +218,7 @@ describe("BuilderConsole", () => {
     it("clears the new message once the user scrolls back down", () => {
       const { rerender } = renderScrolledUp();
       rerender(<BuilderConsole turns={[withNote(toolTurn(1))]} running={false} canStop />);
-      scrollList(1450);
+      scrollList(1500);
       expect(jump(CONSOLE_COPY.jumpNewMessage)).not.toBeInTheDocument();
     });
 
