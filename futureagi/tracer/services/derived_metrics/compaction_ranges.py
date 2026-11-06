@@ -256,6 +256,19 @@ def descriptor(row):
 
 def digest_select(store, table, sql, params, row):
     """At most 4096 fixed-size row hashes per leaf, never groupArray(payload)."""
+    root = sha256(b"metric-range-root-v1\0" + canonical(descriptor(row)) + b"\0")
+    if row.row_count == 0:
+        # Exhaustion ranges still prove actual emptiness on every source and
+        # destination check. No row exists to encode/order/hash: COUNT preserves
+        # the exact v1 empty root while avoiding payload/window work on the tail.
+        count = store.execute(
+            f"SELECT count() FROM ({sql})",
+            params,
+            query_id="metric-range-digest-" + uuid4().hex,
+        )[0][0]
+        if count:
+            raise MetricVisibilityError("empty checkpoint range gained rows")
+        return {"count": 0, "bytes": 0, "sha256": root.hexdigest()}
     columns = ", ".join(table.columns)
     key = ", ".join(table.logical_key)
     encoded = (
@@ -271,7 +284,6 @@ def digest_select(store, table, sql, params, row):
         params,
         query_id="metric-range-digest-" + uuid4().hex,
     )
-    root = sha256(b"metric-range-root-v1\0" + canonical(descriptor(row)) + b"\0")
     count = size = 0
     for ordinal, leaf in enumerate(leaves):
         number, n, byte_count, first, last, digest = leaf

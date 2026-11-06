@@ -43,7 +43,12 @@ WRITE_SETTINGS = {
     "max_memory_usage": 512 * 1024 * 1024,
     "max_execution_time": 60,
     "use_query_cache": 0,
-    "max_block_size": MAX_BATCH_ROWS,
+    # Execution blocks are not publication pages. Using the 500-row transport
+    # limit here also fragments every upstream scan, sort and digest. Keep the
+    # wire/page limits in freeze_select/FrozenRows, and amortize scan work within
+    # a preferred byte target. The hard memory/thread/time caps above still apply.
+    "max_block_size": 8192,
+    "preferred_block_size_bytes": 4 * 1024 * 1024,
     # RowBinary is bound as one opaque hex string, not parsed as row literals.
     "max_query_size": 64 * 1024 * 1024,
 }
