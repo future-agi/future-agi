@@ -14,7 +14,6 @@ Features:
 """
 
 import time
-from typing import Optional
 
 import structlog
 
@@ -25,64 +24,6 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 )
 
 logger = structlog.get_logger(__name__)
-
-
-def requires_completion_audio(model: str) -> bool:
-    """
-    Check if a model must generate audio through the completion endpoint.
-
-    These models go to AudioPreviewHandler (litellm.completion with audio
-    modalities) and receive the whole role-bearing prompt.
-    """
-    model = model.lower()
-
-    # OpenAI audio-preview models
-    # Use exact match or prefix match to avoid matching unintended model names
-    if model == "gpt-4o-audio-preview" or model.startswith("gpt-4o-audio-preview-"):
-        return True
-
-    # Vertex AI Gemini TTS - MUST use completion endpoint with modalities=["audio"]
-    # litellm.speech() does NOT support vertex_ai/gemini-*-tts models
-    if model.startswith("vertex_ai/gemini") and "tts" in model:
-        return True
-
-    # Note: Google AI Studio Gemini TTS (gemini/*-tts without vertex_ai/ prefix)
-    # can use SpeechAPIHandler as LiteLLM has a working bridge for these models.
-
-    return False
-
-
-def tts_lane(model: str, provider: Optional[str]) -> str:
-    """
-    Name the sub-handler TTSHandler uses for this model and provider.
-
-    Returns "custom" when the provider has a registered speech handler,
-    "completion" for models that must use AudioPreviewHandler, and
-    "speech" for SpeechAPIHandler.
-    """
-    from agentic_eval.core_evals.run_prompt.other_services.manager import (
-        OtherServicesManager,
-    )
-
-    if provider and OtherServicesManager().get_speech_handler(provider):
-        return "custom"
-    if requires_completion_audio(model):
-        return "completion"
-    return "speech"
-
-
-def speaks_text_literally(model: str, provider: Optional[str]) -> bool:
-    """
-    Check if text-to-speech for this model reads the script aloud.
-
-    True for custom speech providers and SpeechAPIHandler models. False for
-    completion audio, including provider-qualified gpt-4o-audio-preview
-    names that SpeechAPIHandler hands to the completion fallback.
-    """
-    lane = tts_lane(model, provider)
-    if lane == "custom":
-        return True
-    return lane == "speech" and "gpt-4o-audio-preview" not in model
 
 
 class TTSHandler(BaseModelHandler):
@@ -115,20 +56,24 @@ class TTSHandler(BaseModelHandler):
         if self._sub_handler is not None:
             return self._sub_handler
 
-        lane = tts_lane(self.context.model, self.context.provider)
+        # Import OtherServicesManager to check for custom handlers
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            OtherServicesManager,
+        )
 
-        # 1. Custom provider handler (ElevenLabs, Cartesia, ...)
-        if lane == "custom":
+        other_services_manager = OtherServicesManager()
+
+        # 1. Check if custom provider handler exists
+        provider = self.context.provider
+        if provider and other_services_manager.get_speech_handler(provider):
             from .tts.custom_tts_handler import CustomTTSHandler
 
-            self.logger.info(
-                f"Routing to CustomTTSHandler for provider: {self.context.provider}"
-            )
+            self.logger.info(f"Routing to CustomTTSHandler for provider: {provider}")
             self._sub_handler = CustomTTSHandler(self.context)
             return self._sub_handler
 
-        # 2. Audio-preview model
-        if lane == "completion":
+        # 2. Check if audio-preview model
+        if self._is_audio_preview_model():
             from .tts.audio_preview_handler import AudioPreviewHandler
 
             self.logger.info(
@@ -160,7 +105,22 @@ class TTSHandler(BaseModelHandler):
         Returns:
             True if model must use AudioPreviewHandler, False otherwise
         """
-        return requires_completion_audio(self.context.model)
+        model = self.context.model.lower()
+
+        # OpenAI audio-preview models
+        # Use exact match or prefix match to avoid matching unintended model names
+        if model == "gpt-4o-audio-preview" or model.startswith("gpt-4o-audio-preview-"):
+            return True
+
+        # Vertex AI Gemini TTS - MUST use completion endpoint with modalities=["audio"]
+        # litellm.speech() does NOT support vertex_ai/gemini-*-tts models
+        if model.startswith("vertex_ai/gemini") and "tts" in model:
+            return True
+
+        # Note: Google AI Studio Gemini TTS (gemini/*-tts without vertex_ai/ prefix)
+        # can use SpeechAPIHandler as LiteLLM has a working bridge for these models.
+
+        return False
 
     def _validate_context(self):
         """

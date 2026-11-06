@@ -60,10 +60,7 @@ from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
 )
-from model_hub.views.run_prompt import (
-    LiteralSpeechMediaVariableError,
-    populate_placeholders,
-)
+from model_hub.views.run_prompt import populate_placeholders
 
 # Define a Celery task for running the evaluation
 # Define a Celery task for running the evaluation
@@ -1615,7 +1612,6 @@ class ConditionalColumnView(APIView):
                     template_format=config.get("configuration", {}).get(
                         "template_format"
                     ),
-                    output_format=config.get("output_format"),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(
@@ -1652,9 +1648,6 @@ class ConditionalColumnView(APIView):
             else:
                 return None, None
 
-        except LiteralSpeechMediaVariableError as e:
-            # Report it as this row's error instead of an empty result.
-            return str(e), {"reason": str(e)}
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error processing branch: {str(e)}")

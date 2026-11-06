@@ -1293,7 +1293,6 @@ class ExperimentRunner:
                 messages = populate_placeholders(
                     messages, self.dataset.id, row.id, column.id, model_name=model,
                     template_format=model_config.get("template_format"),
-                    output_format=output_format,
                 )
                 if output_format != "audio":
                     messages = remove_empty_text_from_messages(messages)
@@ -1573,7 +1572,6 @@ def _process_row_impl(
             messages = populate_placeholders(
                 messages, dataset_id, row_id, column_id, model_name=model,
                 template_format=model_config.get("template_format"),
-                output_format=output_format,
             )
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
