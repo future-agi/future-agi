@@ -49,3 +49,13 @@ def set_workspace_context_fixture(request):
         clear_workspace_context()
     else:
         yield
+
+
+@pytest.fixture
+def moves_without_validation(monkeypatch):
+    """Default-agent moves happen at once, as where a pairing cannot be validated. For a
+    single test of that path only: with certifying on, a move waits for validation."""
+    monkeypatch.setattr(
+        "simulate.services.harness_versioning.validation.can_validate",
+        lambda _environment, _agent_version_id: False,
+    )

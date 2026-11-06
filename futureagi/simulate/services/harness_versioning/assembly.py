@@ -43,6 +43,7 @@ SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
 CERTIFY_REPORT_PATH = "/work/authoring/certify-report.json"
+ACTION_CERTIFICATION_PATH = "/work/authoring/generic-harness/action-certification.json"
 # The suite index as assembled; certifying prunes /work/authoring/scenarios.json in place.
 SUITE_INDEX_PATH = "/work/suite-scenarios.json"
 # Run-only fields the certify job must not carry: it certifies the whole suite once.
@@ -427,10 +428,7 @@ def run_assembly(
     )
     failed_before = bundle.state == HarnessAssembledBundle.State.FAILED
     if failed_before:
-        HarnessAssembledBundle._base_manager.filter(
-            id=bundle.id, state=HarnessAssembledBundle.State.FAILED
-        ).update(**_RESET, updated_at=timezone.now())
-        bundle.refresh_from_db()
+        reset_failed(bundle)
     cached = bundle.state == HarnessAssembledBundle.State.READY and bool(
         bundle.object_key
     )
@@ -442,6 +440,14 @@ def run_assembly(
         failed_before=failed_before,
         unsealed=unsealed,
     )
+
+
+def reset_failed(bundle: HarnessAssembledBundle) -> None:
+    """Put a failed row back to pending, so the next run or validation certifies it."""
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, state=HarnessAssembledBundle.State.FAILED
+    ).update(**_RESET, updated_at=timezone.now())
+    bundle.refresh_from_db()
 
 
 def bundle_ready(
@@ -658,7 +664,7 @@ def _hit_source_digest(
     return found
 
 
-def _assembly_unavailable() -> HostedHarnessError:
+def assembly_unavailable() -> HostedHarnessError:
     return HostedHarnessError(
         "assembly_unavailable",
         "the bundle for this run's pinned versions is no longer available "
@@ -680,7 +686,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         return None
     if job.assembled_bundle_id is None:
         if runs_unsealed(job):
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         return None
     if _memoised(job, assembly):
         return LaunchAssembly(
@@ -694,7 +700,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     ).first()
     if bundle is None or job.environment_version_id is None:
         if runs_unsealed(job):
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         return None
     log = {
         "run_id": str(job.id),
@@ -708,7 +714,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     def fallback() -> None:
         # Today's path runs the default pair, so only a run pinned to it may take it.
         if not defaults or unsealed:
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         logger.info("harness_bundle_cache", outcome="miss_fallback", **log)
 
     # Only a run pinned off the defaults certifies; a default-pair miss runs as today,
@@ -789,9 +795,18 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
 
 
 def certify_scenario_count(job: HostedHarnessJob) -> int:
-    return HarnessSuiteMember.no_workspace_objects.filter(
+    """The pinned suite's scenarios; a suite without members counts its documents."""
+    members = HarnessSuiteMember.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id
     ).count()
+    if members:
+        return members
+    return (
+        HarnessSuiteVersion._base_manager.filter(id=job.suite_version_id)
+        .values_list("scenario_count", flat=True)
+        .first()
+        or 0
+    )
 
 
 def certify_job_payload(
@@ -866,6 +881,15 @@ def _set_fill_attempt(
         locked.payload = payload
         locked.save(update_fields=["payload", "updated_at"])
     return True
+
+
+def assembled_bundle_ready(job: HostedHarnessJob) -> bool:
+    """Whether the bundle the job is bound to is cached."""
+    return HarnessAssembledBundle._base_manager.filter(
+        id=job.assembled_bundle_id,
+        state=HarnessAssembledBundle.State.READY,
+        object_key__isnull=False,
+    ).exists()
 
 
 def certifies_here(job: HostedHarnessJob) -> bool:
@@ -968,6 +992,31 @@ def certify_warnings(sandbox: Any) -> list[dict[str, Any]]:
     if isinstance(narrowed, dict) and narrowed:
         warnings.append({"code": "sub_goals_narrowed", "scenarios": narrowed})
     return warnings
+
+
+def certify_failed_actions(sandbox: Any) -> list[dict[str, str]] | None:
+    """The action probes a rejected certify failed, each ``{action, reason}``; ``None``
+    when the report is absent or unreadable."""
+    try:
+        report = _json_object(
+            sandbox.fs.download_file(
+                ACTION_CERTIFICATION_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a certify can stop before it probes actions
+        logger.info("harness_certify_action_report_unread", error=type(exc).__name__)
+        return None
+    actions = (report or {}).get("actions")
+    if not isinstance(actions, list):
+        return None
+    return [
+        {
+            "action": str(item.get("action") or ""),
+            "reason": str(item.get("reason") or ""),
+        }
+        for item in actions
+        if isinstance(item, dict) and item.get("status") == "failed"
+    ]
 
 
 def fill_bundle(
@@ -1096,11 +1145,22 @@ def fill_bundle(
             logger.exception("harness_bundle_cache", outcome="fill_unreleased", **log)
 
 
-def mark_failed(job: HostedHarnessJob, message: str) -> None:
-    """A rejected certify leaves its row failed, so the next run rebuilds. A hit whose
+def mark_failed(
+    job: HostedHarnessJob,
+    message: str,
+    *,
+    failed_actions: list[dict[str, str]] | None = None,
+) -> None:
+    """A rejected certify leaves its row failed with the actions it failed, so the next
+    run rebuilds; a validation job's failure is marked as the validation's. A hit whose
     source check failed puts its row back to pending, so the next run certifies again or
     falls back.
     """
+    from simulate.services.harness_versioning.validation import (
+        FAILURE_SOURCE,
+        certify_only,
+    )
+
     assembly = _assembly(job)
     if assembly is None or job.assembled_bundle_id is None:
         return
@@ -1112,13 +1172,18 @@ def mark_failed(job: HostedHarnessJob, message: str) -> None:
         )
         outcome = "reset"
     elif assembly.get("outcome") == "miss":
+        error: dict[str, Any] = {
+            "code": "authoring_runtime_validation_failed",
+            "message": message[:1000],
+            "run_id": str(job.id),
+        }
+        if failed_actions is not None:
+            error["failed_actions"] = failed_actions
+        if certify_only(job):
+            error["source"] = FAILURE_SOURCE
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(
             state=HarnessAssembledBundle.State.FAILED,
-            error={
-                "code": "authoring_runtime_validation_failed",
-                "message": message[:1000],
-                "run_id": str(job.id),
-            },
+            error=error,
             updated_at=timezone.now(),
         )
         outcome = "failed"

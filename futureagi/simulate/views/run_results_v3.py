@@ -25,11 +25,12 @@ from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
 from simulate.selectors.runs import user_executions
+from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
-from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -52,9 +53,9 @@ from simulate.services.run_results_v3_queries import (
     run_call_rows_queryset,
     run_calls_queryset,
 )
-from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -244,6 +245,11 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    capability_snapshot = HarnessCapabilityReportSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The run readiness of the run's versions when it was created.",
+    )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -599,7 +605,9 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    pinned = (
+        run_version_labels([execution.id], readiness=True).get(str(execution.id)) or {}
+    )
     ordinal = (
         user_executions()
         .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
@@ -618,6 +626,7 @@ def _execution_payload(
         "suite_version": pinned.get("suite_version"),
         "pinned_agent_version": pinned.get("agent_version"),
         "agent_differs": bool(pinned.get("agent_differs")),
+        "capability_snapshot": pinned.get("capability_snapshot"),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
