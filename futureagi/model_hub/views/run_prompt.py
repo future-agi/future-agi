@@ -939,16 +939,12 @@ def process_media_markers(text, image_markers, model_name):
                 "tts",
             ) and not litellm.utils.supports_audio_input(model=model_name):
                 raise ValueError(f"Model {model_name} does not support audio input.")
-            # A text-to-speech model speaks every text part, so this
-            # generated label would be read aloud before the user's script
-            # (TH-2356). Only models that read the audio get the label.
-            if model_mode != "tts":
-                segments.append(
-                    {
-                        "type": "text",
-                        "text": f"Audio Input_{info['counter']} is given below:",
-                    }
-                )
+            segments.append(
+                {
+                    "type": "text",
+                    "text": f"Audio Input_{info['counter']} is given below:",
+                }
+            )
             try:
                 # SSRF-guarded: user-supplied URL; safe_fetch resolves + pins
                 # IP and blocks private/link-local hosts before download.
