@@ -7,7 +7,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PersonaListView from "./PersonaListView";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
@@ -20,28 +20,9 @@ const PersonaListContent = ({
   onClose,
   onAddPersonas,
   onCreatePersona,
-  preSelectedPersonas,
+  selectedPersonas,
+  onToggleSelect,
 }) => {
-  const [selectedPersonas, setSelectedPersonas] = useState(
-    preSelectedPersonas ?? [],
-  );
-
-  const handleToggleSelect = (persona, newValue) => {
-    setSelectedPersonas((prev) => {
-      if (newValue) {
-        return prev.some((p) => p.id === persona.id)
-          ? prev
-          : [...prev, persona];
-      }
-      return prev.filter((p) => p.id !== persona.id);
-    });
-  };
-
-  const handleAddPersonas = () => {
-    onAddPersonas(selectedPersonas);
-    setSelectedPersonas([]);
-  };
-
   return (
     <Box
       sx={{
@@ -75,7 +56,7 @@ const PersonaListContent = ({
         <PersonaListView
           onCreatePersona={onCreatePersona}
           selectedPersonas={selectedPersonas}
-          onToggleSelect={handleToggleSelect}
+          onToggleSelect={onToggleSelect}
           isSelectable
           personaCreateEditType={personaCreateEditType}
           lockedFilters={lockedFilters}
@@ -113,7 +94,7 @@ const PersonaListContent = ({
           sx={{ minWidth: "160px" }}
           size="small"
           disabled={selectedPersonas?.length === 0}
-          onClick={handleAddPersonas}
+          onClick={() => onAddPersonas(selectedPersonas)}
         >
           Add
         </Button>
@@ -128,10 +109,11 @@ PersonaListContent.propTypes = {
   onClose: PropTypes.func,
   onAddPersonas: PropTypes.func,
   onCreatePersona: PropTypes.func,
-  preSelectedPersonas: PropTypes.array,
+  selectedPersonas: PropTypes.array,
+  onToggleSelect: PropTypes.func,
 };
 
-const PersonaCreateContent = ({ onCancel, type }) => {
+const PersonaCreateContent = ({ onCancel, onSuccess, type }) => {
   return (
     <Box sx={{ width: "700px", height: "100vh" }}>
       <IconButton
@@ -147,7 +129,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
       </IconButton>
       <PersonaCreateEditForm
         onCancel={onCancel}
-        onSuccess={onCancel}
+        onSuccess={onSuccess}
         type={type}
       />
     </Box>
@@ -156,6 +138,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
 
 PersonaCreateContent.propTypes = {
   onCancel: PropTypes.func,
+  onSuccess: PropTypes.func,
   type: PropTypes.string,
 };
 
@@ -168,6 +151,34 @@ const PersonaDrawer = ({
   preSelectedPersonas = [],
 }) => {
   const [createEditOpen, setCreateEditOpen] = useState(false);
+  const [selectedPersonas, setSelectedPersonas] = useState(
+    preSelectedPersonas ?? [],
+  );
+
+  useEffect(() => {
+    if (open) setSelectedPersonas(preSelectedPersonas ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const handleToggleSelect = (persona, newValue) => {
+    setSelectedPersonas((prev) => {
+      if (newValue) {
+        return prev.some((p) => p.id === persona.id)
+          ? prev
+          : [...prev, persona];
+      }
+      return prev.filter((p) => p.id !== persona.id);
+    });
+  };
+
+  const handleCreatedPersona = (response) => {
+    const persona = response?.data?.result || response?.data;
+    setCreateEditOpen(false);
+    if (!persona?.id) return;
+    setSelectedPersonas((prev) =>
+      prev.some((p) => p.id === persona.id) ? prev : [...prev, persona],
+    );
+  };
 
   const handleDrawerClose = () => {
     onClose();
@@ -194,6 +205,7 @@ const PersonaDrawer = ({
       >
         <PersonaCreateContent
           onCancel={handleCreateEditClose}
+          onSuccess={handleCreatedPersona}
           type={personaCreateEditType}
         />
       </Collapse>
@@ -208,7 +220,8 @@ const PersonaDrawer = ({
           onClose={handleDrawerClose}
           onAddPersonas={onAddPersonas}
           onCreatePersona={() => setCreateEditOpen(true)}
-          preSelectedPersonas={preSelectedPersonas}
+          selectedPersonas={selectedPersonas}
+          onToggleSelect={handleToggleSelect}
         />
       </Collapse>
     </Drawer>
