@@ -328,7 +328,6 @@ export default function BuilderConsole({
                   onClick={onStop}
                   size="small"
                   sx={{
-                    borderRadius: "50%",
                     color: "text.secondary",
                     border: "1px solid", borderColor: busy ? "transparent" : "divider",
                   }}
