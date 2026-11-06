@@ -274,6 +274,8 @@ def worker_timeline(
                     if by is not None
                     else {}
                 ),
+                # The span the hand-off was made in, for opening it in Traces: its launching call, else its agent.
+                "span_id": delegation_id,
                 "trace_id": str(span.get("trace_id") or ""),
                 "task": _summary(span.get("input"))
                 or _summary((launcher or {}).get("input"), argument=True),

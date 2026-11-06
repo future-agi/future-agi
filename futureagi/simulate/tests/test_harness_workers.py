@@ -1769,3 +1769,22 @@ def test_the_workers_contract_allows_string_payloads_and_the_parts_that_can_be_m
     assert not nullable(
         definitions["CallWorkersResponse"]["properties"]["events"]["items"]
     )
+
+
+def test_a_hand_off_read_from_spans_keeps_the_span_it_was_made_in():
+    spans = [
+        _span("a", None, "agent", "coordinator", "t1", "t9"),
+        _span("al", "a", "llm", "route", "t1", "t1"),
+        # A worker run as a tool: the hand-off is the tool call that launched it.
+        _span("lt", "a", "tool", "ask_planner", "t2", "t8", trace_id="tr1"),
+        _span("b", "lt", "agent", "planner", "t2", "t8"),
+        _span("bl", "b", "llm", "plan", "t2", "t2"),
+        # A worker nested with no launching call: the hand-off is its own agent span.
+        _span("c", "b", "agent", "searcher", "t3", "t7"),
+        _span("ct", "c", "tool", "search", "t4", "t4", trace_id="tr1"),
+    ]
+    events = worker_timeline(spans, [], run_key=RUN)["events"]
+    handed = {
+        e["worker_id"]: e["span_id"] for e in events if e["type"] == "delegated"
+    }
+    assert handed == {"run-1/planner": "lt", "run-1/searcher": "c"}
