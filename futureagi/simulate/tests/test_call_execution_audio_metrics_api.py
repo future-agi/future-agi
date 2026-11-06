@@ -20,10 +20,10 @@ from simulate.views.run_results_v3 import (
     CallExecutionV3DetailView,
     build_call_execution_detail,
 )
+from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.views.run_test import (
     CallExecutionDetailView,
     CallExecutionRerunView,
-    _clear_call_execution_data,
     _save_eval_snapshot,
 )
 from tracer.views.shared_link import _resolve_shared_call_execution
@@ -234,7 +234,7 @@ def test_out_of_scope_404(view, scope, audio_call, user, workspace):
 
 @pytest.mark.parametrize(
     "clear",
-    [_clear_call_execution_data, CallExecutionRerunView()._clear_call_execution_data],
+    [clear_call_for_rerun, CallExecutionRerunView()._clear_call_execution_data],
 )
 def test_snapshot_copies_envelope_before_both_reset_paths(audio_call, clear):
     before = copy.deepcopy(audio_call.audio_metrics)
