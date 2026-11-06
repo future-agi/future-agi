@@ -1825,6 +1825,39 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
         ),
     },
+    "tracer.services.project_tags": {
+        "find_trace_root": filed(
+            BY_ID_ALONE,
+            PROJECT_SET,
+            why=(
+                "root of the trace id a tag write names, inside the caller's "
+                "projects from Project.no_workspace_objects"
+            ),
+        ),
+        "find_span": filed(
+            BY_ID_ALONE,
+            PROJECT_SET,
+            why=(
+                "the span id a tag write names, inside the caller's projects "
+                "from Project.no_workspace_objects"
+            ),
+        ),
+        "write_trace_assignment": filed(
+            PROJECT_SET,
+            why=(
+                "copies the root span found for that trace in the project the "
+                "lookup resolved from the caller's managed projects"
+            ),
+        ),
+        "_assigned_names": filed(
+            PROJECT_SET,
+            why="tag names of the project ProjectView.get_object resolved",
+        ),
+        "_name_assigned": filed(
+            PROJECT_SET,
+            why="whether a tag is assigned in the project ProjectView resolved",
+        ),
+    },
     "tracer.services.clickhouse.v2.trace_detail_reads": {
         "TraceDetailReadBuilder.build_annotation_query": filed(
             NO_SPAN_TABLE,
@@ -3101,6 +3134,10 @@ ROW_TYPES = {
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,
+    # Made when a user tags a trace or span or edits the project's tags; both
+    # resolve the project through Project.no_workspace_objects, which leaves the
+    # hidden project out.
+    "tracer.ProjectTagDefinition.project": USER_MADE,
     "tracer.ProjectVersion.project": USER_MADE,
     "tracer.ProjectVersionWinner.project": USER_MADE,
     "tracer.ReplaySession.project": USER_MADE,

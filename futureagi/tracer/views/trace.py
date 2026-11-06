@@ -74,6 +74,7 @@ from tracer.serializers.project_tags import (
     TAG_ERROR_RESPONSES,
     TagAssignmentRequestSerializer,
     TagAssignmentResponseSerializer,
+    TraceTagsUpdateQuerySerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
@@ -477,6 +478,23 @@ class TraceNavigationReadUnavailable(RuntimeError):
 
 class TraceTagsUpdateSerializer(TagAssignmentRequestSerializer):
     """Body of ``PATCH /tracer/trace/{id}/tags/``."""
+
+
+def _trace_tag_names(value) -> list:
+    """Trace-list tags as a list of names.
+
+    ClickHouse ``traces.tags`` is a JSON string; the grid's tags cell renders
+    only an array, so returning the raw string showed every trace untagged.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
 
 
 def _sanitize_nonfinite_floats(value):
@@ -2620,6 +2638,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     @validated_request(
         request_serializer=TraceTagsUpdateSerializer,
+        query_serializer=TraceTagsUpdateQuerySerializer,
         responses={200: TagAssignmentResponseSerializer, **TAG_ERROR_RESPONSES},
     )
     @action(detail=True, methods=["patch"], url_path="tags")
@@ -2640,7 +2659,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             result = set_trace_tags(
                 project_ids=_tag_project_ids(
-                    request, request.query_params.get("project_id")
+                    request, request.validated_query_data.get("project_id")
                 ),
                 trace_id=trace_id,
                 raw_tags=request.validated_data["tags"],
@@ -5690,7 +5709,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "model": row.get("model"),
                 "provider": row.get("provider"),
-                "tags": row.get("trace_tags") or [],
+                "tags": _trace_tag_names(row.get("trace_tags")),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
@@ -7213,7 +7232,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if str(row.get("trace_session_id", "")) == NIL_UUID
                     else row.get("trace_session_id")
                 ),
-                "tags": row.get("trace_tags") or [],
+                "tags": _trace_tag_names(row.get("trace_tags")),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id), trace_id)
                 ),

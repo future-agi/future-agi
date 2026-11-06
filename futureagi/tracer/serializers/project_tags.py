@@ -47,6 +47,16 @@ class TagAssignmentRequestSerializer(serializers.Serializer):
         return _tag_items(value)
 
 
+class TraceTagsUpdateQuerySerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "The trace's project. Optional; needed only when the trace id "
+            "exists in more than one project you can access."
+        ),
+    )
+
+
 class SpanTagsUpdateRequestSerializer(TagAssignmentRequestSerializer):
     span_id = serializers.CharField(max_length=255)
     project_id = serializers.UUIDField(
@@ -93,7 +103,11 @@ class ProjectTagDefinitionListResponseSerializer(serializers.Serializer):
 
 
 class ProjectTagDefinitionUpdateRequestSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255, help_text="The tag to change.")
+    name = serializers.CharField(
+        max_length=255,
+        trim_whitespace=False,
+        help_text="The tag to change, exactly as listed (not trimmed).",
+    )
     new_name = serializers.CharField(
         max_length=255,
         required=False,
@@ -134,7 +148,11 @@ class ProjectTagDefinitionUpdateResponseSerializer(serializers.Serializer):
 class ProjectTagDefinitionDeleteQuerySerializer(serializers.Serializer):
     name = serializers.CharField(
         max_length=255,
-        help_text="The tag to delete. It is also removed from every assignment.",
+        trim_whitespace=False,
+        help_text=(
+            "The tag to delete, exactly as listed (not trimmed). It is also "
+            "removed from every assignment."
+        ),
     )
 
 

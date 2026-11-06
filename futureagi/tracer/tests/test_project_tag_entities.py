@@ -32,7 +32,15 @@ class _Span:
     """A span row that exists only in ClickHouse."""
 
     def __init__(
-        self, project, *, trace_id, span_id=None, parent="", tags=None, start=None
+        self,
+        project,
+        *,
+        trace_id,
+        span_id=None,
+        parent="",
+        tags=None,
+        start=None,
+        service_name="",
     ):
         self.id = span_id or uuid.uuid4().hex[:16]
         self.trace_id = trace_id
@@ -47,6 +55,7 @@ class _Span:
         self.end_time = self.start_time + timedelta(milliseconds=20)
         self.tags = list(tags or [])
         self.deleted = False
+        self.service_name = service_name
 
 
 def _trace_row(project, trace_id, tags=(), created_at=None):
@@ -90,6 +99,17 @@ def _span_tags(project, span_id, trace_id=None):
     if trace_id is not None:
         rows = [row for row in rows if row[0] == trace_id]
     return [json.loads(row[1]) for row in rows]
+
+
+def _stored_rows(project, span_id):
+    """Every stored row (all versions) of a span id: (service, start µs, tags)."""
+    rows = _ch(
+        "SELECT service_name, toUnixTimestamp64Micro(start_time), tags FROM spans "
+        "WHERE project_id = {p:UUID} AND id = {s:String} ORDER BY _version",
+        p=str(project.id),
+        s=span_id,
+    )
+    return [(svc, start, json.loads(tags)) for svc, start, tags in rows]
 
 
 def _trace_tags(project, trace_id):
@@ -458,6 +478,87 @@ class TestTraceAndSpanTagWrites:
         assert _span_tags(second, span_id) == [["second"]]
 
 
+    def test_root_corrected_within_the_hour_is_tagged_on_every_version(
+        self, auth_client, observe_project, ch_seed
+    ):
+        trace_id = str(uuid.uuid4())
+        span_id = uuid.uuid4().hex[:16]
+        # The same stored span written twice: the newer write moved its start
+        # by five seconds, inside the same hour (one replacing key).
+        ch_seed(_Span(observe_project, trace_id=trace_id, span_id=span_id))
+        ch_seed(
+            _Span(
+                observe_project,
+                trace_id=trace_id,
+                span_id=span_id,
+                start=_START + timedelta(seconds=5),
+            )
+        )
+
+        response = _patch_trace(auth_client, trace_id, ["prod"])
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        rows = _stored_rows(observe_project, span_id)
+        assert len(rows) == 2
+        # Whichever version survives a merge carries the new names.
+        assert [tags for _, _, tags in rows] == [["prod"], ["prod"]]
+
+    def test_same_ids_in_two_services_are_two_spans(
+        self, auth_client, observe_project, ch_seed
+    ):
+        trace_id = str(uuid.uuid4())
+        span_id = uuid.uuid4().hex[:16]
+        ch_seed(
+            _Span(
+                observe_project,
+                trace_id=trace_id,
+                span_id=span_id,
+                tags=["a"],
+                service_name="svc-a",
+            )
+        )
+        ch_seed(
+            _Span(
+                observe_project,
+                trace_id=trace_id,
+                span_id=span_id,
+                tags=["b"],
+                service_name="svc-b",
+            )
+        )
+
+        response = _post_span(auth_client, span_id, ["changed"])
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        by_service = {svc: tags for svc, _, tags in _stored_rows(observe_project, span_id)}
+        # Only the most recently written one (what span detail shows) changes.
+        assert by_service == {"svc-a": ["a"], "svc-b": ["changed"]}
+
+    def test_trace_list_returns_the_tags_as_a_list(
+        self, auth_client, observe_project, ch_seed
+    ):
+        recent = datetime.now(UTC) - timedelta(minutes=10)
+        trace_id = str(uuid.uuid4())
+        ch_seed(_Span(observe_project, trace_id=trace_id, start=recent))
+        seed_ch_trace(_trace_row(observe_project, trace_id, created_at=recent))
+        assert _patch_trace(auth_client, trace_id, ["prod"]).status_code == 200
+
+        listed = auth_client.get(
+            "/tracer/trace/list_traces_of_session/",
+            {
+                "project_id": str(observe_project.id),
+                "page_number": 0,
+                "page_size": 25,
+                "filters": "[]",
+            },
+        )
+
+        assert listed.status_code == status.HTTP_200_OK, listed.data
+        rows = [r for r in listed.data["result"]["table"] if r["trace_id"] == trace_id]
+        # The grid's tags cell renders only an array; a JSON string showed none.
+        assert [row["tags"] for row in rows] == [["prod"]]
+
+
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestTagTenantIsolation:
@@ -730,6 +831,19 @@ class TestProjectTagDefinitions:
         assert trace.tags == []
         listed = auth_client.get(self._url(observe_project)).data["result"]["tags"]
         assert [item["name"] for item in listed] == ["stay"]
+
+    def test_an_existing_name_is_matched_exactly(
+        self, auth_client, observe_project, ch_seed
+    ):
+        span = _Span(observe_project, trace_id=str(uuid.uuid4()), tags=[" prod ", "prod"])
+        ch_seed(span)
+
+        response = auth_client.delete(
+            self._url(observe_project), QUERY_STRING="name=%20prod%20"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert _span_tags(observe_project, span.id) == [["prod"]]
 
     @pytest.mark.parametrize(
         "body",

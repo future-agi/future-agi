@@ -23,7 +23,8 @@ import json
 import re
 import uuid
 from collections.abc import Iterable
-from datetime import UTC
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from django.db import connection, transaction
@@ -32,7 +33,6 @@ from django.utils import timezone
 from tracer.models.project import Project, ProjectTagDefinition
 from tracer.models.trace import Trace
 from tracer.services.clickhouse.v2 import get_v2_config
-from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentity
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 _TAG_NAME_MAX = 255
@@ -46,6 +46,36 @@ _LIST_CAP_MS = 20_000
 _LOOKUP_SETTINGS = {"max_threads": 1, "max_memory_usage": 4 * 1024**3}
 _LIST_SETTINGS = {"max_threads": 4, "max_memory_usage": 8 * 1024**3}
 _ASSIGNMENT_TABLES = ("spans", "traces")
+
+
+@dataclass(frozen=True)
+class SpanKey:
+    """One stored span: the ``spans`` ReplacingMergeTree key plus its current time.
+
+    Versions of a span replace each other on ``(project_id, observation_type,
+    service_name, toStartOfHour(start_time), trace_id, id)``; ``start_time`` is
+    the latest version's, which can differ within the hour from older ones.
+    """
+
+    project_id: str
+    observation_type: str
+    service_name: str
+    trace_id: str
+    span_id: str
+    start_time: datetime
+
+    @property
+    def start_us(self) -> int:
+        start = self.start_time
+        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        delta = start - datetime(1970, 1, 1, tzinfo=UTC)
+        return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+    @property
+    def partition_id(self) -> str:
+        start = self.start_time
+        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        return start.strftime("%Y%m%d")
 
 
 class TagStoreUnavailable(RuntimeError):
@@ -72,6 +102,13 @@ class TagListTooLarge(ValueError):
 
 def is_valid_tag_color(color: Any) -> bool:
     return isinstance(color, str) and bool(_HEX_COLOR.fullmatch(color))
+
+
+def _existing_name(name: Any) -> str:
+    """An existing tag's name, matched exactly (an SDK may have padded it)."""
+    if not isinstance(name, str) or not name or len(name) > _TAG_NAME_MAX:
+        raise ValueError(f"tag name must be 1 to {_TAG_NAME_MAX} characters")
+    return name
 
 
 def _clean_name(name: Any) -> str:
@@ -186,12 +223,14 @@ def _command(sql: str, parameters: dict) -> None:
         client.close()
 
 
-def _identity(row: dict) -> PhysicalSpanIdentity:
-    return PhysicalSpanIdentity(
+def _span_key(row: dict) -> SpanKey:
+    return SpanKey(
         project_id=str(row["project_id"]),
+        observation_type=str(row["observation_type"]),
+        service_name=str(row["service_name"]),
         trace_id=str(row["trace_id"]),
         span_id=str(row["span_id"]),
-        start_time=row["start_time"],
+        start_time=row["latest_start_time"],
     )
 
 
@@ -207,29 +246,31 @@ def _only_project(rows: list[dict]) -> dict:
     return rows[0]
 
 
-def find_trace_root(
-    *, project_ids: list[str], trace_id: str
-) -> PhysicalSpanIdentity | None:
+def find_trace_root(*, project_ids: list[str], trace_id: str) -> SpanKey | None:
     """The earliest live root span of a trace inside the authorized projects.
 
-    Same identity discovery as trace detail: latest state per physical span
-    ``(project_id, trace_id, id, start_time)``, never ``FINAL`` or a bare id.
+    Latest state per stored span (the table's replacing key), never ``FINAL``
+    or a bare id, so a root whose time was corrected within the hour is one
+    span, not two.
     """
     rows = _read(
         """
         SELECT
             toString(project_id) AS project_id,
+            observation_type,
+            service_name,
+            toStartOfHour(start_time) AS start_hour,
             trace_id,
             id AS span_id,
-            start_time,
+            argMax(start_time, _version) AS latest_start_time,
             argMax(tuple(parent_span_id), _version).1 AS latest_parent_span_id,
             argMax(is_deleted, _version) AS latest_is_deleted
         FROM spans
         PREWHERE project_id IN %(project_ids)s
           AND trace_id = %(trace_id)s
-        GROUP BY project_id, trace_id, id, start_time
+        GROUP BY project_id, observation_type, service_name, start_hour, trace_id, id
         HAVING latest_is_deleted = 0 AND ifNull(latest_parent_span_id, '') = ''
-        ORDER BY start_time ASC, span_id ASC
+        ORDER BY latest_start_time ASC, span_id ASC
         LIMIT 1 BY project_id
         LIMIT 2
         """,
@@ -239,32 +280,35 @@ def find_trace_root(
     )
     if not rows:
         return None
-    return _identity(_only_project(rows))
+    return _span_key(_only_project(rows))
 
 
-def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
-    """One live span inside the authorized projects.
+def find_span(*, project_ids: list[str], span_id: str) -> SpanKey:
+    """One live stored span inside the authorized projects.
 
-    Within one project a replay can leave the same span id on several physical
-    rows. Pick the copy span detail shows (most recently written, as in
-    ``TraceDetailReadBuilder.build_span_anchor_query``) and write only that one.
+    Within one project a replay can leave the same span id on several stored
+    spans. Pick the most recently written one (as span detail's anchor query
+    does) and write only that one.
     """
     rows = _read(
         """
         SELECT
             toString(project_id) AS project_id,
+            observation_type,
+            service_name,
+            toStartOfHour(start_time) AS start_hour,
             trace_id,
             id AS span_id,
-            start_time,
+            argMax(start_time, _version) AS latest_start_time,
             argMax(is_deleted, _version) AS latest_is_deleted,
             max(_version) AS latest_version
         FROM spans
         PREWHERE project_id IN %(project_ids)s
           AND id = %(span_id)s
-        GROUP BY project_id, trace_id, id, start_time
+        GROUP BY project_id, observation_type, service_name, start_hour, trace_id, id
         HAVING latest_is_deleted = 0
         ORDER BY latest_version DESC, project_id DESC, trace_id DESC,
-                 start_time DESC
+                 latest_start_time DESC
         LIMIT 1 BY project_id
         LIMIT 2
         """,
@@ -274,39 +318,49 @@ def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
     )
     if not rows:
         raise TagNotFound("span")
-    return _identity(_only_project(rows))
+    return _span_key(_only_project(rows))
 
 
-def write_span_assignment(identity: PhysicalSpanIdentity, names: list[str]) -> None:
-    """Replace one physical span's tag names in place.
+_SPAN_KEY_WHERE = """
+        project_id = {project_id:UUID}
+          AND observation_type = {observation_type:String}
+          AND service_name = {service_name:String}
+          AND toStartOfHour(start_time)
+              = toStartOfHour(fromUnixTimestamp64Micro({start_us:Int64}, 'UTC'))
+          AND trace_id = {trace_id:String}
+          AND id = {span_id:String}"""
+
+
+def _span_key_params(key: SpanKey) -> dict:
+    return {
+        "project_id": key.project_id,
+        "observation_type": key.observation_type,
+        "service_name": key.service_name,
+        "start_us": key.start_us,
+        "trace_id": key.trace_id,
+        "span_id": key.span_id,
+    }
+
+
+def write_span_assignment(key: SpanKey, names: list[str]) -> None:
+    """Replace one stored span's tag names in place, on every version of it.
 
     In place, not a new ``_version``: dashboard aggregates read ``spans``
     without ``FINAL`` and would count a re-inserted copy twice until a merge.
-    The partition and every identity column are pinned, so nothing outside
-    this one row is rewritten.
+    The partition and the whole replacing key are pinned, so no other span is
+    rewritten, and whichever version wins a merge carries the new names.
     """
-    start = identity.start_time
-    start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
-    partition = start.strftime("%Y%m%d")
+    partition = key.partition_id
     if not re.fullmatch(r"\d{8}", partition):
         raise TagStoreUnavailable("span partition could not be derived")
     _command(
         f"""
         ALTER TABLE spans UPDATE tags = {{tags:String}}
         IN PARTITION ID '{partition}'
-        WHERE project_id = {{project_id:UUID}}
-          AND trace_id = {{trace_id:String}}
-          AND id = {{span_id:String}}
-          AND toUnixTimestamp64Micro(start_time) = {{start_us:Int64}}
+        WHERE {_SPAN_KEY_WHERE}
         SETTINGS mutations_sync = 2
         """,
-        {
-            "tags": json.dumps(names, ensure_ascii=False),
-            "project_id": identity.project_id,
-            "trace_id": identity.trace_id,
-            "span_id": identity.span_id,
-            "start_us": identity.start_us,
-        },
+        {"tags": json.dumps(names, ensure_ascii=False), **_span_key_params(key)},
     )
 
 
@@ -315,7 +369,7 @@ def write_trace_assignment(
     project_id: str,
     trace_uuid: str,
     names: list[str],
-    root: PhysicalSpanIdentity | None = None,
+    root: SpanKey | None = None,
 ) -> None:
     """Give the trace's ``traces`` row these tags, creating it if it is missing.
 
@@ -360,29 +414,20 @@ def write_trace_assignment(
     if root is None:
         return
     _command(
-        """
+        f"""
         INSERT INTO traces
             (id, project_id, name, session_id, tags, input, output,
              created_at, updated_at, is_deleted, _version)
         SELECT
-            toUUID(trace_id), project_id, name, trace_session_id, {tags:String},
+            toUUID(trace_id), project_id, name, trace_session_id, {{tags:String}},
             input, output, start_time, now64(6, 'UTC'), 0,
             toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
         FROM spans
-        WHERE project_id = {project_id:UUID}
-          AND trace_id = {trace_id:String}
-          AND id = {span_id:String}
-          AND toUnixTimestamp64Micro(start_time) = {start_us:Int64}
+        WHERE {_SPAN_KEY_WHERE}
         ORDER BY _version DESC
         LIMIT 1
         """,
-        {
-            "tags": tags,
-            "project_id": project_id,
-            "trace_id": root.trace_id,
-            "span_id": root.span_id,
-            "start_us": root.start_us,
-        },
+        {"tags": tags, **_span_key_params(root)},
     )
 
 
@@ -590,7 +635,7 @@ def update_definition(
     one exists) completes it instead of failing, so a retry after a partial
     ClickHouse failure converges.
     """
-    name = _clean_name(name)
+    name = _existing_name(name)
     color = _check_color(color)
     new_name = None if new_name is None else _clean_name(new_name)
     renaming = new_name is not None and new_name != name
@@ -662,7 +707,7 @@ def update_definition(
 
 def delete_definition(*, project: Project, name: str) -> None:
     """Remove a tag from the project and from every assignment in it."""
-    name = _clean_name(name)
+    name = _existing_name(name)
     with transaction.atomic():
         _lock_project_tags(project)
         ProjectTagDefinition.objects.filter(project=project, name=name).update(
@@ -704,6 +749,9 @@ def set_trace_tags(
     project = Project.no_workspace_objects.get(id=project_id)
 
     with transaction.atomic():
+        # Same lock as rename/delete: concurrent writes to one trace cannot
+        # leave its root span and its traces row disagreeing.
+        _lock_project_tags(project)
         upsert_definitions(project, items)
         if pg_trace is not None:
             Trace.no_workspace_objects.filter(id=pg_trace.id).update(
@@ -730,6 +778,7 @@ def set_span_tags(
     identity = find_span(project_ids=project_ids, span_id=str(span_id))
     project = Project.no_workspace_objects.get(id=identity.project_id)
     with transaction.atomic():
+        _lock_project_tags(project)
         upsert_definitions(project, items)
         write_span_assignment(identity, names)
     return {"project_id": identity.project_id, "tags": names}

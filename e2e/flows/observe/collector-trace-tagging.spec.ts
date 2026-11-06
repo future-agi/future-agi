@@ -31,17 +31,17 @@ test('OBS-E2E-059: a collector-ingested trace can be tagged from the Observe gri
       'ingest one trace through the collector into a uniquely named project and wait until it is listed',
       'open the project trace grid and use Display to show Trace Name and Tags',
       'open Add tags on the seeded row, enter a unique tag and press Enter',
-      'see Tags updated, close the popover and read the tag on the refreshed row',
+      'see Tags updated, close the popover, reload the grid and read the tag on the row',
       'read the project tag definitions through the authenticated API',
     ],
     backendChecks: [
       'PATCH /tracer/trace/<traceId>/tags/ accepts an object tag without project_id for a trace absent from Postgres and returns its assigned name',
-      'the refreshed trace-list response and ClickHouse traces FINAL contain exactly the new tag on the seeded trace',
+      'the reloaded trace-list response (tags as an array) and ClickHouse traces FINAL contain exactly the new tag on the seeded trace',
       'GET /tracer/project/<projectId>/tag-definitions/ lists the unique tag with its submitted #RRGGBB colour and usage_count >= 1',
     ],
     browserChecks: [
       'saving the tag shows the Tags updated snackbar',
-      'closing the popover refreshes the grid and the seeded row displays exactly the tag name',
+      'after Reload the seeded row displays exactly the tag name',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -168,10 +168,13 @@ test('OBS-E2E-059: a collector-ingested trace can be tagged from the Observe gri
       return sent.tags[0].color;
     }, { timeout: UI_READY });
 
-    await test.step('UI/API: closing the popover reloads the tagged trace row', async () => {
-      // TagsCell.handleClose -> CustomTraceRenderer.onTagsUpdated -> refreshServerSide.
-      // Arm before Escape, and require the real list response, not the popover's
-      // optimistic chip. TraceGrid/readQuery supports GET and POST list reads.
+    await test.step('UI/API: reloading the grid shows the tagged trace row', async () => {
+      // Close the popover, then use the toolbar's Reload (ObserveHeader.jsx);
+      // closing alone does not refetch the server-side grid. Require the real
+      // list response, not the popover's optimistic chip. TraceGrid/readQuery
+      // supports GET and POST list reads.
+      await page.keyboard.press('Escape');
+      await expect(page.getByPlaceholder('Add tag...', { exact: true })).toBeHidden({ timeout: UI_READY });
       const [response] = await Promise.all([
         page.waitForResponse(r => {
           if (new URL(r.url()).pathname !== TRACE_LIST_PATH
@@ -180,16 +183,17 @@ test('OBS-E2E-059: a collector-ingested trace can be tagged from the Observe gri
             ? r.request().postDataJSON() : Object.fromEntries(new URL(r.url()).searchParams);
           return params.project_id === projectId;
         }, { timeout: UI_READY }),
-        page.keyboard.press('Escape'),
+        page.getByRole('button', { name: /^Reload (data|rows)/ }).first().click(),
       ]);
       expect(response.status()).toBe(200);
       const body = await response.json() as TraceList;
-      await testInfo.attach('refreshed-trace-list', {
+      await testInfo.attach('reloaded-trace-list', {
         body: JSON.stringify(body), contentType: 'application/json',
       });
+      // The list returns tags as an array of names (it used to return the
+      // ClickHouse JSON string, which the tags cell rendered as no tags).
       expect(body.result.table.map(trace => ({ trace_id: trace.trace_id, tags: trace.tags })))
         .toEqual([{ trace_id: seeded.traceId, tags: [tagName] }]);
-      await expect(page.getByPlaceholder('Add tag...', { exact: true })).toBeHidden({ timeout: UI_READY });
       await expect(tagsCell.getByRole('button', { name: 'Edit tags', exact: true }))
         .toHaveText(tagName, { timeout: UI_READY });
     }, { timeout: UI_READY });
