@@ -46,6 +46,7 @@ from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
+    fail_unscheduled,
     run_idempotency_key,
 )
 from simulate.temporal.client import start_hosted_harness_gateway_workflow
@@ -367,22 +368,9 @@ def _dispatch(run: HostedHarnessJob) -> None:
 
 def _fail_unscheduled(run: HostedHarnessJob) -> None:
     message = "the check run could not be scheduled"
-    now = timezone.now()
     with transaction.atomic():
-        marked = HostedHarnessJob.no_workspace_objects.filter(
-            id=run.id, state=HostedHarnessJob.State.QUEUED
-        ).update(
-            state=HostedHarnessJob.State.FAILED,
-            current_stage="failed",
-            terminal_at=now,
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-                "message": message,
-            },
-        )
-        if marked:
+        now = fail_unscheduled(run, message)
+        if now is not None:
             TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
                 status=TestExecution.ExecutionStatus.FAILED,
                 completed_at=now,

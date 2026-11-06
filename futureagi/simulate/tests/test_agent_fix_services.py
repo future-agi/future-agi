@@ -62,6 +62,7 @@ from simulate.services.hosted_harness import (
     hash_secret,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
 from simulate.tests.test_harness_versioning_backfill import (
@@ -1649,9 +1650,11 @@ class TestMakeDefault:
         candidate.refresh_from_db()
 
         outcome = make_candidate_default(candidate, user=user)
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         environment.refresh_from_db()
-        assert outcome == "activated"
+        assert outcome == "validating"
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
 

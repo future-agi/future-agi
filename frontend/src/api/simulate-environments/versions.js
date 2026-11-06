@@ -386,8 +386,10 @@ export const refreshDrafts = (queryClient, envId) => {
 };
 
 // Make a version the default. The answer is every version, so it seeds the list;
-// what follows the default is asked again too. A conflict means the default
-// moved elsewhere: refresh so the user picks again from what is current.
+// what follows the default is asked again too. An agent move that waits for its
+// pairing to be checked answers 202 with the versions under `versions` and the
+// check under `validation`. A conflict means the default moved elsewhere:
+// refresh so the user picks again from what is current.
 export function useMoveDefault(envId) {
   const queryClient = useQueryClient();
   const refresh = () => refreshFollowers(queryClient, envId);
@@ -396,7 +398,10 @@ export function useMoveDefault(envId) {
     mutationFn: ({ piece, versionId, expectedDefaultId }) =>
       moveDefault(envId, piece, versionId, expectedDefaultId),
     onSuccess: (data) => {
-      if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+      const versions = data?.validation ? data.versions : data;
+      if (versions) {
+        queryClient.setQueryData(environmentVersionsKey(envId), versions);
+      }
       refresh();
     },
     onError: (error) => {

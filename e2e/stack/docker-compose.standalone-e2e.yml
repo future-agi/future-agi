@@ -25,6 +25,9 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # Environment versions and pair certification, on as in production.
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
     volumes:
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
