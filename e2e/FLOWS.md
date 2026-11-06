@@ -1059,10 +1059,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1075,7 +1075,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1225,6 +1225,33 @@
 - the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
 - both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
 
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -1279,7 +1306,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -2222,7 +2249,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 
@@ -2315,6 +2342,30 @@
 - Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
+
+### OBS-E2E-059 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
 ## prompts
 

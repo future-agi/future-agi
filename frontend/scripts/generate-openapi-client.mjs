@@ -545,6 +545,33 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // drf-yasg emits x-nullable for these SQL responses, but Orval drops it.
+    // Keep rewrites scoped to the SQL declarations and fail if the source
+    // shape changes; never hand-edit the generated client.
+    for (const [name, field, type, optional] of [
+      ["SQLExecutionApi", "finished_at", "string", false],
+      ["SQLResultApi", "next_offset", "number", true],
+      ["SQLEstimateSourceApi", "parts", "number", false],
+      ["SQLEstimateSourceApi", "marks", "number", false],
+      ["SQLEstimateSourceApi", "max_rows", "number", false],
+      ["SQLEstimateApi", "exceeds_scan_bound", "boolean", false],
+    ]) {
+      const marker = optional ? "?" : "";
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${name} {`,
+        `${field}${marker}: ${type};`,
+        `${field}${marker}: ${type} | null;`,
+        `${name}.${field} nullable`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SQLResultApiRowsItemItem = { [key: string]: unknown };",
+      "export type SQLResultApiRowsItemItem = JsonValueApi;",
+      "SQL result cells support JSON scalars and null",
+    );
+
     for (const rowType of [
       "TracePrototypeListResultApiTableItem",
       "TraceObserveListResultApiTableItem",
@@ -1058,6 +1085,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
       "ConversationAnalysisApiFlags",
+      "EvalTaskDetailsEvalApiMapping",
+      "EvalTaskDetailsEvalApiConfig",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -1081,6 +1110,42 @@ export type ${jsonAlias} = JsonValueApi;`,
         "$1 | null$2",
         `${typeName}.${field} nullable`,
       );
+    }
+
+    // Swagger 2 x-nullable is lost by Orval. Keep the explicit task-details
+    // response aligned with legacy nullable fields and absent sampling policies.
+    for (const [typeName, fields] of Object.entries({
+      EvalTaskDetailsResultApi: [
+        "name",
+        "project_name",
+        "status",
+        "filters_applied",
+        "spans_limit",
+        "sampling_rate",
+        "sampling_policy",
+        "last_run",
+        "run_type",
+      ],
+      SamplingWindowApi: ["end"],
+      EvalTaskDetailsEvalApi: [
+        "name",
+        "template_id",
+        "templateId",
+        "model",
+        "evalType",
+        "templateType",
+        "outputType",
+      ],
+    })) {
+      for (const field of fields) {
+        schemas = assertReplaceRegexInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          "$1 | null$2",
+          `${typeName}.${field} nullable`,
+        );
+      }
     }
 
     fs.writeFileSync(schemasOutputPath, schemas);
@@ -2043,6 +2108,66 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         postName,
       );
     }
+    const taskDetailsDeclaration =
+      "export const TracerEvalTaskGetEvalDetailsResponse = zod.object({";
+    zod = assertReplaceInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      '"end": zod.string().min(1).optional()',
+      '"end": zod.string().min(1).nullish()',
+      "task details live sampling window end nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      taskDetailsDeclaration,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "task details mapping/config recursive JSON values",
+    );
+    for (const field of [
+      "name",
+      "project_name",
+      "template_id",
+      "templateId",
+      "model",
+      "evalType",
+      "templateType",
+      "outputType",
+      "last_run",
+      "spans_limit",
+      "sampling_rate",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(
+          `("${field}": zod\\.(?:string|number)\\(\\)(?:\\.(?:uuid|datetime)\\([^)]*\\))?)(?=,|\\n)`,
+          "g",
+        ),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    for (const field of ["status", "run_type"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`("${field}": zod\\.enum\\(\\[[^\\]]+\\]\\))(?=,|\\n)`, "g"),
+        "$1.nullable()",
+        `task details ${field} nullable`,
+      );
+    }
+    // These two nested objects end immediately before the next required field.
+    for (const next of ["created_at", "last_run"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        taskDetailsDeclaration,
+        new RegExp(`(\\}\\))(?=,\\n  "${next}")`),
+        "$1.nullable()",
+        `task details nullable object before ${next}`,
+      );
+    }
+
     fs.writeFileSync(zodOutputPath, zod);
   }
   await formatGeneratedFiles();

@@ -1023,6 +1023,13 @@ class TestEvalTaskGetDetailsAPI:
         data = get_result(response)
         assert data["name"] == eval_task.name
 
+        from tracer.serializers.eval_task import EvalTaskDetailsResponseSerializer
+
+        contract = EvalTaskDetailsResponseSerializer(data=response.json())
+        assert contract.is_valid(), contract.errors
+        assert "sampling_policy" in data
+        assert "count" not in response.json() and "results" not in response.json()
+
     def test_get_details_internal_error_is_sanitized(
         self, auth_client, eval_task, monkeypatch
     ):

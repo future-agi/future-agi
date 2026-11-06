@@ -3662,10 +3662,20 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             scope_usage_to_request_window=created_at_floor is None,
         )
 
+        # The sampling CTE keeps the original root-only snapshot semantics;
+        # ordinary lists use the newer child-aware physical member replay.
+        aggregates = (
+            "min(start_time) AS session_start, max(end_time) AS session_end, "
+            "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+            "sum(cost) AS total_cost, sum(total_tokens) AS total_tokens, "
+            "uniqExact(trace_id) AS traces_count"
+            if self.TABLE == "sampling_source"
+            else self._AGGREGATE_SELECT
+        )
         query = f"""
         SELECT
             trace_session_id AS session_id,
-            {self._AGGREGATE_SELECT}
+            {aggregates}
             {message_select}
         {from_where}
         GROUP BY trace_session_id
@@ -4142,12 +4152,27 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             c for c in (resolved_session_clause, user_membership_clause) if c
         ]
         where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        # Sampling supplies an already deduplicated CTE, not a MergeTree table.
+        # ClickHouse rejects FINAL on that CTE; ordinary session reads keep FINAL.
+        table_source = (
+            self.TABLE if self.TABLE == "sampling_source" else f"{self.TABLE} FINAL"
+        )
+        if self.TABLE == "sampling_source":
+            # The canonical sampling CTE already freezes one winner per span.
+            # The list's physical member replay recursively inlines that CTE
+            # through its scope/witness joins, exhausting bounded sampling reads.
+            # Preserve the pre-merge bounded root scan for cohort eligibility.
+            return f"""FROM (
+                SELECT {", ".join(outer_select)}
+                FROM (SELECT {", ".join(scan_cols)} FROM {self.TABLE} {base_predicates}) AS rs
+                {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
+            ) {where_clause}"""
         if not include_usage:
             return f"""FROM (
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
@@ -4170,7 +4195,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 LEFT JOIN ts_survivor_map AS ts_remap

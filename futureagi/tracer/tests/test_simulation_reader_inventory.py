@@ -1861,6 +1861,43 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_backfill_status": _EVAL_LOG_BACKFILL,
         "backfill_blank_completed_status": _EVAL_LOG_BACKFILL,
     },
+    "tracer.services.eval_tasks.sampling.query": {
+        "SamplingQuery._source": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_SPAN_EVAL_TASKS,
+            why=(
+                "shared sampling source: preview builds an unsaved EvalTask from "
+                "Project.objects through the scoped project queryset; reconciliation, "
+                "pending proofs and frozen audit populations use the stored EvalTask's "
+                "project. Task creation resolves Project.objects, which excludes "
+                "hidden projects, and simulation creates no EvalTask. The audit also "
+                "rechecks the visible project manager before reading. Span tasks "
+                "include children; query parameters always bind that task's project"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "live_scan_windows": filed(
+            ROW_DRIVEN,
+            why=(
+                "arrival-day discovery called only by reconcile_policy for the "
+                "stored EvalTask's project; simulation never creates that task row"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
+    "tracer.services.eval_tasks.sampling.unit_scope": {
+        "physical_unit_scope": filed(
+            ROW_DRIVEN,
+            why=(
+                "member expansion and first-admission proof fragments of "
+                "SamplingQuery._source, used only with persisted cohort members or "
+                "live candidates of an EvalTask. The caller binds sp_project from "
+                "that task, never from a unit id; simulation makes no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
     "tracer.services.grouping.feature_store": {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
@@ -1884,6 +1921,52 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
+    },
+    "tracer.sql_workbench.catalog": {
+        "sources": filed(
+            PROJECT_SET,
+            why=(
+                "SQL workbench source templates, built for the one scope a caller "
+                "passes in. Every caller takes that project from access.authorize or "
+                "from the operator command, and both resolve it through "
+                "Project.no_workspace_objects, a project manager that leaves out "
+                "simulation projects, so the id of a hidden project is refused "
+                "before a source is built"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.examples": {
+        "EXAMPLES": filed(
+            PROJECT_SET,
+            why=(
+                "editor examples are virtual-catalog SQL, not directly executed "
+                "physical reads; Run goes through service.submit and "
+                "access.authorize's simulation-excluding Project.no_workspace_objects "
+                "before the compiler builds scoped sources"
+            ),
+        ),
+    },
+    "scripts.sql_workbench.capability_check": {
+        "QUERIES": filed(
+            PROJECT_SET,
+            why=(
+                "fixed test corpus executed by the isolated ClickHouse capability "
+                "test through service.submit and the real worker; project ids "
+                "are authorized using the same simulation-excluding project "
+                "manager as a normal workbench run"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.runner": {
+        "derived_metrics_availability": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "schema and grant probe: a LIMIT 0 select over the derived metrics "
+                "view returns no row at all, and that view holds metric results, "
+                "not spans"
+            ),
+            table="derived_metrics",
+        ),
     },
     "tracer.views.dashboard": {
         "_read_dashboard_rollup_fast_path": filed(
@@ -2938,7 +3021,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]
@@ -3104,6 +3187,11 @@ ROW_TYPES = {
     "tracer.ProjectVersion.project": USER_MADE,
     "tracer.ProjectVersionWinner.project": USER_MADE,
     "tracer.ReplaySession.project": USER_MADE,
+    # Both are made only by the SQL workbench's submit and save paths, which take
+    # the project from access.authorize, a project manager that refuses a
+    # simulation project; a simulated run has no path to them.
+    "tracer.SQLExecution.project": USER_MADE,
+    "tracer.SavedSQLQuery.project": USER_MADE,
     "tracer.SavedView.project": USER_MADE,
     "tracer.Trace.project": TRACE_STORE_ROW,
     "tracer.TraceErrorAnalysis.project": JOB_THROUGH_MANAGERS,
