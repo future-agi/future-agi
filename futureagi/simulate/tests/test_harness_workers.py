@@ -1,6 +1,7 @@
 """A multi-agent call's workers, from the spans the app exported: who was delegated what, what each did, what came back."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,8 @@ from simulate.services.harness_workers import worker_timeline
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
+from simulate.views.run_results_v3 import CallWorkerEventSerializer
+from tfc.utils.serializer_fields import JsonValueField
 
 RUN = "run-1"
 DECLARED = [
@@ -1217,7 +1220,8 @@ def test_each_tool_call_keeps_its_input_and_output_and_a_long_one_is_cut():
 
 def _team(leads, helpers, leaves, calls):
     """A coordinator with `leads` workers, each handing to `helpers`, each to `leaves`, each making `calls` tool
-    calls with 2 KB inputs and outputs; distinct names, so every agent is its own worker."""
+    calls with 2 KB inputs and outputs; distinct names, so every agent is its own worker.
+    """
     big = "y" * 2000
     spans, count = [_span("root", None, "agent", "coordinator", "t0000")], [0]
 
@@ -1737,11 +1741,6 @@ def test_a_nested_hand_off_from_spans_names_the_hand_off_its_maker_ran_in():
 
 
 def test_the_workers_contract_allows_string_payloads_and_the_parts_that_can_be_missing():
-    from pathlib import Path
-
-    from simulate.views.run_results_v3 import CallWorkerEventSerializer
-    from tfc.utils.serializer_fields import JsonValueField
-
     event = CallWorkerEventSerializer()
     for name in ("input", "output"):
         assert isinstance(event.fields[name], JsonValueField)
@@ -1784,7 +1783,5 @@ def test_a_hand_off_read_from_spans_keeps_the_span_it_was_made_in():
         _span("ct", "c", "tool", "search", "t4", "t4", trace_id="tr1"),
     ]
     events = worker_timeline(spans, [], run_key=RUN)["events"]
-    handed = {
-        e["worker_id"]: e["span_id"] for e in events if e["type"] == "delegated"
-    }
+    handed = {e["worker_id"]: e["span_id"] for e in events if e["type"] == "delegated"}
     assert handed == {"run-1/planner": "lt", "run-1/searcher": "c"}
