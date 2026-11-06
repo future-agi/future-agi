@@ -84,13 +84,11 @@ _TYPED = re.compile(
 )
 # The line ALK prints for a failed validation, before the error and the agent's output.
 _PHASE_LINE = re.compile(r"runtime validation: ([a-z_]+): (.*)")
-# A runtime or infrastructure phase ends the check at once; a repaired phase may not.
-_ENDING_PHASES = frozenset({"runtime", "infrastructure"})
+# Only a runtime phase ends the check at once; ALK repairs or retries any other.
+_ENDING_PHASE = "runtime"
 # ALK ends a failure's own text with this and prints the agent's output lines after it
 # (process_runtime ``_output_tail``).
 _AGENT_OUTPUT = "; last output:"
-# The one infrastructure phase ALK sets (authoring_runtime_validation).
-_UNTRUSTED_CERTIFICATE = "CERTIFICATE_VERIFY_FAILED"
 # Causes that end every check of the same pairing on the same template the same way.
 _REPEATING_CAUSES = frozenset({"seed_failed"})
 
@@ -99,7 +97,7 @@ def _ending(tail: str) -> tuple[str, str] | None:
     """ALK's phase line for the check's ending, as ``(phase, error)``: the first phase
     line, read only before any of the agent's output. ``None`` when that cannot be
     told: the log's start was cut off, the agent's output comes first, or the first
-    phase line is one ALK repairs (a later one may be the agent's)."""
+    phase line is one ALK repairs or retries (a later one may be the agent's)."""
     from simulate.services.hosted_harness_gateway import GUEST_LOG_CHARS
 
     if len(tail) >= GUEST_LOG_CHARS:
@@ -107,7 +105,7 @@ def _ending(tail: str) -> tuple[str, str] | None:
     for line in tail.splitlines():
         phase = _PHASE_LINE.fullmatch(line)
         if phase is not None:
-            return phase.groups() if phase.group(1) in _ENDING_PHASES else None
+            return phase.groups() if phase.group(1) == _ENDING_PHASE else None
         if _AGENT_OUTPUT in line:
             return None
     return None
@@ -117,23 +115,16 @@ def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
     """Why a failed check ended on our side, or ``None`` when the agent failed it.
 
     Read only from ALK's phase line for the ending (see ``_ending``), never from the
-    agent's output after it. Ours: an ``infrastructure`` phase for an untrusted
-    certificate in ALK's own error text; or ALK's typed failure on that line is an
-    ``internal_*`` code (an ALK bug), an infrastructure-only code, or a failure of a
-    process ALK owns (a canonical seed only for ALK's own fingerprint check). A failed
-    action probe, or anything else, is the agent's."""
+    agent's output after it. Ours: ALK's typed failure on that line is an ``internal_*``
+    code (an ALK bug), an infrastructure-only code, or a failure of a process ALK owns
+    (a canonical seed only for ALK's own fingerprint check). A failed action probe, or
+    anything else, is the agent's."""
     if failed_actions or not failure:
         return None
     ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
     if ending is None:
         return None
-    phase, error = ending
-    typed = _TYPED.fullmatch(error)
-    if phase == "infrastructure":
-        own = _AGENT_OUTPUT not in error and (
-            typed is None or typed.group(2) in _OWNED_PROCESSES
-        )
-        return "infrastructure" if own and _UNTRUSTED_CERTIFICATE in error else None
+    typed = _TYPED.fullmatch(ending[1])
     if typed is None:
         return None
     code, process, detail = typed.groups()
