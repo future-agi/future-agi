@@ -291,12 +291,24 @@ def _cast_view(
         "reserved_ids": list(rules.get("reserved_ids") or []),
         "knowledge_sources": knowledge_sources(environment_files, rules, stores),
         "limits": _limits(environment_files),
-        "actor_models": list(ACTOR_MODELS),
+        "actor_models": actor_models(rules),
     }
 
 
-# The models an actor may be played on for now (K-27): the caller simulator's own, first, and one more flash model.
+# The models an actor may name, for a bundle sealed before its release listed them; a newer one seals its own.
 ACTOR_MODELS = ("gemini-3.8-flash", "gemini-3.7-flash")
+
+
+def actor_models(rules: ActorRules) -> list[str]:
+    """The models an actor may name, as the release that sealed the environment lists them."""
+    sealed = rules.get("actor_models")
+    return (
+        [str(one) for one in sealed]
+        if isinstance(sealed, list) and sealed
+        else list(ACTOR_MODELS)
+    )
+
+
 LIMIT_FIELDS = {
     "max_active": int,
     "caller_takes_back_after_turns": int,
@@ -323,8 +335,12 @@ def write_actor_limits(
     user: User | None,
     expected_revision: int | None,
 ) -> Cast:
-    """Set the environment's actor limits in the draft: each a positive number or null for no limit, `model` one of
-    `ACTOR_MODELS`; a field left out takes the channel's default. Refuses `limits_invalid` (400)."""
+    """Set the environment's actor limits in the draft, as one whole block: each a positive number or null for no
+    limit, `model` one of the models its sealed rules list; a field left out of the block takes the channel's default.
+    Refuses `limits_invalid` (400)."""
+    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    rules = actor_rules(environment_files)
+    models = actor_models(rules)
     problems = []
     clean: dict[str, Any] = {}
     for key, value in (limits or {}).items():
@@ -334,8 +350,8 @@ def write_actor_limits(
         elif value is None:
             clean[key] = None
         elif kind is str:
-            if value not in ACTOR_MODELS:
-                problems.append(f"model is one of {', '.join(ACTOR_MODELS)}")
+            if value not in models:
+                problems.append(f"model is one of {', '.join(models)}")
             else:
                 clean[key] = value
         elif (
@@ -346,8 +362,6 @@ def write_actor_limits(
             clean[key] = kind(value)
     if problems:
         raise HostedHarnessError("limits_invalid", "; ".join(problems), status_code=400)
-    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
-    rules = actor_rules(environment_files)
     return _written(
         environment,
         _with_cast(environment_files, _cast(environment_files), rules, limits=clean),

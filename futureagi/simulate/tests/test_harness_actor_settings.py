@@ -151,3 +151,39 @@ def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_
             user=user,
         )
     assert refused.value.code == "actor_unknown"
+
+
+def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_sealed_with(
+    user, workspace, storage, auth_client
+):
+    from simulate.services import harness_actors
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests import test_harness_versioning_record as record_tests
+    from simulate.tests.test_harness_actors import CRM_CONTRACT
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules["actor_models"] = ["gemini-4.0-flash"]
+    environment = record_tests._environment(user, workspace, "actor-models-sealed")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["actor_models"] == ["gemini-4.0-flash"]
+
+    def put(model):
+        return auth_client.put(
+            f"{BASE}/{environment.id}/actor-limits/",
+            {"limits": {"model": model}},
+            format="json",
+        )
+
+    assert put("gemini-3.8-flash").status_code == 400
+    assert put("gemini-4.0-flash").status_code == 200
+    # A bundle sealed before its release listed models offers the ones that release ran.
+    earlier = _built(user, workspace, "actor-models-earlier")
+    assert auth_client.get(f"{BASE}/{earlier.id}/actors/").json()[
+        "actor_models"
+    ] == list(harness_actors.ACTOR_MODELS)

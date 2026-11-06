@@ -86,7 +86,7 @@ export default function ActorLimits({
             SelectProps={{ displayEmpty: true }}
             helperText={L.modelHelp}
           >
-            <MenuItem value="">{L.callerModel(models[0])}</MenuItem>
+            <MenuItem value="">{L.callerModel}</MenuItem>
             {models.map((one) => (
               <MenuItem key={one} value={one}>
                 {one}

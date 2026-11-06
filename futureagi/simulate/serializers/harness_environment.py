@@ -1068,9 +1068,14 @@ class HarnessActorWriteSerializer(serializers.Serializer):
 
 
 class HarnessActorLimitsWriteSerializer(serializers.Serializer):
-    # Each a positive number or null for no limit; `model` one of the actor models. A field left out takes the
-    # channel's default.
-    limits = serializers.DictField()
+    # The whole limits block, replacing the stored one: each a positive number or null for no limit, `model` one of
+    # the actor models. A field left out of the block takes the channel's default.
+    limits = serializers.DictField(
+        help_text=(
+            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; "
+            "model is one of actor_models. A limit left out takes the channel's default."
+        )
+    )
     expected_revision = serializers.IntegerField(required=False, min_value=0)
 
 

@@ -24,7 +24,7 @@ export const ACTORS_COPY = {
     badNumber: "A number above 0, or none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",
-    callerModel: (model) => `The caller's model (${model})`,
+    callerModel: "The caller's model",
     save: "Save limits to draft",
     saveFailed: "The limits could not be saved",
     scenarioOverride: "A scenario can set its own values for any of these.",
