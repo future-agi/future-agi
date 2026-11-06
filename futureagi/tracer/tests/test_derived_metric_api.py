@@ -1453,3 +1453,95 @@ def test_v2_openapi_freezes_all_routes_and_user_and_snapshot_serializers():
         for method in ("get", "post", "put", "delete"):
             if method in item:
                 assert item[method]["x-runtime-response-validation"] is True
+
+
+@pytest.mark.django_db
+def test_run_now_persists_and_coalesces_then_honors_start_throttle(auth_client, saved):
+    from tracer.models.derived_metric import MetricProjectRefresh
+    from tracer.services.derived_metrics.admission import RUN_NOW_THROTTLE
+
+    url = f"{ROOT}{saved['id']}/refresh/"
+    response = auth_client.post(url, {}, format="json")
+    assert response.status_code == 202 and response.data == {"status": "queued"}
+    state = MetricProjectRefresh.objects.get(project_id=saved["project_id"])
+    requested_at = state.refresh_requested_at
+    assert requested_at is not None
+    response = auth_client.post(url, {}, format="json")
+    assert response.status_code == 202 and response.data == {"status": "already_queued"}
+    state.refresh_from_db()
+    assert state.refresh_requested_at == requested_at
+    MetricProjectRefresh.objects.filter(pk=state.pk).update(
+        refresh_requested_at=None, last_started_at=timezone.now()
+    )
+    response = auth_client.post(url, {}, format="json")
+    assert response.status_code == 202 and response.data == {"status": "already_queued"}
+    state.refresh_from_db()
+    assert state.refresh_requested_at is None
+    MetricProjectRefresh.objects.filter(pk=state.pk).update(
+        last_started_at=timezone.now() - RUN_NOW_THROTTLE - timedelta(seconds=1)
+    )
+    response = auth_client.post(url, {}, format="json")
+    assert response.status_code == 202 and response.data == {"status": "queued"}
+    state.refresh_from_db()
+    assert state.refresh_requested_at > requested_at
+
+
+@pytest.mark.django_db
+def test_run_now_off_and_unconfirmed_do_not_persist_or_dispatch(
+    auth_client, saved, settings
+):
+    from tracer.models.derived_metric import DerivedMetric, MetricProjectRefresh
+    from tracer.services.derived_metrics.service import (
+        MetricUnavailableError,
+        admit_refresh,
+    )
+
+    metric = DerivedMetric.objects.get(pk=saved["id"])
+    url = f"{ROOT}{metric.id}/refresh/"
+    response = auth_client.post(url, {"confirm": False}, format="json")
+    assert response.status_code == 400
+    settings.METRICS_ENABLED = 0
+    with patch(
+        "tracer.services.derived_metrics.admission.request_refresh"
+    ) as request_refresh:
+        assert auth_client.post(url, {}, format="json").status_code == 404
+        with pytest.raises(MetricUnavailableError, match="not enabled"):
+            admit_refresh(metric)
+    request_refresh.assert_not_called()
+    assert not MetricProjectRefresh.objects.filter(
+        project=metric.project, refresh_requested_at__isnull=False
+    ).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("foreign_org", [False, True])
+def test_real_sign_in_run_now_preserves_viewer_and_tenant_boundaries(
+    signed_in_client, saved, user, workspace, observe_project, foreign_org
+):
+    from tracer.models.derived_metric import MetricProjectRefresh
+
+    url = f"{ROOT}{saved['id']}/refresh/"
+    WorkspaceMembership.no_workspace_objects.filter(
+        user=user, workspace=workspace
+    ).update(level=1)
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(level=1)
+    assert signed_in_client.post(url, {}, format="json").status_code == 403
+    WorkspaceMembership.no_workspace_objects.filter(
+        user=user, workspace=workspace
+    ).update(level=3)
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(level=3)
+    organization = (
+        Organization.objects.create(name="Synthetic foreign org")
+        if foreign_org
+        else user.organization
+    )
+    other = Workspace.objects.create(
+        name="Synthetic foreign workspace", organization=organization, created_by=user
+    )
+    observe_project.workspace = other
+    observe_project.organization = organization
+    observe_project.save(update_fields=["workspace", "organization"])
+    assert signed_in_client.post(url, {}, format="json").status_code == 404
+    assert not MetricProjectRefresh.objects.filter(
+        project=observe_project, refresh_requested_at__isnull=False
+    ).exists()

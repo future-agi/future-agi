@@ -472,9 +472,37 @@ def test_user_metrics_never_escape_into_wrong_grain_or_task_pickers(tenant, cont
 @pytest.mark.parametrize(
     "context", ["traces", "task_traces", "users", "sessions", "spans", ""]
 )
-def test_trace_fields_stay_off_in_all_catalog_contexts(tenant, context):
-    create_metric(tenant, level="trace")
+def test_trace_fields_stay_off_in_all_catalog_contexts(tenant, context, settings):
+    # Model a previously activated definition after its capability is disabled.
+    # Normal activation with the flag OFF must remain forbidden.
+    settings.DERIVED_METRICS_TRACE_ENABLED = True
+    metric, _ = create_metric(tenant, level="trace")
+    settings.DERIVED_METRICS_TRACE_ENABLED = False
     assert page(tenant, context=context).metrics == ()
+    source = CurrentDefinitionSource(ReadDeadline.start(10000))
+    assert (
+        source.resolve(
+            scope=tenant.scope, property_id=f"metric_field:{metric.id}", context=context
+        )
+        is None
+    )
+
+
+def test_disabled_trace_activation_rejected_without_hiding_conversation_fields(
+    tenant, settings
+):
+    from tracer.services.derived_metrics.errors import MetricInputError
+
+    settings.DERIVED_METRICS_TRACE_ENABLED = False
+    metric, active = create_metric(tenant)
+    trace = create_version(metric, version=2, level="trace")
+    with pytest.raises(MetricInputError, match="Trace metrics are not enabled"):
+        DerivedMetric.activate_version(
+            metric.id, trace.id, expected_active_id=active.id
+        )
+    metric.refresh_from_db()
+    assert metric.active_version_id == active.id
+    assert page(tenant, context="sessions").metrics[0]["metric_id"] == str(metric.id)
 
 
 def test_default_labels_and_numeric_metadata_do_not_reuse_boolean_labels(tenant):

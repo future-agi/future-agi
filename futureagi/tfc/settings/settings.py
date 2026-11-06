@@ -116,6 +116,12 @@ del _runtime_numeric_setting_specs
 _validate_runtime_numeric_settings(_runtime_numeric_settings)
 globals().update(_runtime_numeric_settings)
 
+# B10 resolves the current source policy through the maintained optional-EE
+# boundary on every call. Missing policy support fails closed, never unlimited.
+METRICS_RETENTION_DAYS_PROVIDER = (
+    "tfc.capabilities.retention.current_trace_retention_days"
+)
+
 # Optional ClickHouse cluster whose entries intentionally expose each physical
 # replica as one read shard. Dashboard heavy reads use it only after validating
 # the identifier in the query builder; an empty value keeps the local-table

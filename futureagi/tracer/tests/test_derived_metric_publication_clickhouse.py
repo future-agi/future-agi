@@ -400,9 +400,26 @@ def test_keyset_batches_and_checkpoint_stream_without_offset_or_payload_recopies
     batches = checkpoint.published_by.batches.filter(
         table_name="field_values"
     ).order_by("batch_no")
-    # Checkpoint transport has its own 50,000-row / 4-MiB cap. The normal
-    # incremental writer above must still use its three 500-row pages.
+    # PERF1 separates checkpoint transport (50k rows / 4 MiB) from the
+    # unchanged 500-row discovery cap asserted above. This payload fits once.
     assert list(batches.values_list("row_count", flat=True)) == [1001]
+    from tracer.services.derived_metrics.publication import (
+        MAX_COMPACTION_BYTES,
+        MAX_COMPACTION_ROWS,
+        FrozenRows,
+    )
+
+    plans = list(writer.plans(checkpoint.published_by, kind="field_values"))
+    assert len(plans) == 1
+    payload = FrozenRows.from_plan(plans[0])
+    assert payload.row_limit == MAX_COMPACTION_ROWS
+    assert len(payload.rows) == 1001
+    assert sum(len(bytes.fromhex(row)) for row in payload.rows) <= MAX_COMPACTION_BYTES
+    assert payload.digest == batches.get().payload_sha256
+    with pytest.raises(ValueError, match="row cap exceeded"):
+        FrozenRows(("00",) * (MAX_COMPACTION_ROWS + 1), row_limit=MAX_COMPACTION_ROWS)
+    with pytest.raises(ValueError, match="byte cap exceeded"):
+        FrozenRows(("00" * (MAX_COMPACTION_BYTES + 1),), row_limit=MAX_COMPACTION_ROWS)
     assert all(
         b.row_sequence_last - b.row_sequence_first + 1 == b.row_count for b in batches
     )
@@ -469,3 +486,54 @@ def test_repeated_checkpoint_pin_revocation_and_gc_collects_real_pg_ancestry(
         )
         writer.store.insert(FIELD_VALUES, delayed[0])
         assert current_fields(writer, checkpoint)[0][2] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_checkpoint_byte_boundary_preserves_all_wide_payloads(live_writer):
+    from tracer.services.derived_metrics.publication import (
+        MAX_COMPACTION_BYTES,
+        MAX_COMPACTION_ROWS,
+        FrozenRows,
+    )
+
+    writer = live_writer
+    attempt = writer.begin()
+    sql, params = field_query(group="g" * 5000)
+    expanded = f"SELECT * REPLACE(concat('unit-', leftPad(toString(number), 4, '0')) AS unit_id) FROM ({sql}) AS f CROSS JOIN numbers(1001) AS n"
+    payloads = writer.freeze(attempt, FIELD_VALUES, expanded, params)
+    assert [len(p.rows) for p in payloads] == [500, 500, 1]
+    writer.seal(attempt)
+    head = writer.stage_and_publish(attempt)
+    expected = current_fields(writer, head)
+    checkpoint = writer.compact()
+    assert current_fields(writer, checkpoint) == expected
+    assert len(expected) == 1001
+    plans = list(writer.plans(checkpoint.published_by, kind="field_values"))
+    payloads = [FrozenRows.from_plan(plan) for plan in plans]
+    assert len(payloads) >= 2  # the native byte boundary, not discovery's row cap
+    assert sum(len(p.rows) for p in payloads) == 1001
+    sizes = [sum(len(bytes.fromhex(row)) for row in p.rows) for p in payloads]
+    assert sum(sizes) > MAX_COMPACTION_BYTES
+    assert all(0 < size <= MAX_COMPACTION_BYTES for size in sizes)
+    assert all(p.row_limit == MAX_COMPACTION_ROWS for p in payloads)
+    batches = list(
+        checkpoint.published_by.batches.filter(table_name="field_values").order_by(
+            "batch_no"
+        )
+    )
+    assert [(b.row_count, b.payload_sha256) for b in batches] == [
+        (len(p.rows), p.digest) for p in payloads
+    ]
+    assert all(
+        b.row_sequence_last - b.row_sequence_first + 1 == b.row_count for b in batches
+    )
+    sql, params = committed_rows_select(
+        FIELD_VALUES,
+        checkpoint,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    assert writer.store.execute(
+        f"SELECT count(), min(length(group_key)), max(length(group_key)) FROM ({sql})",
+        params,
+    ) == [(1001, 5000, 5000)]
