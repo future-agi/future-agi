@@ -102,8 +102,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             return
         msg_type = content.get("type")
 
-        # Rate limiting — only for actionable message types, not ping/reconnect
-        if msg_type in ("chat", "feedback", "stop"):
+        # Rate limit work-producing messages. Stop must remain available so an
+        # active agent can always be cancelled.
+        if msg_type in ("chat", "feedback"):
             import time
 
             now = time.time()
