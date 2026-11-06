@@ -238,9 +238,9 @@ class RunResumeEntrySerializer(serializers.Serializer):
 
 
 class RunResumeSerializer(serializers.Serializer):
-    # True when the run stopped or failed before every call finished, and can resume.
+    # True when the run's job stopped or failed with a call left unfinished.
     resumable = serializers.BooleanField()
-    # Calls that finished and calls that did not; null unless the run ended interrupted.
+    # Calls that finished and calls that did not; null unless the run can resume.
     finished = serializers.IntegerField(allow_null=True)
     unfinished = serializers.IntegerField(allow_null=True)
     history = RunResumeEntrySerializer(many=True)

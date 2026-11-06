@@ -7,6 +7,7 @@ call B has none, unless a test changes that.
 """
 
 import pytest
+from django.utils import timezone
 
 from simulate.models import (
     AgentDefinition,
@@ -17,8 +18,12 @@ from simulate.models import (
     HostedHarnessReceipt,
     TestExecution,
 )
-from simulate.services.hosted_harness import RERUN_EXECUTION_KEYS
+from simulate.services.hosted_harness import (
+    RERUN_EXECUTION_KEYS,
+    project_terminal_job_onto_run,
+)
 from simulate.services.hosted_harness_ingestion import _backfill_missing_receipts
+from simulate.services.scoring_status import settle_run
 
 # The in-run re-run's fixtures: a finished two-call Run, its calls, and the workflow mocks.
 from simulate.tests.test_rerun_calls_in_run import (  # noqa: F401
@@ -164,6 +169,13 @@ def test_resume_is_recorded_on_the_run_and_shown_on_its_read(
         ),
         # The platform's own failure ended the call, so it was not charged.
         ("errored", {"failure": _failure("infrastructure", "call_failed")}, 2),
+        # The simulator's setup broke before the call started: a billable domain, but no
+        # call, so nothing was charged.
+        (
+            "errored",
+            {"call": None, "failure": _failure("simulator", "setup_crashed")},
+            2,
+        ),
         # A call that ran and was charged is finished, whoever broke it.
         ("errored", {"failure": _failure("simulator", "evidence_missing")}, 1),
         ("errored", {"failure": _failure("agent", "target_agent_failed")}, 1),
@@ -172,6 +184,7 @@ def test_resume_is_recorded_on_the_run_and_shown_on_its_read(
     ids=[
         "usage-limit",
         "platform-failure",
+        "never-started",
         "simulator-failure",
         "agent-failure",
         "passed",
@@ -220,6 +233,43 @@ def test_a_call_the_manifest_backfill_marked_skipped_did_not_finish(
         ).status
         == "skipped"
     )
+
+    response = _resume(auth_client, interrupted_run)
+
+    assert response.status_code == 202, response.content
+    assert response.json()["successful_reruns"] == [str(unfinished.id)]
+
+
+@pytest.mark.django_db
+def test_a_resume_that_was_itself_cut_short_can_resume_again(
+    auth_client,
+    interrupted_run,
+    calls,  # noqa: F811
+    workflow,  # noqa: F811
+):
+    _, unfinished = calls
+    assert _resume(auth_client, interrupted_run).status_code == 202
+    # The resume's own attempt fails before call B runs, as the gateway ends it. The job
+    # keeps the re-run's keys, so the run settles from its calls instead of failing.
+    job = HostedHarnessJob.no_workspace_objects.get(id=interrupted_run.id)
+    job.state = HostedHarnessJob.State.FAILED
+    job.terminal_at = timezone.now()
+    job.failure = _failure("infrastructure", "sandbox_lost")
+    job.save(update_fields=["state", "terminal_at", "failure", "updated_at"])
+    project_terminal_job_onto_run(job, job.terminal_at)
+    run = TestExecution.no_workspace_objects.get(id=interrupted_run.test_execution_id)
+
+    # While it grades, it is neither offered nor taken.
+    assert run.status == TestExecution.ExecutionStatus.EVALUATING
+    assert _read(auth_client, interrupted_run)["resumable"] is False
+    grading = _resume(auth_client, interrupted_run)
+    assert grading.status_code == 409, grading.content
+    assert grading.json()["error"] == "rerun_in_progress"
+
+    settle_run(run.id)
+    run.refresh_from_db()
+    assert run.status == TestExecution.ExecutionStatus.COMPLETED
+    assert _read(auth_client, interrupted_run)["unfinished"] == 1
 
     response = _resume(auth_client, interrupted_run)
 

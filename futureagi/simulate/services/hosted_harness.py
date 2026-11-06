@@ -1583,29 +1583,12 @@ def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
     same Run on its pinned versions, and return those calls. Finished calls keep their
     results and are neither run nor charged again. Versions are only ever soft-deleted, so
     a pin stays set and its ``deleted`` flag says whether that version is gone."""
-    from simulate.selectors.run_resume import (
-        INTERRUPTED_JOB_STATES,
-        RESUMES,
-        resumable_job,
-        unfinished_executions,
-    )
+    from simulate.selectors.run_resume import RESUMES, ResumeRefused, check_resume
 
-    job = resumable_job(test_execution)
-    if job is None:
-        raise HostedHarnessError(
-            "run_not_resumable", "this run cannot be resumed", status_code=409
-        )
-    if job.state not in INTERRUPTED_JOB_STATES:
-        raise HostedHarnessError(
-            "run_not_interrupted",
-            "only a run that stopped or failed before it finished can be resumed",
-            status_code=409,
-        )
-    unfinished = unfinished_executions(job)
-    if not unfinished:
-        raise HostedHarnessError(
-            "nothing_to_resume", "every call of this run finished", status_code=409
-        )
+    check = check_resume(test_execution)
+    if isinstance(check, ResumeRefused):
+        raise HostedHarnessError(check.code, check.message, status_code=409)
+    job = check.job
     # A resume runs on the versions the run used, never on others.
     gone = [
         label
@@ -1623,7 +1606,7 @@ def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
             f"this run used a {', '.join(gone)} that is no longer available",
             status_code=409,
         )
-    calls = [execution.call_execution_id for execution in unfinished]
+    calls = [execution.call_execution_id for execution in check.unfinished]
     resumed = rerun_calls_in_run(test_execution, calls)
     with transaction.atomic():
         locked = TestExecution.no_workspace_objects.select_for_update().get(
