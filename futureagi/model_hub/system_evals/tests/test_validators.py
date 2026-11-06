@@ -357,3 +357,60 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# RAG Evaluators: Context Precision, Context Recall, Faithfulness, Noise Sensitivity
+# ---------------------------------------------------------------------------
+
+
+def test_context_precision_ranking_decay():
+    ev = _load_eval("context_precision_score")
+    # Top rank relevant -> higher score
+    r1 = ev(None, ["Paris is the capital of France", "Random fact about cars"], ["France capital is Paris"], None)
+    # Bottom rank relevant -> lower score (rank decayed)
+    r2 = ev(None, ["Random fact about cars", "Paris is the capital of France"], ["France capital is Paris"], None)
+    assert r1["score"] > r2["score"]
+    assert r1["score"] == 1.0  # Hit at rank 1: AP = (1/1)/1 = 1.0
+    assert r2["score"] == 0.5  # Hit at rank 2: AP = (1/2)/1 = 0.5
+
+
+def test_context_precision_empty_inputs():
+    ev = _load_eval("context_precision_score")
+    assert ev(None, [], ["some reference"], None)["score"] == 0.0
+    assert ev(None, ["some chunk"], [], None)["score"] == 0.0
+
+
+def test_context_recall_coverage():
+    ev = _load_eval("context_recall_score")
+    ref = ["France capital is Paris", "Germany capital is Berlin"]
+    # Full coverage
+    r_full = ev(None, ["Paris is the capital of France", "Berlin is Germany capital"], ref, None)
+    assert r_full["score"] == 1.0
+    # Half coverage
+    r_half = ev(None, ["Paris is the capital of France", "Tokyo is in Japan"], ref, None)
+    assert r_half["score"] == 0.5
+
+
+def test_faithfulness_groundedness():
+    ev = _load_eval("faithfulness_score")
+    ctx = "The Apollo 11 mission landed on the Moon in July 1969. Neil Armstrong was the mission commander."
+    # Faithful answer
+    r_faithful = ev(None, "Neil Armstrong commanded Apollo 11 which landed on the Moon in July 1969.", None, ctx)
+    assert r_faithful["score"] == 1.0
+    # Hallucinated answer
+    r_hallucinated = ev(None, "Neil Armstrong walked on Mars with Elon Musk in 2024.", None, ctx)
+    assert r_hallucinated["score"] == 0.0
+
+
+def test_noise_sensitivity_detection():
+    ev = _load_eval("noise_sensitivity")
+    expected = "Paris is the capital of France."
+    ctx = "Paris is the capital of France. Bananas are yellow fruits rich in potassium."
+    # Clean answer derived only from expected ground truth
+    r_clean = ev(None, "Paris is the capital of France.", expected, ctx)
+    assert r_clean["score"] == 0.0
+    # Distracted answer incorporating extraneous noise
+    r_noisy = ev(None, "Paris is France capital and bananas are yellow potassium fruits.", expected, ctx)
+    assert r_noisy["score"] > 0.0
+
