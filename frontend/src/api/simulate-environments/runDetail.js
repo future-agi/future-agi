@@ -229,6 +229,16 @@ export function useRunDetail(
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // How far an interrupted run got and whether it can resume; null when the
+      // backend does not say.
+      resume: execution.resume
+        ? {
+            resumable: Boolean(execution.resume.resumable),
+            finished: execution.resume.finished ?? null,
+            unfinished: execution.resume.unfinished ?? null,
+            history: execution.resume.history ?? [],
+          }
+        : null,
     };
   }, [execution, envName, summary]);
   const stats = useMemo(

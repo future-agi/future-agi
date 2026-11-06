@@ -100,7 +100,8 @@ vi.mock(
 // names the run it was opened for.
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) => (open ? <div>{`launch-fix:${sourceRunId}`}</div> : null),
+  default: ({ open, sourceRunId }) =>
+    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -303,6 +304,16 @@ CallDrawerStub.propTypes = {
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
+// Resume's mutation, so a test can see the button call it.
+const resumeMutate = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/rerunScenarios",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useResumeRun: () => ({ mutate: resumeMutate, isPending: false }),
+  }),
+);
+
 const { default: RunDetail } = await import("../RunDetail");
 
 const IDENTITY = {
@@ -490,12 +501,65 @@ beforeEach(() => {
   });
 });
 
+describe("RunDetail resume", () => {
+  const interrupted = (resume) =>
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed", runState: "failed", resume },
+      stats: STATS,
+      isLoading: false,
+    });
+
+  it("offers Resume on an interrupted run and says how far it got", async () => {
+    resumeMutate.mockReset();
+    interrupted({ resumable: true, finished: 7, unfinished: 5, history: [] });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "a run that cannot resume",
+      { resumable: false, finished: null, unfinished: null, history: [] },
+    ],
+    ["a backend that says nothing", null],
+  ])("offers no Resume for %s", (_, resume) => {
+    interrupted(resume);
+    renderDetail();
+
+    expect(
+      screen.queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/not finished/)).not.toBeInTheDocument();
+  });
+
+  it("says when a run was resumed", () => {
+    interrupted({
+      resumable: false,
+      finished: null,
+      unfinished: null,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
+    renderDetail();
+
+    expect(screen.getByText(/resumed /)).toBeInTheDocument();
+  });
+});
+
 describe("RunDetail", () => {
   it("goes back to where it was opened from when the opener says so", async () => {
     const user = userEvent.setup();
     renderDetail({
       initialEntries: [
-        { pathname: "/run", state: { backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1" } },
+        {
+          pathname: "/run",
+          state: {
+            backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1",
+          },
+        },
       ],
     });
     await user.click(screen.getByRole("button", { name: "Back" }));

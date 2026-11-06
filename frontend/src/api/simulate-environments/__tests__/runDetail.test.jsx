@@ -771,6 +771,12 @@ describe("useRunDetail", () => {
           environment_version: { id: "e2", label: "v2" },
           suite_version: { id: "s3", label: "v3" },
           agent_differs: true,
+          resume: {
+            resumable: true,
+            finished: 18,
+            unfinished: 12,
+            history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+          },
           summary: {
             total: 12,
             measured: 12,
@@ -814,6 +820,12 @@ describe("useRunDetail", () => {
       label: "v3",
     });
     expect(result.current.identity.agentDiffers).toBe(true);
+    expect(result.current.identity.resume).toEqual({
+      resumable: true,
+      finished: 18,
+      unfinished: 12,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -1505,7 +1517,9 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },
