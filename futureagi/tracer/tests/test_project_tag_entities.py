@@ -31,8 +31,9 @@ _START = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 class _Span:
     """A span row that exists only in ClickHouse."""
 
-    def __init__(self, project, *, trace_id, span_id=None, parent="", tags=None,
-                 start=None):
+    def __init__(
+        self, project, *, trace_id, span_id=None, parent="", tags=None, start=None
+    ):
         self.id = span_id or uuid.uuid4().hex[:16]
         self.trace_id = trace_id
         self.project_id = project.id
@@ -128,7 +129,9 @@ def other_org_project(db, user):
     """A project in another organization, never visible to ``auth_client``."""
     other = Organization.objects.create(name="Other Tag Org")
     other_ws = Workspace.objects.create(
-        name="Other Tag Workspace", organization=other, is_active=True,
+        name="Other Tag Workspace",
+        organization=other,
+        is_active=True,
         created_by=user,
     )
     return _project(other, other_ws, "Other Org Project")
@@ -138,7 +141,9 @@ def other_org_project(db, user):
 def other_workspace_project(db, organization, user):
     """Same organization, a non-default workspace the client is not in."""
     other_ws = Workspace.objects.create(
-        name="Other Tag Workspace", organization=organization, is_active=True,
+        name="Other Tag Workspace",
+        organization=organization,
+        is_active=True,
         created_by=user,
     )
     return _project(organization, other_ws, "Other Workspace Project")
@@ -169,8 +174,13 @@ class TestTraceAndSpanTagWrites:
     ):
         trace_id = str(uuid.uuid4())
         root = _Span(observe_project, trace_id=trace_id, tags=["sdk-root"])
-        child = _Span(observe_project, trace_id=trace_id, parent=root.id,
-                      tags=["sdk-child"], start=_START + timedelta(seconds=1))
+        child = _Span(
+            observe_project,
+            trace_id=trace_id,
+            parent=root.id,
+            tags=["sdk-child"],
+            start=_START + timedelta(seconds=1),
+        )
         ch_seed([root, child])
         seed_ch_trace(_trace_row(observe_project, trace_id))
         assert not Trace.objects.filter(id=trace_id).exists()
@@ -223,10 +233,12 @@ class TestTraceAndSpanTagWrites:
         second = _project(organization, workspace, "Second Observe Project")
         trace_id = str(uuid.uuid4())
         span_id = uuid.uuid4().hex[:16]
-        ch_seed([
-            _Span(observe_project, trace_id=trace_id, span_id=span_id),
-            _Span(second, trace_id=trace_id, span_id=span_id, tags=["second"]),
-        ])
+        ch_seed(
+            [
+                _Span(observe_project, trace_id=trace_id, span_id=span_id),
+                _Span(second, trace_id=trace_id, span_id=span_id, tags=["second"]),
+            ]
+        )
 
         ambiguous = _patch_trace(auth_client, trace_id, ["x"])
         assert ambiguous.status_code == status.HTTP_400_BAD_REQUEST
@@ -309,8 +321,12 @@ class TestTraceAndSpanTagWrites:
     ):
         trace_id = str(uuid.uuid4())
         root = _Span(observe_project, trace_id=trace_id)
-        child = _Span(observe_project, trace_id=trace_id, parent=root.id,
-                      start=_START + timedelta(seconds=1))
+        child = _Span(
+            observe_project,
+            trace_id=trace_id,
+            parent=root.id,
+            start=_START + timedelta(seconds=1),
+        )
         ch_seed([root, child])
 
         response = _post_span(
@@ -331,10 +347,16 @@ class TestTraceAndSpanTagWrites:
     ):
         span_id = uuid.uuid4().hex[:16]
         first_trace, second_trace = str(uuid.uuid4()), str(uuid.uuid4())
-        ch_seed(_Span(observe_project, trace_id=first_trace, span_id=span_id,
-                      tags=["first"]))
-        ch_seed(_Span(observe_project, trace_id=second_trace, span_id=span_id,
-                      tags=["second"]))
+        ch_seed(
+            _Span(
+                observe_project, trace_id=first_trace, span_id=span_id, tags=["first"]
+            )
+        )
+        ch_seed(
+            _Span(
+                observe_project, trace_id=second_trace, span_id=span_id, tags=["second"]
+            )
+        )
 
         response = _post_span(auth_client, span_id, ["changed"])
 
@@ -360,11 +382,17 @@ class TestTagTenantIsolation:
     ):
         trace_id = str(uuid.uuid4())
         span_id = uuid.uuid4().hex[:16]
-        ch_seed([
-            _Span(observe_project, trace_id=trace_id, span_id=span_id),
-            _Span(other_org_project, trace_id=trace_id, span_id=span_id,
-                  tags=["theirs"]),
-        ])
+        ch_seed(
+            [
+                _Span(observe_project, trace_id=trace_id, span_id=span_id),
+                _Span(
+                    other_org_project,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    tags=["theirs"],
+                ),
+            ]
+        )
         seed_ch_trace(_trace_row(other_org_project, trace_id, tags=["theirs"]))
 
         assert _patch_trace(auth_client, trace_id, ["mine"]).status_code == 200
@@ -392,8 +420,7 @@ class TestTagTenantIsolation:
             in denied
         )
         assert (
-            auth_client.delete(base, QUERY_STRING="name=theirs").status_code
-            in denied
+            auth_client.delete(base, QUERY_STRING="name=theirs").status_code in denied
         )
         assert _span_tags(other_org_project, span_id) == [["theirs"]]
         assert _trace_tags(other_org_project, trace_id) == ["theirs"]
@@ -406,8 +433,14 @@ class TestTagTenantIsolation:
     ):
         trace_id = str(uuid.uuid4())
         span_id = uuid.uuid4().hex[:16]
-        ch_seed(_Span(other_workspace_project, trace_id=trace_id, span_id=span_id,
-                      tags=["hidden"]))
+        ch_seed(
+            _Span(
+                other_workspace_project,
+                trace_id=trace_id,
+                span_id=span_id,
+                tags=["hidden"],
+            )
+        )
 
         trace = _patch_trace(auth_client, trace_id, ["leak"])
         span = _post_span(auth_client, span_id, ["leak"])
@@ -427,13 +460,23 @@ class TestProjectTagDefinitions:
         self, auth_client, observe_project, ch_seed
     ):
         trace_id = str(uuid.uuid4())
-        ch_seed([
-            # An SDK repeated a name in one list: it still counts once.
-            _Span(observe_project, trace_id=trace_id, tags=["sdk-only", "sdk-only",
-                                                             "shared"]),
-            _Span(observe_project, trace_id=trace_id, parent="p", tags=["shared"],
-                  start=_START + timedelta(seconds=1)),
-        ])
+        ch_seed(
+            [
+                # An SDK repeated a name in one list: it still counts once.
+                _Span(
+                    observe_project,
+                    trace_id=trace_id,
+                    tags=["sdk-only", "sdk-only", "shared"],
+                ),
+                _Span(
+                    observe_project,
+                    trace_id=trace_id,
+                    parent="p",
+                    tags=["shared"],
+                    start=_START + timedelta(seconds=1),
+                ),
+            ]
+        )
         seed_ch_trace(_trace_row(observe_project, trace_id, tags=["trace-only"]))
         ProjectTagDefinition.objects.create(
             project=observe_project, name="stored-only", color="#3B82F6"
@@ -461,8 +504,13 @@ class TestProjectTagDefinitions:
         trace = Trace.objects.create(project=observe_project, tags=["old", "x"])
         trace_id = str(trace.id)
         root = _Span(observe_project, trace_id=trace_id, tags=["old"])
-        child = _Span(observe_project, trace_id=trace_id, parent=root.id,
-                      tags=["old", "new"], start=_START + timedelta(seconds=1))
+        child = _Span(
+            observe_project,
+            trace_id=trace_id,
+            parent=root.id,
+            tags=["old", "new"],
+            start=_START + timedelta(seconds=1),
+        )
         ch_seed([root, child])
         seed_ch_trace(_trace_row(observe_project, trace_id, tags=["old"]))
 
@@ -567,9 +615,7 @@ class TestProjectTagDefinitions:
         ],
     )
     def test_invalid_update_is_a_400(self, auth_client, observe_project, body):
-        response = auth_client.patch(
-            self._url(observe_project), body, format="json"
-        )
+        response = auth_client.patch(self._url(observe_project), body, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
 

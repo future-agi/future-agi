@@ -901,7 +901,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return None
 
     @validated_request(
-        responses={200: ProjectTagDefinitionListResponseSerializer, **TAG_ERROR_RESPONSES},
+        responses={
+            200: ProjectTagDefinitionListResponseSerializer,
+            **TAG_ERROR_RESPONSES,
+        },
         operation_id="tracer_project_tag-definitions_read",
         operation_description=(
             "List the project's tags: stored definitions plus every name assigned "
