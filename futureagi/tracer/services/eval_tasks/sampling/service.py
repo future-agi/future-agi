@@ -48,6 +48,7 @@ from tracer.services.eval_tasks.sampling.policy import (
     validate_policy,
 )
 from tracer.services.eval_tasks.sampling.query import (
+    BATCH_SIZE,
     SamplingQuery,
     live_scan_windows,
     sampling_clock,
@@ -56,6 +57,9 @@ from tracer.services.eval_tasks.sampling.query import (
 from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
+    from tracer.models.observation_span import EvalLogger
     from tracer.services.eval_tasks.reconciler import ReconcileResult
 
 logger = logging.getLogger(__name__)
@@ -595,6 +599,30 @@ def _freeze_closed(
         raise
 
 
+def _retire_pending_pages(results: QuerySet[EvalLogger], *, write: WriteScope) -> int:
+    """Retire bounded pages under the task/revision/lease fence.
+
+    Each page locks eval rows before retiring their issue memberships. Commit
+    before taking the next page's eval locks, preserving the retirement lock
+    order without loading a whole backlog or retaining issue locks across pages.
+    """
+    from tracer.services.eval_tasks.entries import soft_delete_eval_results
+
+    dropped = 0
+    while True:
+        with write():
+            ids = list(
+                results.select_for_update(of=("self",))
+                .order_by("pk")
+                .values_list("pk", flat=True)[:BATCH_SIZE]
+            )
+            if not ids:
+                return dropped
+            dropped += soft_delete_eval_results(
+                results.filter(pk__in=ids).order_by("pk")
+            )
+
+
 def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
     from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
@@ -631,7 +659,9 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
                 | ~Q(output_metadata___task_selection__sampling__policy_version=version)
             )
-            result = ReconcileResult(dropped=stale.update(deleted=True, deleted_at=now))
+        result = ReconcileResult(
+            dropped=_retire_pending_pages(stale, write=fence.write)
+        )
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
@@ -673,15 +703,14 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
             result.requeued += requeued
             result.dropped += dropped
-        with fence.write() as locked:
-            current_evals = locked.evals.values_list("id", flat=True)
-            result.dropped += (
-                EvalLogger.objects.filter(
-                    eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
-                )
-                .exclude(custom_eval_config_id__in=current_evals)
-                .update(deleted=True, deleted_at=now)
-            )
+        result.dropped += _retire_pending_pages(
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+            ).exclude(
+                custom_eval_config_id__in=task.evals.values_list("id", flat=True)
+            ),
+            write=fence.write,
+        )
         result.dropped += revalidate_pending(
             task, policy, version, cohort, sampling_clock(), page_write=fence.write
         )
