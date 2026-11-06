@@ -17894,6 +17894,9 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  /** @maxItems 50 */
+  lost_models?: string[];
+  last_error?: string;
 }
 
 export interface AgentFixEngineStateApi {
@@ -25399,6 +25402,9 @@ export const SimulateRunV3EvaluationResultApiStatus = {
   skipped: "skipped",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -25407,6 +25413,7 @@ export interface SimulateRunV3EvaluationResultApi {
   /** @minLength 1 */
   name: string;
   type: string;
+  /** Any valid JSON value. */
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;
   passed: boolean;
@@ -26169,6 +26176,11 @@ export interface RunSummaryApi {
   cost_cents: TotalMetricStatsApi;
 }
 
+export interface RunFixRunApi {
+  id: string;
+  label: string;
+}
+
 export interface RunExecutionApi {
   id: string;
   run_test_id: string;
@@ -26193,6 +26205,7 @@ export interface RunExecutionApi {
   agent_type: string;
   resume: RunResumeApi;
   summary: RunSummaryApi;
+  fix_run?: RunFixRunApi;
 }
 
 export interface SimulateRunV3ScoringCountsApi {
@@ -26296,9 +26309,7 @@ export interface RunCallApi {
   cost_cents: number;
   cost_breakdown_cents: CostBreakdownApi;
   csat: number;
-  /** @minLength 1 */
   ended_reason: string;
-  /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;
