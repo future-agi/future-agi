@@ -99,6 +99,11 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
+from tracer.serializers.project_tags import (
+    TAG_ERROR_RESPONSES,
+    SpanTagsUpdateRequestSerializer,
+    TagAssignmentResponseSerializer,
+)
 from tracer.serializers.trace import (
     RUN_SCOPE_KEYS,
     TraceNavigationResponseSerializer,
@@ -637,6 +642,87 @@ def _project_workspace_scope_q(request, project_prefix="project__"):
         return scope
 
     return scope & Q(**{workspace_field: workspace})
+
+
+def _tag_project_ids(request, project_id=None) -> list[str]:
+    """Projects a trace/span tag write may touch: the request's org/workspace.
+
+    A named project narrows the scope; one outside it is simply not found.
+    """
+    from tracer.models.project import Project
+    from tracer.services.project_tags import (
+        _MAX_LOOKUP_PROJECTS,
+        TagNotFound,
+        authorized_project_ids,
+    )
+
+    organization = _get_request_organization(request)
+    if organization is None:
+        raise TagNotFound("project")
+    projects = Project.no_workspace_objects.filter(
+        _project_workspace_scope_q(request, project_prefix=""),
+        organization=organization,
+    )
+    if project_id:
+        try:
+            project_id = str(uuid.UUID(str(project_id)))
+        except ValueError:
+            raise ValueError(
+                f"project_id must be a project UUID, got {project_id!r}"
+            ) from None
+        projects = projects.filter(id=project_id)
+    return authorized_project_ids(
+        projects.values_list("id", flat=True)[: _MAX_LOOKUP_PROJECTS + 1]
+    )
+
+
+def _tag_write_failure(gm, exc, *, entity, target_id):
+    """Map a tag-write failure to its API response, or None if it is a bug."""
+    from tracer.services.project_tags import (
+        TagNotFound,
+        TagStoreUnavailable,
+        TagTargetAmbiguous,
+    )
+
+    if entity == "trace":
+        label = "Trace"
+        hint = (
+            "?project_id=<project id>, e.g. "
+            f"PATCH /tracer/trace/{target_id}/tags/?project_id=<project id>"
+        )
+    else:
+        label = "Observation span"
+        hint = (
+            'a "project_id" field, e.g. POST /tracer/observation-span/update-tags/ '
+            f'{{"span_id": "{target_id}", "project_id": "<project id>", '
+            '"tags": ["prod"]}'
+        )
+    if isinstance(exc, TagNotFound):
+        return gm.bad_request(f"{label} not found")
+    if isinstance(exc, TagTargetAmbiguous):
+        if str(exc) == "project_scope_too_large":
+            return gm.bad_request(
+                f"You can access too many projects to search for this {entity}. "
+                f"Retry with {hint}."
+            )
+        return gm.bad_request(
+            f"{label} {target_id} exists in more than one project you can "
+            f"access. Retry with {hint}."
+        )
+    if isinstance(exc, TagStoreUnavailable):
+        logger.warning(
+            "tag_store_unavailable",
+            entity=entity,
+            error=repr(exc.__cause__ or exc),
+        )
+        return gm.custom_error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Tags could not be saved because the trace store is unavailable. "
+            "Retry the same request; repeating it is safe.",
+        )
+    if isinstance(exc, ValueError):
+        return gm.bad_request(str(exc))
+    return None
 
 
 def allowed_root_spans_for_request(
@@ -1779,60 +1865,38 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback: {get_error_message('FAILED_TO_CREATE_FEEDBACK')}"
             )
 
+    @validated_request(
+        request_serializer=SpanTagsUpdateRequestSerializer,
+        responses={200: TagAssignmentResponseSerializer, **TAG_ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"], url_path="update-tags")
     def update_tags(self, request, *args, **kwargs):
-        """Set a span's tags in ClickHouse, scoped to the request project."""
-        from tracer.models.project import Project
-        from tracer.services.project_tags import (
-            TagNotFound,
-            TagStoreUnavailable,
-            set_span_tags,
-        )
+        """Replace one span's tags, including a span only ClickHouse has.
 
-        span_id = request.data.get("span_id")
-        project_id = request.data.get("project_id") or request.query_params.get(
-            "project_id"
-        )
-        if not span_id:
-            return self._gm.bad_request("span_id is required")
-        organization = _get_request_organization(request)
-        project_qs = Project.no_workspace_objects.filter(
-            _project_workspace_scope_q(request, project_prefix=""),
-            organization=organization,
-        )
-        if project_id:
-            project = project_qs.filter(id=project_id).first() if organization else None
-            if project is None:
-                return self._gm.bad_request("Observation span not found")
-        else:
-            from tracer.services.project_tags import find_span_in_projects
+        ``project_id`` is optional. Without it the span is looked up in the
+        projects the caller can access. Only that span's row changes.
+        """
+        from tracer.services.project_tags import set_span_tags
 
-            try:
-                located = find_span_in_projects(
-                    project_ids=[str(item) for item in project_qs.values_list("id", flat=True)],
-                    span_id=str(span_id),
-                )
-            except TagNotFound:
-                return self._gm.bad_request("Observation span not found")
-            project = project_qs.filter(id=located["project_id"]).first()
-            if project is None:
-                return self._gm.bad_request("Observation span not found")
+        data = request.validated_data
+        span_id = data["span_id"]
         try:
-            names = set_span_tags(
-                project=project,
-                span_id=str(span_id),
-                raw_tags=request.data.get("tags"),
+            result = set_span_tags(
+                project_ids=_tag_project_ids(
+                    request,
+                    data.get("project_id") or request.query_params.get("project_id"),
+                ),
+                span_id=span_id,
+                raw_tags=data["tags"],
             )
-        except TagNotFound:
-            return self._gm.bad_request("Observation span not found")
-        except TagStoreUnavailable:
-            return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Tag store is temporarily unavailable",
+        except Exception as exc:
+            failure = _tag_write_failure(
+                self._gm, exc, entity="span", target_id=span_id
             )
-        except ValueError as exc:
-            return self._gm.bad_request(str(exc))
-        return self._gm.success_response({"id": str(span_id), "tags": names})
+            if failure is None:
+                raise
+            return failure
+        return self._gm.success_response({"id": span_id, "tags": result["tags"]})
 
     @action(detail=False, methods=["post"])
     def submit_feedback_action_type(self, request, *args, **kwargs):

@@ -48,6 +48,14 @@ from tracer.serializers.project import (
     ProjectUsersAggregateGraphDataRequestSerializer,
     ProjectViewSetListQuerySerializer,
 )
+from tracer.serializers.project_tags import (
+    TAG_ERROR_RESPONSES,
+    ProjectTagDefinitionDeleteQuerySerializer,
+    ProjectTagDefinitionDeleteResponseSerializer,
+    ProjectTagDefinitionListResponseSerializer,
+    ProjectTagDefinitionUpdateRequestSerializer,
+    ProjectTagDefinitionUpdateResponseSerializer,
+)
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
     finish_graph_action_response,
@@ -872,42 +880,112 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("ERROR_FETCHING_PROJECT_LISTS")
             )
 
-    @action(detail=True, methods=["get", "patch", "delete"], url_path="tag-definitions")
+    def _tag_definition_failure(self, exc, name=None):
+        """Map a tag-definition failure to its API response, or None if a bug."""
+        from tracer.services.project_tags import TagNotFound, TagStoreUnavailable
+
+        if isinstance(exc, TagNotFound):
+            return self._gm.bad_request(
+                f"Tag {name!r} not found in this project. List the project's tags "
+                "with GET /tracer/project/{id}/tag-definitions/."
+            )
+        if isinstance(exc, TagStoreUnavailable):
+            logger.warning("tag_store_unavailable", error=repr(exc.__cause__ or exc))
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Project tags could not be read or changed because the trace "
+                "store is unavailable. Retry the same request; repeating it is safe.",
+            )
+        if isinstance(exc, ValueError):
+            return self._gm.bad_request(str(exc))
+        return None
+
+    @validated_request(
+        responses={200: ProjectTagDefinitionListResponseSerializer, **TAG_ERROR_RESPONSES},
+        operation_id="tracer_project_tag-definitions_read",
+        operation_description=(
+            "List the project's tags: stored definitions plus every name assigned "
+            "to a span or trace, including names only an SDK set."
+        ),
+    )
+    @action(detail=True, methods=["get"], url_path="tag-definitions")
     def tag_definitions(self, request, *args, **kwargs):
-        """List, rename/recolour, or delete a project's reusable tags."""
-        from tracer.services.project_tags import (
-            TagNotFound,
-            TagStoreUnavailable,
-            delete_definition,
-            list_definitions,
-            update_definition,
-        )
+        """List a project's reusable tags with colour and usage."""
+        from tracer.services.project_tags import list_definitions
 
         project = self.get_object()
         try:
-            if request.method == "GET":
-                return self._gm.success_response(
-                    {"tags": list_definitions(project=project)}
-                )
-            if request.method == "DELETE":
-                delete_definition(project=project, name=request.query_params.get("name", ""))
-                return self._gm.success_response({"deleted": True})
+            tags = list_definitions(project=project)
+        except Exception as exc:
+            failure = self._tag_definition_failure(exc)
+            if failure is None:
+                raise
+            return failure
+        return self._gm.success_response({"tags": tags})
+
+    @validated_request(
+        request_serializer=ProjectTagDefinitionUpdateRequestSerializer,
+        responses={
+            200: ProjectTagDefinitionUpdateResponseSerializer,
+            **TAG_ERROR_RESPONSES,
+        },
+        request_methods=["PATCH"],
+        reject_unknown_fields=True,
+        operation_id="tracer_project_tag-definitions_partial_update",
+        operation_description=(
+            "Recolour and/or rename a project tag. A rename rewrites the name in "
+            "every assignment in the project and merges into an existing tag of "
+            'the new name, e.g. {"name": "prod", "new_name": "production"}.'
+        ),
+    )
+    @tag_definitions.mapping.patch
+    def update_tag_definition(self, request, *args, **kwargs):
+        """Recolour or rename one of a project's tags."""
+        from tracer.services.project_tags import update_definition
+
+        project = self.get_object()
+        data = request.validated_data
+        try:
             result = update_definition(
                 project=project,
-                name=request.data.get("name", ""),
-                new_name=request.data.get("new_name"),
-                color=request.data.get("color"),
+                name=data["name"],
+                new_name=data.get("new_name"),
+                color=data.get("color"),
             )
-        except TagNotFound:
-            return self._gm.bad_request("Tag not found")
-        except TagStoreUnavailable:
-            return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Tag store is temporarily unavailable",
-            )
-        except ValueError as exc:
-            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            failure = self._tag_definition_failure(exc, data["name"])
+            if failure is None:
+                raise
+            return failure
         return self._gm.success_response(result)
+
+    @validated_request(
+        query_serializer=ProjectTagDefinitionDeleteQuerySerializer,
+        responses={
+            200: ProjectTagDefinitionDeleteResponseSerializer,
+            **TAG_ERROR_RESPONSES,
+        },
+        operation_id="tracer_project_tag-definitions_delete",
+        operation_description=(
+            "Delete a project tag and remove the name from every assignment in "
+            "the project, e.g. DELETE /tracer/project/{id}/tag-definitions/?name=prod."
+        ),
+    )
+    @tag_definitions.mapping.delete
+    def delete_tag_definition(self, request, *args, **kwargs):
+        """Delete one of a project's tags and its assignments."""
+        from tracer.services.project_tags import delete_definition
+
+        project = self.get_object()
+        name = request.validated_query_data["name"]
+        try:
+            delete_definition(project=project, name=name)
+        except Exception as exc:
+            failure = self._tag_definition_failure(exc, name)
+            if failure is None:
+                raise
+            return failure
+        return self._gm.success_response({"deleted": True})
 
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
