@@ -17,6 +17,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const DerivedDatasetsDrawer = ({
   open,
@@ -28,7 +29,6 @@ const DerivedDatasetsDrawer = ({
   const [derivedDatasets, setDerivedDatasets] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const theme = useTheme();
 
   useEffect(() => {
     localStorage.setItem("derivedDatasetId", id);
@@ -56,19 +56,21 @@ const DerivedDatasetsDrawer = ({
     navigate(`individual-experiment/${id}`);
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={onClose}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "550px",
+            width: "480px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -82,7 +84,7 @@ const DerivedDatasetsDrawer = ({
           onClick={onClose}
           sx={{ position: "absolute", top: "10px", right: "12px" }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
         {loading ? (
           <DrivedDataSkeleton datasetCount={datasetCount} />
@@ -96,10 +98,9 @@ const DerivedDatasetsDrawer = ({
             }}
           >
             <Typography
-              variant="m3"
-              fontWeight={"fontWeightSemiBold"}
+              typography="title_xs"
               color="text.primary"
-              sx={{ marginBottom: 2 }}
+              sx={{ marginBottom: 1.5 }}
             >
               Derived Dataset
             </Typography>
@@ -108,21 +109,19 @@ const DerivedDatasetsDrawer = ({
               sx={{
                 py: 0,
                 width: "100%",
-                borderRadius: "4px",
-                border: `1px solid ${theme.palette.divider}`,
               }}
             >
               <ListItem sx={{ padding: 0 }}>
                 <Typography
-                  variant="s1"
+                  fontSize={13}
+                  lineHeight="20px"
                   color="text.primary"
                   fontWeight={"fontWeightMedium"}
                   sx={{
-                    padding: "10px 15px",
-                    borderBottom: `1px solid ${theme.palette.divider}`,
+                    padding: "8px 12px",
+                    borderBottom: "1px solid",
+                    borderColor: "border.subtle",
                     width: "100%",
-                    backgroundColor: "background.neutral",
-                    fontSize: "16px",
                   }}
                 >
                   {datasetName}
@@ -132,11 +131,17 @@ const DerivedDatasetsDrawer = ({
                 <React.Fragment key={dataset.id}>
                   <ListItem
                     sx={{
-                      padding: "10px 15px",
+                      padding: "8px 12px",
+                      minHeight: 36,
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
                       cursor: "pointer",
+                      borderBottom:
+                        index !== derivedDatasets.length - 1
+                          ? "1px solid"
+                          : "none",
+                      borderColor: "border.subtle",
                     }}
                     onClick={() => {
                       trackEvent(Events.derivedDatasetOpened, {
@@ -154,7 +159,8 @@ const DerivedDatasetsDrawer = ({
                       placement="bottom"
                     >
                       <Typography
-                        variant="s1"
+                        fontSize={13}
+                        lineHeight="20px"
                         color="text.primary"
                         fontWeight={"fontWeightRegular"}
                         noWrap
@@ -165,18 +171,11 @@ const DerivedDatasetsDrawer = ({
                     </CustomTooltip>
 
                     <Iconify
-                      icon="mynaui:chevron-right"
-                      width={20}
-                      sx={{ color: "text.primary" }}
+                      icon="solar:alt-arrow-right-linear"
+                      width={16}
+                      sx={{ color: "text.tertiary" }}
                     />
                   </ListItem>
-                  {index !== derivedDatasets.length - 1 && (
-                    <Divider
-                      variant="middle"
-                      component="li"
-                      sx={{ backgroundColor: "action.hover" }}
-                    />
-                  )}
                 </React.Fragment>
               ))}
             </List>
@@ -212,28 +211,22 @@ const DrivedDataSkeleton = ({ datasetCount = 5 }) => {
     >
       <Skeleton variant="text" width={120} height={28} />
 
-      <Box
-        sx={{
-          border: `1px solid ${theme.palette.divider}`,
-          borderRadius: "4px",
-          overflow: "hidden",
-        }}
-      >
+      <Box sx={{ overflow: "hidden" }}>
         <Box
           sx={{
-            padding: "10px 15px",
-            backgroundColor: "background.neutral",
-            borderBottom: `1px solid ${theme.palette.divider}`,
+            padding: "8px 12px",
+            borderBottom: `1px solid ${theme.palette.border.subtle}`,
           }}
         >
-          <Skeleton variant="text" width="60%" height={24} />
+          <Skeleton variant="text" width="60%" height={20} />
         </Box>
 
         {Array.from({ length: datasetCount }).map((_, index) => (
           <Box key={index}>
             <Box
               sx={{
-                padding: "10px 15px",
+                padding: "8px 12px",
+                minHeight: 36,
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
@@ -241,14 +234,11 @@ const DrivedDataSkeleton = ({ datasetCount = 5 }) => {
             >
               <Skeleton variant="text" width="40%" height={20} />
 
-              <Skeleton variant="circular" width={24} height={24} />
+              <Skeleton variant="circular" width={16} height={16} />
             </Box>
 
             {index !== datasetCount - 1 && (
-              <Divider
-                variant="middle"
-                sx={{ backgroundColor: "action.hover" }}
-              />
+              <Divider sx={{ borderColor: "border.subtle" }} />
             )}
           </Box>
         ))}

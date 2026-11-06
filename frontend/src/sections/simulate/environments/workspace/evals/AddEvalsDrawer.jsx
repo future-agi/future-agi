@@ -11,7 +11,7 @@ import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
  *
  * Both screens are the product's own eval picker: the list with its opt-in
  * `multiSelect` checkboxes, and the real config screen for the mapping. Tick
- * a few, "Add Evaluations (N)" builds a queue, and the config screen is walked
+ * a few, "Add evaluations (N)" builds a queue, and the config screen is walked
  * once per eval with a completion bar and a primary button that reads "Next"
  * until the last — so a batch of evals is one trip through the picker.
  *
@@ -145,10 +145,9 @@ export default function AddEvalsDrawer({
               setIndex(0);
               setCollected([]);
             }}
-            startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-            sx={{ textTransform: "none", fontSize: "12px" }}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
           >
-            Add Evaluations{selected.length ? ` (${selected.length})` : ""}
+            Add evaluations{selected.length ? ` (${selected.length})` : ""}
           </Button>
         ) : null
       }
@@ -205,7 +204,7 @@ function CompletionBar({ pct, index, total }) {
       <Typography
         sx={{
           typography: "s2",
-          fontWeight: "fontWeightBold",
+          fontWeight: "fontWeightSemiBold",
           color: pct ? "success.main" : "text.subtitle",
         }}
       >

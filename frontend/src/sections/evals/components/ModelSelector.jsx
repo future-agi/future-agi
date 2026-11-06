@@ -1,17 +1,19 @@
 /* eslint-disable react/prop-types */
 import {
+  Checkbox,
   Box,
   Chip,
   CircularProgress,
   Divider,
   IconButton,
+  Menu,
   MenuItem,
   Popover,
   Skeleton,
   TextField,
   Tooltip,
   Typography,
-  alpha,
+  ButtonBase,
 } from "@mui/material";
 import {
   useInfiniteQuery,
@@ -29,11 +31,13 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
+import { useApiKeysStatus } from "src/api/model/api-keys";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   useFeatureAllowed,
   useFeatureLocked,
   CAPABILITY,
+  useFeatureDenied,
 } from "src/hooks/useCapabilities";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
@@ -47,21 +51,51 @@ const MODES = [
     value: "auto",
     label: "Auto",
     description: "Balances quality and speed",
-    icon: "mdi:auto-fix",
+    icon: "solar:stars-minimalistic-linear",
   },
   {
     value: "agent",
     label: "Agent",
     description: "Deep, reasoning-based evaluation",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
   },
   {
     value: "quick",
     label: "Quick",
     description: "Runs fast, for quick iteration",
-    icon: "mdi:lightning-bolt-outline",
+    icon: "solar:bolt-linear",
   },
 ];
+
+// Search and grouped rows need navigation across their nested layout.
+const handleMenuNavigation = (event, onClose) => {
+  if (event.key === "Tab") {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  const inInput = event.target.matches("input, textarea");
+  if (
+    !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
+    (inInput && ["Home", "End"].includes(event.key))
+  )
+    return;
+
+  const items = Array.from(
+    event.currentTarget.querySelectorAll(
+      '[role="menuitem"]:not([aria-disabled="true"])',
+    ),
+  );
+  if (!items.length) return;
+  event.preventDefault();
+  const index = items.indexOf(event.target.closest('[role="menuitem"]'));
+  let nextIndex;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = items.length - 1;
+  else if (event.key === "ArrowDown") nextIndex = (index + 1) % items.length;
+  else nextIndex = index <= 0 ? items.length - 1 : index - 1;
+  items[nextIndex].focus();
+};
 
 // Connectors are fetched from the Falcon AI MCP connectors API
 
@@ -73,38 +107,38 @@ const CONTEXT_OPTIONS = [
     value: "variables_only",
     label: "Template variables",
     desc: "Only mapped {{variables}} (default)",
-    icon: "mdi:code-braces",
+    icon: "solar:code-linear",
     isDefault: true,
   },
   {
     value: "dataset_row",
     label: "Dataset row context",
     desc: "All columns from current row",
-    icon: "mdi:table-row",
+    icon: "solar:table-linear",
   },
   {
     value: "call_context",
     label: "Call context",
     desc: "Call transcript, recording, scenario",
-    icon: "mdi:phone-outline",
+    icon: "solar:phone-linear",
   },
   {
     value: "span_context",
     label: "Full span context",
     desc: "Complete span data + metadata",
-    icon: "mdi:layers-outline",
+    icon: "solar:layers-linear",
   },
   {
     value: "trace_context",
     label: "Trace context",
     desc: "Full trace tree with all spans",
-    icon: "mdi:file-tree-outline",
+    icon: "solar:folder-tree-linear",
   },
   {
     value: "session_context",
     label: "Session context",
     desc: "Full conversation history",
-    icon: "mdi:message-text-outline",
+    icon: "solar:chat-round-line-linear",
   },
 ];
 
@@ -142,75 +176,133 @@ const FAGI_MODELS = [
     value: "turing_large",
     label: "Turing Large",
     description: "Best accuracy for complex evaluations",
-    icon: "mdi:star-circle",
+    icon: "solar:star-bold",
   },
   {
     value: "turing_small",
     label: "Turing Small",
     description: "Balanced accuracy, lower cost",
-    icon: "mdi:star-half-full",
+    icon: "solar:star-2-linear",
   },
   {
     value: "turing_flash",
     label: "Turing Flash",
     description: "Fast, low-latency evaluations",
-    icon: "mdi:flash",
+    icon: "solar:bolt-linear",
   },
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
+export const JEV_MODELS = [
+  {
+    value: "jev-1.13.0",
+    label: "Jev 1.13 (pinned)",
+    description: "Pinned System One model (jev-1.13.0)",
+  },
+  {
+    value: "jev-latest",
+    label: "Jev latest",
+    description: "Tracks the current Jev release (jev-latest)",
+  },
+];
+export const JEV_MODEL_VALUES = new Set(JEV_MODELS.map((m) => m.value));
+
 const FAGI_MODEL_LOCKED_TOOLTIP =
   "Turing models aren't enabled for this workspace. Select your own model.";
 
+// Turing and Jev rows share the same layout and selection affordances.
+const EvaluatorModelRow = ({
+  m,
+  selected,
+  locked,
+  lockedTooltip,
+  secondaryText,
+  onSelect,
+}) => (
+  <Tooltip title={locked ? lockedTooltip : ""} placement="right" arrow>
+    <span>
+      <MenuItem
+        selected={selected}
+        disabled={locked}
+        onClick={onSelect}
+        sx={{
+          mx: 0.5,
+          borderRadius: "6px",
+          py: 0.75,
+          gap: 1,
+          width: "auto",
+        }}
+      >
+        <Iconify
+          icon={m.icon || "solar:star-bold"}
+          width={20}
+          sx={{
+            color: selected ? "primary.main" : "text.secondary",
+            flexShrink: 0,
+          }}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            sx={{ fontSize: "13px", fontWeight: 500 }}
+          >
+            {m.label}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "12px" }}
+          >
+            {secondaryText}
+          </Typography>
+        </Box>
+        {locked ? (
+          <Iconify
+            icon="solar:lock-linear"
+            width={16}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+        ) : (
+          selected && (
+            <Iconify
+              icon="solar:check-linear"
+              width={16}
+              sx={{ color: "primary.main", flexShrink: 0 }}
+            />
+          )
+        )}
+      </MenuItem>
+    </span>
+  </Tooltip>
+);
+EvaluatorModelRow.propTypes = {
+  m: PropTypes.object.isRequired,
+  selected: PropTypes.bool.isRequired,
+  locked: PropTypes.bool.isRequired,
+  lockedTooltip: PropTypes.string.isRequired,
+  secondaryText: PropTypes.string.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
+
 const CHIP_STYLES = {
-  backgroundColor: (theme) =>
-    alpha(
-      theme.palette.primary.main,
-      theme.palette.mode === "dark" ? 0.24 : 0.1,
-    ),
+  backgroundColor: "status.discovery.bg",
   "&:hover": {
-    backgroundColor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.32 : 0.16,
-      ),
+    backgroundColor: "status.discovery.bg",
   },
-  color: (theme) =>
-    theme.palette.mode === "dark"
-      ? theme.palette.primary.light
-      : theme.palette.primary.main,
-  border: "1px solid",
-  borderColor: (theme) =>
-    alpha(
-      theme.palette.primary.main,
-      theme.palette.mode === "dark" ? 0.4 : 0.2,
-    ),
-  borderRadius: "4px",
-  fontWeight: 500,
-  fontSize: "11px",
-  height: 22,
-  "& .MuiChip-label": { px: 0.75 },
+  color: "status.discovery.fg",
   "& .MuiChip-icon": {
     color: "inherit",
   },
   "& .MuiChip-deleteIcon": {
-    margin: "0 4px 0 -2px",
-    color: (theme) =>
-      theme.palette.mode === "dark"
-        ? theme.palette.primary.light
-        : theme.palette.primary.main,
-    transition: "color 0.15s ease",
+    color: "status.discovery.fg",
     "&:hover": {
-      color: (theme) =>
-        theme.palette.mode === "dark"
-          ? theme.palette.primary.contrastText
-          : theme.palette.primary.dark,
+      color: "status.discovery.fg",
     },
   },
 };
 
-const DELETE_ICON = <Iconify icon="mdi:close" width={12} />;
+const DELETE_ICON = <Iconify icon="solar:close-linear" width={12} />;
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -324,9 +416,9 @@ function SummarySubmenu({ activeSummary, onSelect }) {
         <Typography
           variant="caption"
           sx={{
-            fontSize: "10px",
-            fontWeight: 700,
-            textTransform: "uppercase",
+            fontSize: "12px",
+            fontWeight: 600,
+            textTransform: "none",
             color: "text.disabled",
             mb: 1,
             display: "block",
@@ -366,7 +458,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
               setEditCriteria("");
             }}
           >
-            <Iconify icon="mdi:close" width={16} />
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
           <IconButton
             size="small"
@@ -376,7 +468,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             }
             sx={{ color: "primary.main" }}
           >
-            <Iconify icon="mdi:check" width={16} />
+            <Iconify icon="solar:check-linear" width={16} />
           </IconButton>
         </Box>
       </Box>
@@ -391,7 +483,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
         sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
       >
         <Iconify
-          icon={!activeSummary ? "mdi:check" : "mdi:blank"}
+          icon={!activeSummary ? "solar:check-linear" : "mdi:blank"}
           width={16}
           sx={{
             color: !activeSummary ? "primary.main" : "transparent",
@@ -408,7 +500,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontSize: "11px" }}
+            sx={{ fontSize: "12px" }}
           >
             No summary — return raw evaluation output
           </Typography>
@@ -428,7 +520,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
           >
             <Iconify
-              icon={isSelected ? "mdi:check" : "mdi:blank"}
+              icon={isSelected ? "solar:check-linear" : "mdi:blank"}
               width={16}
               sx={{
                 color: isSelected ? "primary.main" : "transparent",
@@ -445,7 +537,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 {opt.description}
               </Typography>
@@ -464,9 +556,9 @@ function SummarySubmenu({ activeSummary, onSelect }) {
               px: 1.5,
               py: 0.5,
               display: "block",
-              fontSize: "10px",
-              fontWeight: 700,
-              textTransform: "uppercase",
+              fontSize: "12px",
+              fontWeight: 600,
+              textTransform: "none",
               letterSpacing: "0.5px",
               color: "text.disabled",
             }}
@@ -483,7 +575,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                 sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
               >
                 <Iconify
-                  icon={isSelected ? "mdi:check" : "mdi:blank"}
+                  icon={isSelected ? "solar:check-linear" : "mdi:blank"}
                   width={16}
                   sx={{
                     color: isSelected ? "primary.main" : "transparent",
@@ -502,7 +594,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                     variant="caption"
                     noWrap
                     color="text.secondary"
-                    sx={{ fontSize: "11px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     {tmpl.criteria}
                   </Typography>
@@ -514,10 +606,9 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                       e.stopPropagation();
                       handleEdit(tmpl);
                     }}
-                    sx={{ p: 0.25 }}
                   >
                     <Iconify
-                      icon="mdi:pencil-outline"
+                      icon="solar:pen-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -528,10 +619,9 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                       e.stopPropagation();
                       deleteMutation.mutate(tmpl.id);
                     }}
-                    sx={{ p: 0.25 }}
                   >
                     <Iconify
-                      icon="mdi:delete-outline"
+                      icon="solar:trash-bin-trash-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -549,7 +639,11 @@ function SummarySubmenu({ activeSummary, onSelect }) {
         onClick={() => setCustomMode(true)}
         sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
       >
-        <Iconify icon="mdi:plus" width={16} sx={{ color: "text.secondary" }} />
+        <Iconify
+          icon="solar:add-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
         <Typography
           variant="body2"
           sx={{ fontSize: "12px", color: "text.secondary" }}
@@ -595,6 +689,7 @@ const ModelSelector = ({
   // back to internal state when the parent doesn't pass them (backward compat).
   mode: modeProp,
   onModeChange,
+  previousModeRef: previousModeRefProp,
   useInternet: useInternetProp,
   onUseInternetChange,
   activeSummary: activeSummaryProp,
@@ -615,10 +710,27 @@ const ModelSelector = ({
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
   const mode = modeProp !== undefined ? modeProp : modeLocal;
-  const setMode = (v) => {
-    if (onModeChange) onModeChange(v);
-    else setModeLocal(v);
-  };
+  const setMode = useCallback(
+    (v) => {
+      if (onModeChange) onModeChange(v);
+      else setModeLocal(v);
+    },
+    [onModeChange],
+  );
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const previousModeLocalRef = useRef(null);
+  const previousModeRef = previousModeRefProp || previousModeLocalRef;
+
+  // Normalize reopened drafts and restore a choice made before a tab switch.
+  useEffect(() => {
+    if (isJevModel && mode !== "quick") {
+      previousModeRef.current ??= mode;
+      setMode("quick");
+    } else if (!isJevModel && previousModeRef.current !== null) {
+      setMode(previousModeRef.current);
+      previousModeRef.current = null;
+    }
+  }, [isJevModel, mode, setMode, previousModeRef]);
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
@@ -633,6 +745,15 @@ const ModelSelector = ({
   const [plusAnchor, setPlusAnchor] = useState(null);
   const [plusSubmenu, setPlusSubmenu] = useState(null);
   const [connectorSearch, setConnectorSearch] = useState("");
+  const closeModelMenu = () => {
+    setModelAnchor(null);
+    setModelSearch("");
+  };
+  const closePlusMenu = () => {
+    setPlusAnchor(null);
+    setPlusSubmenu(null);
+    setConnectorSearch("");
+  };
 
   const [activeConnectorIdsLocal, setActiveConnectorIdsLocal] = useState([]);
   const activeConnectorIds =
@@ -689,6 +810,30 @@ const ModelSelector = ({
   const [kbSearch, setKbSearch] = useState("");
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
+  const pendingModelRef = useRef(null);
+  const openKeysDrawer = (nextModel) => {
+    pendingModelRef.current = nextModel;
+    setKeysDrawerModel(nextModel);
+    setModelAnchor(null);
+  };
+  const closeKeysDrawer = () => {
+    pendingModelRef.current = null;
+    setKeysDrawerModel(null);
+  };
+  const selectModel = (value) => {
+    if (JEV_MODEL_VALUES.has(value)) {
+      if (!isJevModel) previousModeRef.current = mode;
+      setMode("quick");
+    } else if (isJevModel && previousModeRef.current !== null) {
+      setMode(previousModeRef.current);
+      previousModeRef.current = null;
+    }
+    onModelChange(value);
+    setModelAnchor(null);
+    setModelSearch("");
+    setPlusSubmenu(null);
+    closeKeysDrawer();
+  };
   const navigate = useNavigate();
   // Fail closed while capabilities load: never flash Turing models as
   // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
@@ -696,10 +841,18 @@ const ModelSelector = ({
   // must not wipe a legitimately-preselected Turing model mid-fetch.
   const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.TURING_MODELS);
+  // A confirmed denial only, as on the eval pages.
+  const jevModelsLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
+  // Jev runs on the org's own TypeSafe key (Settings -> AI Providers).
+  const { data: providerStatuses } = useApiKeysStatus();
+  const hasTypesafeKey = (providerStatuses || []).some(
+    (p) => p.provider === "typesafe" && p.hasKey,
+  );
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
   const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
-  const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
+  const effectiveMode = isJevModel ? "quick" : mode;
+  const currentMode = MODES.find((m) => m.value === effectiveMode) || MODES[1];
 
   // Fetch real MCP connectors from Falcon AI API. Falcon AI needs a
   // license/plan; skip the call when locked so the 402 doesn't fire a
@@ -782,7 +935,11 @@ const ModelSelector = ({
       modelPages?.pages.reduce((acc, p) => [...acc, ...p.data.results], []) ||
       [];
     // Filter out FAGI models to avoid duplicates
-    return all.filter((m) => !FAGI_MODEL_VALUES.has(m.model_name));
+    return all.filter(
+      (m) =>
+        !FAGI_MODEL_VALUES.has(m.model_name) &&
+        !JEV_MODEL_VALUES.has(m.model_name),
+    );
   }, [modelPages]);
 
   // Determine display name for the current model. Match on the full
@@ -792,6 +949,8 @@ const ModelSelector = ({
   // — still resolves to its FAGI label instead of rendering as "small".
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
+    const jev = JEV_MODELS.find((m) => m.value === model);
+    if (jev) return jev.label;
     const exact = FAGI_MODELS.find((m) => m.value === model);
     if (exact) return exact.label;
     const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
@@ -819,6 +978,13 @@ const ModelSelector = ({
     );
   }, [modelSearch]);
 
+  const filteredJevModels = useMemo(() => {
+    const search = modelSearch.toLowerCase();
+    return JEV_MODELS.filter(
+      (m) => m.label.toLowerCase().includes(search) || m.value.includes(search),
+    );
+  }, [modelSearch]);
+
   // When Turing models aren't enabled, callers still seed `model` with
   // "turing_large". Drop it so the pill reads "Select model" instead of
   // preselecting something the backend would 402 on save. Gate on the
@@ -834,9 +1000,15 @@ const ModelSelector = ({
     >
       {/* ── Mode selector (left pill) — hidden in LLM-As-A-Judge ── */}
       {showMode && (
-        <Box
-          onClick={(e) => !disabled && setModeAnchor(e.currentTarget)}
+        <ButtonBase
+          disabled={disabled}
+          aria-label={`Evaluation mode: ${currentMode.label}`}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(modeAnchor)}
+          onClick={(e) => setModeAnchor(e.currentTarget)}
           sx={{
+            minWidth: 0,
+            textTransform: "none",
             display: "inline-flex",
             alignItems: "center",
             gap: 0.5,
@@ -845,14 +1017,17 @@ const ModelSelector = ({
             py: 0.4,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "16px",
+            borderRadius: "6px",
             cursor: disabled ? "default" : "pointer",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.05)"
-                : "rgba(0,0,0,0.03)",
+            backgroundColor: "action.hover",
             "&:hover": disabled ? {} : { borderColor: "text.secondary" },
-            transition: "all 0.15s",
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+              outlineOffset: 1,
+            },
+            // Not "all": that grows the focus ring from a dark 0 px outline.
+            transition: "border-color 0.15s, background-color 0.15s",
           }}
         >
           <Iconify
@@ -867,18 +1042,24 @@ const ModelSelector = ({
             {currentMode.label}
           </Typography>
           <Iconify
-            icon="mdi:chevron-down"
+            icon="solar:alt-arrow-down-linear"
             width={14}
             sx={{ color: "text.disabled" }}
           />
-        </Box>
+        </ButtonBase>
       )}
 
       {/* ── Model selector (right) ── */}
-      <Box
+      <ButtonBase
         ref={modelPillRef}
-        onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
+        disabled={disabled}
+        aria-label={`Evaluation model: ${modelDisplayName}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(modelAnchor)}
+        onClick={(e) => setModelAnchor(e.currentTarget)}
         sx={{
+          minWidth: 0,
+          textTransform: "none",
           display: "inline-flex",
           alignItems: "center",
           gap: 0.5,
@@ -886,6 +1067,11 @@ const ModelSelector = ({
           py: 0.4,
           cursor: disabled ? "default" : "pointer",
           "&:hover": disabled ? {} : { opacity: 0.7 },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 1,
+          },
           transition: "opacity 0.15s",
         }}
       >
@@ -896,27 +1082,27 @@ const ModelSelector = ({
           {modelDisplayName}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{ color: "text.disabled" }}
         />
-      </Box>
+      </ButtonBase>
 
       {/* ── + button + config chips (hidden when showPlus=false, e.g. LLM tab) ── */}
       {showPlus && (
         <IconButton
           size="small"
           disabled={disabled}
+          aria-label="Configure evaluation"
+          aria-haspopup="menu"
+          aria-expanded={Boolean(plusAnchor)}
           onClick={(e) => setPlusAnchor(e.currentTarget)}
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "6px",
-            width: 26,
-            height: 26,
           }}
         >
-          <Iconify icon="mdi:plus" width={14} />
+          <Iconify icon="solar:add-linear" width={14} />
         </IconButton>
       )}
 
@@ -924,24 +1110,30 @@ const ModelSelector = ({
       {showPlus && useInternet && (
         <Chip
           size="small"
-          icon={<Iconify icon="mdi:web" width={12} sx={{ ml: 0.5 }} />}
+          icon={
+            <Iconify icon="solar:global-linear" width={12} sx={{ ml: 0.5 }} />
+          }
           label="Internet"
+          disabled={isJevModel || disabled}
           onDelete={() => setUseInternet(false)}
           deleteIcon={DELETE_ICON}
           sx={CHIP_STYLES}
         />
       )}
-      {showPlus && activeSummary && activeSummary !== "concise" && (
-        <SummaryChip
-          activeSummary={activeSummary}
-          onClick={(e) => {
-            setPlusAnchor(e.currentTarget);
-            setPlusSubmenu("summary");
-          }}
-          onDelete={() => setActiveSummary("concise")}
-        />
-      )}
-      {showPlus && !activeSummary && (
+      {showPlus &&
+        !isJevModel &&
+        activeSummary &&
+        activeSummary !== "concise" && (
+          <SummaryChip
+            activeSummary={activeSummary}
+            onClick={(e) => {
+              setPlusAnchor(e.currentTarget);
+              setPlusSubmenu("summary");
+            }}
+            onDelete={() => setActiveSummary("concise")}
+          />
+        )}
+      {showPlus && !isJevModel && !activeSummary && (
         <Chip
           size="small"
           label="No summary"
@@ -952,9 +1144,6 @@ const ModelSelector = ({
           onDelete={() => setActiveSummary("concise")}
           variant="outlined"
           sx={{
-            height: 22,
-            fontSize: "11px",
-            fontWeight: 500,
             cursor: "pointer",
             color: "text.secondary",
           }}
@@ -972,16 +1161,19 @@ const ModelSelector = ({
                 <Box
                   sx={{
                     width: 7,
+                    // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
                     height: 7,
+                    // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
                     borderRadius: "50%",
                     ml: 0.5,
                     backgroundColor: conn.is_verified
-                      ? "success.main"
+                      ? "status.success.solid"
                       : "text.disabled",
                   }}
                 />
               }
               label={conn.name}
+              disabled={isJevModel || disabled}
               onDelete={() =>
                 setActiveConnectorIds((p) => p.filter((x) => x !== cId))
               }
@@ -992,16 +1184,17 @@ const ModelSelector = ({
         })}
       {showPlus && selectedKBs.length > 0 && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           arrow
           title={
             <Box sx={{ py: 0.25 }}>
-              <Typography sx={{ fontSize: "11px", fontWeight: 600, mb: 0.5 }}>
+              <Typography sx={{ fontSize: "12px", fontWeight: 600, mb: 0.5 }}>
                 Knowledge Bases
               </Typography>
               {selectedKBs.map((kbId) => {
                 const kb = knowledgeBases.find((k) => k.id === kbId);
                 return (
-                  <Typography key={kbId} sx={{ fontSize: "11px" }}>
+                  <Typography key={kbId} sx={{ fontSize: "12px" }}>
                     • {kb?.name || "KB"}
                   </Typography>
                 );
@@ -1012,13 +1205,10 @@ const ModelSelector = ({
           <Chip
             size="small"
             icon={
-              <Iconify
-                icon="mdi:book-open-outline"
-                width={12}
-                sx={{ ml: 0.5 }}
-              />
+              <Iconify icon="solar:book-linear" width={12} sx={{ ml: 0.5 }} />
             }
             label={`${selectedKBs.length} KB`}
+            disabled={isJevModel || disabled}
             onClick={(e) => {
               setPlusAnchor(e.currentTarget);
               setPlusSubmenu("knowledge");
@@ -1033,10 +1223,11 @@ const ModelSelector = ({
         activeContextOptions.filter((o) => o !== "variables_only").length >
           0 && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             title={
               <Box sx={{ py: 0.25 }}>
-                <Typography sx={{ fontSize: "11px", fontWeight: 600, mb: 0.5 }}>
+                <Typography sx={{ fontSize: "12px", fontWeight: 600, mb: 0.5 }}>
                   Data Injection
                 </Typography>
                 {activeContextOptions
@@ -1044,7 +1235,7 @@ const ModelSelector = ({
                   .map((optVal) => {
                     const opt = CONTEXT_OPTIONS.find((c) => c.value === optVal);
                     return (
-                      <Typography key={optVal} sx={{ fontSize: "11px" }}>
+                      <Typography key={optVal} sx={{ fontSize: "12px" }}>
                         • {opt?.label || optVal}
                       </Typography>
                     );
@@ -1056,12 +1247,13 @@ const ModelSelector = ({
               size="small"
               icon={
                 <Iconify
-                  icon="mdi:layers-outline"
+                  icon="solar:layers-linear"
                   width={12}
                   sx={{ ml: 0.5 }}
                 />
               }
               label={`+${activeContextOptions.filter((o) => o !== "variables_only").length} context`}
+              disabled={isJevModel || disabled}
               onClick={(e) => {
                 setPlusAnchor(e.currentTarget);
                 setPlusSubmenu("injection");
@@ -1074,7 +1266,11 @@ const ModelSelector = ({
         )}
 
       {/* ══════ Mode Dropdown ══════ */}
-      <Popover
+      <Menu
+        MenuListProps={{
+          "aria-label": "Evaluation modes",
+          disablePadding: true,
+        }}
         open={Boolean(modeAnchor)}
         anchorEl={modeAnchor}
         onClose={() => setModeAnchor(null)}
@@ -1087,7 +1283,8 @@ const ModelSelector = ({
         {MODES.map((m) => (
           <MenuItem
             key={m.value}
-            selected={m.value === mode}
+            selected={m.value === effectiveMode}
+            disabled={isJevModel && m.value !== "quick"}
             onClick={() => {
               setMode(m.value);
               setModeAnchor(null);
@@ -1096,10 +1293,11 @@ const ModelSelector = ({
           >
             <Iconify
               icon={m.icon}
-              width={18}
+              width={20}
               sx={{
                 mr: 1.5,
-                color: m.value === mode ? "primary.main" : "text.secondary",
+                color:
+                  m.value === effectiveMode ? "primary.main" : "text.secondary",
               }}
             />
             <Box sx={{ flex: 1 }}>
@@ -1112,30 +1310,30 @@ const ModelSelector = ({
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
-                {m.description}
+                {isJevModel && m.value !== "quick"
+                  ? "Jev runs in Quick mode only. Your previous mode is preserved."
+                  : m.description}
               </Typography>
             </Box>
-            {m.value === mode && (
+            {m.value === effectiveMode && (
               <Iconify
-                icon="mdi:check"
+                icon="solar:check-linear"
                 width={16}
                 sx={{ color: "primary.main", ml: 1 }}
               />
             )}
           </MenuItem>
         ))}
-      </Popover>
+      </Menu>
 
       {/* ══════ Model Dropdown — two sections ══════ */}
       <Popover
         open={Boolean(modelAnchor)}
         anchorEl={modelAnchor}
-        onClose={() => {
-          setModelAnchor(null);
-          setModelSearch("");
-        }}
+        onClose={closeModelMenu}
+        onKeyDown={(event) => handleMenuNavigation(event, closeModelMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{ paper: { sx: { width: 320, borderRadius: "8px", p: 0 } } }}
@@ -1147,12 +1345,13 @@ const ModelSelector = ({
             fullWidth
             autoFocus
             placeholder="Search models..."
+            inputProps={{ "aria-label": "Search models" }}
             value={modelSearch}
             onChange={(e) => setModelSearch(e.target.value)}
             InputProps={{
               startAdornment: (
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ mr: 0.5, color: "text.disabled" }}
                 />
@@ -1163,6 +1362,8 @@ const ModelSelector = ({
         </Box>
 
         <Box
+          role="menu"
+          aria-label="Evaluation models"
           sx={{ maxHeight: 350, overflowY: "auto" }}
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
@@ -1184,9 +1385,9 @@ const ModelSelector = ({
                   pt: 1.5,
                   pb: 0.5,
                   display: "block",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "primary.main",
                 }}
@@ -1194,81 +1395,69 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <Tooltip
+                <EvaluatorModelRow
                   key={m.value}
-                  title={fagiModelsLocked ? FAGI_MODEL_LOCKED_TOOLTIP : ""}
-                  placement="right"
-                  arrow
-                >
-                  <span>
-                    <MenuItem
-                      selected={m.value === model}
-                      disabled={fagiModelsLocked}
-                      onClick={() => {
-                        onModelChange(m.value);
-                        setModelAnchor(null);
-                        setModelSearch("");
-                      }}
-                      sx={{
-                        mx: 0.5,
-                        borderRadius: "6px",
-                        py: 0.75,
-                        gap: 1,
-                        width: "auto",
-                      }}
-                    >
-                      <Iconify
-                        icon={m.icon}
-                        width={18}
-                        sx={{
-                          color:
-                            m.value === model
-                              ? "primary.main"
-                              : "text.secondary",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Typography
-                          variant="body2"
-                          sx={{ fontSize: "13px", fontWeight: 500 }}
-                        >
-                          {m.label}
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ fontSize: "11px" }}
-                        >
-                          {fagiModelsLocked ? "Not enabled" : m.description}
-                        </Typography>
-                      </Box>
-                      {fagiModelsLocked ? (
-                        <Iconify
-                          icon="mdi:lock-outline"
-                          width={16}
-                          sx={{ color: "text.disabled", flexShrink: 0 }}
-                        />
-                      ) : (
-                        m.value === model && (
-                          <Iconify
-                            icon="mdi:check"
-                            width={16}
-                            sx={{ color: "primary.main", flexShrink: 0 }}
-                          />
-                        )
-                      )}
-                    </MenuItem>
-                  </span>
-                </Tooltip>
+                  m={m}
+                  selected={m.value === model}
+                  locked={fagiModelsLocked}
+                  lockedTooltip={FAGI_MODEL_LOCKED_TOOLTIP}
+                  secondaryText={
+                    fagiModelsLocked ? "Not enabled" : m.description
+                  }
+                  onSelect={() => selectModel(m.value)}
+                />
+              ))}
+            </>
+          )}
+
+          {filteredJevModels.length > 0 && (
+            <>
+              <Typography
+                variant="caption"
+                sx={{
+                  px: 1.5,
+                  pt: 1.5,
+                  pb: 0.5,
+                  display: "block",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  letterSpacing: "0.5px",
+                  color: "primary.main",
+                }}
+              >
+                Jev models
+              </Typography>
+              {filteredJevModels.map((m) => (
+                <EvaluatorModelRow
+                  key={m.value}
+                  m={m}
+                  selected={m.value === model}
+                  locked={jevModelsLocked}
+                  lockedTooltip="Not included in your plan"
+                  secondaryText={
+                    hasTypesafeKey ? m.value : "Add your TypeSafe API key"
+                  }
+                  onSelect={() => {
+                    if (!hasTypesafeKey) {
+                      // Close the picker so its backdrop doesn't swallow the
+                      // first click in the keys drawer.
+                      openKeysDrawer({
+                        model_name: m.value,
+                        providers: "typesafe",
+                      });
+                      return;
+                    }
+                    selectModel(m.value);
+                  }}
+                />
               ))}
             </>
           )}
 
           {/* Divider between sections */}
-          {filteredFagiModels.length > 0 && apiModels.length > 0 && (
-            <Divider sx={{ my: 0.5 }} />
-          )}
+          {(filteredFagiModels.length > 0 || filteredJevModels.length > 0) &&
+            apiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
 
           {/* Section 2: Your LLM Models (BYOK) */}
           {(apiModels.length > 0 || modelsLoading) && (
@@ -1280,9 +1469,9 @@ const ModelSelector = ({
                   pt: 1,
                   pb: 0.5,
                   display: "block",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -1298,13 +1487,12 @@ const ModelSelector = ({
                     selected={m.model_name === model}
                     onClick={() => {
                       if (!available) {
-                        // Open keys drawer for this model
-                        setKeysDrawerModel(m);
+                        // Open keys drawer for this model; close the picker
+                        // so its backdrop doesn't cover the drawer.
+                        openKeysDrawer(m);
                         return;
                       }
-                      onModelChange(m.model_name);
-                      setModelAnchor(null);
-                      setModelSearch("");
+                      selectModel(m.model_name);
                     }}
                     sx={{
                       mx: 0.5,
@@ -1313,7 +1501,7 @@ const ModelSelector = ({
                       gap: 1,
                       ...(!available && {
                         opacity: 0.8,
-                        "&:hover": { backgroundColor: "error.lighter" },
+                        "&:hover": { backgroundColor: "status.danger.bg" },
                       }),
                     }}
                   >
@@ -1331,10 +1519,12 @@ const ModelSelector = ({
                       />
                     ) : (
                       <Iconify
-                        icon="mdi:cube-outline"
-                        width={18}
+                        icon="solar:box-linear"
+                        width={20}
                         sx={{
-                          color: available ? "text.secondary" : "error.main",
+                          color: available
+                            ? "text.secondary"
+                            : "status.danger.fg",
                           flexShrink: 0,
                         }}
                       />
@@ -1346,7 +1536,9 @@ const ModelSelector = ({
                         sx={{
                           fontSize: "13px",
                           fontWeight: 500,
-                          color: available ? "text.primary" : "error.main",
+                          color: available
+                            ? "text.primary"
+                            : "status.danger.fg",
                         }}
                       >
                         {m.model_name}
@@ -1356,8 +1548,10 @@ const ModelSelector = ({
                           variant="caption"
                           noWrap
                           sx={{
-                            fontSize: "11px",
-                            color: available ? "text.secondary" : "error.light",
+                            fontSize: "12px",
+                            color: available
+                              ? "text.secondary"
+                              : "status.danger.fg",
                           }}
                         >
                           {m.providers}
@@ -1366,13 +1560,13 @@ const ModelSelector = ({
                     </Box>
                     {!available ? (
                       <Iconify
-                        icon="mdi:key-plus"
+                        icon="solar:key-linear"
                         width={16}
-                        sx={{ color: "error.main", flexShrink: 0 }}
+                        sx={{ color: "status.danger.fg", flexShrink: 0 }}
                       />
                     ) : m.model_name === model ? (
                       <Iconify
-                        icon="mdi:check"
+                        icon="solar:check-linear"
                         width={16}
                         sx={{ color: "primary.main", flexShrink: 0 }}
                       />
@@ -1393,6 +1587,7 @@ const ModelSelector = ({
           {/* Empty state */}
           {!modelsLoading &&
             filteredFagiModels.length === 0 &&
+            filteredJevModels.length === 0 &&
             apiModels.length === 0 && (
               <Typography
                 variant="body2"
@@ -1409,11 +1604,8 @@ const ModelSelector = ({
       <Popover
         open={Boolean(plusAnchor)}
         anchorEl={plusAnchor}
-        onClose={() => {
-          setPlusAnchor(null);
-          setPlusSubmenu(null);
-          setConnectorSearch("");
-        }}
+        onClose={closePlusMenu}
+        onKeyDown={(event) => handleMenuNavigation(event, closePlusMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
@@ -1424,12 +1616,14 @@ const ModelSelector = ({
         <Box sx={{ minWidth: 220 }}>
           {/* Internet toggle */}
           <MenuItem
+            autoFocus={!isJevModel && !disabled}
+            disabled={isJevModel || disabled}
             onClick={() => setUseInternet((prev) => !prev)}
             sx={{ borderRadius: "6px", py: 1 }}
           >
             <Iconify
-              icon="mdi:web"
-              width={18}
+              icon="solar:global-linear"
+              width={16}
               sx={{
                 mr: 1.5,
                 color: useInternet ? "primary.main" : "text.secondary",
@@ -1445,9 +1639,11 @@ const ModelSelector = ({
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
-                Search the web during evaluation
+                {isJevModel
+                  ? "Jev does not support internet access. Your selection is preserved."
+                  : "Search the web during evaluation"}
               </Typography>
             </Box>
             <Box
@@ -1456,12 +1652,7 @@ const ModelSelector = ({
                 height: 16,
                 borderRadius: 8,
                 position: "relative",
-                backgroundColor: useInternet
-                  ? "primary.main"
-                  : (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.12)"
-                        : "rgba(0,0,0,0.12)",
+                backgroundColor: useInternet ? "primary.main" : "control.track",
                 transition: "all 0.2s",
                 flexShrink: 0,
               }}
@@ -1488,68 +1679,73 @@ const ModelSelector = ({
           {[
             {
               key: "connectors",
-              icon: "mdi:puzzle-outline",
+              icon: "solar:widget-linear",
               label: "Connectors",
               desc: "Connect external tools to enhance evaluations.",
             },
             {
               key: "knowledge",
-              icon: "mdi:book-open-outline",
+              icon: "solar:book-linear",
               label: "Knowledge Base",
               desc: "Add context from your knowledge bases",
             },
             {
               key: "injection",
-              icon: "mdi:layers-outline",
+              icon: "solar:layers-linear",
               label: "Data Injection",
               desc: "Control what data is included when running",
             },
             {
               key: "summary",
-              icon: "mdi:text-short",
+              icon: "solar:notes-linear",
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => (
-            <MenuItem
-              key={item.key}
-              onClick={() =>
-                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
-              }
-              selected={plusSubmenu === item.key}
-              sx={{ borderRadius: "6px", py: 1 }}
-            >
-              <Iconify
-                icon={item.icon}
-                width={18}
-                sx={{ mr: 1.5, color: "text.secondary" }}
-              />
-              <Box sx={{ flex: 1 }}>
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: "13px", fontWeight: 500 }}
-                >
-                  {item.label}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontSize: "11px" }}
-                >
-                  {item.desc}
-                </Typography>
-              </Box>
-              <Iconify
-                icon="mdi:chevron-right"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </MenuItem>
-          ))}
+          ]
+            .filter((item) => !isJevModel || item.key !== "summary")
+            .map((item) => (
+              <MenuItem
+                key={item.key}
+                disabled={isJevModel || disabled}
+                onClick={() =>
+                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
+                }
+                selected={plusSubmenu === item.key}
+                sx={{ borderRadius: "6px", py: 1 }}
+              >
+                <Iconify
+                  icon={item.icon}
+                  width={20}
+                  sx={{ mr: 1.5, color: "text.secondary" }}
+                />
+                <Box sx={{ flex: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                  >
+                    {item.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px" }}
+                  >
+                    {isJevModel
+                      ? `Jev does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
+                      : item.desc}
+                  </Typography>
+                </Box>
+                <Iconify
+                  icon="solar:alt-arrow-right-linear"
+                  width={16}
+                  sx={{ color: "text.disabled" }}
+                />
+              </MenuItem>
+            ))}
         </Box>
 
         {/* Submenu */}
-        {plusSubmenu && (
+        {plusSubmenu && !isJevModel && (
           <Box
             sx={{
               minWidth: 220,
@@ -1571,7 +1767,7 @@ const ModelSelector = ({
                       InputProps={{
                         startAdornment: (
                           <Iconify
-                            icon="mdi:magnify"
+                            icon="solar:magnifier-linear"
                             width={16}
                             sx={{ mr: 0.5, color: "text.disabled" }}
                           />
@@ -1602,7 +1798,7 @@ const ModelSelector = ({
                             height: 8,
                             borderRadius: "50%",
                             backgroundColor: conn.is_verified
-                              ? "success.main"
+                              ? "status.success.solid"
                               : "text.disabled",
                           }}
                         />
@@ -1612,7 +1808,7 @@ const ModelSelector = ({
                       </Box>
                       {activeConnectorIds.includes(conn.id) && (
                         <Iconify
-                          icon="mdi:check"
+                          icon="solar:check-linear"
                           width={16}
                           sx={{ color: "primary.main" }}
                         />
@@ -1642,7 +1838,7 @@ const ModelSelector = ({
                   sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
                 >
                   <Iconify
-                    icon="mdi:cog-outline"
+                    icon="solar:settings-linear"
                     width={16}
                     sx={{ color: "text.secondary" }}
                   />
@@ -1688,7 +1884,7 @@ const ModelSelector = ({
                       InputProps={{
                         startAdornment: (
                           <Iconify
-                            icon="mdi:magnify"
+                            icon="solar:magnifier-linear"
                             width={14}
                             sx={{ mr: 0.5, color: "text.disabled" }}
                           />
@@ -1721,22 +1917,17 @@ const ModelSelector = ({
                       >
                         {selectedKBs.length} selected
                       </Typography>
-                      <Typography
-                        component="button"
-                        variant="s3"
+                      <ButtonBase
                         onClick={() => setSelectedKBs([])}
                         sx={{
+                          typography: "s3",
                           fontWeight: "fontWeightSemiBold",
                           color: "primary.main",
-                          background: "none",
-                          border: "none",
-                          p: 0,
-                          cursor: "pointer",
                           "&:hover": { textDecoration: "underline" },
                         }}
                       >
                         Clear all
-                      </Typography>
+                      </ButtonBase>
                     </Box>
                   )}
                 </Box>
@@ -1762,27 +1953,17 @@ const ModelSelector = ({
                           py: 0.5,
                           gap: 1,
                           ...(isSelected && {
-                            backgroundColor: (theme) =>
-                              alpha(
-                                theme.palette.primary.main,
-                                theme.palette.mode === "dark" ? 0.16 : 0.08,
-                              ),
+                            backgroundColor: "status.discovery.bg",
                           }),
                         }}
                       >
-                        <Iconify
-                          icon={
-                            isSelected
-                              ? "mdi:checkbox-marked"
-                              : "mdi:checkbox-blank-outline"
-                          }
-                          width={18}
-                          sx={{
-                            color: isSelected
-                              ? "primary.main"
-                              : "text.disabled",
-                            flexShrink: 0,
-                          }}
+                        <Checkbox
+                          size="small"
+                          checked={isSelected}
+                          tabIndex={-1}
+                          disableRipple
+                          inputProps={{ "aria-hidden": true }}
+                          sx={{ p: 0, flexShrink: 0 }}
                         />
                         <Typography
                           variant="s2_1"
@@ -1813,14 +1994,19 @@ const ModelSelector = ({
                     </Typography>
                     <Chip
                       size="small"
-                      icon={<Iconify icon="mdi:open-in-new" width={12} />}
+                      icon={
+                        <Iconify
+                          icon="solar:arrow-right-up-linear"
+                          width={12}
+                        />
+                      }
                       label="Create in Knowledge Base"
                       onClick={() => {
                         setPlusAnchor(null);
                         setPlusSubmenu(null);
                         navigate("/dashboard/knowledge");
                       }}
-                      sx={{ fontSize: "11px", cursor: "pointer" }}
+                      sx={{ cursor: "pointer" }}
                     />
                   </Box>
                 )}
@@ -1881,7 +2067,7 @@ const ModelSelector = ({
                         <Typography
                           variant="caption"
                           sx={{
-                            fontSize: "10px",
+                            fontSize: "12px",
                             color: "text.disabled",
                             lineHeight: 1.2,
                             display: "block",
@@ -1898,10 +2084,7 @@ const ModelSelector = ({
                           position: "relative",
                           backgroundColor: isActive
                             ? "primary.main"
-                            : (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.25)"
-                                  : "rgba(0,0,0,0.12)",
+                            : "control.track",
                           transition: "all 0.2s",
                           flexShrink: 0,
                           cursor: "pointer",
@@ -1912,12 +2095,7 @@ const ModelSelector = ({
                             width: 12,
                             height: 12,
                             borderRadius: "50%",
-                            backgroundColor: isActive
-                              ? "#fff"
-                              : (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.7)"
-                                    : "#fff",
+                            backgroundColor: "control.thumb",
                             position: "absolute",
                             top: 2,
                             left: isActive ? 18 : 2,
@@ -1947,7 +2125,18 @@ const ModelSelector = ({
       <KeysDrawer
         open={Boolean(keysDrawerModel)}
         selectedModel={keysDrawerModel}
-        onClose={() => setKeysDrawerModel(null)}
+        onClose={closeKeysDrawer}
+        onKeySaved={(provider) => {
+          const pending = pendingModelRef.current;
+          if (
+            !pending ||
+            disabled ||
+            provider.toLowerCase() !== pending.providers?.toLowerCase() ||
+            (JEV_MODEL_VALUES.has(pending.model_name) && jevModelsLocked)
+          )
+            return;
+          selectModel(pending.model_name);
+        }}
       />
     </Box>
   );

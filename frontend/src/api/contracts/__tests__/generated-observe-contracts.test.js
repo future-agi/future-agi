@@ -266,3 +266,16 @@ describe("generated Observe response contracts", () => {
     ).toMatchObject({ success: true });
   });
 });
+
+
+it("retains the generated optional cost coverage through the nullable graph adapter", async () => {
+  const { parseTraceGraphResponse } = await import("src/api/project/observe-contracts");
+  const cost_coverage = { status: "partial", known_subtotal: 1.25, known_fact_count: 1, unknown_fact_count: 1 };
+  const result = parseTraceGraphResponse({ status: true, result: {
+    metric_name: "cost", data: [{ timestamp: "2026-10-20T12:00:00Z", value: 0.625, primary_traffic: 2, cost_coverage }],
+  } });
+  expect(result.data[0]).toEqual({ timestamp: "2026-10-20T12:00:00Z", value: 0.625, primary_traffic: 2, cost_coverage });
+  expect(() => parseTraceGraphResponse({ status: true, result: {
+    metric_name: "cost", data: [{ timestamp: "2026-10-20T12:00:00Z", value: null, cost_coverage: { ...cost_coverage, known_subtotal: "1.25" } }],
+  } })).toThrow();
+});

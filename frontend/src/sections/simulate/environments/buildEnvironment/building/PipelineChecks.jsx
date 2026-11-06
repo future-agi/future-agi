@@ -1,9 +1,8 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { alpha, keyframes } from "@mui/material/styles";
+import { keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 
-import { BUILD_TONES } from "../buildTones";
 import { PIPELINE_CHECKS_COPY } from "../build.constants";
 import TimelineRow from "./TimelineRow";
 
@@ -58,33 +57,28 @@ export default function PipelineChecks({ pipeline }) {
   if (!all.length) return null;
 
   return (
-    <Box sx={{ px: 2.5, pt: 2.5, pb: 3 }}>
+    <Box sx={{ px: 3, pt: 3, pb: 3 }}>
       {/* ── heading + progress ── */}
-      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.75 }}>
-        <Typography
-          sx={{
-            typography: "s3", fontWeight: "fontWeightBold", color: "text.disabled",
-            textTransform: "uppercase", letterSpacing: 0.5,
-          }}
-        >
+      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1 }}>
+        <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
           {PIPELINE_CHECKS_COPY.heading}
         </Typography>
         <Box flex={1} />
-        <Typography sx={{ typography: "s3", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
           {done} of {total}
         </Typography>
       </Stack>
       <Box
         sx={{
-          height: 3, borderRadius: 999, overflow: "hidden", mb: 2.5,
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+          height: 4, borderRadius: "2px", overflow: "hidden", mb: 3,
+          bgcolor: "action.selected",
           position: "relative",
         }}
       >
         <Box
           sx={{
             height: "100%", width: `${percent}%`,
-            bgcolor: done === total ? BUILD_TONES.green : BUILD_TONES.accent,
+            bgcolor: done === total ? "status.success.solid" : "status.info.solid",
             transition: "width 0.4s ease",
           }}
         />
@@ -93,7 +87,8 @@ export default function PipelineChecks({ pipeline }) {
             sx={{
               position: "absolute", inset: 0,
               background: (t) =>
-                `linear-gradient(90deg, transparent 0%, ${alpha(t.palette.common.white, 0.18)} 50%, transparent 100%)`,
+                `linear-gradient(90deg, transparent 0%, ${t.palette.background.paper} 50%, transparent 100%)`,
+              opacity: 0.3,
               backgroundSize: "220% 100%",
               animation: `${shimmer} 1.6s linear infinite`,
             }}

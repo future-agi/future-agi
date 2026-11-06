@@ -103,13 +103,8 @@ export default function AddHeadersSection({ control }) {
           variant="outlined"
           color="primary"
           sx={{
-            typography: "s1_2",
-            fontWeight: "fontWeightMedium",
             flexShrink: 0,
-            height: "34px",
             borderColor: "primary.main",
-            padding: theme.spacing(0.75, 1.5),
-            borderRadius: theme.spacing(0.5),
             color: "primary.main",
             "&:hover": {
               borderColor: "primary.dark",
@@ -118,11 +113,8 @@ export default function AddHeadersSection({ control }) {
           startIcon={
             <SvgColor
               src="/assets/icons/ic_add.svg"
-              sx={{
-                bgcolor: "primary.main",
-                height: "20px",
-                width: "20px",
-              }}
+              width="20px"
+              sx={{ bgcolor: "primary.main" }}
             />
           }
         >
@@ -133,8 +125,8 @@ export default function AddHeadersSection({ control }) {
         sx={{
           bgcolor: "background.paper",
           padding: theme.spacing(3, 1.5),
-          border: `1px solid ${theme.palette.background.neutral}`,
-          borderRadius: theme.spacing(1.5),
+          border: `1px solid ${theme.palette.divider}`,
+          borderRadius: "8px",
         }}
         direction={"column"}
         mt={2}

@@ -62,8 +62,8 @@ describe("CoverageMatrix", () => {
   it("draws the pairwise grid from rows / columns / cells, zeros included", () => {
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} defaultOpen />);
     // Row-axis levels (humanized) and column-axis levels render as the grid axes.
-    expect(screen.getByText("Authenticate Otp")).toBeInTheDocument();
-    expect(screen.getByText("Prompt Injection")).toBeInTheDocument();
+    expect(screen.getByText("Authenticate otp")).toBeInTheDocument();
+    expect(screen.getByText("Prompt injection")).toBeInTheDocument();
     // The forced-overlays checklist reads from per_axis.overlay.counts.
     expect(screen.getByText("Destructive / irreversible")).toBeInTheDocument();
   });

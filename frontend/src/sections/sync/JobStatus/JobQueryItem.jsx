@@ -15,15 +15,15 @@ const JobQueryItem = ({ jobQuery }) => {
     >
       <Box sx={{ display: "flex" }}>
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-          <Typography fontSize={14} color="text.primary">
+          <Typography fontSize={13} color="text.primary">
             Query ID : {jobQuery.id}
           </Typography>
-          <Typography fontSize={14} color="text.primary">
+          <Typography fontSize={13} color="text.primary">
             No.of rows processed: {jobQuery.rowsProcessed}
           </Typography>
         </Box>
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-          <Typography fontSize={14} color="text.primary">
+          <Typography fontSize={13} color="text.primary">
             Runtime :{" "}
             {format(new Date(jobQuery.created_at), "dd MMM yyyy hh:mm:ss aa")}
           </Typography>

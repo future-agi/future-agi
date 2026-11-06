@@ -70,7 +70,13 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
 
   if (step === "success") {
     return (
-      <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+      <Dialog
+        open={open}
+        onClose={handleClose}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
+        fullWidth
+      >
         <DialogTitle>API Key Created</DialogTitle>
         <DialogContent>
           <Stack spacing={2} mt={1}>
@@ -89,11 +95,11 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
                     <IconButton onClick={handleCopy} size="small">
                       {copied ? (
                         <Iconify
-                          icon="mdi:check"
+                          icon="solar:check-linear"
                           sx={{ color: "success.main" }}
                         />
                       ) : (
-                        <Iconify icon="mdi:content-copy" />
+                        <Iconify icon="solar:copy-linear" />
                       )}
                     </IconButton>
                   </InputAdornment>
@@ -121,7 +127,13 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Create API Key</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} mt={1}>

@@ -1,13 +1,13 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { format } from "date-fns";
-import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import {
@@ -17,12 +17,15 @@ import {
   usedInLabel,
   versionsParts,
 } from "./connectedAgentLabels";
+import ListToolbar from "src/components/list-toolbar/ListToolbar";
+import EmptyState from "src/components/empty-state";
 
 const PAGE_SIZE_DEFAULT = 25;
 const MONO = "ui-monospace, Menlo, monospace";
 
-const CellText = ({ children, color = "text.primary" }) => (
-  <Typography variant="body2" noWrap sx={{ fontSize: 13, color }}>
+// Table values are 12/18 (body-sm), one size under the row title's weight.
+const CellText = ({ children, color = "text.secondary" }) => (
+  <Typography variant="body2" noWrap sx={{ color }}>
     {children}
   </Typography>
 );
@@ -41,18 +44,15 @@ const columns = [
       const a = row.original;
       return (
         <Stack justifyContent="center" sx={{ minWidth: 0, height: "100%" }}>
-          <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
+          {/* One line: the name; the description shows on hover. */}
+          <Typography
+            variant="body2"
+            noWrap
+            title={a.description || a.name}
+            sx={{ fontWeight: 500 }}
+          >
             {a.name}
           </Typography>
-          {a.description && (
-            <Typography
-              noWrap
-              title={a.description}
-              sx={{ typography: "s3", color: "text.subtitle" }}
-            >
-              {a.description}
-            </Typography>
-          )}
         </Stack>
       );
     },
@@ -102,7 +102,7 @@ const columns = [
       const { version, rest } = versionsParts(row.original);
       return (
         <CellText>
-          <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>
+          <Box component="span" sx={{ fontFamily: MONO, fontWeight: 500 }}>
             {version}
           </Box>
           <Box component="span" sx={{ color: "text.secondary" }}>
@@ -122,7 +122,7 @@ const columns = [
     cell: ({ row }) => {
       const { text, empty } = usedInLabel(row.original);
       return (
-        <CellText color={empty ? "text.disabled" : "text.primary"}>
+        <CellText color={empty ? "text.disabled" : "text.secondary"}>
           {text}
         </CellText>
       );
@@ -163,53 +163,26 @@ export default function ConnectedAgentsView({ onConnect }) {
   });
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const rowHeight = useMemo(
-    () => (items.some((a) => a.description) ? 52 : 44),
-    [items],
-  );
+  // One-line rows: the name only.
+  const rowHeight = ROW_HEIGHT.default;
 
   if (!isLoading && !isError && !search && !query && total === 0) {
     return (
-      <Box
-        sx={{
-          p: 5,
-          textAlign: "center",
-          border: "1px dashed",
-          borderColor: "divider",
-          borderRadius: 1.5,
-        }}
-      >
-        <Iconify
-          icon="solar:link-circle-linear"
-          width={28}
-          sx={{ color: "text.subtitle" }}
-        />
-        <Typography sx={{ typography: "s1", fontWeight: 600, mt: 1 }}>
-          No connected agents yet
-        </Typography>
-        <Typography
-          sx={{
-            typography: "s2",
-            color: "text.subtitle",
-            mt: 0.5,
-            mb: 2,
-            maxWidth: 460,
-            mx: "auto",
-          }}
-        >
-          Connect your agent from a hosted platform, an endpoint, a repository
-          or an upload. Simulations run against a copy of it.
-        </Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={onConnect}
-          sx={{ typography: "s2", fontWeight: 700 }}
-        >
-          Connect an agent
-        </Button>
-      </Box>
+      <EmptyState
+        icon="solar:link-circle-linear"
+        title="No connected agents yet"
+        description="Connect your agent from a hosted platform, an endpoint, a repository or an upload. Simulations run against a copy of it."
+        action={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={onConnect}
+          >
+            Connect an agent
+          </Button>
+        }
+      />
     );
   }
 
@@ -218,21 +191,24 @@ export default function ConnectedAgentsView({ onConnect }) {
       sx={{
         display: "flex",
         flexDirection: "column",
-        gap: 1.5,
         flex: 1,
         minHeight: 0,
       }}
     >
-      <FormSearchField
-        searchQuery={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setPage(0);
-        }}
-        size="small"
-        placeholder="Search"
-        sx={{ width: 250, "& .MuiOutlinedInput-root": { height: "30px" } }}
-      />
+      {/* Same toolbar wrapper as the Agent Playground tab: 12px below the
+          tabs, 8px above the table, so switching tabs moves nothing. */}
+      <ListToolbar>
+        <FormSearchField
+          searchQuery={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
+          size="small"
+          placeholder="Search"
+          sx={{ width: 250 }}
+        />
+      </ListToolbar>
       <DataTable
         columns={columns}
         data={items}

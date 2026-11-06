@@ -55,6 +55,10 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
+from agentcc.serializers.provider_credential import (
+    ProviderBaseURLField,
+    allows_keyless_system_one,
+)
 from agentcc.services.config_push import (
     _RULE_TO_REGISTRY,
     push_all_org_configs,
@@ -598,6 +602,9 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request(
                     "Google service-account credentials can only be used with Vertex AI."
                 )
+            provider_config["base_url"] = ProviderBaseURLField(
+                max_length=500, allow_blank=True
+            ).run_validation(provider_config.get("base_url", ""))
             saved_base_url = (
                 AgentccProviderCredential.no_workspace_objects.filter(
                     organization=org, provider_name=provider_name, deleted=False
@@ -615,6 +622,10 @@ class AgentccGatewayViewSet(ViewSet):
             from integrations.services.credentials import CredentialManager
 
             api_key = provider_config.pop("api_key", None)
+            if api_key is not None and not isinstance(api_key, str):
+                return self._gm.bad_request("API key must be a string")
+            if isinstance(api_key, str):
+                api_key = api_key.strip()
             credential_fields = (
                 "api_secret",
                 "access_key",
@@ -683,21 +694,48 @@ class AgentccGatewayViewSet(ViewSet):
                     cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
                         **lookup
                     )
+                except AgentccProviderCredential.DoesNotExist:
+                    cred = None
+
+                # Omitted keys keep the stored credentials; an explicit empty
+                # key must still pass the same rules as a new provider.
+                credentials = (
+                    CredentialManager.decrypt(bytes(cred.encrypted_credentials))
+                    if cred is not None
+                    else {}
+                )
+                credentials.update(new_cred_values)
+                has_credentials = isinstance(credentials.get("api_key"), str) and bool(
+                    credentials["api_key"].strip()
+                )
+                if (
+                    provider_name in ("bedrock", "vertex")
+                    or defaults["api_format"] == "bedrock"
+                ):
+                    has_credentials = any(
+                        isinstance(value, str) and value.strip()
+                        for value in credentials.values()
+                    )
+                if not has_credentials and not allows_keyless_system_one(
+                    provider_name, defaults["api_format"], defaults["base_url"]
+                ):
+                    return self._gm.bad_request(
+                        "API key or provider credentials are required"
+                    )
+
+                if cred is not None:
                     for k, v in defaults.items():
                         setattr(cred, k, v)
-                    # Merge new credential values into existing encrypted credentials.
                     if new_cred_values:
-                        existing = CredentialManager.decrypt(cred.encrypted_credentials)
-                        existing.update(new_cred_values)
-                        cred.encrypted_credentials = CredentialManager.encrypt(existing)
-                    cred.save()
-                except AgentccProviderCredential.DoesNotExist:
-                    if not new_cred_values:
-                        return self._gm.bad_request(
-                            "credentials are required for new providers"
+                        cred.encrypted_credentials = CredentialManager.encrypt(
+                            credentials
                         )
+                    cred.save()
+                else:
+                    # Encrypt even an empty dict: config push decrypts every
+                    # provider row, including a keyless Generic endpoint.
                     defaults["encrypted_credentials"] = CredentialManager.encrypt(
-                        new_cred_values
+                        credentials
                     )
                     cred = AgentccProviderCredential.no_workspace_objects.create(
                         **lookup, **defaults
