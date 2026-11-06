@@ -100,7 +100,8 @@ import { managedOf, managedRepoOf } from "../_mock/envManaged";
 import SetupGapsPanel from "./SetupGapsPanel";
 import { runPlan } from "../_mock/proofs";
 import { runScopeOf, scopeBreakdownOf } from "../_mock/runScope";
-import { resolveEval } from "../_mock/evals";
+import { resolveEval, suggestedEvalsOf } from "../_mock/evals";
+import { useAppliedEvals } from "./evals/useAppliedEvals";
 import { runSizeOf, parallelOf } from "../_mock/runStream";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
 import {
@@ -378,6 +379,11 @@ export default function EnvironmentWorkspace() {
   /* A locked release is read-only the same way: copy it to edit. */
   const lockedRelease = envState.lockedRelease || null;
   const readOnlyEnv = isSeededTemplate || !!lockedRelease;
+  /* Suggested evaluations picked in the run plan are added on start. */
+  const { add: addEvals } = useAppliedEvals(
+    envState.evals ? envState : { ...envState, evals: [] },
+    patch,
+  );
   /* The newest state, for chat confirmations answered after a re-render. */
   const latestEnvState = useRef(envState);
   latestEnvState.current = envState;
@@ -1083,10 +1089,12 @@ export default function EnvironmentWorkspace() {
     compatSubset,
     withAgent,
     suiteIds,
+    addEvals: picked,
   }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
     if (!req) return;
+    if (picked?.length && !readOnlyEnv) addEvals(picked);
     const current = currentAgentVersion(envState)?.label;
     if (versions.length > 1)
       return runGroup.startVersions(versions, {
@@ -3266,6 +3274,8 @@ export default function EnvironmentWorkspace() {
             envId,
           )}
           evals={(envState.evals || []).map(resolveEval).filter(Boolean)}
+          suggestedEvals={suggestedEvalsOf(env, envState)}
+          canAddEvals={!readOnlyEnv}
           runLocation={envState?.agent?.values?.runLocation || null}
           parallel={parallelOf(envState)}
           missingRate={missingRate}

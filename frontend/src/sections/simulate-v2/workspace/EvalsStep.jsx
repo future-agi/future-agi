@@ -19,12 +19,12 @@ import Iconify from "src/components/iconify";
 import { SectionCard, EmptyState } from "../components/primitives";
 import {
   getEval,
-  EVAL_CATALOG,
   EVAL_CAP_NOTE,
   MAX_APPLIED_EVALS,
   REQUIRED_EVAL_NOTE,
   TOOL_CALL_JUDGE_ID,
   cappedEvalCount,
+  suggestedEvalsOf,
 } from "../_mock/evals";
 import { EvalRow } from "./evals/appliedEvals";
 import { useAppliedEvals } from "./evals/useAppliedEvals";
@@ -119,23 +119,10 @@ export default function EvalsStep({
         suggestions the moment the env exists, not something the user
         has to hunt down in the picker.
   */
-  const suggested = useMemo(() => {
-    const presetIds = env.evalPreset || [];
-    const twinIds = envState?.twinBacking
-      ? EVAL_CATALOG.filter((e) => e.evalKind === "twin_end_state").map(
-          (e) => e.id,
-        )
-      : [];
-    const orderedIds = [...presetIds, ...twinIds];
-    return (
-      orderedIds
-        .map(getEval)
-        .filter(Boolean)
-        .filter((e) => !appliedIds.has(e.id))
-        /* De-duplicate — a twin id could theoretically also live in preset. */
-        .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i)
-    );
-  }, [env.evalPreset, envState?.twinBacking, appliedIds]);
+  const suggested = useMemo(
+    () => suggestedEvalsOf(env, envState),
+    [env, envState],
+  );
 
   /* evals.md: run only selected evaluations — the suggestions below are
      added by the user, one at a time or all at once, never on mount. */

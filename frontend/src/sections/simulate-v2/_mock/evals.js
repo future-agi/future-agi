@@ -579,3 +579,25 @@ export const isRequiredEval = (applied) =>
   !!(applied && typeof applied === "object" && applied.required);
 export const requiredEvalIds = (applied = []) =>
   applied.filter(isRequiredEval).map(idOfApplied);
+
+/* Suggested = the environment's preset (plus end-state checks when it's
+   backed by connected apps) minus what's already added. Derived, never
+   stored: nothing here scores a run until the user adds it (evals.md). */
+export const suggestedEvalsOf = (env, envState) => {
+  const applied = new Set(
+    (envState?.evals || [])
+      .map(resolveEval)
+      .filter(Boolean)
+      .map((e) => e.id),
+  );
+  const twinIds = envState?.twinBacking
+    ? EVAL_CATALOG.filter((e) => e.evalKind === "twin_end_state").map(
+        (e) => e.id,
+      )
+    : [];
+  return [...(env?.evalPreset || []), ...twinIds]
+    .map(getEval)
+    .filter(Boolean)
+    .filter((e) => !applied.has(e.id))
+    .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
+};

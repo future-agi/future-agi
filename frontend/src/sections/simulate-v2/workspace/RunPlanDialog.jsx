@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Chip,
   Collapse,
   Radio,
   DialogActions,
@@ -45,6 +46,7 @@ import {
 import { currentEnvVersion } from "../_mock/versions";
 import ReadyToRun from "../compat/ReadyToRun";
 import { SHOW_RUN_COST } from "../_mock/costFlags";
+import { evalSlotsLeft } from "../_mock/evals";
 import { waitingWordOf } from "../_mock/compatibility";
 import { platformPreviewOf } from "../_mock/platformPreview";
 import { assistantsFor } from "../_mock/connectAgent";
@@ -163,6 +165,8 @@ export default function RunPlanDialog({
   initialAgentKey = null,
   suites = [],
   envLabel = null,
+  suggestedEvals = [],
+  canAddEvals = true,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
   /* Agents we start from code run in our sandbox and take the seed; a
@@ -187,6 +191,19 @@ export default function RunPlanDialog({
      and which suite (every scenario, or a saved suite). */
   const [agentKey, setAgentKey] = useState(initialAgentKey);
   const [suiteId, setSuiteId] = useState("all");
+  /* Suggested evaluations score this run only when picked here (evals.md:
+     run only selected evaluations); a pick is added to the environment. */
+  const [addEvalIds, setAddEvalIds] = useState([]);
+  const evalRoom = evalSlotsLeft(envState?.evals || []);
+  const pickable = canAddEvals ? suggestedEvals : [];
+  const toggleEval = (id) =>
+    setAddEvalIds((ids) =>
+      ids.includes(id)
+        ? ids.filter((x) => x !== id)
+        : ids.length < evalRoom
+          ? [...ids, id]
+          : ids,
+    );
   const otherAgent =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
   const suite = suites.find((x) => x.id === suiteId) || null;
@@ -253,6 +270,7 @@ export default function RunPlanDialog({
     setMoreVersions(false);
     setAgentKey(initialAgentKey);
     setSuiteId("all");
+    setAddEvalIds([]);
     setCandidate(null);
     setCapTouched(false);
     setAlertAt(WORKSPACE_POLICY.alertAt);
@@ -654,6 +672,107 @@ export default function RunPlanDialog({
                   note: suite
                     ? "A suite is frozen when the run starts: later edits to it don't change this run."
                     : null,
+                },
+                /* What scores this run: the added evaluations, then the
+                   suggested ones — picked here, never added by default. */
+                {
+                  k: "Evaluations",
+                  v: (
+                    <Stack spacing={0.5} sx={{ py: 0.25, minWidth: 0 }}>
+                      <Stack direction="row" alignItems="center">
+                        <Box component="span">
+                          {(evals || []).length
+                            ? (evals || []).map((e) => e.name).join(", ")
+                            : "None added"}
+                        </Box>
+                        <Tooltip
+                          arrow
+                          title={
+                            pickable.length
+                              ? "Suggested evaluations score a run only if you pick them. Picked ones are added to this environment's evaluations when the run starts. The scenarios' own checks always run."
+                              : "The scenarios' own checks always run. Add evaluations on the Evaluations step."
+                          }
+                        >
+                          <Box
+                            component="span"
+                            sx={{ display: "inline-flex", ml: 0.75 }}
+                          >
+                            <Iconify
+                              icon="solar:info-circle-linear"
+                              width={14}
+                              sx={{ color: "text.disabled" }}
+                            />
+                          </Box>
+                        </Tooltip>
+                      </Stack>
+                      {pickable.length > 0 && (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          gap={0.75}
+                          flexWrap="wrap"
+                        >
+                          <Box component="span" sx={{ color: "text.tertiary" }}>
+                            Suggested
+                          </Box>
+                          {pickable.map((e) => {
+                            const on = addEvalIds.includes(e.id);
+                            const full = !on && addEvalIds.length >= evalRoom;
+                            return (
+                              <Tooltip
+                                key={e.id}
+                                arrow
+                                title={
+                                  full
+                                    ? "No room for more evaluations on this environment."
+                                    : e.blurb || e.description || ""
+                                }
+                              >
+                                <span>
+                                  <Chip
+                                    size="small"
+                                    label={e.name}
+                                    disabled={full}
+                                    onClick={() => toggleEval(e.id)}
+                                    icon={
+                                      <Iconify
+                                        icon={
+                                          on
+                                            ? "solar:check-read-linear"
+                                            : "solar:add-circle-linear"
+                                        }
+                                        width={12}
+                                      />
+                                    }
+                                    variant={on ? "filled" : "outlined"}
+                                    sx={{
+                                      height: 20,
+                                      borderRadius: "4px",
+                                      typography: "s3",
+                                      fontWeight: 500,
+                                      ...(on
+                                        ? {
+                                            bgcolor: "action.selected",
+                                            color: "text.primary",
+                                          }
+                                        : { color: "text.secondary" }),
+                                      "& .MuiChip-icon": {
+                                        ml: "6px",
+                                        mr: "-2px",
+                                        color: "inherit",
+                                      },
+                                      "& .MuiChip-label": { px: "6px" },
+                                    }}
+                                  />
+                                </span>
+                              </Tooltip>
+                            );
+                          })}
+                        </Stack>
+                      )}
+                    </Stack>
+                  ),
+                  note: null,
                 },
               ].map((row) => (
                 <Stack
@@ -1444,6 +1563,7 @@ export default function RunPlanDialog({
                       }
                     : null,
                   suiteIds: suite ? suite.ids : null,
+                  addEvals: pickable.filter((e) => addEvalIds.includes(e.id)),
                   candidate: snapshotPick ? candidate : null,
                   /* No cap is applied while pre-run cost is Later (costFlags). */
                   cap: SHOW_RUN_COST ? effectiveCap : null,
@@ -1508,6 +1628,9 @@ RunPlanDialog.propTypes = {
     }),
   ),
   evals: PropTypes.array,
+  /* Suggested evaluations not added yet — picked here, added on start. */
+  suggestedEvals: PropTypes.array,
+  canAddEvals: PropTypes.bool,
   runLocation: PropTypes.string,
   parallel: PropTypes.number,
   missingRate: PropTypes.bool,
