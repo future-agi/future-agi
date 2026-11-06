@@ -68,6 +68,34 @@ describe("ChatCallDrawer Open in Traces", () => {
     );
   });
 
+  it("forgets the asked-for trace when the drawer moves to another call", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(screen.getByRole("button", { name: "open step trace" }));
+    expect(screen.getByTestId("traces-panel")).toHaveAttribute(
+      "data-open-trace",
+      "tr-1",
+    );
+
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("traces-panel")).toHaveAttribute(
+      "data-open-trace",
+      "null",
+    );
+  });
+
   it("keeps what was opened in Participants after a visit to another tab", async () => {
     const user = userEvent.setup();
     render(

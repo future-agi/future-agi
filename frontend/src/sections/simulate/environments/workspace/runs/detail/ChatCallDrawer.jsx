@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Chip, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -101,6 +101,12 @@ export default function ChatCallDrawer({
   const [side, setSide] = useState("analytics");
   const [chosenArtifact, setChosenArtifact] = useState("transcript");
   const [openStep, setOpenStep] = useState(null);
+  // Forgotten on another call, as in the voice drawer.
+  const [traceCallId, setTraceCallId] = useState(task.id);
+  if (traceCallId !== task.id) {
+    setTraceCallId(task.id);
+    setOpenStep(null);
+  }
   const openTrace = (traceId, spanId) => {
     setOpenStep({ traceId, spanId });
     setChosenArtifact("traces");
@@ -114,6 +120,10 @@ export default function ChatCallDrawer({
   const showWorkers = hasWorkers || artifact === "workers";
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
+  const traceIds = useMemo(
+    () => callTraces.traces.map((trace) => trace.traceId),
+    [callTraces.traces],
+  );
   const showTraces = artifact === "traces";
 
   // The header and chips paint from the already-loaded row immediately, then
@@ -201,7 +211,9 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            {showWorkers ? <Tab value="workers" label={CALL_WORKERS_COPY.tab} /> : null}
+            {showWorkers ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
@@ -212,7 +224,7 @@ export default function ChatCallDrawer({
                   key={task.id}
                   callExecutionId={task.id}
                   onOpenTrace={openTrace}
-                  traceIds={callTraces.traces.map((trace) => trace.traceId)}
+                  traceIds={traceIds}
                 />
               </Box>
             ) : null}
