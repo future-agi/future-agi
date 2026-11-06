@@ -8,6 +8,27 @@ const quiet = {
   wordBreak: "break-word",
 };
 
+// Actors' model calls summed per actor and model, then in all: calls, tokens and cost, never just a count.
+const usageLines = (rows, name) => {
+  const sum = (some) => [
+    some.length,
+    some.reduce(
+      (n, one) => n + (one.tokens_in || 0) + (one.tokens_out || 0),
+      0,
+    ),
+    some.reduce((n, one) => n + (one.cost_usd || 0), 0),
+  ];
+  const groups = new Map();
+  for (const one of rows) {
+    const key = `${one.actor}\u0000${one.model || ""}`;
+    groups.set(key, [...(groups.get(key) || []), one]);
+  }
+  const lines = [...groups.values()].map((some) =>
+    C.usageBy(name(some[0].actor), some[0].model, C.usage(...sum(some))),
+  );
+  return [...lines, C.usageTotal(C.usage(...sum(rows)))];
+};
+
 // A trial's world changes per participant (the agent and each actor), and what each actor chose. Kept apart:
 // attempted, refused and committed are never summed into one number.
 export default function TrialChangesPanel({ trialState }) {
@@ -102,7 +123,11 @@ export default function TrialChangesPanel({ trialState }) {
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
             {C.usageHeading}
           </Typography>
-          <Typography sx={quiet}>{C.usage(usage)}</Typography>
+          {usageLines(usage, name).map((line) => (
+            <Typography key={line} sx={quiet}>
+              {line}
+            </Typography>
+          ))}
         </Box>
       )}
     </Stack>

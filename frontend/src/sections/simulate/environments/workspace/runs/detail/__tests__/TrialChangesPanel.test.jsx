@@ -228,14 +228,21 @@ describe("TrialChangesPanel", () => {
     expect(screen.queryByText(/Before the run · /)).toBeNull();
   });
 
-  it("says how much the actors' model calls used", () => {
+  it("says each actor's model calls, tokens and cost, then the trial's in all", () => {
+    const call = (actor, model, cost) => ({
+      actor,
+      model,
+      tokens_in: 10,
+      tokens_out: 5,
+      cost_usd: cost,
+    });
     render(
       <TrialChangesPanel
         trialState={{
           state_changes: [
             {
-              who: "agent",
-              name: "the agent",
+              who: "priya",
+              name: "Priya",
               attempted: 1,
               committed: 1,
               refused: 0,
@@ -245,20 +252,22 @@ describe("TrialChangesPanel", () => {
             },
           ],
           usage: [
-            {
-              actor: "priya",
-              model: "m",
-              tokens_in: 10,
-              tokens_out: 5,
-              cost_usd: 0,
-            },
+            call("priya", "m1", 0.001),
+            call("priya", "m1", 0.002),
+            call("ravi", "", 0.0005),
           ],
         }}
       />,
     );
     expect(
+      screen.getByText("Priya on m1: 2 model calls, 30 tokens, $0.0030"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("ravi: 1 model call, 15 tokens, $0.0005"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText(
-        "1 model calls, 15 tokens, counted in the simulator's usage",
+        "In all: 3 model calls, 45 tokens, $0.0035, counted in the simulator's usage",
       ),
     ).toBeInTheDocument();
   });

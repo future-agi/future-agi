@@ -58,13 +58,12 @@ export const TRIAL_CHANGES_COPY = {
   actedBefore: "the agent committed a write before the decision",
   waitedFor: "the agent waited for the decision",
   usageHeading: "Actors' model use",
-  usage: (rows) => {
-    const tokens = rows.reduce(
-      (sum, one) => sum + (one.tokens_in || 0) + (one.tokens_out || 0),
-      0,
-    );
-    return `${rows.length} model calls, ${tokens} tokens, counted in the simulator's usage`;
-  },
+  // One line for a set of model calls: how many, their tokens and what they cost.
+  usage: (calls, tokens, cost) =>
+    `${calls} model call${calls === 1 ? "" : "s"}, ${tokens} tokens, $${cost.toFixed(4)}`,
+  usageBy: (who, model, line) =>
+    `${who}${model ? ` on ${model}` : ""}: ${line}`,
+  usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
 };
