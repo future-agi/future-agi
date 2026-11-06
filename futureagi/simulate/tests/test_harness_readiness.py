@@ -1399,6 +1399,28 @@ class TestCancel:
 
         assert _rows(_report(environment))["cancel"]["status"] == "untested"
 
+    def test_a_stopped_build_of_the_agent_is_not_a_stop_of_a_run(
+        self, user, workspace, storage
+    ):
+        from django.utils import timezone
+
+        from simulate.models import HostedHarnessAttempt
+        from simulate.services.hosted_harness import register_attempt
+
+        environment = _environment(user, workspace, storage, "rd-cancel-build")
+        _certify(environment, storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            cancel_requested_at=timezone.now(), cancel_reason="user_canceled"
+        )
+        attempt = register_attempt(
+            environment.id, endpoint_base_url="https://platform.example"
+        ).attempt
+        HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+            provider_ref="sandbox-build", cleanup_verified_at=timezone.now()
+        )
+
+        assert _rows(_report(environment))["cancel"]["status"] == "untested"
+
     def test_cancel_is_needed_by_no_case(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "rd-cancel-needs")
         _certify(environment, storage)
