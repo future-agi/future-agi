@@ -67,16 +67,19 @@ def invalid_bedrock_model_id(model_name) -> bool:
 
     Family names such as "Claude" reach LiteLLM Invoke with no vendor and
     fail as Unknown provider=None. Reject those before any provider call.
-    Real IDs contain a vendor separator (dot, slash, or colon).
+    Real IDs contain a vendor separator (dot, slash, or colon) and never
+    contain whitespace, so "Claude 3.5 Sonnet" is a label even with a dot.
+    A route prefix does not turn a label into an ID: "bedrock/Claude" is
+    still the family name.
     """
     if not isinstance(model_name, str):
         return True
     stripped = model_name.strip()
     if not stripped or stripped != model_name or len(stripped) > 255:
         return True
-    if any(ord(char) < 32 for char in stripped):
+    if not stripped.isprintable() or any(char.isspace() for char in stripped):
         return True
-    if stripped.lower() in _BEDROCK_FAMILY_LABELS:
+    if stripped.rsplit("/", 1)[-1].lower() in _BEDROCK_FAMILY_LABELS:
         return True
     return not any(separator in stripped for separator in (".", "/", ":"))
 
@@ -625,11 +628,17 @@ class EditCustomModel(APIView):
             key = data.get("key", None)
 
             model = _custom_ai_model_queryset(request).get(id=model_id)
+            # Check the ID only when it is about to be saved or sent to the
+            # provider. A cost-only edit of an older row leaves it untouched,
+            # as the details update does.
+            checks_model_id = bool(model_name or key or config_json)
             if not model_name:
                 model_name = model.user_model_id
-            if str(
-                model.provider or ""
-            ).strip().lower() == "bedrock" and invalid_bedrock_model_id(model_name):
+            if (
+                checks_model_id
+                and str(model.provider or "").strip().lower() == "bedrock"
+                and invalid_bedrock_model_id(model_name)
+            ):
                 return self._gm.bad_request(
                     get_error_message("INVALID_BEDROCK_MODEL_ID")
                 )
