@@ -5,6 +5,7 @@ package a2a
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 )
 
@@ -70,6 +71,16 @@ type Task struct {
 	Artifacts []Artifact      `json:"artifacts,omitempty"`
 	History   []Message       `json:"history,omitempty"`
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
+}
+
+// clone returns a copy of t with its own top-level slices, so one copy can be
+// updated while another is read or encoded on a different goroutine.
+func (t *Task) clone() *Task {
+	c := *t
+	c.Status.Message = slices.Clone(t.Status.Message)
+	c.Artifacts = slices.Clone(t.Artifacts)
+	c.History = slices.Clone(t.History)
+	return &c
 }
 
 // TaskStatus describes the current state of a task.

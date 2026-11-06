@@ -116,8 +116,8 @@ const EmbeddingsSpan = ({
                     }}
                   >
                     <Iconify
-                      icon="basil:copy-outline"
-                      width={22}
+                      icon="solar:copy-linear"
+                      width={20}
                       sx={{ color: "text.secondary" }}
                     />
                   </IconButton>
@@ -131,7 +131,7 @@ const EmbeddingsSpan = ({
               >
                 <Typography
                   sx={{
-                    fontSize: "14px",
+                    fontSize: "13px",
                     fontWeight: typography["fontWeightSemiBold"],
                     color: "primary.main",
                     padding: 1.5,
@@ -143,7 +143,7 @@ const EmbeddingsSpan = ({
               <Typography
                 sx={{
                   padding: 1.5,
-                  fontSize: "14px",
+                  fontSize: "13px",
                 }}
               >
                 {["array", "json"].includes(dataType) &&

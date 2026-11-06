@@ -95,7 +95,13 @@ const UpdateKeysDialog = ({
   agentDefinitionId,
 }) => {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <UpdateKeysDialogChild
         agentDetails={agentDetails}
         onClose={onClose}

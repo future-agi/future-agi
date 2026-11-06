@@ -4,12 +4,15 @@ import { Box, ButtonBase } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 const PROMPTS = [
-  { label: "Show me where the latency is", icon: "mdi:timer-outline" },
-  { label: "Visualize token usage by span", icon: "mdi:chart-bar" },
-  { label: "Show the agent execution flow", icon: "mdi:graph-outline" },
-  { label: "What's the cost breakdown?", icon: "mdi:currency-usd" },
-  { label: "Compare the LLM calls", icon: "mdi:compare" },
-  { label: "Summarize this trace", icon: "mdi:text-box-outline" },
+  { label: "Show me where the latency is", icon: "solar:clock-circle-linear" },
+  { label: "Visualize token usage by span", icon: "solar:chart-2-linear" },
+  { label: "Show the agent execution flow", icon: "solar:graph-linear" },
+  {
+    label: "What's the cost breakdown?",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  { label: "Compare the LLM calls", icon: "solar:transfer-horizontal-linear" },
+  { label: "Summarize this trace", icon: "solar:notes-linear" },
 ];
 
 export default function SuggestedPrompts({ onSelect, prompts }) {
@@ -34,7 +37,7 @@ export default function SuggestedPrompts({ onSelect, prompts }) {
             gap: 0.5,
             px: 1.25,
             py: 0.5,
-            borderRadius: "16px",
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
