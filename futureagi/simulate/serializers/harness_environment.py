@@ -849,6 +849,15 @@ class HarnessCapabilityFixRecheckSerializer(serializers.Serializer):
 
 class HarnessCapabilityFixSerializer(serializers.Serializer):
     type = serializers.CharField()
+    category = serializers.ChoiceField(
+        choices=("startup", "message_mapping", "tool_routing", "evidence"),
+        allow_null=True,
+        help_text=(
+            "The kind of repair: the agent's start and credentials, its message"
+            " mapping, a tool's routing, or the environment's data and reset; null"
+            " for a re-check."
+        ),
+    )
     target = serializers.CharField(allow_null=True)
     action = serializers.CharField()
     would = serializers.CharField()
@@ -881,6 +890,9 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
     evidence = HarnessCapabilityEvidenceSerializer(many=True)
     checked_at = serializers.CharField(allow_null=True)
     fix = HarnessCapabilityFixSerializer(allow_null=True)
+    consequence = serializers.CharField(
+        help_text="What the status means for the cases, their spend and their independence."
+    )
 
 
 class HarnessCapabilityCountsSerializer(serializers.Serializer):

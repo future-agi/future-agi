@@ -384,6 +384,7 @@ class TestRows:
         assert (routing["status"], routing["reason_code"]) == ("untested", "not_run")
         assert routing["fix"] == {
             "type": "tool_routing",
+            "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
             "would": "issue_refund lands in the test world and its probe passes",
@@ -733,6 +734,7 @@ class TestApi:
                     "evidence",
                     "checked_at",
                     "fix",
+                    "consequence",
                     "needed_by",
                     "affected",
                 }
@@ -917,6 +919,7 @@ class TestDoneWhen:
         )
         assert routing["fix"] == {
             "type": "tool_routing",
+            "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
             "would": "issue_refund lands in the test world and its probe passes",
@@ -1097,3 +1100,155 @@ class TestReviewFollowUps:
         assert picked.status_code == 422, picked.content
         assert picked.json()["error"] == "version_not_pickable"
         assert (read.status_code, rechecked.status_code) == (404, 404)
+
+
+FAILED_PROBE = [
+    {"action": "lookup_order", "status": "passed", "reason": ""},
+    {"action": "issue_refund", "status": "failed", "reason": "no world"},
+]
+REJECTED_TOOL = [
+    {"tool": "lookup_order", "availability": "certified", "reason": ""},
+    {"tool": "issue_refund", "availability": "rejected", "reason": ""},
+]
+
+
+class TestRepairKinds:
+    @pytest.mark.parametrize(
+        ("row", "certificate", "fix_type", "category"),
+        [
+            (
+                "start",
+                {"checks": {**PASSED, "processes": "failed"}},
+                "start",
+                "startup",
+            ),
+            (
+                "message",
+                {"checks": {**PASSED, "chat_ingress": "failed"}},
+                "message",
+                "message_mapping",
+            ),
+            (
+                "tool_discovery",
+                {"checks": {**PASSED, "tool_contract": "1/2"}, "tools": REJECTED_TOOL},
+                "tool_discovery",
+                "tool_routing",
+            ),
+            (
+                "tool_routing",
+                {
+                    "checks": {**PASSED, "action_behavior": "1/2"},
+                    "actions": FAILED_PROBE,
+                },
+                "tool_routing",
+                "tool_routing",
+            ),
+            (
+                "state",
+                {"checks": {**PASSED, "schema_and_seed": "failed"}},
+                "state",
+                "evidence",
+            ),
+            (
+                "reset",
+                {"checks": {**PASSED, "reset_equivalence": "failed"}},
+                "reset",
+                "evidence",
+            ),
+            (
+                "message",
+                {"checks": {**PASSED, "processes": "failed"}},
+                "gate",
+                "startup",
+            ),
+            (
+                "tool_routing",
+                {"checks": {**PASSED, "tool_contract": "1/2"}, "tools": REJECTED_TOOL},
+                "gate",
+                "tool_routing",
+            ),
+        ],
+    )
+    def test_fix_category_per_row(
+        self, user, workspace, storage, row, certificate, fix_type, category
+    ):
+        environment = _environment(
+            user, workspace, storage, f"rd-kind-{row[:6]}-{fix_type[:4]}"
+        )
+        _certify(environment, storage, **certificate)
+
+        fix = _rows(_report(environment))[row]["fix"]
+
+        assert (fix["type"], fix["category"]) == (fix_type, category)
+
+    def test_preflight_fix_is_startup_and_recheck_has_no_kind(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-kind-preflight")
+        _built(environment)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
+            preflight_status="pending"
+        )
+
+        rows = _rows(_report(environment, a2))
+
+        assert (rows["start"]["fix"]["type"], rows["start"]["fix"]["category"]) == (
+            "preflight",
+            "startup",
+        )
+        assert (rows["message"]["fix"]["type"], rows["message"]["fix"]["category"]) == (
+            "recheck",
+            None,
+        )
+
+
+class TestConsequence:
+    def test_every_row_has_a_consequence(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "rd-consequence")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "1/2"},
+            actions=FAILED_PROBE,
+        )
+
+        report = _report(environment)
+
+        rows = _rows(report)
+        assert all(row["consequence"] for row in report["rows"])
+        assert rows["tool_routing"]["consequence"] == (
+            "Cases that use issue_refund cannot run until it is routed to the test world"
+        )
+        assert rows["reset"]["consequence"] == (
+            "Every trial starts from the same seed, agent included"
+        )
+        assert rows["audio"]["consequence"].startswith("No check measures this yet")
+        assert report["rules_version"] == "6"
+        HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
+
+    def test_reset_consequence_by_connection(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-consequence-reset")
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
+            source_kind="provider"
+        )
+        _certify(environment, storage, agent=a2)
+        assert _rows(_report(environment, a2))["reset"]["consequence"] == (
+            "The world resets between trials; the agent may carry its own memory"
+        )
+
+        _certify(
+            environment,
+            storage,
+            agent=a2,
+            checks={
+                **PASSED,
+                "schema_and_seed": "not_applicable",
+                "reset_equivalence": "not_applicable",
+                "world_isolation": "not_applicable",
+            },
+        )
+        reset = _rows(_report(environment, a2))["reset"]
+        assert reset["status"] == "unavailable"
+        assert reset["consequence"] == (
+            "No seeded world of ours to reset for this connection"
+        )

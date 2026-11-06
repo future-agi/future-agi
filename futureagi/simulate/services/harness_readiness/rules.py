@@ -13,6 +13,7 @@ from simulate.services.harness_readiness.catalogue import (
     AnswerView,
     Capability,
     Fix,
+    FixCategory,
     FixRecheck,
     Pairing,
     Reading,
@@ -75,6 +76,7 @@ def _row(
         "evidence": list(reading.evidence) if reading is not None else [],
         "checked_at": checked_at if reading is not None else None,
         "fix": None,
+        "consequence": "",
     }
 
 
@@ -168,6 +170,7 @@ def rows(
         statuses[capability.id] = row["status"]
         fresh.setdefault(capability.id, row["status"])
         row["fix"] = _fix(pairing, row, certified=evidence.source == "pair_certificate")
+        row["consequence"] = consequence(row)
         rows.append(row)
     return rows
 
@@ -177,6 +180,9 @@ def _gated(
 ) -> tuple[Status, str | None, str | None, str | None]:
     gate = capability.gate
     if gate is not None and statuses.get(gate) not in GATE_OPEN:
+        if statuses.get(gate) == "unavailable" and reading.finding == "not_applicable":
+            # Neither exists for this connection: nothing waits on the gate.
+            return (*_status(reading), None)
         return "untested", "blocked_by", f"Waits on {gate}", gate
     return (*_status(reading), None)
 
@@ -237,6 +243,88 @@ _FIXES: dict[str, tuple[str, str]] = {
 }
 
 
+# Each fixable row's kind of repair: the screen its fix opens.
+_CATEGORIES: dict[str, FixCategory] = {
+    "start": "startup",
+    "message": "message_mapping",
+    "tool_discovery": "tool_routing",
+    "tool_routing": "tool_routing",
+    "state": "evidence",
+    "reset": "evidence",
+}
+
+# What a row's status means for the cases, by row then ``status:reason_code`` or
+# ``status``; ``{target}`` is the row's first target. A status a row does not name reads
+# the shared line below.
+_CONSEQUENCES: dict[str, dict[str, str]] = {
+    "start": {
+        "supported": "The agent starts in the test sandbox, so every case can begin",
+        "blocked": "No case can run until the agent starts",
+    },
+    "message": {
+        "supported": "Test messages reach the agent and it answers",
+        "blocked": "Chat cases cannot run until a test message reaches the agent",
+        "unavailable": "This connection takes no chat message; only voice cases apply",
+    },
+    "tool_discovery": {
+        "supported": "Every tool the cases use is found before they call it",
+        "partial": "Some tools appear only once the agent runs, so a case can fail on a"
+        " tool found late",
+        "blocked": "Cases that use {target} cannot run until it is exposed",
+    },
+    "tool_routing": {
+        "supported": "Every tool call lands in the test world, never in a real system",
+        "partial": "Some tools were not probed, so a case may still reach a real system"
+        " through them",
+        "blocked": "Cases that use {target} cannot run until it is routed to the test"
+        " world",
+    },
+    "state": {
+        "supported": "Every case starts from the seeded test data",
+        "blocked": "Cases that read the world's data cannot run until it is seeded",
+        "unavailable": "This connection keeps its own data; there is no seeded world of"
+        " ours",
+    },
+    "reset": {
+        "supported": "Every trial starts from the same seed, agent included",
+        "partial": "The world resets between trials; the agent may carry its own memory",
+        "partial:isolation_not_run": "The world resets between trials, but cases run at"
+        " the same time were not shown to stay apart",
+        "blocked": "Trials can see each other's changes, so repeated results are not"
+        " independent",
+        "unavailable": "No seeded world of ours to reset for this connection",
+    },
+}
+_SHARED_CONSEQUENCES: dict[Status, str] = {
+    "supported": "Shown to work for this pairing",
+    "partial": "Works within the limits the reason names",
+    "blocked": "Cases that need this cannot run until it is fixed",
+    "unavailable": "This connection does not offer this",
+    "untested": "Not shown to work yet; a case that needs it can fail for this, not"
+    " for the agent",
+    "stale": "Checked with another agent version; check again before trusting cases"
+    " that need this",
+}
+_UNMEASURED = (
+    "No check measures this yet; results that depend on it are not verified either way"
+)
+
+
+def consequence(row: RowView) -> str:
+    """What ``row``'s status means for the cases, in plain words."""
+    if not row["measured"]:
+        return _UNMEASURED
+    own = _CONSEQUENCES.get(row["id"], {})
+    status = row["status"]
+    text = (
+        own.get(f"{status}:{row['reason_code']}")
+        or own.get(status)
+        or _SHARED_CONSEQUENCES[status]
+    )
+    target = row["targets"][0]["name"] if row["targets"] else "the failing tools"
+    return text.format(target=target)
+
+
 def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     """What to change for a measured row that is Blocked, Stale or Untested, and the
     re-check that reads it again.
@@ -261,6 +349,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     if code in ("preflight_failed", "preflight_pending"):
         return {
             "type": "preflight",
+            "category": "startup",
             "target": None,
             "action": _preflight_action(pairing.runtime),
             "would": "The agent passes its preflight and can start",
@@ -278,6 +367,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     ):
         return {
             "type": "recheck",
+            "category": None,
             "target": None,
             "action": "Check this agent with this environment and suite",
             "would": "The row reads what this agent does",
@@ -288,6 +378,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         labels = {one.id: one.label for one in CATALOGUE}
         return {
             "type": "gate",
+            "category": _CATEGORIES.get(gate),
             "target": gate,
             "action": f"Fix {labels.get(gate, gate)} first",
             "would": f"{row['label']} is checked once {labels.get(gate, gate)} is Supported",
@@ -298,6 +389,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     subject = target or ("the tools" if code == "not_run" else "the failing tools")
     return {
         "type": row["id"],
+        "category": _CATEGORIES.get(row["id"]),
         "target": target,
         "action": action.format(target=subject),
         "would": would.format(target=subject),
