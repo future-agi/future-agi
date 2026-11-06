@@ -707,30 +707,6 @@ class TestAudioVariablesForTextToSpeech:
         assert segments == [{"type": "text", "text": AUDIO_LABEL}]
 
     @pytest.mark.parametrize(
-        ("text", "referenced"),
-        [
-            ("{{Recording}}", True),
-            ("Please listen. {{Recording}}", True),
-            ("{{ Recording }}", True),
-            ("{{{Recording}}}", True),
-            ('{{ Recording | default("") }}', True),
-            ("{% if Recording %}listen{% endif %}", True),
-            ("{{ col-uuid }}", True),
-            ("{{RecordingNotes}}", False),
-            ("{{ data.Recording }}", False),
-            ("Recording without a tag", False),
-        ],
-    )
-    def test_column_reference_detection(self, text, referenced):
-        from types import SimpleNamespace
-
-        from model_hub.views.run_prompt import _references_column
-
-        column = SimpleNamespace(name="Recording", id="col-uuid")
-
-        assert _references_column(text, column) is referenced
-
-    @pytest.mark.parametrize(
         ("model", "provider", "literal"),
         [
             ("openai/tts-1", "openai", True),
@@ -760,3 +736,37 @@ class TestAudioVariablesForTextToSpeech:
             "speech": SpeechAPIHandler,
         }[tts_lane(model, provider)]
         assert isinstance(sub_handler, expected)
+
+    @pytest.mark.parametrize(
+        ("model", "output_format", "tts"),
+        [
+            ("openai/tts-1", "audio", True),
+            ("gpt-4o", "audio", True),
+            ("gpt-4o", "string", False),
+            ("whisper-1", "audio", False),
+            ("hd/1024-x-1024/dall-e-3", "audio", False),
+        ],
+    )
+    def test_uses_tts_handler_matches_the_factory(self, model, output_format, tts):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.factory import (
+            ModelHandlerFactory,
+            uses_tts_handler,
+        )
+
+        context = ModelHandlerContext(
+            model=model,
+            messages=control_and_user(),
+            organization_id=str(uuid4()),
+            output_format=output_format,
+            api_key="test-key",
+            provider="openai",
+        )
+
+        assert uses_tts_handler(model, output_format) is tts
+        with patch(
+            "agentic_eval.core_evals.run_prompt.runprompt_handlers.factory."
+            "ModelHandlerFactory._is_custom_model",
+            return_value=False,
+        ):
+            handler = ModelHandlerFactory.create_handler(context)
+        assert isinstance(handler, TTSHandler) is tts

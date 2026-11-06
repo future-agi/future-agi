@@ -29,9 +29,11 @@ from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 # (available_models always available)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.factory import (
+    uses_tts_handler,
+)
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
     speaks_text_literally,
-    tts_lane,
 )
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
@@ -501,35 +503,17 @@ class JsonStr(dict):
 MEDIA_COLUMN_TYPES = ("audio", "image", "images", "document")
 
 
-def _user_texts(messages):
-    for message in messages:
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            yield content
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and isinstance(part.get("text"), str):
-                    yield part["text"]
+class LiteralSpeechMediaVariableError(ValueError):
+    """A literal text-to-speech script references a media column."""
 
 
-def _references_column(text, column):
-    """True if a template tag in text names the column, with any spacing or filter."""
-    for token in {column.name, str(column.id), sanitize_uuid_for_jinja(str(column.id))}:
-        pattern = r"\{[{%][^{}]*?(?<![\w.])" + re.escape(token) + r"(?![\w])[^{}]*?[}%]\}"
-        if re.search(pattern, text):
-            return True
-    return False
+def literal_tts_run(model_name, output_format, organization_id):
+    """Whether this run reads its script aloud as literal text-to-speech.
 
-
-def _speaks_text_literally(model_name, organization_id):
-    """Whether a run of this model is literal text-to-speech.
-
-    Resolves the provider as RunPrompt does and applies TTSHandler's routing.
+    Uses ModelHandlerFactory's choice of TTSHandler, the provider resolved as
+    RunPrompt resolves it, and TTSHandler's own lane routing.
     """
-    model_mode = get_model_mode(model_name)
-    if model_mode == "stt":
+    if not uses_tts_handler(model_name, output_format):
         return False
     try:
         provider = LiteLLMModelManager(
@@ -537,39 +521,41 @@ def _speaks_text_literally(model_name, organization_id):
         ).get_provider(model_name=model_name, organization_id=organization_id)
     except Exception:
         provider = None
-    if model_mode != "tts" and tts_lane(model_name, provider) != "custom":
-        return False
     return speaks_text_literally(model_name, provider)
 
 
-def reject_media_variables_for_literal_tts(messages, dataset, column_ids, model_name):
-    """Refuse media column variables in a literal text-to-speech script.
+def _media_stand_in(column_id):
+    return f"__fi_tts_media_{uuid.UUID(str(column_id)).hex}__"
 
-    Such a model speaks the user's text, so a media value would reach it only
-    as a generated label or a raw URL (TH-2356). This runs before any template
-    is rendered or media is fetched.
-    """
-    texts = [text for text in _user_texts(messages) if "{{" in text or "{%" in text]
-    if not texts:
-        return
-    referenced = [
-        column
-        for column in Column.objects.filter(
-            id__in=column_ids, data_type__in=MEDIA_COLUMN_TYPES
-        )
-        if any(_references_column(text, column) for text in texts)
-    ]
-    if not referenced or not _speaks_text_literally(model_name, dataset.organization_id):
-        return
-    column = referenced[0]
-    raise ValueError(
-        f"{model_name} speaks text only. Remove the {column.data_type} column "
-        f'variable "{column.name}" from the prompt.'
-    )
+
+def _reject_media_in_user_script(messages, stand_ins, model_name):
+    """Raise if a media column's stand-in value reached the user script."""
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        parts = content if isinstance(content, list) else [{"text": content}]
+        for part in parts:
+            text = part.get("text") if isinstance(part, dict) else None
+            if not isinstance(text, str):
+                continue
+            for stand_in, column in stand_ins.items():
+                if stand_in in text:
+                    raise LiteralSpeechMediaVariableError(
+                        f"{model_name} speaks text only. Remove the "
+                        f'{column.data_type} column variable "{column.name}" '
+                        "from the prompt."
+                    )
 
 
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    output_format=None,
 ):
     try:
         media_error = None
@@ -578,6 +564,15 @@ def populate_placeholders(
 
         dataset = Dataset.objects.get(id=dataset_id)
         column_ids = dataset.column_order
+
+        # Literal text-to-speech speaks the user's text, so a media value could
+        # only reach it as a generated label or a raw URL (TH-2356). Media
+        # columns render as stand-ins instead, whatever the template syntax,
+        # and nothing is fetched; a stand-in in the user script is refused.
+        literal_tts = output_format is not None and literal_tts_run(
+            model_name, output_format, dataset.organization_id
+        )
+        media_stand_ins = {}
 
         # Create context for Handlebars with proper nesting
         context: dict[str, Any] = {}
@@ -592,6 +587,23 @@ def populate_placeholders(
                     cell = Cell.objects.filter(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
+
+                    if literal_tts and column.data_type in MEDIA_COLUMN_TYPES:
+                        stand_in = _media_stand_in(column_id)
+                        media_stand_ins[stand_in] = column
+                        value = [stand_in] if column.data_type == "images" else stand_in
+                        column_info[column_id] = {
+                            "value": stand_in,
+                            "data_type": "text",
+                            "name": column.name,
+                        }
+                        parts = column.name.split(".")
+                        current = context
+                        for part in parts[:-1]:
+                            current = current.setdefault(part, {})
+                        current[parts[-1]] = value
+                        context[sanitize_uuid_for_jinja(column_id)] = value
+                        continue
 
                     if not cell:
                         continue
@@ -671,9 +683,6 @@ def populate_placeholders(
         image_counter = 0
         processed_messages = []
         try:
-            reject_media_variables_for_literal_tts(
-                messages, dataset, column_ids, model_name
-            )
             for message in messages:
                 content = message.get("content")
                 processed_content = []
@@ -707,6 +716,10 @@ def populate_placeholders(
                 # Preserve all message keys (name, tool_calls, tool_call_id, etc.)
                 processed_messages.append({**message, "content": processed_content})
 
+            if media_stand_ins:
+                _reject_media_in_user_script(
+                    processed_messages, media_stand_ins, model_name
+                )
             return processed_messages
 
         except ValueError as e:
@@ -1073,6 +1086,7 @@ class LitellmAPIView(CreateAPIView):
                 row_id=row.id,
                 col_id=column.id,
                 model_name=validated_data.get("model"),
+                output_format=validated_data.get("output_format"),
             )
             messages = remove_empty_text_from_messages(messages)
 
@@ -1513,6 +1527,7 @@ class RunPrompts:
                     template_format=(self.run_prompt_model.run_prompt_config or {}).get(
                         "template_format"
                     ),
+                    output_format=self.run_prompt_model.output_format,
                 )
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(
@@ -2003,6 +2018,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        output_format=output_format,
                     )
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)

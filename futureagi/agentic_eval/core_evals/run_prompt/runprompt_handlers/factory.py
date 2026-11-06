@@ -5,7 +5,7 @@ This implements the Strategy Pattern by routing to the correct handler
 based on model type, output format, and other context attributes.
 """
 
-from typing import Type
+from typing import Optional, Type
 
 import structlog
 
@@ -15,6 +15,22 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def uses_tts_handler(model: str, output_format: Optional[str]) -> bool:
+    """
+    Check if ModelHandlerFactory.create_handler picks TTSHandler.
+
+    That happens for audio output from a model that is neither speech-to-text
+    nor image generation, which create_handler checks first.
+    """
+    from model_hub.utils.utils import get_model_mode
+
+    try:
+        model_mode = get_model_mode(model)
+    except Exception:
+        model_mode = None
+    return output_format == "audio" and model_mode not in ("stt", "image_generation")
 
 
 class ModelHandlerFactory:
@@ -106,7 +122,7 @@ class ModelHandlerFactory:
             return ImageHandler(context)
 
         # 3. TTS models (output_format == "audio")
-        if context.output_format == "audio":
+        if uses_tts_handler(context.model, context.output_format):
             from .handlers.tts_handler import TTSHandler
 
             logger.debug("Using TTSHandler")

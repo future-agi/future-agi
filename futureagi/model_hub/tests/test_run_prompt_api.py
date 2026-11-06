@@ -4116,16 +4116,19 @@ class TestLiteralTTSScriptRoutes:
 
     # -- Audio-column variables (TTS-01) ------------------------------------
 
-    def _recording_column(self, dataset, row, value="https://media.example/recording.wav"):
+    def _recording_column(
+        self, dataset, row, value="https://media.example/recording.wav", name="Recording"
+    ):
         recording = Column.objects.create(
-            name="Recording",
+            name=name,
             dataset=dataset,
             data_type=DataTypeChoices.AUDIO.value,
             source=SourceChoices.OTHERS.value,
         )
         dataset.column_order.append(str(recording.id))
         dataset.save()
-        Cell.objects.create(dataset=dataset, column=recording, row=row, value=value)
+        if value is not None:
+            Cell.objects.create(dataset=dataset, column=recording, row=row, value=value)
         return recording
 
     @pytest.mark.parametrize(
@@ -4134,8 +4137,11 @@ class TestLiteralTTSScriptRoutes:
             ("{{Recording}}", "https://media.example/recording.wav"),
             ("Please listen. {{Recording}}", "https://media.example/recording.wav"),
             ("{{ Recording }}", "https://media.example/recording.wav"),
+            ('{{ Recording | default("") }}', "https://media.example/recording.wav"),
             ("Please listen. {{Recording}}", ""),
+            ("Please listen. {{Recording}}", None),
         ],
+        ids=["exact", "mixed", "spaced", "filtered", "empty-cell", "missing-cell"],
     )
     def test_preview_rejects_audio_variable_before_fetch_or_speech(
         self,
@@ -4199,46 +4205,163 @@ class TestLiteralTTSScriptRoutes:
         run_prompter.refresh_from_db()
         assert run_prompter.messages == stored_messages
 
+    def test_preview_rejects_bracket_access_to_dotted_audio_column(
+        self, auth_client, dataset, row, openai_provider_key, speech_boundary
+    ):
+        speech, upload = speech_boundary
+        self._recording_column(dataset, row, name="media.Recording")
+
+        with patch("model_hub.views.run_prompt.safe_fetch") as fetch:
+            response = self._preview(auth_client, dataset, '{{ media["Recording"] }}')
+
+        assert response.status_code == status.HTTP_200_OK
+        [result] = response.json()["result"]["responses"]
+        assert result == (
+            'openai/tts-1 speaks text only. Remove the audio column variable '
+            '"media.Recording" from the prompt.'
+        )
+        fetch.assert_not_called()
+        speech.assert_not_called()
+
     @pytest.mark.parametrize(
-        ("model", "rejected"),
+        ("system_text", "user_text", "spoken"),
         [
-            ("openai/tts-1", True),
-            ("eleven_multilingual_v2", True),
-            ("vertex_ai/gemini-2.5-flash-preview-tts", False),
-            ("whisper-1", False),
-            ("gpt-4o", False),
+            ("{{Recording}}", "Hello.", "Hello."),
+            ("", '{{ "Recording" }} now.', "Recording now."),
         ],
+        ids=["system-message-reference", "quoted-literal"],
     )
-    def test_only_literal_tts_rejects_audio_variables(self, dataset, row, model, rejected):
-        from model_hub.views.run_prompt import reject_media_variables_for_literal_tts
+    def test_preview_without_a_user_media_reference_still_speaks(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        system_text,
+        user_text,
+        spoken,
+    ):
+        speech, _ = speech_boundary
+        self._recording_column(dataset, row)
+        config = tts_config(user_text)
+        config["messages"][0]["content"] = [{"type": "text", "text": system_text}]
 
-        recording = self._recording_column(dataset, row)
-        messages = tts_messages("Please listen. {{Recording}}")
-
-        if rejected:
-            with pytest.raises(ValueError, match="speaks text only"):
-                reject_media_variables_for_literal_tts(
-                    messages, dataset, [str(recording.id)], model
-                )
-        else:
-            reject_media_variables_for_literal_tts(
-                messages, dataset, [str(recording.id)], model
+        with patch("model_hub.views.run_prompt.safe_fetch") as fetch:
+            response = auth_client.post(
+                "/model-hub/develops/preview_run_prompt_column/",
+                {
+                    "dataset_id": str(dataset.id),
+                    "name": "TTS Preview",
+                    "first_n_rows": 1,
+                    "config": config,
+                },
+                format="json",
             )
 
-    def test_audio_variable_outside_the_user_script_is_not_rejected(
-        self, dataset, row
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["responses"] == [TTS_AUDIO_URL]
+        assert speech.call_args.kwargs["input"] == spoken
+        fetch.assert_not_called()
+
+    def test_saved_column_f_string_audio_variable_is_rejected(
+        self,
+        dataset,
+        organization,
+        workspace,
+        input_column,
+        row,
+        openai_provider_key,
+        speech_boundary,
     ):
-        from model_hub.views.run_prompt import reject_media_variables_for_literal_tts
+        from model_hub.views.run_prompt import RunPrompts
 
-        recording = self._recording_column(dataset, row)
-        messages = [
-            {"role": "system", "content": [{"type": "text", "text": "{{Recording}}"}]},
-            {"role": "user", "content": [{"type": "text", "text": "Hello."}]},
-        ]
-
-        reject_media_variables_for_literal_tts(
-            messages, dataset, [str(recording.id)], "openai/tts-1"
+        speech, _ = speech_boundary
+        self._recording_column(dataset, row)
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
         )
+        run_prompter.messages = tts_messages("Listen: {Recording}")
+        run_prompter.run_prompt_config = {
+            **run_prompter.run_prompt_config,
+            "template_format": "f-string",
+        }
+        run_prompter.save()
+
+        with (
+            patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None),
+            patch("model_hub.views.run_prompt.close_old_connections"),
+            patch("model_hub.views.run_prompt.safe_fetch") as fetch,
+        ):
+            runner = RunPrompts(run_prompter.id)
+            runner.load_run_prompt_id()
+            runner.process_row(row, column, edit_mode=True)
+
+        cell = Cell.objects.get(id=previous.id)
+        assert cell.status == CellStatus.ERROR.value
+        assert cell.value == TTS_AUDIO_VARIABLE_ERROR
+        fetch.assert_not_called()
+        speech.assert_not_called()
+
+    def test_conditional_column_branch_reports_the_rejection(
+        self, dataset, organization, row
+    ):
+        from model_hub.views.dynamic_columns import ConditionalColumnView
+
+        self._recording_column(dataset, row)
+        branch = {
+            "branch_type": "else",
+            "branch_node_config": {
+                "type": "run_prompt",
+                "config": {
+                    "model": "openai/tts-1",
+                    "messages": tts_messages("{{Recording}}"),
+                    "output_format": "audio",
+                },
+            },
+        }
+
+        with (
+            patch("model_hub.views.run_prompt.safe_fetch") as fetch,
+            patch("litellm.speech") as speech,
+        ):
+            value, value_infos = ConditionalColumnView()._process_row(
+                row, [branch], org_id=organization.id
+            )
+
+        assert value == TTS_AUDIO_VARIABLE_ERROR
+        assert value_infos == {"reason": TTS_AUDIO_VARIABLE_ERROR}
+        fetch.assert_not_called()
+        speech.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("model", "output_format", "literal"),
+        [
+            ("openai/tts-1", "audio", True),
+            ("eleven_multilingual_v2", "audio", True),
+            ("tts-1", "audio", True),
+            ("vertex_ai/gemini-2.5-flash-preview-tts", "audio", False),
+            ("whisper-1", "audio", False),
+            ("gpt-4o", "string", False),
+        ],
+    )
+    def test_literal_tts_run_follows_factory_and_tts_routing(
+        self, organization, workspace, user, model, output_format, literal
+    ):
+        from model_hub.models.custom_models import CustomAIModel
+        from model_hub.views.run_prompt import literal_tts_run
+
+        CustomAIModel.objects.create(
+            user_model_id="tts-1",
+            provider="openai",
+            input_token_cost=0,
+            output_token_cost=0,
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+
+        assert literal_tts_run(model, output_format, organization.id) is literal
 
     # -- Storage failure (AC-12) ---------------------------------------------
 
