@@ -24,7 +24,6 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import SectionCard from "../../components/SectionCard";
 import { refusalText } from "../evals/refusalText";
-import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
 import ActorLimits from "./ActorLimits";
 import ActorRelations from "./ActorRelations";
@@ -172,7 +171,9 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       </Typography>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
-        {!hasCaller && <Alert severity="info">{ACTORS_COPY.noCaller}</Alert>}
+        {cast.length > 0 && !hasCaller && (
+          <Alert severity="info">{ACTORS_COPY.noCaller}</Alert>
+        )}
         {inUse && (
           <Alert severity="warning" onClose={() => setInUse(null)}>
             {inUse}
@@ -195,6 +196,11 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       >
         {rows(cast)}
       </Group>
+      {cast.length > 1 && (
+        <Box sx={{ mt: 2 }}>
+          <ActorRelations cast={cast} />
+        </Box>
+      )}
       <Button
         size="small"
         sx={{ mt: 2 }}
@@ -204,7 +210,6 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       </Button>
       <Collapse in={settings} unmountOnExit>
         <Stack spacing={2} sx={{ mt: 1 }}>
-          <ActorRelations cast={cast} />
           <ActorLimits
             key={revision}
             limits={data?.limits || {}}

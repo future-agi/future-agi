@@ -347,6 +347,31 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
+  it("shows who can reach whom open once there is more than one actor, with limits folded", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.queryByText("Who can reach whom")).toBeNull();
+    actorsData = cast([
+      MANAGER,
+      { id: "caller", name: "Dana", role: "customer" },
+    ]);
+    const { container } = render(<WorldActorsPanel envId="env-2" />);
+    expect(
+      within(container).getByText("Who can reach whom"),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByRole("button", { name: "Limits" }),
+    ).toBeInTheDocument();
+    expect(within(container).queryByText("Save limits to draft")).toBeNull();
+  });
+
+  it("says nothing about a missing caller while there are no actors at all", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText(/no caller record yet/)).toBeInTheDocument();
+    actorsData = cast([]);
+    const { container } = render(<WorldActorsPanel envId="env-2" />);
+    expect(within(container).queryByText(/no caller record yet/)).toBeNull();
+  });
+
   it("lists every actor in one list, one that speaks with its channel beside what it may do", () => {
     actorsData = cast([
       MANAGER,

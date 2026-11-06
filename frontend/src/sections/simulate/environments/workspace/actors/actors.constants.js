@@ -38,8 +38,8 @@ export const ACTORS_COPY = {
     reaches: (names) => `Its actions reach ${names.join(", ")}`,
     reachesNoOne: "Its actions reach no other actor",
   },
-  showSettings: "Who can reach whom, and limits",
-  hideSettings: "Hide who can reach whom and limits",
+  showSettings: "Limits",
+  hideSettings: "Hide limits",
   noCaller:
     "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
