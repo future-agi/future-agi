@@ -374,6 +374,91 @@ class TestTraceAndSpanTagWrites:
         assert after[untouched] == [original]
 
 
+    def test_trace_with_no_traces_row_gets_one_for_the_grid(
+        self, auth_client, observe_project, ch_seed
+    ):
+        trace_id = str(uuid.uuid4())
+        root = _Span(observe_project, trace_id=trace_id)
+        ch_seed(root)
+        assert _trace_tags(observe_project, trace_id) is None
+
+        response = _patch_trace(auth_client, trace_id, ["prod"])
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert _trace_tags(observe_project, trace_id) == ["prod"]
+        rows = _ch(
+            "SELECT name, toUnixTimestamp64Micro(created_at) FROM traces "
+            "WHERE project_id = {p:UUID} AND id = {t:UUID}",
+            p=str(observe_project.id),
+            t=trace_id,
+        )
+        # Derived from the root span, the way the collector derives it.
+        assert rows == [("root", int(_START.timestamp() * 1_000_000))]
+
+    def test_assignment_colours_never_recolour_a_stored_tag(
+        self, auth_client, observe_project, ch_seed
+    ):
+        ProjectTagDefinition.objects.create(
+            project=observe_project, name="prod", color="#010203"
+        )
+        trace_id = str(uuid.uuid4())
+        ch_seed(_Span(observe_project, trace_id=trace_id, tags=["prod"]))
+
+        # The editors resend a name-derived colour for every tag they show.
+        response = _patch_trace(
+            auth_client,
+            trace_id,
+            [
+                {"name": "prod", "color": "#7857FC"},
+                {"name": "new-one", "color": "#22C55E"},
+            ],
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        colours = dict(
+            ProjectTagDefinition.objects.filter(project=observe_project).values_list(
+                "name", "color"
+            )
+        )
+        assert colours == {"prod": "#010203", "new-one": "#22C55E"}
+
+    def test_ambiguity_is_found_however_many_rows_one_project_holds(
+        self, auth_client, organization, workspace, observe_project, ch_seed
+    ):
+        second = _project(organization, workspace, "Second Observe Project")
+        trace_id = str(uuid.uuid4())
+        span_id = uuid.uuid4().hex[:16]
+        # The other project's copy is the oldest write and the latest start.
+        ch_seed(
+            _Span(
+                second,
+                trace_id=trace_id,
+                span_id=span_id,
+                tags=["second"],
+                start=_START + timedelta(hours=1),
+            )
+        )
+        ch_seed(
+            [
+                _Span(
+                    observe_project,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    start=_START + timedelta(seconds=i),
+                )
+                for i in range(60)
+            ]
+        )
+
+        trace = _patch_trace(auth_client, trace_id, ["x"])
+        span = _post_span(auth_client, span_id, ["x"])
+
+        for response in (trace, span):
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "project_id" in str(response.data)
+        assert _span_tags(second, span_id) == [["second"]]
+
+
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestTagTenantIsolation:
@@ -489,8 +574,51 @@ class TestProjectTagDefinitions:
             {"name": "sdk-only", "color": "", "usage_count": 1},
             {"name": "shared", "color": "", "usage_count": 2},
             {"name": "stored-only", "color": "#3B82F6", "usage_count": 0},
-            {"name": "trace-only", "color": "", "usage_count": 1},
+            # Seen only on a trace row: listed, but no span carries it.
+            {"name": "trace-only", "color": "", "usage_count": 0},
         ]
+
+    def test_list_refuses_to_truncate_past_its_cap(
+        self, auth_client, observe_project, ch_seed, monkeypatch
+    ):
+        monkeypatch.setattr("tracer.services.project_tags._MAX_LISTED_TAGS", 2)
+        ch_seed(
+            _Span(observe_project, trace_id=str(uuid.uuid4()), tags=["a", "b", "c"])
+        )
+
+        response = auth_client.get(self._url(observe_project))
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "more than 2 distinct tag names" in str(response.data)
+
+    def test_retrying_a_rename_after_a_partial_clickhouse_failure_completes_it(
+        self, auth_client, observe_project, ch_seed, monkeypatch
+    ):
+        from tracer.services import project_tags
+
+        span = _Span(observe_project, trace_id=str(uuid.uuid4()), tags=["old"])
+        ch_seed(span)
+        real_command = project_tags._command
+
+        def _traces_down(sql, parameters):
+            if "ALTER TABLE traces" in sql:
+                raise project_tags.TagStoreUnavailable("traces mutation failed")
+            return real_command(sql, parameters)
+
+        monkeypatch.setattr(project_tags, "_command", _traces_down)
+        body = {"name": "old", "new_name": "new", "color": "#123456"}
+        failed = auth_client.patch(self._url(observe_project), body, format="json")
+        assert failed.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        # The spans mutation landed; Postgres rolled back.
+        assert _span_tags(observe_project, span.id) == [["new"]]
+        assert not ProjectTagDefinition.objects.filter(name="new").exists()
+
+        monkeypatch.setattr(project_tags, "_command", real_command)
+        retried = auth_client.patch(self._url(observe_project), body, format="json")
+
+        assert retried.status_code == status.HTTP_200_OK, retried.data
+        assert retried.data["result"] == {"name": "new", "color": "#123456"}
+        assert _span_tags(observe_project, span.id) == [["new"]]
 
     def test_rename_merges_into_an_existing_tag_everywhere(
         self, auth_client, observe_project, ch_seed

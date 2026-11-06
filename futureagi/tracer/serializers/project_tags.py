@@ -12,8 +12,9 @@ TAG_ERROR_RESPONSES = {
 
 _TAGS_HELP = (
     'Replaces the current tags. Each item is a name ("prod") or '
-    '{"name": "prod", "color": "#22C55E"}. A colour is saved on the project '
-    "tag, never on the assignment; an omitted colour keeps the existing one."
+    '{"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the '
+    "project does not have yet (or has without a colour) and is never stored "
+    "on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/."
 )
 _COLOR_HELP = '"#RRGGBB", or "" when no colour is set.'
 
@@ -75,9 +76,9 @@ class ProjectTagDefinitionSerializer(serializers.Serializer):
     color = serializers.CharField(allow_blank=True, help_text=_COLOR_HELP)
     usage_count = serializers.IntegerField(
         help_text=(
-            "Rows in this project carrying the name: spans, or trace rows when "
-            "more traces than spans carry it (a trace tag is on both its trace "
-            "row and its root span and counts once)."
+            "Live spans in this project whose tags contain the name, once per "
+            "span. A trace tag sits on the trace's root span, so it counts once; "
+            "a name seen only on a trace row counts 0."
         )
     )
 

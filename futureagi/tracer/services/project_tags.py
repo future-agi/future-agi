@@ -38,7 +38,6 @@ _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 _TAG_NAME_MAX = 255
 # Same ceiling trace detail uses before it refuses an implicit project scope.
 _MAX_LOOKUP_PROJECTS = 4096
-_MAX_LOOKUP_ROWS = 50
 _MAX_LISTED_TAGS = 10_000
 # The shared read lane drops row/byte abort caps by policy; what bounds these
 # reads is the explicit per-statement execution cap plus memory and threads.
@@ -59,6 +58,16 @@ class TagNotFound(LookupError):
 
 class TagTargetAmbiguous(LookupError):
     """The id matches rows in more than one of the caller's projects."""
+
+
+class TagListTooLarge(ValueError):
+    """More distinct tag names than one response may list."""
+
+    def __init__(self, limit: int):
+        super().__init__(
+            f"This project has more than {limit} distinct tag names, so they "
+            "cannot be listed in one response."
+        )
 
 
 def is_valid_tag_color(color: Any) -> bool:
@@ -186,11 +195,16 @@ def _identity(row: dict) -> PhysicalSpanIdentity:
     )
 
 
-def _single_project(rows: list[dict]) -> list[dict]:
-    projects = {str(row["project_id"]) for row in rows}
-    if len(projects) > 1:
+def _only_project(rows: list[dict]) -> dict:
+    """The one candidate, when the id matched in exactly one project.
+
+    Lookups return at most one row per project (``LIMIT 1 BY project_id``), so
+    a second row always means a second project, however many rows the first
+    project holds.
+    """
+    if len(rows) > 1:
         raise TagTargetAmbiguous("id_in_several_projects")
-    return rows
+    return rows[0]
 
 
 def find_trace_root(
@@ -202,7 +216,7 @@ def find_trace_root(
     ``(project_id, trace_id, id, start_time)``, never ``FINAL`` or a bare id.
     """
     rows = _read(
-        f"""
+        """
         SELECT
             toString(project_id) AS project_id,
             trace_id,
@@ -216,7 +230,8 @@ def find_trace_root(
         GROUP BY project_id, trace_id, id, start_time
         HAVING latest_is_deleted = 0 AND ifNull(latest_parent_span_id, '') = ''
         ORDER BY start_time ASC, span_id ASC
-        LIMIT {_MAX_LOOKUP_ROWS}
+        LIMIT 1 BY project_id
+        LIMIT 2
         """,
         {"project_ids": tuple(project_ids), "trace_id": str(trace_id)},
         cap_ms=_LOOKUP_CAP_MS,
@@ -224,7 +239,7 @@ def find_trace_root(
     )
     if not rows:
         return None
-    return _identity(_single_project(rows)[0])
+    return _identity(_only_project(rows))
 
 
 def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
@@ -235,7 +250,7 @@ def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
     ``TraceDetailReadBuilder.build_span_anchor_query``) and write only that one.
     """
     rows = _read(
-        f"""
+        """
         SELECT
             toString(project_id) AS project_id,
             trace_id,
@@ -250,7 +265,8 @@ def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
         HAVING latest_is_deleted = 0
         ORDER BY latest_version DESC, project_id DESC, trace_id DESC,
                  start_time DESC
-        LIMIT {_MAX_LOOKUP_ROWS}
+        LIMIT 1 BY project_id
+        LIMIT 2
         """,
         {"project_ids": tuple(project_ids), "span_id": str(span_id)},
         cap_ms=_LOOKUP_CAP_MS,
@@ -258,7 +274,7 @@ def find_span(*, project_ids: list[str], span_id: str) -> PhysicalSpanIdentity:
     )
     if not rows:
         raise TagNotFound("span")
-    return _identity(_single_project(rows)[0])
+    return _identity(_only_project(rows))
 
 
 def write_span_assignment(identity: PhysicalSpanIdentity, names: list[str]) -> None:
@@ -295,31 +311,77 @@ def write_span_assignment(identity: PhysicalSpanIdentity, names: list[str]) -> N
 
 
 def write_trace_assignment(
-    *, project_id: str, trace_uuid: str, names: list[str]
+    *,
+    project_id: str,
+    trace_uuid: str,
+    names: list[str],
+    root: PhysicalSpanIdentity | None = None,
 ) -> None:
-    """Add a newer ``traces`` version that differs only in its tags.
+    """Give the trace's ``traces`` row these tags, creating it if it is missing.
 
-    This is the trace mirror's own update pattern: copy the latest live row and
-    raise ``_version``. A trace with no ``traces`` row inserts nothing.
+    An existing live row gets a newer version that differs only in its tags,
+    which is the trace mirror's own update pattern. When no row exists (the
+    collector writes it best-effort, after the spans), one is created from the
+    root span the way the collector derives it. A tombstoned trace is left
+    alone.
     """
+    state = _read(
+        """
+        SELECT count() AS versions, argMax(is_deleted, _version) AS latest_is_deleted
+        FROM traces
+        WHERE project_id = %(project_id)s AND id = %(trace_id)s
+        """,
+        {"project_id": project_id, "trace_id": trace_uuid},
+        cap_ms=_LOOKUP_CAP_MS,
+        settings=_LOOKUP_SETTINGS,
+    )
+    versions = int(state[0]["versions"]) if state else 0
+    tags = json.dumps(names, ensure_ascii=False)
+    if versions:
+        if int(state[0]["latest_is_deleted"]):
+            return
+        _command(
+            """
+            INSERT INTO traces
+            SELECT * REPLACE (
+                {tags:String} AS tags,
+                now64(6, 'UTC') AS updated_at,
+                greatest(
+                    _version + 1,
+                    toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
+                ) AS _version
+            )
+            FROM traces FINAL
+            WHERE project_id = {project_id:UUID} AND id = {trace_id:UUID}
+            """,
+            {"tags": tags, "project_id": project_id, "trace_id": trace_uuid},
+        )
+        return
+    if root is None:
+        return
     _command(
         """
         INSERT INTO traces
-        SELECT * REPLACE (
-            {tags:String} AS tags,
-            now64(6, 'UTC') AS updated_at,
-            greatest(
-                _version + 1,
-                toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
-            ) AS _version
-        )
-        FROM traces FINAL
-        WHERE project_id = {project_id:UUID} AND id = {trace_id:UUID}
+            (id, project_id, name, session_id, tags, input, output,
+             created_at, updated_at, is_deleted, _version)
+        SELECT
+            toUUID(trace_id), project_id, name, trace_session_id, {tags:String},
+            input, output, start_time, now64(6, 'UTC'), 0,
+            toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
+        FROM spans
+        WHERE project_id = {project_id:UUID}
+          AND trace_id = {trace_id:String}
+          AND id = {span_id:String}
+          AND toUnixTimestamp64Micro(start_time) = {start_us:Int64}
+        ORDER BY _version DESC
+        LIMIT 1
         """,
         {
-            "tags": json.dumps(names, ensure_ascii=False),
+            "tags": tags,
             "project_id": project_id,
-            "trace_id": trace_uuid,
+            "trace_id": root.trace_id,
+            "span_id": root.span_id,
+            "start_us": root.start_us,
         },
     )
 
@@ -397,28 +459,36 @@ def _rewrite_postgres_trace_tags(
 
 
 def upsert_definitions(project: Project, items: list[dict[str, str]]) -> None:
-    """Create or update definitions. An empty colour does not clear an existing one."""
+    """Create a definition for each new name; never recolour an existing one.
+
+    An assignment's colour only seeds a tag the project does not have yet, or
+    one that has no colour. The current editors resend a colour for every tag
+    they show, usually one derived from the name, so honouring it here would
+    overwrite real colours project-wide. Recolour with tag-definitions PATCH.
+    """
     for item in items:
         definition, created = ProjectTagDefinition.objects.get_or_create(
             project=project,
             name=item["name"],
             defaults={"color": item["color"]},
         )
-        if not created and item["color"] and definition.color != item["color"]:
+        if not created and item["color"] and not definition.color:
             definition.color = item["color"]
             definition.save(update_fields=["color", "updated_at"])
 
 
-def _assigned_counts(project_id: str) -> dict[str, int]:
-    """Per name, how many live rows carry it, on each assignment table.
+def _assigned_names(project_id: str) -> tuple[dict[str, int], set[str]]:
+    """Names assigned in the project: span counts, plus names seen on trace rows.
 
-    A name counts once per row even if an SDK repeated it in one list.
+    ``usage_count`` is the number of live spans whose tags contain the name,
+    once per span even if an SDK repeated it in one list. Trace rows only add
+    names (a legacy trace-level tag with no span carrying it counts 0).
     """
-    counts: dict[str, int] = {}
+    found: dict[str, dict[str, int]] = {}
     for table, live in (("spans", "AND is_deleted = 0"), ("traces", "")):
         rows = _read(
             f"""
-            SELECT tag, count() AS rows
+            SELECT tag, count() AS row_count
             FROM (
                 SELECT arrayDistinct(JSONExtract(tags, 'Array(String)')) AS names
                 FROM {table} FINAL
@@ -430,18 +500,16 @@ def _assigned_counts(project_id: str) -> dict[str, int]:
             WHERE tag != ''
             GROUP BY tag
             ORDER BY tag
-            LIMIT {_MAX_LISTED_TAGS}
+            LIMIT {_MAX_LISTED_TAGS + 1}
             """,
             {"project_id": project_id},
             cap_ms=_LIST_CAP_MS,
             settings=_LIST_SETTINGS,
         )
-        for row in rows:
-            name, used = str(row["tag"]), int(row["rows"])
-            # A trace tag lands on the trace row and its root span, so add
-            # nothing twice: take whichever table carries the name more often.
-            counts[name] = max(counts.get(name, 0), used)
-    return counts
+        if len(rows) > _MAX_LISTED_TAGS:
+            raise TagListTooLarge(_MAX_LISTED_TAGS)
+        found[table] = {str(row["tag"]): int(row["row_count"]) for row in rows}
+    return found["spans"], set(found["traces"])
 
 
 def list_definitions(*, project: Project) -> list[dict[str, Any]]:
@@ -452,13 +520,15 @@ def list_definitions(*, project: Project) -> list[dict[str, Any]]:
     stored = {
         row.name: row for row in ProjectTagDefinition.objects.filter(project=project)
     }
-    counts = _assigned_counts(str(project.id))
-    names = sorted(set(stored) | set(counts))
+    span_counts, trace_names = _assigned_names(str(project.id))
+    names = sorted(set(stored) | set(span_counts) | trace_names)
+    if len(names) > _MAX_LISTED_TAGS:
+        raise TagListTooLarge(_MAX_LISTED_TAGS)
     return [
         {
             "name": name,
             "color": stored[name].color if name in stored else "",
-            "usage_count": counts.get(name, 0),
+            "usage_count": span_counts.get(name, 0),
         }
         for name in names
     ]
@@ -496,6 +566,13 @@ def _check_color(color: Any) -> str | None:
     return color
 
 
+def _lock_project_tags(project: Project) -> None:
+    """Serialize rename/recolour/delete of one project's tags (transaction-scoped)."""
+    key = uuid.UUID(str(project.id)).int & 0x7FFFFFFF
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", [7275, key])
+
+
 def update_definition(
     *,
     project: Project,
@@ -508,25 +585,43 @@ def update_definition(
     Recolouring changes the definition only. A rename also rewrites every
     assignment in the project; renaming onto an existing tag merges into it.
     ``color`` None keeps the current colour, ``""`` clears it.
+
+    Repeating a rename that already happened (the old name is gone and the new
+    one exists) completes it instead of failing, so a retry after a partial
+    ClickHouse failure converges.
     """
     name = _clean_name(name)
     color = _check_color(color)
     new_name = None if new_name is None else _clean_name(new_name)
-    definition = ProjectTagDefinition.objects.filter(project=project, name=name).first()
-    if definition is None and not _name_assigned(project, name):
-        raise TagNotFound("definition")
-
-    if new_name is None or new_name == name:
-        if definition is None:
-            definition = ProjectTagDefinition.objects.create(
-                project=project, name=name, color=color or ""
-            )
-        elif color is not None and definition.color != color:
-            definition.color = color
-            definition.save(update_fields=["color", "updated_at"])
-        return {"name": name, "color": definition.color}
-
+    renaming = new_name is not None and new_name != name
     with transaction.atomic():
+        _lock_project_tags(project)
+        definition = (
+            ProjectTagDefinition.objects.select_for_update()
+            .filter(project=project, name=name)
+            .first()
+        )
+        if definition is None and not _name_assigned(project, name):
+            already_renamed = renaming and (
+                ProjectTagDefinition.objects.filter(
+                    project=project, name=new_name
+                ).exists()
+                or _name_assigned(project, new_name)
+            )
+            if not already_renamed:
+                raise TagNotFound("definition")
+            name, renaming = new_name, False
+
+        if not renaming:
+            if definition is None:
+                definition, _ = ProjectTagDefinition.objects.get_or_create(
+                    project=project, name=name, defaults={"color": color or ""}
+                )
+            if color is not None and definition.color != color:
+                definition.color = color
+                definition.save(update_fields=["color", "updated_at"])
+            return {"name": name, "color": definition.color}
+
         target = (
             ProjectTagDefinition.objects.select_for_update()
             .filter(project=project, name=new_name)
@@ -558,8 +653,9 @@ def update_definition(
         _rewrite_postgres_trace_tags(
             project_id=str(project.id), old_name=name, new_name=new_name
         )
-        # Last, so a ClickHouse failure rolls the Postgres side back. Both
-        # statements are idempotent, so a retry after a partial failure converges.
+        # Last, so a ClickHouse failure rolls the Postgres side back. The
+        # statements are idempotent, and a repeated rename completes (see
+        # above), so retrying after a partial failure converges.
         rewrite_tag_name(project_id=str(project.id), old_name=name, new_name=new_name)
     return {"name": new_name, "color": survivor.color}
 
@@ -568,6 +664,7 @@ def delete_definition(*, project: Project, name: str) -> None:
     """Remove a tag from the project and from every assignment in it."""
     name = _clean_name(name)
     with transaction.atomic():
+        _lock_project_tags(project)
         ProjectTagDefinition.objects.filter(project=project, name=name).update(
             deleted=True, deleted_at=timezone.now()
         )
@@ -619,7 +716,7 @@ def set_trace_tags(
             write_span_assignment(root, names)
         if trace_uuid is not None:
             write_trace_assignment(
-                project_id=project_id, trace_uuid=trace_uuid, names=names
+                project_id=project_id, trace_uuid=trace_uuid, names=names, root=root
             )
     return {"project_id": project_id, "tags": names}
 
