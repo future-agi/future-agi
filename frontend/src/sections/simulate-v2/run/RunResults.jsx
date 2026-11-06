@@ -3729,69 +3729,176 @@ RunResults.propTypes = {
   evals: PropTypes.array,
 };
 
-/* The trials an interruption kept from running: one row each, marked
-   Interrupted, with what happened to them since. */
+/* The trials an interruption kept from running: one quiet line under the
+   table, the list itself in a side drawer — marked Interrupted, with what
+   happened to each since (runs §2). */
 function InterruptedRows({ ids, retried, repeats, envState, onRetry }) {
-  const [all, setAll] = useState(false);
-  const shownIds = all ? ids : ids.slice(0, 10);
+  const [open, setOpen] = useState(false);
   const titleOf = (id) =>
     scenarioTitle(
       (envState?.scenarios || []).find((s) => s.id === id)?.title || id,
     );
+  /* Scenarios that share a title read as one row with a count. */
+  const rows = [];
+  ids.forEach((id) => {
+    const t = titleOf(id);
+    const r = rows.find((x) => x.title === t);
+    if (r) {
+      r.n += 1;
+      r.retried += retried.includes(id) ? 1 : 0;
+    } else rows.push({ title: t, n: 1, retried: retried.includes(id) ? 1 : 0 });
+  });
   return (
-    <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+    <>
       <Stack
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 2, py: 1, bgcolor: "background.neutral" }}
+        sx={{
+          px: 2,
+          py: 0.75,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
       >
-        <Typography sx={{ typography: "s3", fontWeight: 600, flex: 1 }}>
-          {`Interrupted · ${ids.length} scenario${ids.length === 1 ? "" : "s"} · ${(ids.length * repeats).toLocaleString()} trials didn't run`}
+        <StatusChip status="interrupted" />
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            flex: 1,
+            minWidth: 0,
+          }}
+          noWrap
+        >
+          {`${ids.length} scenario${ids.length === 1 ? "" : "s"} · ${(ids.length * repeats).toLocaleString()} trials didn't run`}
         </Typography>
+        <Button
+          size="small"
+          onClick={() => setOpen(true)}
+          sx={{ color: "text.primary", flexShrink: 0 }}
+        >
+          View
+        </Button>
         {onRetry && (
           <Button
             size="small"
             variant="outlined"
             onClick={onRetry}
-            sx={{ color: "text.primary", borderColor: "divider" }}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
           >
             Retry interrupted trials
           </Button>
         )}
       </Stack>
-      {shownIds.map((id) => (
-        <Stack
-          key={id}
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{
-            px: 2,
-            py: 0.75,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-            {titleOf(id)}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {retried.includes(id) ? "Retried as a new attempt" : "No result"}
-          </Typography>
-          <StatusChip status="interrupted" />
+      <SideDrawer
+        open={open}
+        onClose={() => setOpen(false)}
+        width={{ xs: "100%", sm: 480 }}
+      >
+        <Stack sx={{ height: "100%" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 2.5,
+              py: 2,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Box flex={1} minWidth={0}>
+              <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+                Interrupted trials
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {`${ids.length} scenarios · ${(ids.length * repeats).toLocaleString()} trials had no result — not a pass or a fail.`}
+              </Typography>
+            </Box>
+            <IconButton
+              size="small"
+              onClick={() => setOpen(false)}
+              aria-label="Close"
+            >
+              <Iconify icon="solar:close-linear" width={16} />
+            </IconButton>
+          </Stack>
+          <Box sx={{ flex: 1, overflowY: "auto" }}>
+            {rows.map((r) => (
+              <Stack
+                key={r.title}
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{
+                  px: 2.5,
+                  py: 0.875,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  noWrap
+                  sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+                >
+                  {r.title}
+                  {r.n > 1 && (
+                    <Box
+                      component="span"
+                      sx={{ color: "text.tertiary", ml: 0.75 }}
+                    >
+                      {`× ${r.n}`}
+                    </Box>
+                  )}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    flexShrink: 0,
+                  }}
+                >
+                  {r.retried === r.n
+                    ? "Retried as a new attempt"
+                    : r.retried
+                      ? `${r.retried} of ${r.n} retried`
+                      : "No result"}
+                </Typography>
+              </Stack>
+            ))}
+          </Box>
+          {onRetry && (
+            <Stack
+              direction="row"
+              justifyContent="flex-end"
+              sx={{
+                px: 2.5,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => {
+                  setOpen(false);
+                  onRetry();
+                }}
+              >
+                Retry interrupted trials
+              </Button>
+            </Stack>
+          )}
         </Stack>
-      ))}
-      {ids.length > 10 && (
-        <Button
-          size="small"
-          onClick={() => setAll((v) => !v)}
-          sx={{ mx: 1.25, my: 0.5, color: "text.secondary" }}
-        >
-          {all ? "Show fewer" : `Show all ${ids.length}`}
-        </Button>
-      )}
-    </Box>
+      </SideDrawer>
+    </>
   );
 }
 InterruptedRows.propTypes = {
