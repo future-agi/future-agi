@@ -157,6 +157,10 @@ def start_verify(
             "this environment's scenarios include no held-back case to verify on",
             status_code=409,
         )
+    # Fewer trials keep every held-back case inside a run's execution cap; the
+    # result reports the trials that ran.
+    cap = int(getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200))
+    trials = max(1, min(trials, cap // len(cases)))
     # Outside the transaction: the check may call the usage service.
     require_harness_call_usage(environment)
     with transaction.atomic():

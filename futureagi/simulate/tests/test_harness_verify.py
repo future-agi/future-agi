@@ -359,6 +359,15 @@ class TestVerify:
         temporal.start.assert_called_once()
         assert temporal.start.call_args.args[0] == str(run.id)
 
+    def test_trials_shrink_to_fit_the_run_cap(self, environment, settings):
+        settings.HARNESS_MAX_EXECUTIONS_PER_RUN = 2
+        cases = len(ensure_held_back(environment).scenario_keys)
+
+        run = _verify(environment, _second_agent(environment), trials=5)
+
+        assert run.payload["metadata"]["trials"] == 2 // cases
+        assert _executions(run).count() == cases * (2 // cases)
+
     def test_a_version_is_verified_once(self, environment, temporal):
         candidate = _second_agent(environment)
 
