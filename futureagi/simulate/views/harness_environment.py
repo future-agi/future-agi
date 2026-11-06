@@ -469,7 +469,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def upload_file(self, request, pk=None):
         """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
         it, for picking per actor."""
-        from simulate.services.harness_actors import upload_environment_file
+        from simulate.services.harness_actors import (
+            UPLOAD_MAX_BYTES,
+            upload_environment_file,
+        )
 
         version_reads.require_versioning()
         job = self._job(request, pk)
@@ -493,7 +496,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 kind=str(request.data.get("kind") or ""),
                 name=str(upload.name or ""),
                 # Read one byte past the bound, so a larger file is refused without reading all of it.
-                content=upload.read(1024 * 1024 + 1),
+                content=upload.read(UPLOAD_MAX_BYTES + 1),
                 user=request.user,
                 expected_revision=expected,
             )

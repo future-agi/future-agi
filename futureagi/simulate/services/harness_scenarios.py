@@ -578,11 +578,13 @@ def with_sessions_to_rewrite(
         return doc
     old = (before or {}).get("pre_run") if isinstance(before, dict) else None
     old = old if isinstance(old, list) else []
-    shape = lambda one: (
-        (one.get("actors"), one.get("where"), one.get("about"))
-        if isinstance(one, dict)
-        else None
-    )  # noqa: E731
+
+    def shape(one: object) -> object:
+        """What a session was written from: who is in it, where, and about what."""
+        if not isinstance(one, dict):
+            return None
+        return (one.get("actors"), one.get("where"), one.get("about"))
+
     kept = []
     for index, session in enumerate(sessions):
         if not isinstance(session, dict):
