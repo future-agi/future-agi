@@ -10,7 +10,9 @@ handlers, adapter and provider request builders are the real ones.
 
 import base64
 import copy
+import io
 import json
+import wave
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -645,3 +647,110 @@ class TestCustomAdapterBoundary:
 
         assert result.failure is None, result.failure
         assert provider_io[0]["text"] == user_text[:2000]
+
+
+# ---------------------------------------------------------------------------
+# Audio-column variables on text-to-speech (R-02, R-04, AC-04)
+# ---------------------------------------------------------------------------
+
+
+AUDIO_MARKER = "__AUDIO_MARKER_th2356__"
+AUDIO_MARKERS = {
+    AUDIO_MARKER: {"type": "audio", "url": "https://media.example/recording.wav", "counter": 0}
+}
+AUDIO_LABEL = "Audio Input_0 is given below:"
+LITERAL_TTS_MODELS = ["openai/tts-1", "gpt-4o-mini-tts", "eleven_multilingual_v2", "aura-2"]
+AUDIO_READING_MODELS = ["vertex_ai/gemini-2.5-flash-preview-tts", "whisper-1"]
+
+
+def silent_wav():
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x00\x00" * 2000)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def media_fetch():
+    with patch("model_hub.views.run_prompt.safe_fetch") as fetch:
+        fetch.return_value = MagicMock(content=silent_wav())
+        yield fetch
+
+
+class TestAudioVariablesForTextToSpeech:
+    @pytest.mark.parametrize("model", LITERAL_TTS_MODELS)
+    @pytest.mark.parametrize("text", [AUDIO_MARKER, f"Please listen. {AUDIO_MARKER}"])
+    def test_literal_tts_rejects_audio_variable_before_fetch(self, media_fetch, model, text):
+        from model_hub.views.run_prompt import process_media_markers
+
+        with pytest.raises(ValueError, match="speaks text only"):
+            process_media_markers(text, AUDIO_MARKERS, model)
+
+        media_fetch.assert_not_called()
+
+    def test_literal_tts_rejection_does_not_depend_on_the_fetch(self, media_fetch):
+        from model_hub.views.run_prompt import process_media_markers
+
+        media_fetch.side_effect = Exception("recording unreachable")
+
+        with pytest.raises(ValueError, match="speaks text only"):
+            process_media_markers(AUDIO_MARKER, AUDIO_MARKERS, "openai/tts-1")
+
+        media_fetch.assert_not_called()
+
+    @pytest.mark.parametrize("model", AUDIO_READING_MODELS)
+    def test_models_that_read_audio_keep_label_and_audio(self, media_fetch, model):
+        from model_hub.views.run_prompt import process_media_markers
+
+        segments = process_media_markers(
+            f"Please listen. {AUDIO_MARKER}", AUDIO_MARKERS, model
+        )
+
+        assert segments[:2] == [
+            {"type": "text", "text": "Please listen. "},
+            {"type": "text", "text": AUDIO_LABEL},
+        ]
+        assert segments[2]["type"] == "input_audio"
+        assert segments[2]["input_audio"]["data"] == base64.b64encode(silent_wav()).decode()
+        media_fetch.assert_called_once()
+
+    @pytest.mark.parametrize("model", AUDIO_READING_MODELS)
+    def test_fetch_failure_for_models_that_read_audio_is_unchanged(self, media_fetch, model):
+        from model_hub.views.run_prompt import process_media_markers
+
+        media_fetch.side_effect = Exception("recording unreachable")
+
+        segments = process_media_markers(AUDIO_MARKER, AUDIO_MARKERS, model)
+
+        assert segments == [{"type": "text", "text": AUDIO_LABEL}]
+
+    @pytest.mark.parametrize(
+        ("model", "literal"),
+        [
+            ("openai/tts-1", True),
+            ("gpt-4o-mini-tts", True),
+            ("eleven_multilingual_v2", True),
+            ("gemini/gemini-2.5-flash-preview-tts", True),
+            ("vertex_ai/gemini-2.5-flash-preview-tts", False),
+            ("gpt-4o-audio-preview", False),
+            ("gpt-4o-audio-preview-2024-12-17", False),
+            ("openai/gpt-4o-audio-preview", False),
+        ],
+    )
+    def test_literal_predicate_follows_tts_routing(self, model, literal):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
+            requires_completion_audio,
+            speaks_text_literally,
+        )
+
+        assert speaks_text_literally(model) is literal
+        handler = TTSHandler(tts_context(model, control_and_user()))
+        with patch(
+            "agentic_eval.core_evals.run_prompt.other_services.manager.OtherServicesManager.get_speech_handler",
+            return_value=None,
+        ):
+            routed_to_completion = isinstance(handler._get_sub_handler(), AudioPreviewHandler)
+        assert routed_to_completion is requires_completion_audio(model)

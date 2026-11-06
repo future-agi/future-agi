@@ -29,6 +29,9 @@ from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 # (available_models always available)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
+    speaks_text_literally,
+)
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
@@ -933,6 +936,14 @@ def process_media_markers(text, image_markers, model_name):
         elif info["type"] == "audio":
             # Allow audio for models explicitly marked as audio (tts) or stt
             model_mode = get_model_mode(model_name)
+            # A text-to-speech model that reads its script aloud cannot use
+            # audio input; any label added below would be spoken (TH-2356).
+            # Completion-audio models still get the audio.
+            if model_mode == "tts" and speaks_text_literally(model_name):
+                raise ValueError(
+                    f"{model_name} speaks text only. Remove the audio column "
+                    "variable from the prompt."
+                )
             if model_mode not in (
                 "audio",
                 "stt",
