@@ -377,7 +377,12 @@ def activate_account(request, uidb64, token):
         # Decode the uidb64 to the user ID
         uid = force_str(urlsafe_base64_decode(uidb64))
         user = User.objects.get(pk=uid)
+    except User.DoesNotExist:
+        return _gm.bad_request("User does not exist.")
+    except (TypeError, ValueError, OverflowError, ValidationError):
+        return _gm.bad_request("Activation link is invalid or has expired.")
 
+    try:
         # Check if the token is valid
         if account_activation_token.check_token(user, token):
             # Use transaction to ensure atomicity of account activation
@@ -432,8 +437,6 @@ def activate_account(request, uidb64, token):
         else:
             return _gm.bad_request("Activation link is invalid or has expired.")
 
-    except User.DoesNotExist:
-        return _gm.bad_request("User does not exist.")
     except Exception:
         logger.exception("Error during account activation")
         return _gm.internal_server_error_response(
