@@ -224,6 +224,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                    elif row['name']=='0103_callexecution_audio_metrics': expected_row={'simulate_call_execution','simulate_call_execution_snapshot'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
 
