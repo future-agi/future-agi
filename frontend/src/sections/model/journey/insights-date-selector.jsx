@@ -10,16 +10,17 @@ const formatDate = (date) => {
   return date.toISOString().split("T")[0]; // Format as 'YYYY-MM-DD'
 };
 
-export function getDateRange(range) {
-  const toDate = new Date(); // 'to' date is today
-  const fromDate = new Date(); // Start with today for 'from' date
+export function getDateRange(range, reference = new Date()) {
+  const toDate = new Date(reference); // 'to' date is today
+  const fromDate = new Date(reference); // Start with today for 'from' date
 
   switch (range) {
     case "today":
       // 1 day means today, so 'from' date is the same as 'to' date
       break;
     case "yesterday":
-      fromDate.setDate(toDate.getDate() - 1);
+      fromDate.setDate(fromDate.getDate() - 1);
+      toDate.setDate(toDate.getDate() - 1);
       break;
     case "7d":
       fromDate.setDate(toDate.getDate() - 6); // Subtract 6 days (7 days including today)
