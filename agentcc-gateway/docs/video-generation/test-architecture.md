@@ -18,6 +18,17 @@ Stage: ARCHITECTURE draft, 2026-10-02. Maps PRD r2 acceptance AT01 to AT32 onto 
 
 Fixtures: `internal/providers/video/<service>/testdata/` holds (a) `capabilities.json` (the registry record snapshot), (b) `submit_request.golden.json` per operation (what the adapter must send; asserted by the fake with a JSON-diff that ignores volatile fields), (c) `responses/*.json` recorded from the official docs (BytePlus retrieve response copied verbatim from the API reference examples), and (d) `errors/*.json`. Fixtures never contain real keys, prompts with PII, or real media; test media are generated 64×64 PNGs and 1-second synthetic MP4s built in `videotest` at test time (ftyp/moov only).
 
+## 1a. OpenRouter adapter and OpenAI wire (added 2026-11-07)
+
+| Concern | Tests | How it runs |
+|---|---|---|
+| Request mapping, status/usage mapping, error classes, authenticated content, redirect credential stripping, byte cap, config | `providers/video/openrouter: TestSubmit_*`, `TestPoll_*`, `TestHTTP_ErrorClassification`, `TestFetch_*`, `TestNew_ConfigValidation`, `TestSchemaPollFixture` (synthetic, built from the published response schema), `TestContractSuite` | `go test`, no network |
+| Upper-bound reservation, USD micros, live-billed coverage | `video/tariff: TestOpenRouterEstimatesForSmokeClips`, `TestOpenRouterEstimatesCoverLiveBilledCosts`, `TestUSDMicrosRoundsUpWithoutFloatNoise` | `go test` |
+| Settlement, null cost, later-reported cost, bounded usage refresh, expired reason, ambiguous submit never resubmitted, definite rejection, cancel unsupported, verified image type | `video/lifecycle: TestOpenRouter_*` | Redis (`TEST_REDIS_ADDR`) |
+| OpenAI wire: multipart/JSON decode, exact sizes, status dialects, cursor, idempotency bound to wire, delete, variant | `video/capability: TestOpenAI*`, `video: TestStatusResponseWireDialects`, `TestListCursorSurvivesFilterChanges`, `server: TestVideoOpenAIWire*`, `TestVideoIdempotencyKeyIsBoundToWire` | Redis for `server` |
+| Real clients | `server: TestVideoOpenAISDKContract` (`VIDEO_OPENAI_SDK_PYTHON`, a Python with `openai==3.46.0`), `TestVideoLiteLLMContract` (`VIDEO_LITELLM_PYTHON`, `litellm==1.108.2`) | opt-in; skipped without the variable |
+| LIVE | one synthetic clip per pinned OpenRouter model through `/v1/videos` with the `openai` SDK on an ephemeral cloud VM, under a gateway hard org budget; ledger, catalog pre-check and reported costs kept as private evidence | manual, authorized spend only |
+
 ## 2. AT mapping
 
 | AT | Layer(s) | Concrete tests (package: name) | Pass condition |

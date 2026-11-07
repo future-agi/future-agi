@@ -859,3 +859,20 @@ logging:
 #       execution_expires_after: 7200
 #       acknowledge_public_output: false  # Enablement blocked until explicitly acknowledged.
 #       min_tokens_with_video_input: 0    # Operator-asserted minimum; zero rejects video-input estimates.
+#     openrouter:  # Aggregator route: proves the OpenRouter path, not the model vendor's native API.
+#       enabled: false
+#       api_key: "${OPENROUTER_API_KEY}"
+#       base_url: https://openrouter.ai/api/v1
+#       region: global
+#       account_ref: openrouter-main
+#       # Request as "openrouter/<vendor>/<model>". Pinned to the 2026-11-06 public catalog.
+#       models: [bytedance/seedance-1-5-pro, google/veo-3.1-lite, kwaivgi/kling-v3.0-std, alibaba/wan-3.0, minimax/hailuo-3-max, runway/gen-4.5, x-ai/grok-imagine-video-1.5-lite]
+#       limits: { submit_rpm: 10, poll_qps: 2, max_active_tasks: 4 }
+#       deadlines: { connect: 10s, read: 30s, submit: 60s, run: 30m, reconcile: 5m }
+#       poll: { base_interval: 10s }
+#       allow_unpriced_models: false
+#       tariff_revision: openrouter-2026-11-06  # Upper-bound reservation; settles OpenRouter usage.cost in USD.
+#       safety_identifier_mode: none            # org_key_hmac sends a keyed HMAC as `user`.
+#       # No execution_expires_after, acknowledge_public_output or min_tokens_with_video_input:
+#       # those are BytePlus-only. Outputs are copied through OpenRouter's authenticated
+#       # content endpoint; there is no upstream cancel, idempotency key or job lookup.

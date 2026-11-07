@@ -186,6 +186,27 @@ The adapter never sends `callback_url`, `draft`, `draft_task`, or the
 `edit`/`extend` task types; those operations are out of scope (D04) and the
 callback has no documented authentication.
 
+### `providers.openrouter` specifics
+
+OpenRouter is an aggregator route: it proves the OpenRouter path for a model,
+not the model vendor's native API, credentials, billing or retention.
+
+| Key | Meaning |
+|---|---|
+| `base_url` | `https://openrouter.ai/api/v1` (HTTPS, no query). |
+| `region` | `global` (the only value accepted). |
+| `models` | Any of `bytedance/seedance-1-5-pro`, `google/veo-3.1-lite`, `kwaivgi/kling-v3.0-std`, `alibaba/wan-3.0`, `minimax/hailuo-3-max`, `runway/gen-4.5`, `x-ai/grok-imagine-video-1.5-lite`. Requests name them as `openrouter/<vendor>/<model>`. |
+| `poll.base_interval` | At least 5s; OpenRouter suggests about 30s between polls. |
+| `tariff_revision` | `openrouter-2026-11-06`: the list `pricing_skus` of the public video catalog read on 2026-11-06, used only for the upper-bound reservation (advertised discounts ignored; Kling 3.0 Std and Wan 3.0 reserved at their observed 5-second minimum billed duration; 15% headroom on Seedance video tokens). Each job settles at the USD `usage.cost` OpenRouter reports. A null or missing cost, or `is_byok: true` (the vendor bills your own key directly), leaves the job unsettled with the reservation held; it is re-read for accounting at most 12 times, five minutes apart. |
+| `safety_identifier_mode` | `none` (default) or `org_key_hmac`, which sends a keyed HMAC of org, key and end user as OpenRouter's `user` field (observability only; it is not a deduplication key). |
+| `execution_expires_after`, `min_tokens_with_video_input`, `acknowledge_public_output` | Not accepted: they are BytePlus-specific. Outputs are copied only through OpenRouter's authenticated content endpoint into gateway storage; signed download URLs are never followed or stored. |
+
+OpenRouter documents no submit idempotency key, job lookup, list or cancel
+operation. A submit that was sent but got no definite answer (timeout, 429,
+499, 5xx) stays `submission_unknown` and is never resubmitted; 400 and 402
+are definite refusals and release the reservation. `POST /cancel` answers 409
+`cancel_unsupported`, and local delete reports `upstream_may_continue`.
+
 ## BytePlus ModelArk setup
 
 1. Create an API key in the ModelArk console for region `ap-southeast-1`

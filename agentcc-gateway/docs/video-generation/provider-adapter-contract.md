@@ -272,11 +272,41 @@ Checked 2026-10-02: https://fal.ai/docs/documentation/model-apis/inference/queue
 - Runway third-party catalog (P26): optional explicit route; never a fallback; same Runway adapter with different model IDs, each pinned individually.
 - OpenAI Sora (P27): retired 2026-09-24; no adapter; model IDs rejected with 400 `unsupported_model` (`reason: retired`) so aliases cannot be silently re-routed.
 
+## 14a. OpenRouter aggregator route (O01 to O07), implemented
+
+Route kind `aggregator`: a passing job proves OpenRouter's path for that model
+only; it is never evidence for the vendor's native API, auth, billing or output
+privacy, and native rows keep their own state. Sources: openrouter.ai
+`openapi.json`, the video-generation API reference and guide, the official
+TypeScript SDK models, and `GET /api/v1/videos/models` (all read 2026-11-06).
+
+| Gateway | OpenRouter |
+|---|---|
+| `POST /videos`, Bearer key, JSON | 202 `{id, polling_url, status}`; `id` is opaque and validated as `[A-Za-z0-9_-]{1,256}` before use in a path |
+| `duration_seconds` | `duration` (integer) |
+| `resolution`, `aspect_ratio` | same names; `size` is never sent |
+| `audio` | `generate_audio`, sent only for models whose catalog entry documents the flag (Seedance, Veo Lite, Kling, Wan); never sent for Hailuo, Runway or Grok |
+| `inputs[first_frame / last_frame]` | `frame_images[] {type: image_url, image_url.url: data:<type>;base64,..., frame_type}`; reference roles are not enabled |
+| `provider_options.seed` | `seed` where the catalog says `seed: true` |
+| prepared correlation | optional `user` (keyed HMAC); OpenRouter has no idempotency key |
+| `pending` / `in_progress` | `queued` / `running` |
+| `completed` | `completed`; outputs counted from `unsigned_urls` |
+| `failed` / `expired` | `failed`, error code `provider_failed` / `provider_expired` (provider error text dropped) |
+| `cancelled` | `cancelled` |
+| any other status, id mismatch, negative cost | `*SchemaError` |
+| `usage.cost` (USD) | usage line `unit: usd`, settled to the micro-dollar (rounded up); `null`, absent or `is_byok: true` = unknown |
+| content | `GET /videos/{id}/content?index=N` with the API key, from the configured origin only; redirects are followed without `Authorization`; `urls` (signed bearer links) and `polling_url` are never dialled or persisted |
+| HTTP 400 / 402 on submit | definite refusal (`submit_rejected` / `provider_insufficient_credits`), reservation released |
+| HTTP 401 / 403 | `provider_access_denied` |
+| HTTP 408 / 429 / 499 / 5xx, transport errors after send | ambiguous: `submission_unknown`, never resubmitted |
+| Cancel, Reconcile | unsupported (`ErrCancelUnsupported`, `ErrReconcileUnsupported`) |
+
 ## 15. Summary capability flags per adapter (as designed)
 
 | Service | SubmitIdempotency | CorrelationLookup | Cancel | Output expiry / refresh | OutputACL | BillsOnFailure | Webhook | Tariff |
 |---|---|---|---|---|---|---|---|---|
 | byteplus | None | Heuristic (list + safety_identifier) | QueuedOnly | 24h, 100 downloads / no | Unknown until smoke | Unknown | Unauthenticated (unused) | video_tokens (verified) |
+| openrouter (aggregator, implemented) | None | None | None | `expires_at` per job / no | PrivateToken (authenticated content endpoint) | Unknown (docs say failed generations are not billed; settles only on reported cost) | None (callback_url never sent) | usd: pinned SKU upper bound, settles reported `usage.cost` |
 | google_gemini (Veo) | None | None | None | 48h / no | PrivateToken | NotBilled for safety blocks | None | output_seconds (PM) |
 | google_gemini (Omni) | None | None | None | unknown | unknown | Unknown | None | multimodal_tokens, upper bound required |
 | google_vertex | None | None | unverified | unverified | PrivateToken (IAM) | Unknown | None | unverified |

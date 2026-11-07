@@ -45,7 +45,7 @@ Headers:
 |---|---|---|
 | `Authorization` | yes | Bearer API key |
 | `Idempotency-Key` | yes | 1 to 255 printable characters. Missing: 400 `missing_idempotency_key`. See "Idempotency" below. |
-| `Content-Type` | yes | `application/json` |
+| `Content-Type` | yes | `application/json`, or `multipart/form-data` for the OpenAI shape (see "OpenAI Videos API compatibility") |
 
 Request body:
 
@@ -232,12 +232,13 @@ Query parameters:
 | `order` | `asc` or `desc` (default) by `created_at`, ties broken by `id` |
 | `status` | One of the normalized states |
 | `model` | Registry-known service-qualified ID |
+| `after` | Cursor: a video ID from a previous page; results start after it in the requested order. It is positioned by that job even if it no longer matches `status` or `model`. Unknown or foreign IDs answer 400 `invalid_filter`. Cannot be combined with `offset`; with `after`, `total` counts the jobs after the cursor. |
 
 Invalid values are rejected with 400 `invalid_filter`; they are never
 silently ignored.
 
 ```json
-{"object": "list", "data": [{"id": "video_01J9...", "...": "status objects"}], "total": 42, "limit": 20, "offset": 0, "has_more": true}
+{"object": "list", "data": [{"id": "video_01J9...", "...": "status objects"}], "total": 42, "limit": 20, "offset": 0, "has_more": true, "first_id": "video_01J9...", "last_id": "video_01JA..."}
 ```
 
 `total` is computed with the same organization and filters as `data`.
@@ -388,6 +389,58 @@ redacted):
 - The original client URL is forwarded to the provider only when the
   provider must fetch it itself; gateway credentials are never placed in
   URLs. Signed client URLs have their signatures redacted in logs.
+
+## OpenAI Videos API compatibility
+
+The same routes also accept the OpenAI Videos API request shape, so the
+official OpenAI SDKs and LiteLLM's video client can point `base_url` at the
+gateway. The gateway never calls OpenAI: Sora is retired (P27), and the
+model must be a gateway model such as `openrouter/runway/gen-4.5`.
+
+A create request uses the OpenAI shape when it is `multipart/form-data`
+(what the SDKs send) or JSON that contains `seconds`, `size` or
+`input_reference`. Any other JSON body uses the native contract above,
+which is unchanged: those three fields were unknown to it and rejected.
+
+| OpenAI field | Gateway meaning |
+|---|---|
+| `model`, `prompt` | Same as native |
+| `seconds` | `duration_seconds`; a positive integer, sent as a string or number |
+| `size` | An exact canonical `WIDTHxHEIGHT` for a resolution tier (short side 480, 720, 768, 1080 or 2160) and aspect ratio, for example `854x480`, `1280x720`, `720x1280`, `1366x768` or `1080x1080`. Any other size, including near misses such as `1283x720` and Sora-only sizes such as `1792x1024`, answers 400 `unsupported_combination` instead of being rounded to a different paid output. |
+| `input_reference` | A first-frame image: a multipart file, or JSON `{"image_url": "https://..."}` or a `data:image/...;base64,` URL. The type sent upstream is the one sniffed from the bytes at ingress and must be a format the model accepts. `file_id` is not supported. |
+| `audio`, `resolution`, `aspect_ratio` | Gateway extensions (SDKs pass them via `extra_body`). A `size` that conflicts with `resolution` or `aspect_ratio` is refused. |
+
+Every field may appear once; unknown fields are rejected as in the native
+contract. `Idempotency-Key` is still required (SDKs pass it via
+`extra_headers`).
+
+A job's response shape is fixed when it is created: jobs created through the
+OpenAI shape answer with OpenAI's status enum, and replaying an
+`Idempotency-Key` in the other shape is 409 `idempotency_conflict`. A list
+therefore shows each job in the shape it was created with. OpenAI-shaped jobs
+use:
+`queued` (for `submitting`, `submission_unknown` and `queued`),
+`in_progress`, `completed` and `failed` (also for `cancelled`, with error
+code `cancelled`). The durable gateway state stays visible as
+`gateway_status`, and `progress`, `error` (`{code, message}` or `null`) and
+`remixed_from_video_id: null` are always present. `DELETE` answers
+`object: "video.deleted"`, still local only. Native jobs keep the gateway
+status vocabulary and object names.
+
+Native status objects gain `seconds` (string) and `size` (`WIDTHxHEIGHT`)
+only when they have a value; `completed_at` keeps its absent-until-set
+contract. OpenAI-shaped objects always carry `seconds`, `size` and
+`completed_at`, `null` when unset.
+
+`GET /v1/videos/{id}/content?variant=video` is accepted; `thumbnail` and
+`spritesheet` answer 400 `unsupported_variant`. List pages support the
+OpenAI cursor (`after`, `first_id`, `last_id`, `has_more`).
+
+Contract tests drive the real `openai` Python SDK (3.46.0) and LiteLLM
+(1.108.2) against the gateway handler: create, idempotent replay, retrieve
+until terminal, content download, `input_reference` upload, the SDK poll
+helper, cursor pagination, cross-tenant 404, missing `Idempotency-Key`,
+retired Sora and delete (`internal/server/handlers_video_openai_test.go`).
 
 ## Compatibility with the `ce6af27` scaffold
 

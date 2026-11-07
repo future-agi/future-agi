@@ -330,7 +330,7 @@ Legend: ✅ first-class · ⚠️ partial/paid · ❌ not in OSS.
 
 <sup>¹ 18 built-in scanners + adapters for: Lakera, Aporia, AWS Bedrock Guardrails, Azure AI Content Safety, Presidio, Llama Guard, Pangea, Enkrypt, Lasso, HiddenLayer, Gray Swan, DynamoAI, CrowdStrike, IBM watsonx, Zscaler — all chainable in the same pipeline.</sup>
 
-<sup>² BytePlus Seedance only; other providers designed, not implemented. See the <a href="#-video-generation">video support matrix</a>.</sup>
+<sup>² BytePlus Seedance (native, contract-tested, not live-verified) and seven models through the OpenRouter aggregator route (live-smoked); other native providers designed, not implemented. See the <a href="#-video-generation">video support matrix</a>.</sup>
 
 Corrections welcome — open an issue or send a PR.
 
@@ -485,12 +485,20 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 ### 🎬 Video generation
 
 Video generation is a durable, Redis-backed job lifecycle behind `/v1/videos`.
-It is **off by default** (`video.enabled: false`). This release implements one
-provider family, BytePlus ModelArk Seedance. Every other family in the table
-below is designed (capability record, adapter contract, tests mapped) but
-**not implemented** until its cohort PR lands, and no row, including Seedance,
-is smoke-verified against a live provider account yet. The table is the
-support claim; nothing outside it is supported.
+It is **off by default** (`video.enabled: false`). This release implements two
+adapters: BytePlus ModelArk Seedance (native API, contract tests only: no
+account was available, so its auth, billing and output privacy are unproven)
+and the OpenRouter aggregator route for the seven models in the second table.
+Every other native family in the first table is designed (capability record,
+adapter contract, tests mapped) but **not implemented** until its cohort PR
+lands. A model reached through OpenRouter proves the OpenRouter route only: it
+does not upgrade the native row of the same vendor. The tables are the
+support claim; nothing outside them is supported.
+
+The same routes accept the OpenAI Videos API shape (`seconds`, `size`,
+`input_reference`, multipart), so the OpenAI SDKs and LiteLLM's video client
+work with `base_url` pointed at the gateway. The gateway never calls OpenAI:
+Sora is retired. See [OpenAI Videos API compatibility](docs/video-generation/api-reference.md#openai-videos-api-compatibility).
 
 State vocabulary: `documented` = upstream contract verified from primary
 docs and adapter designed, not implemented · `implemented` = adapter and
@@ -529,6 +537,31 @@ deferral (none today) · `retired` = provider retired the API.
 | P25 | Replicate inventory | `tencent/hunyuan-video`, `prunaai/p-video`, `lightricks/ltx-video` | unverified | — | — | — | — | — | model versions and schemas unverified |
 | P26 | Runway third-party catalog | `seedance2_5`, `seedance2`, `seedance2_fast`, `seedance2_mini`, `hailuo3`, `h3_max`, `wan3`, `wan3_prime`, `grok_imagine_1_5`, `happyhorse_1_0`, `veo3.1`, `veo3.1_fast`, `gemini_omni_flash_1.1`, `gemini_omni_flash` | unverified | per model | per model | per model | per model | Runway task semantics | explicit opt-in route only, never a fallback; per-model schema unpinned |
 | P27 | OpenAI Sora | `sora-2`, `sora-2-pro`, `sora-2-2025-10-06`, `sora-2-2025-12-08`, `sora-2-pro-2025-10-06` | retired | — | — | — | — | — | API retired 2026-09-24; IDs answer 400 `unsupported_model` |
+
+**OpenRouter aggregator route** (`openrouter/<vendor>/<model>`, catalog pinned
+2026-11-06). Live smoke on 2026-11-07: one synthetic clip per model through the
+gateway's `/v1/videos` route with the official `openai` SDK, run on an
+ephemeral cloud VM; every job reached `completed`, the gateway copied a
+playable MP4 into its own storage, and settled the `usage.cost` OpenRouter
+reported (total USD 1.298101 for the seven clips). Cancel is not offered
+upstream; local delete never stops upstream generation or billing.
+
+| ID | Gateway model | Smoke request | State | Text→video | Image→video | Audio out | Output (ffprobe) | Reported cost |
+|---|---|---|---|---|---|---|---|---|
+| O01 | `openrouter/bytedance/seedance-1-5-pro` | 4s, 480p, 16:9, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 864x496, 4.04s | USD 0.048226 |
+| O02 | `openrouter/google/veo-3.1-lite` | 4s, 720p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 1280x720, 4.00s | USD 0.1188 |
+| O03 | `openrouter/kwaivgi/kling-v3.0-std` | 3s, 720p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 1920x1080, 3.04s; billed 5s | USD 0.4158 |
+| O04 | `openrouter/alibaba/wan-3.0` | 2s, 480p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 854x480, 2.02s; billed 5s | USD 0.210375 |
+| O05 | `openrouter/minimax/hailuo-3-max` | 5s, 480p | live-smoked (aggregator) | yes | first, first+last | no | 832x480, 5.18s | USD 0.2475 |
+| O06 | `openrouter/runway/gen-4.5` | 2s, 720p | live-smoked (aggregator) | yes | first | no | 1280x720, 2.04s | USD 0.2376 |
+| O07 | `openrouter/x-ai/grok-imagine-video-1.5-lite` | 1s, 480p | live-smoked (aggregator) | yes | first | not switchable (catalog `null`); never claimed silent | 848x480, 1.04s | USD 0.0198 |
+
+Reference inputs (`reference_image`/`video`/`audio`) are not enabled for any
+OpenRouter model: the catalog does not establish per-model support. The
+reservation is an upper bound from the pinned SKUs, with Kling and Wan billed
+at their observed 5-second minimum and 15% token headroom for Seedance; the
+job then settles at OpenRouter's reported `usage.cost`. A missing or null cost
+leaves the job unsettled with the reservation held, never settled at zero.
 
 "Cancel" is what the upstream API documents, not a gateway promise:
 `POST /v1/videos/{id}/cancel` returns `cancel_unsupported` or
