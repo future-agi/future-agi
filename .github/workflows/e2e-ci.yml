@@ -363,8 +363,17 @@ jobs:
         id: boot
         run: bin/e2e up
 
-      - name: Run E2E suite
-        run: bin/e2e test
+      - name: Run Copilot managed green and fallibility proofs
+        run: python3 -I scripts/copilot-fallibility.py
+
+      - name: Upload Copilot fallibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copilot-fallibility
+          path: e2e/copilot-fallibility
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
