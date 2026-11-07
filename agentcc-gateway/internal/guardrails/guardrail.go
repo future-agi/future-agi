@@ -42,6 +42,9 @@ type CheckResult struct {
 	Action  Action                 // what action to take if triggered
 	Message string                 // human-readable explanation
 	Details map[string]interface{} // guardrail-specific metadata
+	// OperationalError means evaluation could not run, not an unsafe verdict.
+	// The runner applies fail_open; a fail-closed error bypasses score thresholds.
+	OperationalError bool
 }
 
 // Guardrail is the interface that all guardrail implementations must satisfy.
@@ -75,6 +78,9 @@ type PipelineResult struct {
 func shouldTrigger(result *CheckResult, threshold float64) bool {
 	if result == nil {
 		return false
+	}
+	if result.OperationalError {
+		return true
 	}
 	if result.Score > threshold {
 		return true

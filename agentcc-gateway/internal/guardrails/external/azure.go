@@ -31,7 +31,7 @@ type azureCategory struct {
 	Severity int    `json:"severity"`
 }
 
-func newAzureAdapter(cfg map[string]interface{}) *azureAdapter {
+func newAzureAdapter(cfg adapterConfig) *azureAdapter {
 	return &azureAdapter{
 		endpoint:          getStringConfig(cfg, "endpoint", ""),
 		apiKey:            getStringConfig(cfg, "api_key", ""),

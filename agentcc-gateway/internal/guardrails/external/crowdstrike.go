@@ -17,6 +17,7 @@ type crowdstrikeAdapter struct {
 	clientSecret      string
 	baseURL           string
 	severityThreshold int
+	client            *http.Client
 
 	mu          sync.Mutex
 	cachedToken string
@@ -54,7 +55,7 @@ type crowdstrikeTokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-func newCrowdstrikeAdapter(cfg map[string]interface{}) *crowdstrikeAdapter {
+func newCrowdstrikeAdapter(cfg adapterConfig) *crowdstrikeAdapter {
 	return &crowdstrikeAdapter{
 		clientID:          getStringConfig(cfg, "client_id", ""),
 		clientSecret:      getStringConfig(cfg, "client_secret", ""),
@@ -80,8 +81,7 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return "", err
 	}

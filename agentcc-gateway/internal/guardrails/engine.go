@@ -214,6 +214,9 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 
 	select {
 	case res := <-ch:
+		if res.cr != nil && res.cr.OperationalError {
+			res.err = fmt.Errorf("%s", res.cr.Message)
+		}
 		if res.err != nil {
 			return e.handleError(rule, res.err)
 		}
@@ -283,10 +286,11 @@ func (e *Engine) handleError(rule resolvedRule, err error) *CheckResult {
 		return nil
 	}
 	return &CheckResult{
-		Pass:    false,
-		Score:   1.0,
-		Action:  rule.action,
-		Message: fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		Pass:             false,
+		Score:            1.0,
+		Action:           rule.action,
+		Message:          fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		OperationalError: true,
 	}
 }
 
