@@ -2,6 +2,7 @@
 
 import pytest
 
+from model_hub.models.skills_hub import HubSkillDraft
 from model_hub.services.skills_hub.drafts import (
     discard_draft,
     get_draft,
@@ -145,7 +146,7 @@ def test_draft_paths_are_relative(hub_skill, user, path):
     assert exc.value.code == "invalid_selector"
 
 
-def test_publish_removes_only_its_author_draft(
+def test_publish_tombstones_only_its_author_draft(
     hub_skill, user, hub_other_user, make_skill_files
 ):
     save_draft(
@@ -170,6 +171,9 @@ def test_publish_removes_only_its_author_draft(
     assert result.version.number == 1 and result.version.note == "Saved note"
     assert hub_skill.labels.get(name="staging").version_id == result.version.pk
     assert not hub_skill.drafts.filter(user=user).exists()
+    tombstone = HubSkillDraft.all_objects.get(skill=hub_skill, user=user)
+    assert tombstone.revision == 3 and tombstone.discarded_at is not None
+    assert tombstone.files == [] and tombstone.note == ""
     assert get_draft(skill=hub_skill, user=hub_other_user).note == "Other draft"
 
 
@@ -220,6 +224,9 @@ def test_unchanged_publish_also_discards_draft(
     )
     assert result.unchanged and result.version.pk == first.version.pk
     assert not hub_skill.drafts.exists()
+    tombstone = HubSkillDraft.all_objects.get(skill=hub_skill, user=user)
+    assert tombstone.revision == 3 and tombstone.discarded_at is not None
+    assert tombstone.files == []
 
 
 @pytest.mark.parametrize("content", ["\x00", "\x01", "\x85", "\ud800"])

@@ -25,6 +25,10 @@ from model_hub.services.skills_hub.packages import (
     file_sha256,
     manifest_digest,
 )
+from model_hub.services.skills_hub.zip_directory import (
+    ZipDirectoryTooLarge,
+    preflight_zip_directory,
+)
 
 # Identify a complete grant, not two phrases inside potentially modified terms.
 _MIT_GRANT = """Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -224,6 +228,10 @@ def parse_repository_zip(raw: bytes, *, path: str) -> dict:
     if len(raw) > limits.MAX_ZIP_BYTES:
         raise _large()
     try:
+        try:
+            preflight_zip_directory(raw, max_entries=limits.MAX_ZIP_ENTRIES)
+        except ZipDirectoryTooLarge as exc:
+            raise _large() from exc
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             members = _members(archive)
             roots = _roots(members, path)

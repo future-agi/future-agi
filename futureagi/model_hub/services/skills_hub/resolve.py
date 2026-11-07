@@ -12,6 +12,9 @@ from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.limits import DEFAULT_CHUNK_BYTES, MAX_CHUNK_BYTES
 from model_hub.services.skills_hub.types import ResolvedSkill
 
+# 25 maximum-length Unicode paths plus bounded identity metadata fit below 64 KiB.
+MANIFEST_PAGE_SIZE = 25
+
 
 def resolve(
     *,
@@ -55,6 +58,55 @@ def resolve(
     if resolved is None:
         raise SkillsHubError("version_not_found", "Version not found.", status=404)
     return ResolvedSkill(skill=skill, version=resolved, requested=requested)
+
+
+def manifest(
+    resolved: ResolvedSkill,
+    *,
+    include_content: bool = False,
+    include_frontmatter: bool = True,
+    file_offset: int = 0,
+    file_limit: int | None = None,
+) -> dict:
+    """Page an immutable file inventory without truncating individual metadata rows."""
+    version = resolved.version
+    if file_offset > version.file_count:
+        raise SkillsHubError(
+            "invalid_selector",
+            "The file offset is past the end of this manifest.",
+            status=400,
+        )
+    rows = version.files.order_by("path")
+    if include_content:
+        rows = rows.select_related("blob")
+    end = (
+        min(file_offset + file_limit, version.file_count)
+        if file_limit is not None
+        else version.file_count
+    )
+    return {
+        "skill_id": resolved.skill.pk,
+        "name": resolved.skill.name,
+        "description": version.frontmatter["description"],
+        "version": version.number,
+        "version_id": version.pk,
+        "digest": version.digest,
+        "requested": resolved.requested,
+        **({"frontmatter": version.frontmatter} if include_frontmatter else {}),
+        "files": [
+            {
+                "path": row.path,
+                "size_bytes": row.size_bytes,
+                "sha256": row.sha256,
+                **({"content": row.blob.content} if include_content else {}),
+            }
+            for row in rows[file_offset:end]
+        ],
+        "file_count": version.file_count,
+        "file_offset": file_offset,
+        "next_file_offset": end if end < version.file_count else None,
+        "created_at": version.created_at,
+    }
 
 
 def read_file_chunk(

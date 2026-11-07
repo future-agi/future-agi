@@ -20,18 +20,31 @@ def codes(files, **kwargs):
     return {item["code"] for item in checks.run_checks(files, **kwargs)["items"]}
 
 
-# Every fixed code has a positive case below and is absent in the clean control.
+# Severities are specified independently from the implementation, per SPEC §6.
 CASES = [
-    ("root_missing", []),
-    ("frontmatter_missing", [{"path": "SKILL.md", "content": "# Instructions"}]),
-    ("frontmatter_invalid", [skill("name: [")]),
-    ("name_missing", [skill(f"description: {DESCRIPTION}")]),
-    ("name_invalid", [skill(f"name: Bad_Name\ndescription: {DESCRIPTION}")]),
-    ("name_mismatch", [skill(f"name: other-skill\ndescription: {DESCRIPTION}")]),
-    ("description_missing", [skill("name: help-desk")]),
-    ("description_too_long", [skill(f"name: help-desk\ndescription: {'x' * 1025}")]),
+    ("root_missing", "error", []),
+    (
+        "frontmatter_missing",
+        "error",
+        [{"path": "SKILL.md", "content": "# Instructions"}],
+    ),
+    ("frontmatter_invalid", "error", [skill("name: [")]),
+    ("name_missing", "error", [skill(f"description: {DESCRIPTION}")]),
+    ("name_invalid", "error", [skill(f"name: Bad_Name\ndescription: {DESCRIPTION}")]),
+    (
+        "name_mismatch",
+        "error",
+        [skill(f"name: other-skill\ndescription: {DESCRIPTION}")],
+    ),
+    ("description_missing", "error", [skill("name: help-desk")]),
+    (
+        "description_too_long",
+        "error",
+        [skill(f"name: help-desk\ndescription: {'x' * 1025}")],
+    ),
     (
         "compatibility_too_long",
+        "error",
         [
             skill(
                 f"name: help-desk\ndescription: {DESCRIPTION}\ncompatibility: {'x' * 501}"
@@ -40,51 +53,64 @@ CASES = [
     ),
     (
         "metadata_invalid",
+        "error",
         [skill(f"name: help-desk\ndescription: {DESCRIPTION}\nmetadata: [wrong]")],
     ),
-    ("path_invalid", [skill(), {"path": "../escape.txt", "content": "hello"}]),
-    ("path_duplicate", [skill(), {"path": "skill.MD", "content": "hello"}]),
+    ("path_invalid", "error", [skill(), {"path": "../escape.txt", "content": "hello"}]),
+    ("path_duplicate", "error", [skill(), {"path": "skill.MD", "content": "hello"}]),
     (
         "file_too_large",
+        "error",
         [skill(), {"path": "large.txt", "content": "x" * (limits.MAX_FILE_BYTES + 1)}],
     ),
     (
         "too_many_files",
+        "error",
         [skill()] + [{"path": f"{index}.txt", "content": "x"} for index in range(200)],
     ),
     (
         "bundle_too_large",
+        "error",
         [skill()]
         + [
             {"path": f"{index}.txt", "content": "x" * limits.MAX_FILE_BYTES}
             for index in range(4)
         ],
     ),
-    ("file_not_text", [skill(), {"path": "bad.txt", "content": "a\x00b"}]),
-    ("secret_suspected", [skill(body="AWS key: " + "AKIA" + "A" * 16)]),
-    ("link_broken", [skill(body="Read [policy](references/missing.md).")]),
-    ("skill_md_long", [skill(body="line\n" * 501)]),
-    ("skill_md_tokens", [skill(body="x" * 20001)]),
-    ("description_short", [skill("name: help-desk\ndescription: Use when asked.")]),
+    ("file_not_text", "error", [skill(), {"path": "bad.txt", "content": "a\x00b"}]),
+    ("secret_suspected", "warning", [skill(body="AWS key: " + "AKIA" + "A" * 16)]),
+    ("link_broken", "warning", [skill(body="Read [policy](references/missing.md).")]),
+    ("skill_md_long", "warning", [skill(body="line\n" * 501)]),
+    ("skill_md_tokens", "warning", [skill(body="x" * 20001)]),
+    (
+        "description_short",
+        "warning",
+        [skill("name: help-desk\ndescription: Use when asked.")],
+    ),
     (
         "frontmatter_unknown_key",
+        "warning",
         [skill(f"name: help-desk\ndescription: {DESCRIPTION}\nunknown: true")],
     ),
-    ("file_empty", [skill(), {"path": "empty.txt", "content": "\t\n "}]),
+    ("file_empty", "warning", [skill(), {"path": "empty.txt", "content": "\t\n "}]),
     (
         "host_extension",
+        "info",
         [skill(f"name: help-desk\ndescription: {DESCRIPTION}\nuser-invocable: true")],
     ),
     (
         "allowed_tools_note",
+        "info",
         [skill(f"name: help-desk\ndescription: {DESCRIPTION}\nallowed-tools: Read")],
     ),
     (
         "executable_content",
+        "info",
         [skill(), {"path": "scripts/inspect.sh", "content": "printf 'hello\\n'"}],
     ),
     (
         "description_trigger_hint",
+        "info",
         [
             skill(
                 "name: help-desk\ndescription: A clear and comprehensive support policy for customer questions."
@@ -94,10 +120,15 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize("code,files", CASES, ids=[case[0] for case in CASES])
-def test_every_fixed_code_has_a_positive_and_negative_case(code, files):
+@pytest.mark.parametrize(
+    "code,expected_severity,files", CASES, ids=[case[0] for case in CASES]
+)
+def test_every_fixed_code_has_a_positive_and_negative_case(
+    code, expected_severity, files
+):
     result = checks.run_checks(files, expected_name="help-desk")
-    assert code in {item["code"] for item in result["items"]}
+    findings = [item for item in result["items"] if item["code"] == code]
+    assert findings and all(item["severity"] == expected_severity for item in findings)
     assert code not in codes([skill()], expected_name="help-desk")
     for key, severity in (
         ("errors", "error"),

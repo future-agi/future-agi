@@ -16,7 +16,11 @@ from model_hub.models.skills_hub import (
     HubSkillFile,
 )
 from model_hub.selectors.skills_hub import scoped_skill, skills_for_request_scope
-from model_hub.services.skills_hub.checks import estimate_tokens, run_checks
+from model_hub.services.skills_hub.checks import (
+    estimate_tokens,
+    parse_frontmatter,
+    run_checks,
+)
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.labels import set_label
 from model_hub.services.skills_hub.limits import (
@@ -76,7 +80,7 @@ def _validate_note(note: str) -> None:
 
 def _checked(
     files: list[FileInput], *, name: str | None, acknowledge_warnings: bool
-) -> dict:
+) -> tuple[dict, dict]:
     checks = run_checks(files, expected_name=name)
     if checks["summary"]["errors"]:
         raise SkillsHubError(
@@ -92,7 +96,11 @@ def _checked(
             status=422,
             detail=checks,
         )
-    return checks
+    # Checks are redacted diagnostics, never the authoritative publication data.
+    root = next(file["content"] for file in files if file["path"] == "SKILL.md")
+    frontmatter, _, _ = parse_frontmatter(root)
+    assert frontmatter is not None  # Successful checks guarantee a valid root mapping.
+    return checks, frontmatter
 
 
 def _create_identity(
@@ -182,6 +190,7 @@ def _publish_checked(
     base_version: int | None,
     labels: list[str],
     checks: dict,
+    frontmatter: dict,
     source: dict,
     force: bool,
     always_new: bool = False,
@@ -220,31 +229,38 @@ def _publish_checked(
             created_by_api_key=actor.api_key,
             file_count=len(files),
             total_bytes=sum(len(file["content"].encode("utf-8")) for file in files),
-            frontmatter=checks["frontmatter"],
+            frontmatter=frontmatter,
             checks=checks,
             parent_number=base_version,
             source=source,
         )
-        rows = []
-        for file in hashed:
-            size = len(file["content"].encode("utf-8"))
-            blob, _ = HubSkillBlob.objects.get_or_create(
+        # Different skills share organization-wide blob keys. Acquire each once,
+        # in hash order, so concurrent publications cannot deadlock on those keys.
+        content_by_hash = {file["sha256"]: file["content"] for file in hashed}
+        blobs = {}
+        for sha256, content in sorted(content_by_hash.items()):
+            blobs[sha256], _ = HubSkillBlob.objects.get_or_create(
                 organization_id=skill.organization_id,
-                sha256=file["sha256"],
-                defaults={"content": file["content"], "size_bytes": size},
+                sha256=sha256,
+                defaults={
+                    "content": content,
+                    "size_bytes": len(content.encode("utf-8")),
+                },
             )
-            rows.append(
+        HubSkillFile.objects.bulk_create(
+            [
                 HubSkillFile(
                     version=version,
                     path=file["path"],
-                    blob=blob,
-                    size_bytes=size,
+                    blob=blobs[file["sha256"]],
+                    size_bytes=len(file["content"].encode("utf-8")),
                     sha256=file["sha256"],
                     token_estimate=estimate_tokens(file["content"]),
                 )
-            )
-        HubSkillFile.objects.bulk_create(rows)
-        skill.description = checks["frontmatter"]["description"]
+                for file in hashed
+            ]
+        )
+        skill.description = frontmatter["description"]
         skill.latest_version_number = version.number
         skill.updated_by = actor.user
         skill.save(
@@ -275,7 +291,9 @@ def publish_files(
 ) -> PublishResult:
     """Check and atomically publish content, optionally moving requested labels."""
     _validate_note(note)
-    checks = _checked(files, name=skill.name, acknowledge_warnings=acknowledge_warnings)
+    checks, frontmatter = _checked(
+        files, name=skill.name, acknowledge_warnings=acknowledge_warnings
+    )
     return _publish_checked(
         skill=skill,
         actor=actor,
@@ -284,6 +302,7 @@ def publish_files(
         base_version=base_version,
         labels=labels,
         checks=checks,
+        frontmatter=frontmatter,
         source=source,
         force=force,
     )
@@ -306,8 +325,9 @@ def publish_by_name(
     source = {"type": "api"} if source is None else source
     _validate_note(note)
     _validate_tags(tags)
-    checks = _checked(files, name=None, acknowledge_warnings=acknowledge_warnings)
-    frontmatter = checks["frontmatter"]
+    checks, frontmatter = _checked(
+        files, name=None, acknowledge_warnings=acknowledge_warnings
+    )
     scope = skills_for_request_scope(organization, workspace)
     skill = scope.filter(name=frontmatter["name"]).first()
     if skill is None:
@@ -339,6 +359,7 @@ def publish_by_name(
         base_version=skill.latest_version_number or None,
         labels=labels,
         checks=checks,
+        frontmatter=frontmatter,
         source=source,
         force=True,
     )
@@ -359,7 +380,7 @@ def restore_version(
     ]
     note = note or f"Restored from v{number}"
     _validate_note(note)
-    checks = _checked(files, name=skill.name, acknowledge_warnings=True)
+    checks, frontmatter = _checked(files, name=skill.name, acknowledge_warnings=True)
     return _publish_checked(
         skill=skill,
         actor=actor,
@@ -368,6 +389,7 @@ def restore_version(
         base_version=skill.latest_version_number or None,
         labels=[],
         checks=checks,
+        frontmatter=frontmatter,
         source={"type": "restore", "version": number},
         force=False,
         always_new=True,

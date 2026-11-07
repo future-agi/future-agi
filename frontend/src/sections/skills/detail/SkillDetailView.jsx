@@ -17,6 +17,7 @@ import {
   MenuItem,
   Stack,
   Tab,
+  Typography,
 } from "@mui/material";
 
 import {
@@ -73,6 +74,7 @@ function DetailContent({ skill, preview }) {
     });
   const copyCommand = async () => {
     setMenuAnchor(null);
+    if (!production) return;
     try {
       await navigator.clipboard.writeText(
         buildInstallCommand({
@@ -217,12 +219,29 @@ function DetailContent({ skill, preview }) {
           </ListItemIcon>
           Download ZIP
         </MenuItem>
-        <MenuItem disabled={!skill.latestVersion} onClick={copyCommand}>
+        <MenuItem
+          disabled={!production}
+          onClick={copyCommand}
+          aria-describedby={!production ? "install-command-guidance" : undefined}
+        >
           <ListItemIcon>
             <Iconify icon="solar:copy-linear" width={16} />
           </ListItemIcon>
           Copy install command
         </MenuItem>
+        {!production && (
+          <Typography
+            id="install-command-guidance"
+            component="li"
+            role="note"
+            variant="s3"
+            color="text.secondary"
+            sx={{ px: 2, py: 1, maxWidth: 280, listStyle: "none" }}
+          >
+            Assign production, or open Use skill to choose an existing label or
+            pinned version.
+          </Typography>
+        )}
         <MenuItem
           onClick={() => {
             setMenuAnchor(null);

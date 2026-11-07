@@ -5,6 +5,7 @@ import io
 import json
 import stat
 import struct
+import subprocess
 import zipfile
 
 import pytest
@@ -518,3 +519,43 @@ def test_download_skill_count_and_duplicate_names():
         packages.build_zip([skill(f"skill-{i}") for i in range(51)], origin="local")
     with pytest.raises(SkillsHubError, match="unique"):
         packages.build_zip([skill(), skill()], origin="local")
+
+
+@pytest.mark.parametrize("parent", ["references", "REFERENCES", "Straße"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_file_directory_collision_is_invalid_on_import_and_export(parent, reverse):
+    child = "STRASSE/guide.md" if parent == "Straße" else "references/guide.md"
+    extra = [{"path": parent, "content": "File"}, {"path": child, "content": "Guide"}]
+    entry = skill()
+    entry["files"] = entry["files"][:1] + (extra[::-1] if reverse else extra)
+    members = [(file["path"], file["content"].encode()) for file in entry["files"]]
+    for parsed in (upload(members), packages.parse_upload(members)):
+        checks = parsed["bundles"][0]["checks"]
+        assert checks["summary"]["errors"] > 0
+        assert any(
+            item["code"] == "path_invalid" and item["severity"] == "error"
+            for item in checks["items"]
+        )
+    with pytest.raises(SkillsHubError) as error:
+        packages.build_zip([entry], origin="local")
+    assert (error.value.code, error.value.status) == ("import_invalid", 400)
+
+
+def test_export_rejects_unextractable_bundle_and_corrected_bundle_installs(tmp_path):
+    entry = skill()
+    entry["files"].append({"path": "references", "content": "Not a directory"})
+    with pytest.raises(SkillsHubError, match="directory"):
+        packages.build_zip([entry], origin="local")
+    entry["files"][-1]["path"] = "references.txt"
+    archive_path = tmp_path / "skills.zip"
+    archive_path.write_bytes(packages.build_zip([entry], origin="local"))
+    destination = tmp_path / "installed"
+    subprocess.run(
+        ["unzip", "-oq", str(archive_path), "-d", str(destination)],
+        check=True,
+        timeout=10,
+    )
+    for file in entry["files"]:
+        assert (destination / entry["name"] / file["path"]).read_bytes() == file[
+            "content"
+        ].encode()

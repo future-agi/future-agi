@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PublishDialog from "./PublishDialog";
 
-const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn() }));
+const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), refreshCompare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn() }));
 vi.mock("src/api/skills", () => ({
   usePublishSkillDraft: () => ({ mutateAsync: api.publish, isPending: false }),
   useRunSkillChecks: () => ({ mutateAsync: api.checks }),
-  useSkillCompare: (...args) => api.compare(...args),
+  useSkillCompare: (...args) => ({ ...api.compare(...args), refetch: api.refreshCompare }),
   useSkillDraft: () => ({ refetch: api.refetch }),
   useSaveSkillDraft: () => ({ mutateAsync: api.save }),
   getSkillErrorCode: (error) => error.code,
@@ -29,6 +29,7 @@ beforeEach(() => {
   api.checks.mockResolvedValue(checks());
   api.publish.mockResolvedValue({ version: { number: 3 }, unchanged: false });
   api.compare.mockReturnValue({ data: null, isPending: false, isError: false });
+  api.refreshCompare.mockImplementation(async () => api.compare());
   api.refetch.mockResolvedValue({ data: { ...draft, revision: 9, files: [{ path: "SKILL.md", content: "Other tab" }] } });
   api.save.mockImplementation(async (payload) => ({ ...payload, revision: payload.revision + 1 }));
 });
@@ -78,20 +79,60 @@ describe("publish review", () => {
     await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true, revision: 1 }));
   });
 
-  it("renders changed files first, opens their diff, and blocks when comparison fails", async () => {
+  it("renders changed files first and opens their freshly loaded diff", async () => {
     api.compare.mockReturnValue({ data: { files: [
       { path: "SKILL.md", status: "unchanged" },
       { path: "references/policy.md", status: "modified", fromText: "Old policy", toText: "New policy" },
     ] }, isError: false });
-    const { rerender } = renderDialog({ draft: { ...draft, baseVersion: 1 } });
+    renderDialog({ draft: { ...draft, baseVersion: 1 } });
     expect(api.compare).toHaveBeenCalledWith("skill-id", 1, "draft");
-    expect(screen.getByTestId("diff")).toHaveTextContent("Old policy → New policy");
+    expect(await screen.findByTestId("diff")).toHaveTextContent("Old policy → New policy");
     fireEvent.click(screen.getByText("SKILL.md"));
     expect(screen.getByText("This file has no changes.")).toBeInTheDocument();
-    api.compare.mockReturnValue({ data: null, isError: true, refetch: vi.fn() });
-    rerender(<PublishDialog open onClose={vi.fn()} skill={skill} draft={{ ...draft, baseVersion: 1 }} />);
-    expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
-    expect(screen.getByText("Couldn't load file changes")).toBeInTheDocument();
+  });
+
+  it("does not review or publish a cached comparison while the saved revision's refresh is pending", async () => {
+    const previous = { files: [{ path: "SKILL.md", status: "unchanged" }] };
+    api.compare.mockReturnValue({ data: previous, isFetching: false });
+    const onClose = vi.fn();
+    const first = { ...draft, baseVersion: 1 };
+    const { rerender } = renderDialog({ draft: first, onClose });
+    await screen.findByText("This file has no changes.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Publish", exact: true })).toBeEnabled());
+    rerender(<PublishDialog open={false} onClose={onClose} skill={skill} draft={first} />);
+
+    const saved = { ...first, revision: 2, files: [{ path: "SKILL.md", content: "New reviewed instructions" }] };
+    let finish;
+    api.refreshCompare.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    api.compare.mockReturnValue({ data: previous, isFetching: true, isError: false });
+    rerender(<PublishDialog open onClose={onClose} skill={skill} draft={saved} />);
+    await screen.findByText("No issues found.");
+    expect(api.checks).toHaveBeenCalledTimes(2);
+    const publish = screen.getByRole("button", { name: "Publish", exact: true });
+    expect(publish).toBeDisabled();
+    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("diff")).not.toBeInTheDocument();
+    fireEvent.click(publish);
+    expect(api.publish).not.toHaveBeenCalled();
+    await act(async () => finish({ data: { files: [{ path: "SKILL.md", status: "modified", fromText: "Instructions", toText: saved.files[0].content }] }, isError: false }));
+    expect(screen.getByTestId("diff")).toHaveTextContent("Instructions → New reviewed instructions");
+    expect(publish).toBeEnabled();
+    fireEvent.click(publish);
+    await waitFor(() => expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ revision: 2 })));
+  });
+
+  it("fails closed on a comparison refresh error despite cached data and permits retry", async () => {
+    const cached = { files: [{ path: "SKILL.md", status: "unchanged" }] };
+    api.compare.mockReturnValue({ data: cached });
+    api.refreshCompare.mockResolvedValueOnce({ data: cached, isError: true });
+    renderDialog({ draft: { ...draft, baseVersion: 1 } });
+    await screen.findByText("Couldn't load file changes");
+    expect(screen.queryByText("This file has no changes.")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    expect(button).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(api.refreshCompare).toHaveBeenCalledTimes(2);
   });
 
   it("uses authoritative server errors if publishing rechecks reject the draft", async () => {

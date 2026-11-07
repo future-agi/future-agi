@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "src/utils/test-utils";
 import SkillsLibraryView from "./SkillsLibraryView";
 import NewSkillDialog from "./NewSkillDialog";
@@ -147,6 +148,62 @@ describe("Skills library", () => {
     expect(new URLSearchParams(window.location.search).get("keep")).toBe("yes");
   });
 
+  it("filters by a tag found only beyond the first 25 skills", () => {
+    const workspaceSkills = Array.from({ length: 26 }, (_, index) => ({
+      ...skill, id: `skill-${index}`, name: `skill-${index}`, tags: [index === 25 ? "finance" : "support"],
+    }));
+    api.list.mockImplementation(({ tag, page, pageSize }) => {
+      const matches = workspaceSkills.filter((item) => !tag || item.tags.includes(tag));
+      return listResult({ results: matches.slice((page - 1) * pageSize, page * pageSize), count: matches.length, totalPages: Math.ceil(matches.length / pageSize) });
+    });
+    renderLibrary();
+    expect(screen.queryByRole("link", { name: "skill-25" })).not.toBeInTheDocument();
+    const filter = screen.getByRole("combobox", { name: "Tag" });
+    fireEvent.keyDown(filter, { key: "ArrowDown" });
+    expect(screen.queryByRole("option", { name: "finance" })).not.toBeInTheDocument();
+    fireEvent.change(filter, { target: { value: "finance" } });
+    fireEvent.keyDown(filter, { key: "Enter" });
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "finance", page: 1 }));
+    expect(screen.getByRole("link", { name: "skill-25" })).toBeInTheDocument();
+    expect(filter).toHaveValue("finance");
+  });
+
+  it("switches between disjoint tag results and resets pagination without clearing other filters", () => {
+    api.list.mockImplementation(({ tag }) => listResult({ results: [{ ...skill, tags: [tag] }], count: 26, totalPages: 3 }));
+    renderLibrary("?tag=support&search=policy&label=production&page=2&page_size=10&keep=yes");
+    const filter = screen.getByRole("combobox", { name: "Tag" });
+    fireEvent.change(filter, { target: { value: "security" } });
+    fireEvent.keyDown(filter, { key: "Enter" });
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "security", search: "policy", label: "production", page: 1, pageSize: 10 }));
+    expect(new URLSearchParams(window.location.search).get("page")).toBeNull();
+    expect(new URLSearchParams(window.location.search).get("keep")).toBe("yes");
+    fireEvent.change(filter, { target: { value: "support" } });
+    fireEvent.keyDown(filter, { key: "Enter" });
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "support", page: 1 }));
+    expect(filter).toHaveValue("support");
+  });
+
+  it("keeps an off-page tag selected with no results and allows any tag on blur", () => {
+    api.list.mockReturnValue(listResult({ results: [], count: 0 }));
+    renderLibrary("?search=missing&tag=finance&page=3");
+    const filter = screen.getByRole("combobox", { name: "Tag" });
+    expect(filter).toHaveValue("finance");
+    fireEvent.change(filter, { target: { value: "security" } });
+    fireEvent.blur(filter);
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "security", search: "missing", page: 1 }));
+    fireEvent.focus(filter);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "", search: "missing", page: 1 }));
+    expect(filter).toHaveValue("");
+  });
+
+  it("still lets users choose a suggested tag", () => {
+    renderLibrary("?page=2");
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Tag" }), { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("option", { name: "support" }));
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "support", page: 1 }));
+  });
+
   it("normalizes malformed pagination and moves between server pages", () => {
     api.list.mockReturnValue(listResult({ count: 82, totalPages: 4 }));
     renderLibrary("?page=-3&page_size=1000");
@@ -230,6 +287,17 @@ describe("New skill", () => {
 });
 
 describe("Import skills", () => {
+  it.each(["{Enter}", " "])("opens the folder input exactly once with %s", async (key) => {
+    const user = userEvent.setup();
+    renderWithRouter(<ImportSkillsDialog open onClose={vi.fn()} />);
+    const input = screen.getByLabelText("Choose skill folder");
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    screen.getByRole("button", { name: "Choose folder", exact: true }).focus();
+    await user.keyboard(key);
+    expect(click).toHaveBeenCalledOnce();
+    click.mockRestore();
+  });
+
   it("preserves folder paths and uses files multipart parts for preview and import", async () => {
     await renderImport();
     const preview = api.preview.mock.calls[0][0];

@@ -57,7 +57,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
   };
   const onKeyDown = (event, row, index) => {
     const folder = row.type === 'folder';
-    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End', 'Enter', ' '].includes(event.key)) return;
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End', 'Enter'].includes(event.key)) return;
     event.preventDefault();
     switch (event.key) {
       case 'ArrowDown': focus(rows[Math.min(index + 1, rows.length - 1)].path); break;

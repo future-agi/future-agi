@@ -295,6 +295,7 @@ class Migration(migrations.Migration):
                 ("files", models.JSONField(default=list)),
                 ("note", models.TextField(blank=True)),
                 ("revision", models.PositiveIntegerField(default=1)),
+                ("discarded_at", models.DateTimeField(null=True, blank=True)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 (

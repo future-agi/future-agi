@@ -18,12 +18,18 @@ from collections import Counter
 
 from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.checks import (
+    parse_frontmatter,
+    path_directory_collisions,
     path_is_valid,
     run_checks,
     text_is_valid,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.types import FileInput
+from model_hub.services.skills_hub.zip_directory import (
+    ZipDirectoryTooLarge,
+    preflight_zip_directory,
+)
 
 _LOCK_PATH = ".futureagi-skills.lock.json"
 _ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
@@ -77,6 +83,10 @@ def build_zip(
         names.add(name)
         if len(skill["files"]) > limits.MAX_FILES:
             raise _too_large("Keep each skill within 200 files.")
+        if path_directory_collisions([file["path"] for file in skill["files"]]):
+            raise SkillsHubError(
+                "import_invalid", "A file path cannot also be a directory.", status=400
+            )
         paths: set[str] = set()
         total = 0
         for file in skill["files"]:
@@ -164,12 +174,17 @@ def _zip_files(
         return {}
     files: dict[str, str] = {}
     try:
+        try:
+            budget["entries"] += preflight_zip_directory(
+                raw, max_entries=limits.MAX_ZIP_ENTRIES - budget["entries"]
+            )
+        except ZipDirectoryTooLarge as exc:
+            raise _too_large(
+                "The ZIP directory exceeds the entry or metadata limit."
+            ) from exc
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             entries = archive.infolist()
-            budget["entries"] += len(entries)
             budget["bytes"] += sum(entry.file_size for entry in entries)
-            if budget["entries"] > limits.MAX_ZIP_ENTRIES:
-                raise _too_large("Import at most 1,000 ZIP entries at a time.")
             if budget["bytes"] > limits.MAX_UNZIPPED_BYTES:
                 raise _too_large("Keep the uncompressed import within 20 MiB.")
             counts = Counter(
@@ -264,7 +279,8 @@ def _bundles(
             if path.startswith(prefix)
         ]
         checks = run_checks(bundle_files)
-        name = (checks["frontmatter"] or {}).get("name")
+        frontmatter, _, _ = parse_frontmatter(files[prefix + "SKILL.md"])
+        name = (frontmatter or {}).get("name")
         if (
             not isinstance(name, str)
             or len(name) > limits.MAX_NAME

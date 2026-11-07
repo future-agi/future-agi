@@ -192,6 +192,17 @@ describe("Skill detail route", () => {
       ),
     );
   });
+  it("does not copy a production command for a published skill without labels", () => {
+    useSkill.mockReturnValue(success({ ...skill, labels: [] }));
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));
+    const copy = screen.getByRole("menuitem", { name: "Copy install command" });
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAccessibleDescription(/Assign production, or open Use skill/);
+    fireEvent.click(copy);
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+  });
   it("copies a production command with environment variables, not credentials", async () => {
     show();
     fireEvent.click(screen.getByRole("button", { name: "Skill actions" }));

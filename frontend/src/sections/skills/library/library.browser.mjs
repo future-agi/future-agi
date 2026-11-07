@@ -23,7 +23,12 @@ const makeSkill = (name, index) => ({
   hasDraft: true, fetches7d: index * 12, updatedAt: '2026-11-06T12:00:00Z', updatedBy: {id: 'user-1', name: 'Sam'},
 });
 const skills = ['support-policy', 'code-review', 'research-brief'].map((name, index) => makeSkill(name, index + 1));
-export const useSkillsList = () => ({data: {results: skills, count: 3, page: 1, pageSize: 25, totalPages: 1, stats: {total: 3, inProduction: 2, fetches7d: 72, myDrafts: 1}}, refetch: () => {}});
+const taggedSkills = Array.from({length: 26}, (_, index) => ({...makeSkill('tagged-skill-' + index, index + 1), tags: [index === 25 ? 'finance' : 'support']}));
+export const useSkillsList = ({tag, search, label, page, pageSize}) => {
+  const workspaceSkills = new URLSearchParams(location.search).get('fixture') === 'tags' ? taggedSkills : skills;
+  const matches = workspaceSkills.filter(skill => (!tag || skill.tags.includes(tag)) && (!search || skill.name.includes(search)) && (!label || skill.labels.some(item => item.name === label)));
+  return {data: {results: matches.slice((page - 1) * pageSize, page * pageSize), count: matches.length, page, pageSize, totalPages: Math.ceil(matches.length / pageSize), stats: {total: workspaceSkills.length, inProduction: 2, fetches7d: 72, myDrafts: 1}}, refetch: () => {}};
+};
 export const useSkillTemplates = () => ({data: ['support-policy','code-review','incident-triage','research-brief','trace-debugging','eval-writer'].map(id => ({id, title: id.replaceAll('-', ' '), description: 'Use when reviewing ' + id.replaceAll('-', ' ') + ' with your team.'}))});
 export const useCreateSkill = () => ({mutateAsync: async () => ({id: 'new-skill'})});
 export const useArchiveSkill = () => ({mutateAsync: async () => {}});
@@ -103,7 +108,9 @@ try {
         await page.goto(`${origin}/dashboard/skills?${params}`);
         if (state === "rows") {
           await page.getByRole("link", { name: "support-policy" }).waitFor();
-          assert.equal(await page.getByRole("combobox", { name: /^Tag/ }).innerText(), "Any tag");
+          const tagFilter = page.getByRole("combobox", { name: "Tag", exact: true });
+          assert.equal(await tagFilter.inputValue(), "");
+          assert.equal(await tagFilter.getAttribute("placeholder"), "Any tag");
           assert.equal(await page.getByRole("combobox", { name: /^Label/ }).innerText(), "Any label");
           if (width === 1280) await page.getByRole("button", { name: "Actions for support-policy" }).locator("svg").waitFor();
         }
@@ -122,6 +129,15 @@ try {
           assert.equal(await page.getByRole("button", { name: "Create skill" }).isEnabled(), false);
         }
         if (state === "import") {
+          const chooseFolder = page.getByRole("button", { name: "Choose folder", exact: true });
+          for (const key of ["Enter", "Space"]) {
+            await chooseFolder.focus();
+            const [chooser] = await Promise.all([
+              page.waitForEvent("filechooser", { timeout: 3000 }),
+              chooseFolder.press(key),
+            ]);
+            assert.equal(await chooser.element().getAttribute("webkitdirectory"), "", `${key} opens the directory picker`);
+          }
           await page.locator('input[type="file"]').first().setInputFiles({ name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from("Synthetic skill") });
           await page.getByRole("button", { name: "Preview import" }).click();
           await page.getByRole("checkbox", { name: "Select skill-invalid" }).waitFor();
@@ -134,10 +150,25 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme}/${width}/${state}: page overflow`);
         await page.screenshot({ path: path.join(output, `${theme}-${width}-${state}.png`), fullPage: true, animations: "disabled" });
       }
+      await page.goto(`${origin}/dashboard/skills?fixture=tags&theme=${theme}`);
+      await page.getByRole("link", { name: "tagged-skill-0", exact: true }).waitFor();
+      assert.equal(await page.getByRole("link", { name: "tagged-skill-25", exact: true }).count(), 0);
+      const tagFilter = page.getByRole("combobox", { name: "Tag", exact: true });
+      await tagFilter.fill("finance");
+      await tagFilter.press("Enter");
+      await page.getByRole("link", { name: "tagged-skill-25", exact: true }).waitFor();
+      assert.equal(new URL(page.url()).searchParams.get("tag"), "finance");
+      await tagFilter.fill("support");
+      await tagFilter.press("Enter");
+      await page.getByRole("link", { name: "tagged-skill-0", exact: true }).waitFor();
+      assert.equal(await page.getByRole("link", { name: "tagged-skill-25", exact: true }).count(), 0);
+      assert.equal(new URL(page.url()).searchParams.get("tag"), "support");
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme}/${width}/tag filter: page overflow`);
+      await page.screenshot({ path: path.join(output, `${theme}-${width}-tag-filter.png`), fullPage: true, animations: "disabled" });
     }
   }
   assert.deepEqual(errors, [], "Browser runtime errors");
-  process.stdout.write(`PASS: 24 light/dark desktop/mobile component-state checks. Screenshots: ${output}\n`);
+  process.stdout.write(`PASS: 24 light/dark desktop/mobile component-state checks, Enter/Space folder pickers, and 4 off-page/disjoint tag-filter checks. Screenshots: ${output}\n`);
 } finally {
   await browser?.close();
   await server.close();

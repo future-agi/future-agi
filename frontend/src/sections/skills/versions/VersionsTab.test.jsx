@@ -7,6 +7,7 @@ import {
   within,
 } from "src/utils/test-utils";
 import VersionsTab from "./VersionsTab";
+import LabelHistoryDrawer from "./LabelHistoryDrawer";
 
 const mocks = vi.hoisted(() => ({
   versions: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock("src/routes/hooks", () => ({
 }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("./MoveLabelDialog", () => ({ default: () => null }));
-vi.mock("./LabelHistoryDrawer", () => ({ default: () => null }));
+vi.mock("./LabelHistoryDrawer", () => ({ default: vi.fn(() => null) }));
 vi.mock("./RestoreVersionDialog", () => ({ default: () => null }));
 
 const skill = { id: "skill-1", name: "release-review", latestVersion: 3 };
@@ -55,6 +56,15 @@ beforeEach(() => {
 });
 
 describe("VersionsTab", () => {
+  it("keeps unfiltered label history accessible after the last label is removed", () => {
+    const view = renderWithRouter(<VersionsTab skill={skill} />);
+    expect(screen.getByRole("button", { name: "History for production" })).toBeInTheDocument();
+    mocks.labels.mockReturnValue({ data: [] });
+    view.rerender(<VersionsTab skill={skill} />);
+    expect(screen.queryByRole("button", { name: "History for production" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Label history" }));
+    expect(LabelHistoryDrawer).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, label: "", skill }), expect.anything());
+  });
   it("only compares exactly two selected rows, ordered oldest first", () => {
     renderWithRouter(<VersionsTab skill={skill} />);
     expect(

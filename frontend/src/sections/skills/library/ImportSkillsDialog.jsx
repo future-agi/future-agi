@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useImportPreview, useImportSkills } from "src/api/skills";
@@ -21,6 +21,7 @@ function uploadForm(files) {
 export default function ImportSkillsDialog({ open, onClose }) {
   const previewMutation = useImportPreview();
   const importMutation = useImportSkills();
+  const folderInput = useRef(null);
   const [files, setFiles] = useState([]);
   const [preview, setPreview] = useState(null);
   const [selected, setSelected] = useState([]);
@@ -79,11 +80,11 @@ export default function ImportSkillsDialog({ open, onClose }) {
             heading="Drop a ZIP or skill files" description="ZIPs up to 10 MiB, or up to 200 loose text files. Include a SKILL.md in each skill folder."
             onDrop={(accepted) => chooseFiles(accepted)} />
           <Stack direction="row" spacing={1} alignItems="center">
-            <Button component="label" variant="outlined" size="small" disabled={busy}>
+            <Button variant="outlined" size="small" disabled={busy} onClick={() => folderInput.current?.click()}>
               Choose folder
-              <input type="file" hidden multiple webkitdirectory="" aria-label="Choose skill folder"
-                disabled={busy} onChange={(event) => { chooseFiles(event.target.files); event.target.value = ""; }} />
             </Button>
+            <input ref={folderInput} type="file" hidden multiple webkitdirectory="" aria-label="Choose skill folder"
+              disabled={busy} onChange={(event) => { chooseFiles(event.target.files); event.target.value = ""; }} />
             <Typography variant="s3" color="text.secondary">{files.length ? `${files.length} ${files.length === 1 ? "file" : "files"} selected` : "Folder paths are preserved."}</Typography>
           </Stack>
           {previewMutation.isPending && <ContentSkeleton variant="rows" rows={3} label="Checking uploaded skills" />}

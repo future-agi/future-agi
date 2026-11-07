@@ -6,13 +6,14 @@ import SkillFileEditor from "./SkillFileEditor";
 const editor = vi.hoisted(() => ({ setPosition: vi.fn(), revealLineInCenter: vi.fn(), focus: vi.fn(), copy: vi.fn() }));
 vi.mock("@monaco-editor/react", async () => {
   const { default: PropTypes } = await import("prop-types");
-  function MockEditor({ value, onChange, language, options }) {
-    return <textarea aria-label="Code editor" data-language={language} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.target.value)} />;
+  function MockEditor({ value, onChange, language, options, height }) {
+    return <textarea aria-label="Code editor" data-language={language} data-height={height} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.target.value)} />;
   }
   MockEditor.propTypes = {
     value: PropTypes.string,
     onChange: PropTypes.func.isRequired,
     language: PropTypes.string,
+    height: PropTypes.string,
     options: PropTypes.shape({ readOnly: PropTypes.bool }).isRequired,
   };
   return {
@@ -43,6 +44,14 @@ describe("skill file editor", () => {
     expect(onChange).toHaveBeenCalledWith("Updated content");
     rerender(<SkillFileEditor file={file} onChange={onChange} readOnly />);
     expect(textarea).toHaveAttribute("readonly");
+  });
+
+  it("fills the flex pane instead of reserving a fixed viewport height", () => {
+    render(<SkillFileEditor file={file} onChange={vi.fn()} />);
+    const editorElement = screen.getByLabelText("Code editor");
+    expect(editorElement).toHaveAttribute("data-height", "100%");
+    expect(editorElement.parentElement).toHaveStyle({ flex: "1", minHeight: "0" });
+    expect(editorElement.parentElement.parentElement).toHaveStyle({ flex: "1", minHeight: "0" });
   });
 
   it("focuses the requested file and check line", () => {

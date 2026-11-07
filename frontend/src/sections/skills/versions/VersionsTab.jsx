@@ -195,16 +195,25 @@ export default function VersionsTab({ skill }) {
         title="Labels"
         description="Agents fetching a label receive the version it points to."
         actions={
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={
-              !skill.latestVersion || labels.isError || labels.isLoading
-            }
-            onClick={() => setMove({})}
-          >
-            Set label
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => setHistory("")}
+            >
+              Label history
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={
+                !skill.latestVersion || labels.isError || labels.isLoading
+              }
+              onClick={() => setMove({})}
+            >
+              Set label
+            </Button>
+          </Stack>
         }
       >
         {labels.isLoading && (

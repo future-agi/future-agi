@@ -5,13 +5,18 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID
 
-from django.db.models import Count, Q, QuerySet, Sum
+from django.db.models import Count, Prefetch, Q, QuerySet, Sum
 from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
-from model_hub.models.skills_hub import HubSkill, HubSkillUsageDaily, HubSkillVersion
+from model_hub.models.skills_hub import (
+    HubSkill,
+    HubSkillDraft,
+    HubSkillUsageDaily,
+    HubSkillVersion,
+)
 from model_hub.services.skills_hub.errors import SkillsHubError
 
 
@@ -102,7 +107,14 @@ def list_skills(
     ordering = ("-" if order == "desc" else "") + fields[sort]
     return (
         queryset.select_related("created_by", "updated_by")
-        .prefetch_related("labels__version", "labels__updated_by", "drafts__user")
+        .prefetch_related(
+            "labels__version",
+            "labels__updated_by",
+            Prefetch(
+                "drafts",
+                queryset=HubSkillDraft.objects.only("id", "skill_id", "user_id"),
+            ),
+        )
         .order_by(ordering, "id")
     )
 
@@ -115,7 +127,11 @@ def workspace_stats(
     counts = skills.aggregate(
         total=Count("id", distinct=True),
         in_production=Count("id", filter=Q(labels__name="production"), distinct=True),
-        my_drafts=Count("drafts", filter=Q(drafts__user=user), distinct=True),
+        my_drafts=Count(
+            "drafts",
+            filter=Q(drafts__user=user, drafts__discarded_at__isnull=True),
+            distinct=True,
+        ),
     )
     today = timezone.now().date()
     counts["fetches_7d"] = (

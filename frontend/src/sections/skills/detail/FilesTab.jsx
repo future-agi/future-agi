@@ -146,11 +146,18 @@ export default function FilesTab({ skill, previewEmpty = false }) {
   return (
     <Stack spacing={3}>
       <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={1.5}
-        alignItems={{ sm: "center" }}
+        direction="row"
+        gap={1.5}
+        flexWrap="wrap"
+        alignItems="center"
       >
-        <Box sx={{ width: { xs: "100%", sm: 320 }, flexShrink: 0 }}>
+        <Box
+          sx={{
+            width: "max-content",
+            maxWidth: "100%",
+            "& .MuiFormControl-root": { width: "auto", maxWidth: "100%" },
+          }}
+        >
           <VersionSelect
             skillId={skill.id}
             value={viewed.value}

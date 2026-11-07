@@ -5,10 +5,12 @@ from __future__ import annotations
 import unicodedata
 
 from django.db import transaction
+from django.utils import timezone
 
 from accounts.models.user import User
 from model_hub.models.skills_hub import HubSkill, HubSkillDraft
 from model_hub.selectors.skills_hub import scoped_skill
+from model_hub.services.skills_hub.checks import path_directory_collisions
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.limits import (
     MAX_FILE_BYTES,
@@ -30,6 +32,10 @@ def _validate_payload(files: list[FileInput], note: str) -> None:
             "payload_too_large",
             "Use at most 200 files and a note of 2000 characters.",
             status=413,
+        )
+    if path_directory_collisions([file["path"] for file in files]):
+        raise SkillsHubError(
+            "invalid_selector", "A file path cannot also be a directory.", status=400
         )
     total = 0
     paths = set()
@@ -116,18 +122,9 @@ def save_draft(
 ) -> HubSkillDraft:
     """Save if the supplied revision still matches, including first-create races."""
     skill = scoped_skill(skill, lock=True)
-    draft = skill.drafts.filter(user=user).first()
+    draft = HubSkillDraft.all_objects.filter(skill=skill, user=user).first()
+    _check_revision(draft, revision)
     current_revision = draft.revision if draft else 0
-    if revision != current_revision:
-        raise SkillsHubError(
-            "draft_conflict",
-            "This draft changed. Reload it before saving.",
-            status=409,
-            detail={
-                "revision": current_revision,
-                "updated_at": draft.updated_at.isoformat() if draft else None,
-            },
-        )
     _validate_payload(files, note)
     if (
         base_version is not None
@@ -140,15 +137,53 @@ def save_draft(
     draft.note = note
     draft.base_version = base_version
     draft.revision = current_revision + 1
+    draft.discarded_at = None
     draft.save()
     return draft
+
+
+def _check_revision(draft: HubSkillDraft | None, revision: int) -> None:
+    # Zero means no live draft, not a reset of the persisted revision sequence.
+    live = draft is not None and draft.discarded_at is None
+    current_revision = draft.revision if live else 0
+    if revision != current_revision:
+        raise SkillsHubError(
+            "draft_conflict",
+            "This draft changed. Reload it before saving or publishing.",
+            status=409,
+            detail={
+                "revision": current_revision,
+                "updated_at": draft.updated_at.isoformat() if draft else None,
+            },
+        )
+
+
+def _tombstone(draft: HubSkillDraft) -> None:
+    """Erase authoring content but retain the CAS sequence under the skill lock."""
+    draft.files = []
+    draft.note = ""
+    draft.base_version = None
+    draft.discarded_at = timezone.now()
+    draft.revision += 1
+    draft.save(
+        update_fields=[
+            "files",
+            "note",
+            "base_version",
+            "discarded_at",
+            "revision",
+            "updated_at",
+        ]
+    )
 
 
 @transaction.atomic
 def discard_draft(*, skill: HubSkill, user: User) -> None:
     """Discard only this author's draft; repeating discard is harmless."""
     skill = scoped_skill(skill, lock=True)
-    skill.drafts.filter(user=user).delete()
+    draft = skill.drafts.filter(user=user).first()
+    if draft is not None:
+        _tombstone(draft)
 
 
 @transaction.atomic
@@ -162,19 +197,13 @@ def publish_draft(
     force: bool = False,
     revision: int | None = None,
 ) -> PublishResult:
-    """Publish and remove the same locked draft, retaining it on any failure."""
+    """Publish and tombstone the locked draft, retaining it on any failure."""
     skill = scoped_skill(skill, lock=True)
-    draft = get_draft(skill=skill, user=user)
-    if revision is not None and revision != draft.revision:
-        raise SkillsHubError(
-            "draft_conflict",
-            "This draft changed. Reload it before publishing.",
-            status=409,
-            detail={
-                "revision": draft.revision,
-                "updated_at": draft.updated_at.isoformat(),
-            },
-        )
+    draft = HubSkillDraft.all_objects.filter(skill=skill, user=user).first()
+    if revision is not None:
+        _check_revision(draft, revision)
+    if draft is None or draft.discarded_at is not None:
+        raise SkillsHubError("draft_not_found", "Draft not found.", status=404)
     result = publish_files(
         skill=skill,
         actor=Actor(user=user, api_key=None),
@@ -186,5 +215,5 @@ def publish_draft(
         force=force,
         source={"type": "draft"},
     )
-    draft.delete()
+    _tombstone(draft)
     return result

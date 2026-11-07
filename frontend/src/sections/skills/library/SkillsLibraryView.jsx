@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link as RouterLink, useNavigate, useSearchParams } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Avatar, Box, Button, Chip, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Autocomplete, Avatar, Box, Button, Chip, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
@@ -43,7 +43,8 @@ export default function SkillsLibraryView() {
   const stats = previewState === "empty" ? { total: 0 } : query.data?.stats;
   const filtered = Boolean(search || tag || label);
   const firstRun = !loading && !failed && stats?.total === 0 && !filtered;
-  const tags = [...new Set([...(tag ? [tag] : []), ...rows.flatMap((skill) => skill.tags)])].sort();
+  // This page supplies suggestions, not an exhaustive workspace tag inventory.
+  const tagSuggestions = [...new Set([...(tag ? [tag] : []), ...rows.flatMap((skill) => skill.tags)])].sort();
 
   const changeParams = (changes, resetPage = true) => {
     setParams((previous) => {
@@ -94,9 +95,9 @@ export default function SkillsLibraryView() {
       ]} />}
       {!firstRun && <ListToolbar alignItems="flex-end" sx={{ flexWrap: "wrap", rowGap: 1 }}>
         <FormSearchField searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />
-        <TextField select label="Tag" size="small" SelectProps={{ displayEmpty: true }} value={tag} onChange={(event) => changeParams({ tag: event.target.value })} sx={{ minWidth: 120 }}>
-          <MenuItem value="">Any tag</MenuItem>{tags.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
-        </TextField>
+        <Autocomplete freeSolo autoSelect selectOnFocus forcePopupIcon size="small" options={tagSuggestions} value={tag || null}
+          onChange={(_event, value) => changeParams({ tag: value?.trim() || "" })} sx={{ width: 200, maxWidth: "100%" }}
+          renderInput={(inputParams) => <TextField {...inputParams} label="Tag" placeholder="Any tag" />} />
         <TextField select label="Label" size="small" SelectProps={{ displayEmpty: true }} value={label} onChange={(event) => changeParams({ label: event.target.value })} sx={{ minWidth: 140 }}>
           <MenuItem value="">Any label</MenuItem>{SYSTEM_LABELS.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
           {label && !SYSTEM_LABELS.includes(label) && <MenuItem value={label}>{label}</MenuItem>}

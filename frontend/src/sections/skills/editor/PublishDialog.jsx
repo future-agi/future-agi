@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Typography } from "@mui/material";
@@ -28,7 +28,22 @@ function PublishReview({ onClose, onDraftChange, skill, draft }) {
   const [selectedPath, setSelectedPath] = useState(null);
   const live = useDraftChecks(draft.files, skill.name, 0);
   const checks = serverChecks ?? live.checks;
-  const comparison = useSkillCompare(skill.id, draft.baseVersion, "draft");
+  const { refetch: refetchComparison } = useSkillCompare(skill.id, draft.baseVersion, "draft");
+  const [comparison, setComparison] = useState({ isPending: true });
+  const [comparisonAttempt, setComparisonAttempt] = useState(0);
+  useEffect(() => {
+    if (draft.baseVersion === null) return undefined;
+    let active = true;
+    setComparison({ isPending: true });
+    // The shared draft comparison cache has no revision. Review only a fresh
+    // response for this mounted, saved revision, never the previous review's data.
+    refetchComparison().then((result) => {
+      if (active) setComparison(result);
+    }).catch(() => {
+      if (active) setComparison({ isError: true });
+    });
+    return () => { active = false; };
+  }, [refetchComparison, draft.baseVersion, comparisonAttempt]);
   const publish = usePublishSkillDraft(skill.id);
   const currentDraft = useSkillDraft(skill.id);
   const save = useSaveSkillDraft(skill.id);
@@ -106,7 +121,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft }) {
         {failure && <Alert severity="error">{failure}</Alert>}
         <Section title={draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
           {draft.baseVersion !== null && comparison.isPending && <ContentSkeleton variant="panel" label="Loading changes" />}
-          {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => comparison.refetch()} />}
+          {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
           {comparisonReady && (
             <Stack spacing={1.5}>
               <List dense aria-label="File changes" disablePadding>
@@ -157,7 +172,7 @@ const reviewPropTypes = {
 PublishReview.propTypes = reviewPropTypes;
 
 export default function PublishDialog({ open, onClose, onDraftChange, skill, draft }) {
-  return open ? <PublishReview onClose={onClose} onDraftChange={onDraftChange} skill={skill} draft={draft} /> : null;
+  return open ? <PublishReview key={`${skill.id}:${draft.baseVersion}:${draft.revision}`} onClose={onClose} onDraftChange={onDraftChange} skill={skill} draft={draft} /> : null;
 }
 
 PublishDialog.propTypes = { ...reviewPropTypes, open: PropTypes.bool.isRequired };
