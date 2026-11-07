@@ -1,0 +1,213 @@
+"""Tests for scripts/check_python_lint_delta.py.
+
+Run from the repo root: python3 -I scripts/test_check_python_lint_delta.py
+
+The end-to-end tests build a throwaway git repo and run the real ruff. They are
+the gate's canary: they prove it fails on a new violation and passes on an old
+one. In CI (when CI is set) a missing ruff fails the run instead of skipping.
+"""
+
+import importlib.util
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts" / "check_python_lint_delta.py"
+
+spec = importlib.util.spec_from_file_location("check_python_lint_delta", SCRIPT)
+gate = importlib.util.module_from_spec(spec)
+sys.modules["check_python_lint_delta"] = gate
+spec.loader.exec_module(gate)
+
+RUFF = shutil.which("ruff")
+REQUIRE_RUFF = bool(os.environ.get("CI"))
+
+
+def v(path, code, line, source):
+    return gate.Violation(path=path, code=code, line=line, column=1, message="m", source=source)
+
+
+class PureFunctionTests(unittest.TestCase):
+    def test_test_and_migration_paths_are_left_out_of_the_banned_pass(self):
+        for path in (
+            "futureagi/app/tests/test_x.py",
+            "futureagi/app/test/helpers.py",
+            "futureagi/app/test_views.py",
+            "futureagi/app/views_test.py",
+            "futureagi/conftest.py",
+            "futureagi/app/migrations/0001_initial.py",
+        ):
+            self.assertTrue(gate.is_test_or_migration(path), path)
+        for path in ("futureagi/app/views.py", "futureagi/app/testing_utils.py", "futureagi/contest.py"):
+            self.assertFalse(gate.is_test_or_migration(path), path)
+
+    def test_an_unchanged_violation_is_not_new(self):
+        base = [v("futureagi/a.py", "BLE001", 4, "except Exception:")]
+        head = [v("futureagi/a.py", "BLE001", 9, "except Exception:")]
+        self.assertEqual(gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {}), [])
+
+    def test_an_extra_copy_is_new_and_taken_from_changed_lines(self):
+        base = [v("futureagi/a.py", "BLE001", 4, "except Exception:")]
+        head = [
+            v("futureagi/a.py", "BLE001", 4, "except Exception:"),
+            v("futureagi/a.py", "BLE001", 11, "except Exception:"),
+        ]
+        found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {"futureagi/a.py": {10, 11}})
+        self.assertEqual([x.line for x in found], [11])
+
+    def test_a_renamed_file_keeps_its_old_violations(self):
+        base = [v("futureagi/old.py", "T201", 2, "print(x)")]
+        head = [v("futureagi/new.py", "T201", 2, "print(x)")]
+        self.assertEqual(gate.new_violations(head, base, {"futureagi/new.py": "futureagi/old.py"}, {}), [])
+
+    def test_a_different_rule_on_the_same_line_is_new(self):
+        base = [v("futureagi/a.py", "S110", 4, "except Exception:")]
+        head = [v("futureagi/a.py", "BLE001", 4, "except Exception:")]
+        found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {})
+        self.assertEqual([x.code for x in found], ["BLE001"])
+
+    def test_annotation_escapes_and_carries_the_replacement(self):
+        line = gate.annotation(v("futureagi/a,b.py", "S608", 3, "x"))
+        self.assertTrue(line.startswith("::error file=futureagi/a%2Cb.py,line=3,col=1,title=ruff S608 (new in this change)::"))
+        self.assertIn("bound parameter", line)
+        self.assertNotIn("\n", line)
+
+    def test_every_banned_rule_has_a_replacement_hint(self):
+        for code in gate.BANNED_RULES:
+            self.assertIn(code, gate.HINTS, code)
+
+    def test_ci_and_the_pre_commit_hook_pin_the_same_ruff(self):
+        workflow = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
+        hook = (ROOT / "scripts" / "lint-staged-python.sh").read_text()
+        pinned = re.search(r'RUFF_VERSION:\s*"([0-9.]+)"', workflow).group(1)
+        self.assertEqual(re.search(r'^RUFF_VERSION="([0-9.]+)"$', hook, re.MULTILINE).group(1), pinned)
+        self.assertIn('"ruff==${RUFF_VERSION}"', hook)
+        self.assertIn('"ruff@${RUFF_VERSION}"', hook)
+
+
+BASE_MOD = textwrap.dedent(
+    """\
+    def first():
+        try:
+            return 1
+        except Exception:
+            return 0
+    """
+)
+
+HEAD_MOD = BASE_MOD + textwrap.dedent(
+    """\
+
+
+    def second(cursor, name):
+        try:
+            cursor.execute(f"SELECT * FROM t WHERE name = '{name}'")
+        except Exception:
+            return None
+        print(name)
+        return name
+    """
+)
+
+CONFIG = textwrap.dedent(
+    """\
+    [tool.ruff]
+    line-length = 88
+    exclude = ["migrations"]
+
+    [tool.ruff.lint]
+    select = ["E", "F", "B"]
+    """
+)
+
+
+@unittest.skipUnless(RUFF or REQUIRE_RUFF, "ruff is not installed")
+class EndToEndTests(unittest.TestCase):
+    def setUp(self):
+        if not RUFF:
+            self.fail("ruff must be on PATH in CI: the canary would otherwise prove nothing")
+        self.tmp = tempfile.TemporaryDirectory(prefix="lint-delta-test-")
+        self.repo = Path(self.tmp.name)
+        self.git("init", "-q", "-b", "main")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+            cwd=self.repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def write(self, rel, text):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def commit(self):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "c")
+        return self.git("rev-parse", "HEAD")
+
+    def gate(self, base):
+        proc = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--base", base],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GITHUB_STEP_SUMMARY": ""},
+        )
+        found = re.findall(r"^::error file=([^,]+),line=(\d+),col=\d+,title=ruff ([A-Z0-9]+)", proc.stdout, re.MULTILINE)
+        return proc.returncode, [(f, int(n), c) for f, n, c in found], proc
+
+    def test_fails_on_new_violations_only(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/mod.py", BASE_MOD)
+        self.write("futureagi/app/old_ugly.py", "y=2\n")
+        base = self.commit()
+
+        self.write("futureagi/app/mod.py", HEAD_MOD)
+        self.write("futureagi/app/old_ugly.py", "y=3\n")  # unformatted at the base too: not new
+        self.write("futureagi/app/new_ugly.py", "x=1\n")  # new and unformatted: new
+        self.write("futureagi/app/tests/test_mod.py", 'def test_x():\n    print("x")\n')  # tests: no T201
+        self.write("futureagi/app/migrations/0001_x.py", 'print("x")\n')  # excluded
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            sorted(found),
+            sorted(
+                [
+                    ("futureagi/app/mod.py", 10, "S608"),
+                    ("futureagi/app/mod.py", 11, "BLE001"),
+                    ("futureagi/app/mod.py", 13, "T201"),
+                    ("futureagi/app/new_ugly.py", 1, "FORMAT"),
+                ]
+            ),
+            proc.stdout,
+        )
+
+    def test_passes_when_only_old_violations_remain(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/mod.py", BASE_MOD)
+        base = self.commit()
+        self.write("futureagi/app/mod.py", "# A comment that changes nothing.\n" + BASE_MOD)
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -1,0 +1,54 @@
+name: Python lint
+
+# Fails on Python lint violations that a PR adds; old ones are left for cleanup
+# PRs. Rules: the repo's ruff config plus the banned patterns from the coding
+# standards that the config does not select yet. See
+# scripts/check_python_lint_delta.py. Advisory until it is made a required check.
+#
+# No branches filter: stacked PRs into feature branches get the check too.
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**/*.py"
+      - "futureagi/pyproject.toml"
+      - "scripts/check_python_lint_delta.py"
+      - "scripts/test_check_python_lint_delta.py"
+      - "scripts/lint-staged-python.sh"
+      - ".github/workflows/python-lint.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with scripts/lint-staged-python.sh; a test checks they match.
+  RUFF_VERSION: "0.17.3"
+
+jobs:
+  ruff-delta:
+    name: Ruff (new violations only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The PR head, not the merge commit, so annotation lines match the diff.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: python -m pip install --quiet "ruff==${RUFF_VERSION}"
+      - name: Self-test the gate
+        run: python3 -I scripts/test_check_python_lint_delta.py
+      - name: Report new violations
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          python3 -I scripts/check_python_lint_delta.py --base "$base" --expect-ruff-version "$RUFF_VERSION"

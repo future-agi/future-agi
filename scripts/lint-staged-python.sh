@@ -25,13 +25,15 @@ fi
 
 cd "${BACKEND_DIR}"
 
-# Prefer a project-local ruff (uv-managed venv or dev group). Fall back to
-# `uvx ruff` when the current env doesn't ship one — this happens on fresh
-# clones or when the developer hasn't run `uv sync --group dev`.
-if uv run --quiet --with ruff ruff --version >/dev/null 2>&1; then
-  ruff_cmd=(uv run --quiet --with ruff ruff)
+# Pinned to the version CI uses (RUFF_VERSION in .github/workflows/python-lint.yml;
+# scripts/test_check_python_lint_delta.py checks they match), so a commit that
+# passes here also passes there. Fall back to `uvx` when `uv run` cannot resolve
+# it, for example on a fresh clone.
+RUFF_VERSION="0.17.3"
+if uv run --quiet --with "ruff==${RUFF_VERSION}" ruff --version >/dev/null 2>&1; then
+  ruff_cmd=(uv run --quiet --with "ruff==${RUFF_VERSION}" ruff)
 else
-  ruff_cmd=(uvx ruff)
+  ruff_cmd=(uvx "ruff@${RUFF_VERSION}")
 fi
 
 "${ruff_cmd[@]}" check --fix -- "${files[@]}"
