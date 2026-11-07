@@ -132,19 +132,28 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return self.gm.bad_request("'label_id' and 'version_id' are required")
 
         try:
-            label = PromptLabel.objects.get(id=label_id)
+            org = getattr(request, "organization", None) or request.user.organization
+            label = PromptLabel.no_workspace_objects.get(
+                Q(organization=org, workspace=request.workspace)
+                | Q(organization__isnull=True, type=LabelTypeChoices.SYSTEM.value),
+                id=label_id,
+            )
             version = PromptVersion.objects.get(id=version_id)
         except (PromptLabel.DoesNotExist, PromptVersion.DoesNotExist):
             return self.gm.bad_request("Invalid label or version")
 
         org = getattr(request, "organization", None) or request.user.organization
-        template_org = getattr(version.original_template, "organization", None)
-        if template_org != org:
+        template = version.original_template
+        if template.organization != org or template.workspace != request.workspace:
             return self.gm.bad_request(
                 "You don't have permission to modify this template"
             )
 
-        version.labels.remove(label)
+        # Direct through-table delete so system labels (workspace=NULL) are not
+        # filtered out by the M2M manager
+        version.labels.through.objects.filter(
+            promptversion_id=version.id, promptlabel_id=label.id
+        ).delete()
         return self.gm.success_response({"detail": "Label removed successfully"})
 
     @action(detail=False, methods=["post"], url_path="create-system-labels")
@@ -295,7 +304,8 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         ):
             return self.gm.bad_request("You don't have permission to use this label")
 
-        # Remove from other versions under same template
+        # Remove from other versions under same template (direct through-table delete
+        # so system labels with workspace=NULL are not filtered out by the M2M manager)
         other_versions = PromptVersion.objects.filter(
             original_template=template,
             original_template__organization=getattr(request, "organization", None)
@@ -303,10 +313,12 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             labels__id=label_obj.id,
             deleted=False,
         ).exclude(id=target_version.id)
-        moved_from = []
-        for ov in other_versions:
-            ov.labels.remove(label_obj)
-            moved_from.append(ov.template_version)
+        moved_from = list(other_versions.values_list("template_version", flat=True))
+        if moved_from:
+            target_version.labels.through.objects.filter(
+                promptversion_id__in=other_versions.values("id"),
+                promptlabel_id=label_obj.id,
+            ).delete()
 
         target_version.labels.add(label_obj)
 
