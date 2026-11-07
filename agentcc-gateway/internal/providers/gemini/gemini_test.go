@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1409,5 +1410,239 @@ func TestIntegration_RequestBodyContainsTools(t *testing.T) {
 	_, err := p.ChatCompletion(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ChatCompletion() error = %v", err)
+	}
+}
+
+func TestChatCompletion_StrictFunctionAndServerTool(t *testing.T) {
+	for _, toolType := range []string{"function", ""} {
+		t.Run("type="+toolType, func(t *testing.T) {
+			sent := requestSentFor(t, `{
+				"model": "gemini-2.5-flash",
+				"messages": [{"role":"user","content":"hi"}],
+				"tools": [
+					{"type":"`+toolType+`","function":{"name":"get_weather","strict":true}},
+					{"google_search": {}}
+				]
+			}`)
+
+			entries := toolsEntries(t, sent)
+			if len(entries) != 2 {
+				t.Fatalf("tools entries = %d, want 2: %s", len(entries), sent["tools"])
+			}
+			var decls []geminiFuncDecl
+			if err := json.Unmarshal(entries[0]["functionDeclarations"], &decls); err != nil {
+				t.Fatalf("reading function declarations: %v", err)
+			}
+			if len(decls) != 1 || decls[0].Name != "get_weather" {
+				t.Fatalf("function declarations = %+v, want get_weather", decls)
+			}
+			if _, ok := entries[1]["googleSearch"]; !ok {
+				t.Fatalf("googleSearch is missing: %s", sent["tools"])
+			}
+			var config geminiToolConfig
+			if err := json.Unmarshal(sent["toolConfig"], &config); err != nil {
+				t.Fatalf("reading toolConfig: %v", err)
+			}
+			if config.FunctionCallingConfig == nil || config.FunctionCallingConfig.Mode != "VALIDATED" {
+				t.Fatalf("functionCallingConfig = %+v, want VALIDATED", config.FunctionCallingConfig)
+			}
+		})
+	}
+}
+
+func TestChatCompletion_MixedStrictToolsRejected(t *testing.T) {
+	var contacted atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contacted.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL)
+	bTrue := true
+	bFalse := false
+
+	cases := []struct {
+		name  string
+		tools []models.Tool
+	}{
+		{
+			name: "strict=true + strict=false",
+			tools: []models.Tool{
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_a",
+						Description: "Strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bTrue,
+					},
+				},
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_b",
+						Description: "Non-strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bFalse,
+					},
+				},
+			},
+		},
+		{
+			name: "strict=true + strict=nil",
+			tools: []models.Tool{
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_a",
+						Description: "Strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bTrue,
+					},
+				},
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_b",
+						Description: "Non-strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      nil,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contacted.Store(false)
+			req := &models.ChatCompletionRequest{
+				Model:    "gemini-2.5-flash",
+				Messages: []models.Message{{Role: "user", Content: mustJSON("Hello")}},
+				Tools:    tc.tools,
+			}
+			_, err := p.ChatCompletion(context.Background(), req)
+			if contacted.Load() {
+				t.Error("upstream server was contacted for invalid mixed-strict request")
+			}
+			if err == nil {
+				t.Fatal("expected error for mixed strict tools, got nil")
+			}
+			apiErr, ok := err.(*models.APIError)
+			if !ok {
+				t.Fatalf("expected *models.APIError, got %T: %v", err, err)
+			}
+			if apiErr.Status != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadRequest)
+			}
+			if apiErr.Code != "conflicting_tool_strictness" {
+				t.Errorf("code = %q, want %q", apiErr.Code, "conflicting_tool_strictness")
+			}
+			if !strings.Contains(apiErr.Message, "conflicting tool strictness") {
+				t.Errorf("expected conflicting tool strictness message, got: %s", apiErr.Message)
+			}
+		})
+	}
+}
+
+func TestStreamChatCompletion_MixedStrictToolsRejected(t *testing.T) {
+	var contacted atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contacted.Store(true)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL)
+	bTrue := true
+	bFalse := false
+
+	cases := []struct {
+		name  string
+		tools []models.Tool
+	}{
+		{
+			name: "strict=true + strict=false",
+			tools: []models.Tool{
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_a",
+						Description: "Strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bTrue,
+					},
+				},
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_b",
+						Description: "Non-strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bFalse,
+					},
+				},
+			},
+		},
+		{
+			name: "strict=true + strict=nil",
+			tools: []models.Tool{
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_a",
+						Description: "Strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      &bTrue,
+					},
+				},
+				{
+					Type: "function",
+					Function: models.ToolFunction{
+						Name:        "tool_b",
+						Description: "Non-strict tool",
+						Parameters:  json.RawMessage(`{"type":"object"}`),
+						Strict:      nil,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contacted.Store(false)
+			req := &models.ChatCompletionRequest{
+				Model:    "gemini-2.5-flash",
+				Messages: []models.Message{{Role: "user", Content: mustJSON("Hello")}},
+				Tools:    tc.tools,
+			}
+			_, errCh := p.StreamChatCompletion(context.Background(), req)
+			err := <-errCh
+			if contacted.Load() {
+				t.Error("upstream server was contacted for invalid mixed-strict stream request")
+			}
+			if err == nil {
+				t.Fatal("expected error for mixed strict tools in stream, got nil")
+			}
+			apiErr, ok := err.(*models.APIError)
+			if !ok {
+				t.Fatalf("expected *models.APIError, got %T: %v", err, err)
+			}
+			if apiErr.Status != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadRequest)
+			}
+			if apiErr.Code != "conflicting_tool_strictness" {
+				t.Errorf("code = %q, want %q", apiErr.Code, "conflicting_tool_strictness")
+			}
+			if !strings.Contains(apiErr.Message, "conflicting tool strictness") {
+				t.Errorf("expected conflicting tool strictness message, got: %s", apiErr.Message)
+			}
+		})
 	}
 }
