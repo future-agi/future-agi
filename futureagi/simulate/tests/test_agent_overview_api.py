@@ -277,7 +277,9 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "agent_version": None,
         "outcome_passed": None,
         "outcome_failed": None,
+        "outcome_errored": None,
         "outcome_skipped": None,
+        "outcome_no_score": None,
         "started_at": None,
         "completed_at": None,
     }
@@ -286,11 +288,13 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         2,
         {"id": str(environment.id), "name": "env-1"},
     )
+    # An errored call is its own count, never a fail: a pass rate is passed over passed plus failed.
     assert (
         runs[1]["outcome_passed"],
         runs[1]["outcome_failed"],
+        runs[1]["outcome_errored"],
         runs[1]["outcome_skipped"],
-    ) == (2, 2, 1)
+    ) == (2, 1, 1, 1)
     assert (runs[2]["run_number"], runs[2]["agent_version"]) == (
         1,
         {"id": str(version.id), "version_number": version.version_number},

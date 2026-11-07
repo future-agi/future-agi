@@ -656,6 +656,7 @@ class CallTranscript(BaseModel):
         SYSTEM = "system", "System"
         TOOL_CALLS = "tool_calls", "Tool Calls"
         TOOL_CALL_RESULT = "tool_call_result", "Tool Call Result"
+        ACTOR = "actor", "Actor"
         UNKNOWN = "unknown", "Unknown"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -673,6 +674,12 @@ class CallTranscript(BaseModel):
         default=SpeakerRole.UNKNOWN,
         help_text="Role of the speaker (user or assistant)",
     )
+    # Who spoke, when the speaker is an actor: anyone in the conversation other than the person and the agent.
+    speaker_name = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+    # Which actor spoke, by their id in the environment; null on other turns and older rows.
+    actor_id = models.CharField(max_length=255, null=True, blank=True)
 
     content = models.TextField(help_text="Transcript content")
 
