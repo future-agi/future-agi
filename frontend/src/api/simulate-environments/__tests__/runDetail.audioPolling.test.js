@@ -16,6 +16,24 @@ const pending = (deadline = "2026-10-03T12:30:00Z") => ({
   id: "call-audio",
   audio_metrics: { schema_version: 1, state: "pending", deadline_at: deadline },
 });
+// Both detail APIs serialize start_time and duration_seconds; envelope reasons
+// live on the metric entries, not on the envelope itself.
+const notAnalyzed = (reason = "not_analyzed") => ({
+  id: "call-audio",
+  status: "completed",
+  start_time: "2026-10-03T11:58:30Z",
+  duration: 60,
+  duration_seconds: 60,
+  audio_metrics: {
+    schema_version: 1,
+    state: "not_requested",
+    metrics: Object.fromEntries(
+      ["average_pitch_hz", "estimated_snr_db", "voice_quality_index"].map(
+        (name) => [name, { value: null, state: "unavailable", reason }],
+      ),
+    ),
+  },
+});
 const clients = [];
 
 beforeEach(() => {
@@ -75,7 +93,7 @@ describe.each([
       const query = client
         .getQueryCache()
         .find({ queryKey: [key, "call-audio"] });
-      return { ...hook, query, client };
+      return { ...hook, query, client, wrapper };
     }
 
     it("polls the existing detail endpoint every 5 seconds without eval metrics", async () => {
@@ -84,6 +102,106 @@ describe.each([
       expect(query.options.refetchInterval(query)).toBe(5000);
       await act(() => vi.advanceTimersByTimeAsync(5000));
       expect(axios.get).toHaveBeenCalledTimes(2);
+      unmount();
+    });
+
+    it("polls the scheduling gap through pending to complete for a recent completed call", async () => {
+      const data = notAnalyzed();
+      const { query, result, unmount } = await setup(data);
+      expect(query.options.refetchInterval(query)).toBe(5000);
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(result.current.data).toEqual(data);
+      axios.get.mockResolvedValue({ data: pending() });
+      await act(() => vi.advanceTimersByTimeAsync(5001));
+      expect(result.current.data).toEqual(pending());
+      expect(query.options.refetchInterval(query)).toBe(5000);
+      const complete = { audio_metrics: { state: "complete" } };
+      axios.get.mockResolvedValue({ data: complete });
+      await act(() => vi.advanceTimersByTimeAsync(5001));
+      expect(result.current.data).toEqual(complete);
+      expect(query.options.refetchInterval(query)).toBe(false);
+      await act(() => vi.advanceTimersByTimeAsync(15000));
+      expect(axios.get).toHaveBeenCalledTimes(4);
+      unmount();
+    });
+
+    it("bounds the scheduling gap to two minutes from call completion", async () => {
+      const { query, unmount } = await setup({
+        ...notAnalyzed(),
+        start_time: "2026-10-03T11:57:10Z",
+      });
+      expect(query.options.refetchInterval(query)).toBe(5000);
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(query.options.refetchInterval(query)).toBe(false);
+      expect(axios.get).toHaveBeenCalledTimes(3);
+      await act(() => vi.advanceTimersByTimeAsync(15000));
+      expect(axios.get).toHaveBeenCalledTimes(3);
+      unmount();
+    });
+
+    it.each(["ended_at", "completed_at"])(
+      "uses an explicit recent %s when provided",
+      async (field) => {
+        const { query, unmount } = await setup({
+          ...notAnalyzed(),
+          start_time: null,
+          duration_seconds: null,
+          duration: null,
+          [field]: "2026-10-03T11:59:30Z",
+        });
+        expect(query.options.refetchInterval(query)).toBe(5000);
+        unmount();
+      },
+    );
+
+    it.each([
+      [
+        "historical call recently updated",
+        { start_time: "2026-10-02T11:58:30Z", timestamp: now.toISOString() },
+      ],
+      ["exact window boundary", { start_time: "2026-10-03T11:57:00Z" }],
+      ["ongoing call", { status: "ongoing" }],
+      ["failed call", { status: "failed" }],
+      ["unknown call status", { status: undefined }],
+      ["snapshot", { is_snapshot: true }],
+      ["missing start time", { start_time: null }],
+      ["invalid start time", { start_time: "invalid-date" }],
+      ["missing duration", { duration_seconds: null, duration: null }],
+      ["negative duration", { duration_seconds: -1 }],
+      ["invalid duration", { duration_seconds: "invalid" }],
+      ["future completion", { start_time: "2026-10-03T12:01:00Z" }],
+      ["invalid explicit end time", { ended_at: "invalid-date" }],
+      ["historical explicit end time", { ended_at: "2026-10-02T12:00:00Z" }],
+      ["missing envelope", { audio_metrics: null }],
+      ["missing reasons", { audio_metrics: { state: "not_requested" } }],
+    ])("does not poll the scheduling gap for %s", async (_case, fields) => {
+      const { query, unmount } = await setup({ ...notAnalyzed(), ...fields });
+      expect(query.options.refetchInterval(query)).toBe(false);
+      await act(() => vi.advanceTimersByTimeAsync(15000));
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      unmount();
+    });
+
+    it.each(["not_enabled", "not_applicable", "unsupported_schema_version"])(
+      "does not treat %s as a scheduling gap even for a recent call",
+      async (reason) => {
+        const { query, unmount } = await setup(notAnalyzed(reason));
+        expect(query.options.refetchInterval(query)).toBe(false);
+        await act(() => vi.advanceTimersByTimeAsync(15000));
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        unmount();
+      },
+    );
+
+    it("preserves localizer precedence during the scheduling gap", async () => {
+      const { query, unmount } = await setup({
+        ...notAnalyzed(),
+        eval_metrics: { eval1: { error_localizer_status: "running" } },
+      });
+      expect(query.options.refetchInterval(query)).toBe(3000);
       unmount();
     });
 
@@ -223,6 +341,15 @@ describe.each([
     });
 
     if (_name === "v3") {
+      it("preserves scoring precedence during the scheduling gap", async () => {
+        const { query, unmount } = await setup({
+          ...notAnalyzed(),
+          evaluations: [{ status: "pending" }],
+        });
+        expect(query.options.refetchInterval(query)).toBe(3000);
+        unmount();
+      });
+
       it("preserves scoring precedence over audio polling and stops on access loss", async () => {
         const { query, result, unmount } = await setup({
           ...pending(),
@@ -237,8 +364,60 @@ describe.each([
       });
     }
 
+    describe.each([401, 403, 404])("access recovery after %s", (statusCode) => {
+      it.each(["reopen", "fresh mount", "invalidate", "explicit refetch"])(
+        "recovers via %s with the denied query still cached",
+        async (recovery) => {
+          const data = pending();
+          const hook = await setup(data);
+          const { query, result, client, wrapper } = hook;
+          axios.get.mockRejectedValue({ response: { status: statusCode } });
+          await act(() => result.current.refetch());
+          await act(() => vi.advanceTimersByTimeAsync(1));
+          expect(result.current.isError).toBe(true);
+          expect(result.current.data).toEqual(data);
+          expect(query.options.refetchInterval(query)).toBe(false);
+          expect(
+            query.options.retry(0, { response: { status: statusCode } }),
+          ).toBe(false);
+          await act(() => vi.advanceTimersByTimeAsync(15000));
+          expect(axios.get).toHaveBeenCalledTimes(2);
+
+          axios.get.mockResolvedValue({ data });
+          let recovered = hook;
+          if (recovery === "reopen") {
+            hook.rerender({ enabled: false });
+            hook.rerender({ enabled: true });
+          } else if (recovery === "fresh mount") {
+            hook.unmount();
+            expect(
+              client.getQueryCache().find({ queryKey: query.queryKey }),
+            ).toBe(query);
+            recovered = renderHook(() => useDetail("call-audio", true), {
+              wrapper,
+            });
+          } else if (recovery === "invalidate") {
+            await act(() =>
+              client.invalidateQueries({ queryKey: query.queryKey }),
+            );
+          } else {
+            await act(() => result.current.refetch());
+          }
+          await act(() => vi.advanceTimersByTimeAsync(1));
+          expect(axios.get).toHaveBeenCalledTimes(3);
+          expect(recovered.result.current.isError).toBe(false);
+          expect(recovered.result.current.data).toEqual(data);
+          expect(query.isActive()).toBe(true);
+          expect(query.options.refetchInterval(query)).toBe(5000);
+          await act(() => vi.advanceTimersByTimeAsync(5000));
+          expect(axios.get).toHaveBeenCalledTimes(4);
+          recovered.unmount();
+        },
+      );
+    });
+
     it.each([401, 403, 404])(
-      "stops refetches and retries on access loss (%s), retaining cached values",
+      "stops polling and retries on access loss (%s), retaining cached values",
       async (statusCode) => {
         const data = pending();
         const { query, result, unmount } = await setup(data);

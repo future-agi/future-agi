@@ -1210,10 +1210,11 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
     queryKey,
     queryFn: () =>
       axios.get(endpoints.runTests.callExecutionDetail(callExecutionId)),
-    enabled: (query) =>
-      !!callExecutionId && enabled && !isCallDetailAccessError(query.state.error),
+    enabled: !!callExecutionId && enabled,
     select: (data) => data?.data,
-    staleTime: 5 * 60 * 1000,
+    // A reopen must retry access even when the retained data is still fresh.
+    staleTime: (query) =>
+      isCallDetailAccessError(query.state.error) ? 0 : 5 * 60 * 1000,
     retry: callDetailRetry(retry),
     refetchInterval: (query) =>
       callDetailRefetchInterval(query.state.data?.data, query.state.error),

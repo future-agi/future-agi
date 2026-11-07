@@ -657,9 +657,10 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
       axios
         .get(endpoints.runResultsV3.callDetail(callExecId))
         .then((response) => response.data),
-    enabled: (query) =>
-      enabled && !!callExecId && !isCallDetailAccessError(query.state.error),
-    staleTime: 1000 * 60 * 5,
+    enabled: enabled && !!callExecId,
+    // A reopen must retry access even when the retained data is still fresh.
+    staleTime: (query) =>
+      isCallDetailAccessError(query.state.error) ? 0 : 1000 * 60 * 5,
     retry: callDetailRetry(retry),
     refetchInterval: (query) => {
       const { data, error } = query.state;
