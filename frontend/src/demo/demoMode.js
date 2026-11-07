@@ -5,6 +5,7 @@
   product never set the flag, so none of this runs there.
 */
 import { OBSERVE_PROJECTS } from "src/sections/simulate-v2/_mock/connectAgent";
+import { DEMO_PERSONAS, personasPage } from "./personas";
 
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -69,6 +70,8 @@ const features = () => Object.fromEntries(["error_feed", "voice_sim", "optimizat
 
 /* path → result. Anything not listed answers an empty success. */
 const ROUTES = [
+  [/\/simulate\/api\/personas\/$/, (q) => ({ status: true, result: personasPage(q) })],
+  [/\/simulate\/api\/personas\/[^/]+\/$/, (q, path) => ({ status: true, result: DEMO_PERSONAS.find((p) => path.includes(p.id)) || DEMO_PERSONAS[0] })],
   [/\/api\/capabilities\/$/, () => ({ features: features() })],
   [/\/accounts\/user-info\/$/, () => USER],
   [/\/accounts\/organizations\/$/, () => ({ status: true, result: { organizations: [{ ...ORG, role: "Owner", level: 15, is_selected: true }] } })],
@@ -85,7 +88,7 @@ const answer = (method, url, params = {}) => {
   const u = new URL(url, "https://demo.invalid");
   const q = { ...Object.fromEntries(u.searchParams), ...params };
   const hit = ROUTES.find(([re]) => re.test(u.pathname));
-  if (hit) return hit[1](q);
+  if (hit) return hit[1](q, u.pathname);
   return method === "get" ? { status: true, result: [] } : { status: true, result: {} };
 };
 
