@@ -358,10 +358,13 @@ class _Walk:
         self.survivors = survivors
         self.stop_on_refill = stop_on_refill
         self.candidate_deadlines: list[object] = []
+        self.first_batch_walls: list[object] = []
         self.exact_deadlines: list[object] = []
 
     def read_candidates(self, **kwargs):
         self.candidate_deadlines.append(kwargs["deadline"])
+        if kwargs.get("first_batch_wall") is not None:
+            self.first_batch_walls.append(kwargs["first_batch_wall"])
         before_id = kwargs["before_end_user_id"]
         start = 0
         if before_id is not None:
@@ -397,13 +400,16 @@ def _patched(manager, walk):
     )
 
 
-def test_user_cursor_page_starts_the_user_page_wall_not_the_global():
+def test_user_cursor_page_refills_at_the_user_page_wall_not_the_global():
     from tracer.services import users_list_manager
-    from tracer.services.users_list_manager import USER_LIST_PAGE_WALL_MS
+    from tracer.services.users_list_manager import (
+        USER_LIST_FIRST_BATCH_WALL_MS,
+        USER_LIST_PAGE_WALL_MS,
+    )
 
     manager = _manager()
     walk = _Walk()
-    started: list[int] = []
+    started: list[tuple[int, bool]] = []
     real_start = ReadDeadline.start
     reads, exacts = _patched(manager, walk)
     with (
@@ -412,23 +418,36 @@ def test_user_cursor_page_starts_the_user_page_wall_not_the_global():
         mock.patch.object(
             users_list_manager.ReadDeadline,
             "start",
-            side_effect=lambda total_ms: (
-                started.append(total_ms) or real_start(total_ms)
+            side_effect=lambda total_ms, **kwargs: (
+                started.append((total_ms, kwargs.get("enforce_on_server", False)))
+                or real_start(total_ms, **kwargs)
             ),
         ),
     ):
         page = manager.list_cursor_payload(page_size=25)
 
-    assert started == [USER_LIST_PAGE_WALL_MS]
+    # The page wall for refills, and the analytics wall the server enforces
+    # on the first batch's candidate statements (TH-6934).
+    assert started == [
+        (USER_LIST_PAGE_WALL_MS, False),
+        (USER_LIST_FIRST_BATCH_WALL_MS, True),
+    ]
     assert USER_LIST_PAGE_WALL_MS == settings.USER_LIST_PAGE_WALL_MS
     assert USER_LIST_PAGE_WALL_MS != settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+    assert USER_LIST_FIRST_BATCH_WALL_MS == (
+        settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+    )
     assert len(page.payload["table"]) == 25
     assert page.payload["query_status"] == "complete"
     assert page.payload["query_complete"] is True
     assert page.payload["query_exact"] is True
-    # The first batch runs as before: no wall reaches its statements.
+    # The page wall never reaches the first batch; only its candidate
+    # statements carry the first-batch wall.
     assert walk.candidate_deadlines == [None]
     assert walk.exact_deadlines == [None]
+    assert [wall.total_ms for wall in walk.first_batch_walls] == [
+        USER_LIST_FIRST_BATCH_WALL_MS
+    ]
 
 
 def test_user_numbered_page_carries_no_page_wall():
@@ -574,19 +593,28 @@ def test_user_first_batch_never_stops_at_the_wall_and_no_refill_follows():
     }
     walk = _Walk(survivors=survivors)
     expired = ReadDeadline(total_ms=1, started=time.monotonic() - 10)
+    real_start = ReadDeadline.start
     reads, exacts = _patched(manager, walk)
     with (
         reads,
         exacts,
         mock.patch.object(
-            users_list_manager.ReadDeadline, "start", return_value=expired
+            users_list_manager.ReadDeadline,
+            "start",
+            side_effect=lambda total_ms, **kwargs: (
+                expired
+                if total_ms == users_list_manager.USER_LIST_PAGE_WALL_MS and not kwargs
+                else real_start(total_ms, **kwargs)
+            ),
         ),
     ):
         page = manager.list_cursor_payload(page_size=25)
 
-    # An already-expired wall cannot touch the first batch; it only stops the
+    # An already-expired page wall cannot touch the first batch (which is
+    # bounded by its own first-batch wall instead); it only stops the
     # refill, which publishes what the first batch proved plus its checkpoint.
     assert walk.candidate_deadlines == [None]
+    assert len(walk.first_batch_walls) == 1
     assert len(page.payload["table"]) == 5
     assert page.has_more is True
     assert page.checkpoint_order[2] == walk.candidates[24]["end_user_id"]
@@ -594,21 +622,27 @@ def test_user_first_batch_never_stops_at_the_wall_and_no_refill_follows():
     assert page.payload["query_complete"] is False
 
 
-@pytest.mark.parametrize("refill", [True, False], ids=["refill", "first-batch"])
+@pytest.mark.parametrize("batch", ["refill", "first-batch", "export"])
 def test_user_refill_candidate_statements_carry_the_page_wall_as_a_server_cap(
-    refill,
+    batch,
 ):
-    """A refill's whole-window candidate statement is stopped by the server.
+    """A cursor page's whole-window candidate statements are stopped by the server.
 
-    It used to be admitted by the page wall only: ``timeout_ms`` is not a
-    statement deadline, so ClickHouse ran it with ``max_execution_time`` 0.
+    They used to be admitted by the page wall only: ``timeout_ms`` is not a
+    statement deadline, so ClickHouse ran them with ``max_execution_time`` 0.
     Under a refill's page wall the candidate statement and its survivor
     statement ask the server to stop them at ``USER_LIST_QUERY_TIMEOUT_MS``
     or what is left of the wall; a stop is a page-wall stop the page
     resumes from (``test_user_refill_stopped_by_the_wall_publishes_partial_page_and_resumes``).
-    The first batch has no deadline and still sends none.
+    The first batch has no page wall: under its first-batch wall (TH-6934)
+    both statements ask the server to stop at what is left of the analytics
+    wall, with no tighter hint. The export starts neither and sends none.
     """
     from tracer.services import users_list_manager
+    from tracer.services.users_list_manager import (
+        USER_LIST_FIRST_BATCH_WALL_MS,
+        USER_LIST_QUERY_TIMEOUT_MS,
+    )
 
     manager = _manager()
     user = str(uuid.UUID(int=7))
@@ -619,7 +653,12 @@ def test_user_refill_candidate_statements_carry_the_page_wall_as_a_server_cap(
             sent.append(kwargs)
             return SimpleNamespace(data=[{"end_user_id": user}])
 
-    deadline = ReadDeadline.start(5_000) if refill else None
+    deadline = ReadDeadline.start(5_000) if batch == "refill" else None
+    first_batch_wall = (
+        ReadDeadline.start(USER_LIST_FIRST_BATCH_WALL_MS, enforce_on_server=True)
+        if batch == "first-batch"
+        else None
+    )
     with (
         mock.patch.object(users_list_manager, "V2AnalyticsQueryService", _Service),
         mock.patch.object(
@@ -630,6 +669,7 @@ def test_user_refill_candidate_statements_carry_the_page_wall_as_a_server_cap(
     ):
         manager._read_dimension_candidates(
             deadline=deadline,
+            first_batch_wall=first_batch_wall,
             limit=26,
             before_first_seen=None,
             before_end_user_id=None,
@@ -639,9 +679,16 @@ def test_user_refill_candidate_statements_carry_the_page_wall_as_a_server_cap(
 
     assert len(sent) == 2
     for kwargs in sent:
-        if refill:
+        if batch == "refill":
             assert 0 < kwargs["timeout_ms"] <= 5_000
             assert kwargs["server_execution_cap_ms"] == kwargs["timeout_ms"]
+        elif batch == "first-batch":
+            assert (
+                USER_LIST_QUERY_TIMEOUT_MS
+                < kwargs["server_execution_cap_ms"]
+                <= USER_LIST_FIRST_BATCH_WALL_MS
+            )
+            assert kwargs["timeout_ms"] == kwargs["server_execution_cap_ms"]
         else:
             assert kwargs["timeout_ms"] is None
             assert kwargs.get("server_execution_cap_ms") is None
