@@ -586,7 +586,7 @@ class _TraceRootReplayV2:
                             argMax(tuple(start_time, cost, total_tokens, prompt_tokens,
                                 completion_tokens, model, provider, input_length,
                                 output_length, parent_span_id, is_deleted, name,
-                                {usage_coverage_sql(attrs="attrs_string")},
+                                {usage_coverage_sql(attrs="attrs_string", include_summary=True)},
                                 {source_summary_sql(attrs="attrs_string")}), _version)
                                 AS latest_span,
                             id AS latest_id,

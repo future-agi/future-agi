@@ -69,6 +69,18 @@ describe("qualified timing spans", () => {
     expect(JSON.stringify(spans)).toBe(before);
   });
 
+  it("shares visibility changes with the companion graph", () => {
+    const changed = vi.fn();
+    const { rerender } = render(<TraceTreeV2 spans={spans} onSelectSpan={vi.fn()}
+      showTimingSpans={false} onTimingVisibilityChange={changed} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 timing span" }));
+    expect(changed).toHaveBeenLastCalledWith(true);
+    rerender(<TraceTreeV2 spans={spans} onSelectSpan={vi.fn()}
+      showTimingSpans onTimingVisibilityChange={changed} />);
+    expect(screen.getByRole("region", { name: "Trace Tree" })).toBeInTheDocument();
+    expect(screen.getByText(timing.name)).toBeInTheDocument();
+  });
+
   it("reveals a directly selected timing span", () => {
     render(
       <TraceTreeV2

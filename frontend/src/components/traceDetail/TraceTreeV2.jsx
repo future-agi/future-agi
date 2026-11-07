@@ -695,9 +695,16 @@ const TraceTreeV2 = ({
   visibleMetrics,
   onToggleMetrics: onToggleMetricsProp,
   onRefresh,
+  showTimingSpans: showTimingProp,
+  onTimingVisibilityChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [showTimingSpans, setShowTimingSpans] = useState(false);
+  const [showTimingLocal, setShowTimingLocal] = useState(false);
+  const showTimingSpans = showTimingProp ?? showTimingLocal;
+  const setShowTimingSpans = useCallback((show) => {
+    setShowTimingLocal(show);
+    onTimingVisibilityChange?.(show);
+  }, [onTimingVisibilityChange]);
   const timingIds = useMemo(() => timingSpanIds(spans || []), [spans]);
   const visibleSpans = useMemo(
     () => (showTimingSpans ? spans : withoutTimingSpans(spans || [])),
@@ -733,7 +740,7 @@ const TraceTreeV2 = ({
   // Direct navigation to a timing span must reveal it, not strand selection.
   useEffect(() => {
     if (timingIds.has(selectedSpanId)) setShowTimingSpans(true);
-  }, [selectedSpanId, timingIds, spansKey]);
+  }, [selectedSpanId, timingIds, spansKey, setShowTimingSpans]);
 
   const handleCollapseAll = useCallback(() => setExpandedSet(new Set()), []);
   const handleExpandAll = useCallback(
@@ -761,6 +768,8 @@ const TraceTreeV2 = ({
 
   return (
     <Box
+      role="region"
+      aria-label="Trace Tree"
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -783,7 +792,7 @@ const TraceTreeV2 = ({
           size="small"
           color="inherit"
           aria-pressed={showTimingSpans}
-          onClick={() => setShowTimingSpans((show) => !show)}
+          onClick={() => setShowTimingSpans(!showTimingSpans)}
           startIcon={<Iconify icon="solar:clock-circle-linear" width={14} />}
           sx={{
             alignSelf: "flex-start",
@@ -826,6 +835,8 @@ TraceTreeV2.propTypes = {
   visibleMetrics: PropTypes.object,
   onToggleMetrics: PropTypes.func,
   onRefresh: PropTypes.func,
+  showTimingSpans: PropTypes.bool,
+  onTimingVisibilityChange: PropTypes.func,
 };
 
 export default React.memo(TraceTreeV2);

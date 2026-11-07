@@ -137,21 +137,22 @@ test('OBS-E2E-059: Copilot agent traces show request usage and optional timing d
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?tab=traces`, { waitUntil: 'domcontentloaded' });
     await page.locator(`.clean-data-table:visible .ag-row[row-id="${traceId}"] [col-id="trace_name"]`).click();
     const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
-    await drawer.getByText('invoke_agent', { exact: true }).click();
-    await expect(drawer.getByText('Agent', { exact: true }).first()).toBeVisible();
-    await drawer.getByText('invoke_agent', { exact: true }).click();
+    await drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText('invoke_agent', { exact: true }).click();
+    await expect(drawer.getByText('Type : agent', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText('invoke_agent', { exact: true }).click();
     // formatters.js abbreviates totals >= 10000; detail API above pins the exact integer.
-    await expect(drawer.getByText('88.1K observed tokens', { exact: true })).toBeVisible();
-    await expect(drawer.getByRole('button', { name: 'Show 72 timing spans', exact: true })).toBeVisible();
-    await expect(drawer.getByText(/^session\.timing\./)).toHaveCount(0);
+    await expect(drawer.getByText('88.1K observed tokens', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(drawer.getByRole('button', { name: 'Show 72 timing spans', exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText(/^session\.timing\./)).toHaveCount(0, { timeout: UI_READY });
   }, { timeout: UI_READY });
   await test.step('show exact timing names then hide without deleting API data', async () => {
     const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
     await drawer.getByRole('button', { name: 'Show 72 timing spans', exact: true }).click();
-    await expect(drawer.getByText(/^session\.timing\./)).toHaveCount(72);
-    expect((await drawer.getByText(/^session\.timing\./).allTextContents()).sort()).toEqual(timingNames);
+    await expect(drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText(/^session\.timing\./)).toHaveCount(72, { timeout: UI_READY });
+    expect((await drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText(/^session\.timing\./).allTextContents()).sort()).toEqual(timingNames);
+    await testInfo.attach('timing-shown', { body: await page.screenshot(), contentType: 'image/png' });
     await drawer.getByRole('button', { name: 'Hide 72 timing spans', exact: true }).click();
-    await expect(drawer.getByText(/^session\.timing\./)).toHaveCount(0);
+    await expect(drawer.getByRole('region', { name: 'Trace Tree', exact: true }).getByText(/^session\.timing\./)).toHaveCount(0, { timeout: UI_READY });
     const detail = await actor.api.get<Detail>(`/tracer/trace/${traceId}/`, { project_id: projectId });
     expect(flatten(detail.result.observation_spans).filter(s => s.observation_type === 'internal').map(s => s.id).sort()).toEqual(timingIds);
     await testInfo.attach('timing-hidden', { body: await page.screenshot(), contentType: 'image/png' });
