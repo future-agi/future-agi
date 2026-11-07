@@ -46,15 +46,40 @@ class KBSearchTool(BaseTool):
     def execute(self, params: KBSearchInput, context: ToolContext) -> ToolResult:
         try:
             from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+            from model_hub.models.develop_dataset import KnowledgeBaseFile
+
+            try:
+                # BaseTool.run sets workspace_context, so the default manager also
+                # applies workspace scoping for workspace-bound KBs.
+                kb = KnowledgeBaseFile.objects.get(
+                    id=params.kb_id,
+                    organization=context.organization,
+                    deleted=False,
+                )
+            except KnowledgeBaseFile.DoesNotExist:
+                return ToolResult.not_found("Knowledge base", params.kb_id)
+
+            context_workspace_id = getattr(
+                getattr(context, "workspace", None), "id", None
+            )
+            if (
+                getattr(kb, "workspace_id", None)
+                and context_workspace_id
+                and str(kb.workspace_id) != str(context_workspace_id)
+            ):
+                return ToolResult.permission_denied(
+                    "Knowledge base is not available in the current workspace."
+                )
 
             manager = EmbeddingManager()
-
+            filter_by = {"organization_id": str(context.organization_id)}
             results = manager.retrieve_rag_based_examples(
                 query=params.query,
                 table_name="syn",
                 eval_id=params.kb_id,
                 meta_data_col="chunk_text",
                 input_type="text",
+                filter_by=filter_by,
                 top_k=params.top_k,
                 threshold=0.25,
             )
