@@ -30,16 +30,16 @@ const SNR_DB = 23.64;
 const PRIVATE_OBJECT_KEY = 'call-recordings/e2e-sim3-private/tested-agent.wav';
 
 // The row the analysis worker commits to CallExecution.audio_metrics
-// (envelope.py AudioEnvelope + metric_entry). The voice quality index is what
-// the scheduler writes when no validated calibration artifact is configured
-// (ee/voice/temporal/activities/audio_analysis.py: unavailable, not_validated),
-// the state of every deployment today. Capture origin, transport and provider
-// are null: this seed has no recording and claims no provider.
+// (envelope.py AudioEnvelope + metric_entry). The VQI entry is the one the
+// scheduler writes when model weights are configured but no validated
+// calibration is (ee/voice/temporal/activities/audio_analysis.py). The stored
+// top-level state is deliberately stale ('complete'): the API must derive it.
+// Capture origin, transport and provider are null: no recording, no provider.
 const STORED_ENVELOPE = {
   schema_version: 1,
   analysis_id: ANALYSIS_ID,
   generation: 0,
-  state: 'partial',
+  state: 'complete',
   computed_at: '2026-11-07T12:00:20+00:00',
   scheduled_at: '2026-11-07T12:00:00+00:00',
   deadline_at: '2026-11-07T12:30:00+00:00',
