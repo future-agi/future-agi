@@ -29,7 +29,7 @@ def eligible_call(audio_call, settings):
             artifacts=[
                 ProvenanceArtifact(
                     "customer",
-                    f"call-recordings/{audio_call.id}/customer.wav",
+                    f"call-recordings/project/vapi/{audio_call.id}/customer.wav",
                     '"etag"',
                 )
             ],

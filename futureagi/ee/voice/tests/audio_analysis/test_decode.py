@@ -132,7 +132,7 @@ def test_fetch_checks_version_and_closes_stream():
         decode.fetch_audio(
             s3,
             bucket="recordings",
-            key="call-recordings/call/a",
+            key="call-recordings/project/vapi/call/a",
             call_id="call",
             expected_version="etag",
         )
@@ -155,7 +155,10 @@ def test_revoked_credentials_sanitized():
     )
     with pytest.raises(AudioDeterministicError, match="provider_access_denied") as exc:
         decode.fetch_audio(
-            s3, bucket="recordings", key="call-recordings/call/a", call_id="call"
+            s3,
+            bucket="recordings",
+            key="call-recordings/project/vapi/call/a",
+            call_id="call",
         )
     assert "secret" not in str(exc.value)
 
@@ -202,7 +205,7 @@ def test_fetch_version_mismatch_reheads_once():
         decode.fetch_audio(
             s3,
             bucket="recordings",
-            key="call-recordings/call/a",
+            key="call-recordings/project/vapi/call/a",
             call_id="call",
             expected_version="old",
             sleep=sleep,
@@ -219,7 +222,10 @@ def test_fetch_lying_head_closes_body():
     s3.get_object.return_value = {"Body": body}
     with pytest.raises(AudioDeterministicError, match="storage_unavailable"):
         decode.fetch_audio(
-            s3, bucket="recordings", key="call-recordings/call/a", call_id="call"
+            s3,
+            bucket="recordings",
+            key="call-recordings/project/vapi/call/a",
+            call_id="call",
         )
     assert body.closed
 

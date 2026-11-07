@@ -15,7 +15,7 @@ from ee.voice.services.audio_provenance import (
 
 def artifact(role="customer", **kwargs):
     return ProvenanceArtifact(
-        role, "call-recordings/call/" + role + ".wav", '"etag"', **kwargs
+        role, "call-recordings/project/vapi/call/" + role + ".wav", '"etag"', **kwargs
     )
 
 
@@ -81,7 +81,7 @@ def test_stereo_channel_index_follows_verified_evidence():
 def test_conflicting_manifest_same_role():
     prov = manifest()
     prov.artifacts.append(
-        replace(artifact(), object_key="call-recordings/call/other.wav")
+        replace(artifact(), object_key="call-recordings/project/vapi/call/other.wav")
     )
     with pytest.raises(AudioProvenanceError, match="unknown_agent_track"):
         validate_manifest(prov, "call", "recordings")

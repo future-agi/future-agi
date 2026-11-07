@@ -68,13 +68,13 @@ def unsupported_provenance(reason, **context) -> AudioProvenance:
 
 def validate_object_key(key, call_id) -> None:
     """Only a plain object key in this call's deployment bucket is accepted."""
-    prefix = f"call-recordings/{call_id}/"
+    parts = key.split("/") if isinstance(key, str) else []
     if (
-        not isinstance(key, str)
-        or not key.startswith(prefix)
-        or key == prefix
+        len(parts) != 5
+        or parts[0] != "call-recordings"
+        or parts[3] != str(call_id)
         or any(c in key for c in ("\\", "%", "?", "#", "\x00", ":"))
-        or any(part in {".", "..", ""} for part in key.split("/"))
+        or any(part in {".", "..", ""} for part in parts)
     ):
         raise AudioProvenanceError("analysis_error")
 

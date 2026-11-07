@@ -12,14 +12,18 @@ from ee.voice.services.audio_provenance import validate_object_key
 @pytest.mark.parametrize(
     "key",
     [
-        "call-recordings/other/a.wav",
+        "call-recordings/project/vapi/other/a.wav",
         "https://host/a.wav",
         "//foreign/a",
-        "call-recordings/call/../other/a",
-        "call-recordings/call/%2e%2e/a",
-        "call-recordings/call/",
-        "call-recordings/call\\a",
-        "call-recordings/call/a?signature=secret",
+        "call-recordings/project/../call/a.wav",
+        "call-recordings/project/%2e%2e/call/a.wav",
+        "call-recordings/project/vapi/call/",
+        "call-recordings/project/vapi/call/a\\b.wav",
+        "call-recordings/project/vapi/call/a?signature=secret",
+        "call-recordings/call/customer.wav",
+        "call-recordings/call/0/customer.wav",
+        "call-recordings/project/vapi/call/extra/customer.wav",
+        "call-recordings//vapi/call/customer.wav",
     ],
 )
 def test_key_outside_prefix_rejected(key):
@@ -29,7 +33,7 @@ def test_key_outside_prefix_rejected(key):
 
 
 def test_valid_key():
-    validate_object_key("call-recordings/call/customer.wav", "call")
+    validate_object_key("call-recordings/project/vapi/call/customer.wav", "call")
 
 
 def test_no_outbound_http_clients_imported():

@@ -14,6 +14,7 @@ from simulate.models.test_execution import CallExecution
 @pytest.fixture
 def recording_seam(monkeypatch, settings):
     settings.UPLOAD_BUCKET_NAME = "recordings"
+    settings.VOICE_AUDIO_METRICS_ENABLED = True
     call = SimpleNamespace(
         id="call",
         audio_analysis_generation=0,
@@ -30,13 +31,9 @@ def recording_seam(monkeypatch, settings):
     from simulate.temporal.utils import async_storage
 
     async def convert(call_id, url, url_type, **kwargs):
-        assert (
-            kwargs.get("call_scoped", False)
-            if kwargs.get("provider") == "vapi"
-            else True
-        )
         return (
-            f"https://recordings.s3.amazonaws.com/call-recordings/{call_id}/{url_type}.wav",
+            "https://recordings.s3.amazonaws.com/call-recordings/"
+            f"unknown-project/{kwargs['provider']}/{call_id}/{url_type}.wav",
             0,
         )
 
@@ -105,7 +102,9 @@ async def test_vapi_emits_owned_role(
         )
         assert artifact.provider_role == expected
         assert artifact.object_version_or_etag == '"etag"'
-        assert artifact.object_key.startswith("call-recordings/call/")
+        assert artifact.object_key.startswith(
+            "call-recordings/unknown-project/vapi/call/"
+        )
         assert f"owner={owner}" in prov.target.evidence
     else:
         assert prov.manifest_version == "unsupported_v1"

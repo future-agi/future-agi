@@ -37,7 +37,9 @@ def worker_case(monkeypatch, settings):
             recording_owner_account="system",
             artifacts=[
                 ProvenanceArtifact(
-                    "customer", "call-recordings/call/customer.wav", '"etag"'
+                    "customer",
+                    "call-recordings/project/vapi/call/customer.wav",
+                    '"etag"',
                 )
             ],
         )
@@ -158,9 +160,9 @@ async def test_worker_blocks_fetch_before_authorization(worker_case, kind, reaso
     if kind == "tenant":
         worker_case.input.org_id = "wrong-org"
     elif kind == "key":
-        worker_case.call.audio_provenance["artifacts"][0][
-            "object_key"
-        ] = "call-recordings/other/customer.wav"
+        worker_case.call.audio_provenance["artifacts"][0]["object_key"] = (
+            "call-recordings/project/vapi/other/customer.wav"
+        )
     else:
         worker_case.input.attempt_deadline_at = "2000-01-01T00:00:00+00:00"
     result = await ActivityEnvironment().run(aa.analyze_call_audio, worker_case.input)

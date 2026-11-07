@@ -163,7 +163,9 @@ def generate(directory, *, sr=16000, seconds=10.0, include_mp3=True):
     )
 
     role_files = [
-        ProvenanceArtifact(role, f"call-recordings/fixture/{role}.wav", "fixture-v1")
+        ProvenanceArtifact(
+            role, f"call-recordings/project/vapi/fixture/{role}.wav", "fixture-v1"
+        )
         for role in ("assistant", "customer")
     ]
     for direction, owner in (("inbound", "system"), ("outbound", "client")):

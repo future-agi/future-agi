@@ -8,7 +8,7 @@ def test_vqi_cohort_tag_survives_projection_and_secrets_do_not():
     raw["metrics"]["voice_quality_index"]["coverage"] = {
         "window_count": 2,
         "cohort": "en/sip/provider_received_track",
-        "object_key": "call-recordings/x/customer.wav",
+        "object_key": "call-recordings/project/vapi/x/customer.wav",
     }
     coverage = sanitize_for_api(raw)["metrics"]["voice_quality_index"]["coverage"]
     assert coverage == {"window_count": 2, "cohort": "en/sip/provider_received_track"}

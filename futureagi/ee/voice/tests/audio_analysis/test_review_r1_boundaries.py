@@ -54,6 +54,7 @@ def test_terminal_identity_never_relaunches(eligible_call, state):
 @pytest.fixture
 def capture(monkeypatch, settings):
     settings.UPLOAD_BUCKET_NAME = "recordings"
+    settings.VOICE_AUDIO_METRICS_ENABLED = True
     storage = Mock()
     monkeypatch.setattr(recording_provenance, "get_audio_storage", lambda: storage)
     backoff = AsyncMock()
@@ -67,7 +68,7 @@ def capture_target(call_id, *, pin_versions=True):
         stereo_recording_url=None,
         assistant_recording_url=None,
         customer_recording_url=(
-            f"https://recordings.s3.amazonaws.com/call-recordings/{call_id}/customer.wav"
+            f"https://recordings.s3.amazonaws.com/call-recordings/project/vapi/{call_id}/customer.wav"
         ),
     )
     return async_to_sync(recording_provenance.recording_artifacts)(
@@ -78,11 +79,11 @@ def capture_target(call_id, *, pin_versions=True):
 @pytest.mark.parametrize("failure", [ConnectionError("storage unavailable"), {}])
 def test_capture_retries_missing_pin_and_recovers(capture, failure):
     storage, backoff = capture
-    storage.head_object.side_effect = [failure, failure, {"ETag": '"original"'}]
+    storage.head_object.side_effect = [failure, {"ETag": '"original"'}]
     artifacts = capture_target("call")
     assert artifacts[0].object_version_or_etag == '"original"'
-    assert storage.head_object.call_count == 3
-    assert backoff.await_count == 2
+    assert storage.head_object.call_count == 2
+    assert backoff.await_count == 1
 
 
 def test_null_storage_version_uses_etag(capture):
@@ -119,8 +120,8 @@ def test_failed_capture_then_replacement_never_schedules(
     result = schedule(eligible_call)
     assert not result.scheduled
     assert result.skip_reason == "storage_unavailable"
-    assert storage.head_object.call_count == 3
-    assert backoff.await_count == 2
+    assert storage.head_object.call_count == 2
+    assert backoff.await_count == 1
     storage.get_object.assert_not_called()
     eligible_call.refresh_from_db()
     assert eligible_call.audio_metrics["state"] == "failed"
@@ -154,7 +155,7 @@ def test_fetch_conditions_get_on_scheduled_pin(field, condition):
         fetch_audio(
             storage,
             bucket="recordings",
-            key="call-recordings/call/customer.wav",
+            key="call-recordings/project/vapi/call/customer.wav",
             call_id="call",
             expected_version="original",
         )
@@ -162,7 +163,7 @@ def test_fetch_conditions_get_on_scheduled_pin(field, condition):
     )
     storage.get_object.assert_called_once_with(
         Bucket="recordings",
-        Key="call-recordings/call/customer.wav",
+        Key="call-recordings/project/vapi/call/customer.wav",
         **{condition: "original"},
     )
     assert body.closed
@@ -175,7 +176,7 @@ def test_fetch_rejects_replacement_before_get():
         fetch_audio(
             storage,
             bucket="recordings",
-            key="call-recordings/call/customer.wav",
+            key="call-recordings/project/vapi/call/customer.wav",
             call_id="call",
             expected_version='"original"',
             sleep=Mock(),

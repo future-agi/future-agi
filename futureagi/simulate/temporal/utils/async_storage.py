@@ -204,7 +204,6 @@ async def _convert_audio_url_to_s3_async_with_size(
     vapi_call_id: Optional[str] = None,
     artifact_type: Optional[str] = None,
     project_id: Optional[str] = None,
-    call_scoped: bool = False,
     recording_generation: int = 0,
 ) -> tuple[str, int]:
     """Internal worker that does the download + upload and reports size.
@@ -231,11 +230,10 @@ async def _convert_audio_url_to_s3_async_with_size(
     if _is_fagi_storage_url(audio_url):
         return audio_url, 0
 
-    object_key_base = (
-        f"call-recordings/{call_id}/{recording_generation}/{url_type}"
-        if call_scoped
-        else _rehost_object_key_base(call_id, url_type, project_id, provider)
-    )
+    # Keep generation zero byte-identical to the original rehost key. Reruns
+    # vary only the artifact segment so evidence reads retain project isolation.
+    kind = f"g{recording_generation}-{url_type}" if recording_generation else url_type
+    object_key_base = _rehost_object_key_base(call_id, kind, project_id, provider)
     existing = _existing_rehosted_audio(object_key_base)
     if existing:
         return existing
@@ -352,7 +350,6 @@ async def convert_audio_url_to_s3_async_with_size(
     vapi_call_id: Optional[str] = None,
     artifact_type: Optional[str] = None,
     project_id: Optional[str] = None,
-    call_scoped: bool = False,
     recording_generation: int = 0,
 ) -> tuple[str, int]:
     """Like `convert_audio_url_to_s3_async` but also reports uploaded bytes.
@@ -369,7 +366,6 @@ async def convert_audio_url_to_s3_async_with_size(
         vapi_call_id=vapi_call_id,
         artifact_type=artifact_type,
         project_id=project_id,
-        call_scoped=call_scoped,
         recording_generation=recording_generation,
     )
 

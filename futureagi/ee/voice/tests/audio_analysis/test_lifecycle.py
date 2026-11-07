@@ -4,13 +4,11 @@ import copy
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from rest_framework.test import APIRequestFactory, force_authenticate
 
 from ee.voice.services.audio_analysis.envelope import empty_envelope
-from simulate.tests.test_call_execution_audio_metrics_api import (
-    audio_call as audio_call,
-)
-from simulate.views.run_test import CallExecutionDeleteView
+from simulate.tests import test_call_execution_audio_metrics_api
+
+audio_call = test_call_execution_audio_metrics_api.audio_call
 
 
 def test_delete_succeeds_when_temporal_has_no_workflow(audio_call, auth_client):
@@ -28,9 +26,7 @@ def test_delete_succeeds_when_temporal_has_no_workflow(audio_call, auth_client):
     audio_call.audio_metrics = env
     audio_call.save(update_fields=["audio_metrics"])
 
-    response = auth_client.delete(
-        f"/simulate/call-executions/{audio_call.pk}/delete/"
-    )
+    response = auth_client.delete(f"/simulate/call-executions/{audio_call.pk}/delete/")
     assert response.status_code == 204, response.content
     deleted = CallExecution.all_objects.get(pk=audio_call.pk)
     assert deleted.deleted is True
@@ -85,7 +81,7 @@ async def test_fetch_and_persist_saves_provenance_same_write(monkeypatch):
     manager.fetch_and_store_call_data = AsyncMock(return_value=(4, True, True))
     manager.extract_and_persist_recordings = AsyncMock(
         return_value=RecordingUrls(
-            recording_url="https://recordings.s3.amazonaws.com/call-recordings/call/combined.wav",
+            recording_url="https://recordings.s3.amazonaws.com/call-recordings/project/vapi/call/combined.wav",
             provenance=provenance,
             provider_call_data={"vapi": {"recording": {}}},
         )

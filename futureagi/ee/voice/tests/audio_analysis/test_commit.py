@@ -8,12 +8,10 @@ from ee.voice.services.audio_analysis.commit import commit_envelope
 from ee.voice.services.audio_analysis.errors import StaleAnalysisError
 from ee.voice.services.audio_analysis.identity import compute_analysis_id
 from simulate.models.test_execution import CallExecution
-from simulate.tests.test_call_execution_audio_metrics_api import (  # noqa: F401
-    audio_call as audio_call,
-)
-from simulate.tests.test_call_execution_audio_metrics_api import (
-    phase_a,
-)
+from simulate.tests import test_call_execution_audio_metrics_api
+from simulate.tests.test_call_execution_audio_metrics_api import phase_a
+
+audio_call = test_call_execution_audio_metrics_api.audio_call
 
 
 def test_concurrent_latency_write_not_overwritten(audio_call):
@@ -58,7 +56,7 @@ def test_identity_changes_with_source_or_generation():
         workspace_id="ws",
         call_id="call",
         generation=0,
-        target_object_key="call-recordings/call/a",
+        target_object_key="call-recordings/project/vapi/call/a",
         target_object_version_or_etag="v1",
         manifest_version="vapi_role_v1",
         mapping_version="vapi_role_v1",

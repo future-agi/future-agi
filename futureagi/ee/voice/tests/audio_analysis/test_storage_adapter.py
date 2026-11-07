@@ -22,14 +22,14 @@ def test_conditional_fetch_closes_and_releases_storage_response():
     result = fetch_audio(
         AudioStorage(client),
         bucket="recordings",
-        key="call-recordings/call/agent.wav",
+        key="call-recordings/project/vapi/call/agent.wav",
         call_id="call",
         expected_version='"etag"',
     )
     assert result == b"wav"
     client.get_object.assert_called_once_with(
         "recordings",
-        "call-recordings/call/agent.wav",
+        "call-recordings/project/vapi/call/agent.wav",
         version_id=None,
         request_headers={"If-Match": '"etag"'},
     )
@@ -53,7 +53,7 @@ def test_deployment_access_denied_is_sanitized():
         fetch_audio(
             AudioStorage(client),
             bucket="recordings",
-            key="call-recordings/call/agent.wav",
+            key="call-recordings/project/vapi/call/agent.wav",
             call_id="call",
         )
     assert "secret" not in str(error.value)
@@ -80,12 +80,13 @@ async def test_rehost_generation_never_reuses_old_audio(monkeypatch):
             "call",
             "https://source",
             "customer_recording",
-            call_scoped=True,
+            provider="vapi",
+            project_id="project",
             recording_generation=generation,
         )
     assert looked_up == [
-        "call-recordings/call/0/customer_recording",
-        "call-recordings/call/1/customer_recording",
+        "call-recordings/project/vapi/call/customer_recording",
+        "call-recordings/project/vapi/call/g1-customer_recording",
     ]
 
 

@@ -2494,6 +2494,15 @@ class VapiService(VoiceServiceBlueprint):
         )
         organization_id = str(call.test_execution.run_test.organization_id)
 
+        # A rerun uploads new generation-scoped objects, so it is metered under a
+        # new id; the first generation keeps the original (shipped) id.
+        generation = getattr(call, "audio_analysis_generation", 0) or 0
+        usage_key = (
+            f"futureagi:simulate-recording:{call_execution_id}:{generation}"
+            if generation
+            else f"futureagi:simulate-recording:{call_execution_id}"
+        )
+
         def emit_recording_storage_usage(url_type: str, payload_bytes: int) -> None:
             if not payload_bytes:
                 return
@@ -2507,8 +2516,7 @@ class VapiService(VoiceServiceBlueprint):
                         event_id=str(
                             uuid.uuid5(
                                 uuid.NAMESPACE_URL,
-                                f"futureagi:simulate-recording:{call_execution_id}:"
-                                f"{getattr(call, 'audio_analysis_generation', 0)}:{url_type}",
+                                f"{usage_key}:{url_type}",
                             )
                         ),
                         org_id=organization_id,
@@ -2536,8 +2544,7 @@ class VapiService(VoiceServiceBlueprint):
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.MONO,
                     project_id=project_id,
-                    call_scoped=True,
-                    recording_generation=getattr(call, "audio_analysis_generation", 0),
+                    recording_generation=generation,
                 )
                 result.recording_url = s3_url
                 emit_recording_storage_usage("recording", payload_bytes)
@@ -2561,8 +2568,7 @@ class VapiService(VoiceServiceBlueprint):
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.STEREO,
                     project_id=project_id,
-                    call_scoped=True,
-                    recording_generation=getattr(call, "audio_analysis_generation", 0),
+                    recording_generation=generation,
                 )
                 result.stereo_recording_url = s3_url
                 emit_recording_storage_usage("stereo_recording", payload_bytes)
@@ -2586,8 +2592,7 @@ class VapiService(VoiceServiceBlueprint):
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.ASSISTANT,
                     project_id=project_id,
-                    call_scoped=True,
-                    recording_generation=getattr(call, "audio_analysis_generation", 0),
+                    recording_generation=generation,
                 )
                 result.assistant_recording_url = s3_url
                 emit_recording_storage_usage("assistant_recording", payload_bytes)
@@ -2611,8 +2616,7 @@ class VapiService(VoiceServiceBlueprint):
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.CUSTOMER,
                     project_id=project_id,
-                    call_scoped=True,
-                    recording_generation=getattr(call, "audio_analysis_generation", 0),
+                    recording_generation=generation,
                 )
                 result.customer_recording_url = s3_url
                 emit_recording_storage_usage("customer_recording", payload_bytes)
@@ -2644,7 +2648,9 @@ class VapiService(VoiceServiceBlueprint):
         )
         from ee.voice.services.recording_provenance import recording_artifacts
 
-        artifacts = await recording_artifacts(result, pin_versions=True)
+        artifacts = await recording_artifacts(
+            result, pin_versions=settings.VOICE_AUDIO_METRICS_ENABLED
+        )
         if recording_context is None:
             result.provenance = unsupported_provenance(
                 "unknown_agent_track",

@@ -39,9 +39,11 @@ async def test_recording_storage_events_are_generation_scoped(monkeypatch):
 
     async def upload(call_id, url, url_type, **kwargs):
         assert kwargs["recording_generation"] == call.audio_analysis_generation
+        generation = call.audio_analysis_generation
+        kind = f"g{generation}-{url_type}" if generation else url_type
         return (
-            f"https://recordings.s3.amazonaws.com/call-recordings/{call_id}/"
-            f"{call.audio_analysis_generation}/{url_type}.wav",
+            "https://recordings.s3.amazonaws.com/call-recordings/"
+            f"unknown-project/vapi/{call_id}/{kind}.wav",
             1024,
         )
 

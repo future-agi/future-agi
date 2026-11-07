@@ -7,6 +7,36 @@ from django.conf import settings
 from ee.voice.services.audio_provenance import ProvenanceArtifact
 from ee.voice.services.audio_storage import get_audio_storage
 
+PIN_TOTAL_TIMEOUT_SECONDS = 10
+PIN_ATTEMPT_TIMEOUT_SECONDS = 4
+
+
+async def _pin_artifact(artifact, bucket):
+    def head_object():
+        return get_audio_storage().head_object(Bucket=bucket, Key=artifact.object_key)
+
+    for attempt in range(2):
+        try:
+            head = await asyncio.wait_for(
+                asyncio.to_thread(head_object), timeout=PIN_ATTEMPT_TIMEOUT_SECONDS
+            )
+            version = next(
+                (
+                    value
+                    for value in (head.get("VersionId"), head.get("ETag"))
+                    if isinstance(value, str) and value.strip() and value != "null"
+                ),
+                None,
+            )
+            if version:
+                artifact.object_version_or_etag = version
+                return
+        except Exception:
+            # Pinning is optional; an unpinned target cannot be scheduled.
+            pass
+        if attempt == 0:
+            await asyncio.sleep(0.1)
+
 
 async def recording_artifacts(recordings, *, pin_versions=False):
     from tfc.utils.storage import is_own_storage_url
@@ -26,32 +56,19 @@ async def recording_artifacts(recordings, *, pin_versions=False):
             key = extract_object_key(url, bucket)
         except (IndexError, ValueError):
             continue
-        version = None
-        if pin_versions:
-            for attempt in range(3):
-                try:
-                    head = await asyncio.to_thread(
-                        get_audio_storage().head_object, Bucket=bucket, Key=key
-                    )
-                    version = next(
-                        (
-                            value
-                            for value in (head.get("VersionId"), head.get("ETag"))
-                            if isinstance(value, str)
-                            and value.strip()
-                            and value != "null"
-                        ),
-                        None,
-                    )
-                    if version:
-                        break
-                except Exception:
-                    # Preserve playback even if pinning fails. The scheduler
-                    # rejects an unpinned target with storage_unavailable.
-                    pass
-                if attempt < 2:
-                    await asyncio.sleep(0.1 * (attempt + 1))
         artifacts.append(
-            ProvenanceArtifact(role, key, version, codec=key.rsplit(".", 1)[-1])
+            ProvenanceArtifact(role, key, None, codec=key.rsplit(".", 1)[-1])
         )
+    if pin_versions and settings.VOICE_AUDIO_METRICS_ENABLED and artifacts:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(_pin_artifact(artifact, bucket) for artifact in artifacts)
+                ),
+                timeout=PIN_TOTAL_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            # Cancel pending awaits, not playback persistence. Late HEAD results
+            # cannot mutate the returned artifacts; unpinned versions remain None.
+            pass
     return artifacts
