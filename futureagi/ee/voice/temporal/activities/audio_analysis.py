@@ -190,12 +190,64 @@ def _tenant_mismatch(input, run):
     )
 
 
+def _single_declared_language(language, languages):
+    """One unambiguous configured two-letter code, never detected language."""
+    if languages is None:
+        languages = []
+    if not isinstance(languages, list):
+        return None
+    codes = set()
+    for value in [language, *languages]:
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str):
+            return None
+        code = value.strip().lower()
+        if not code:
+            continue
+        if len(code) != 2 or not code.isascii() or not code.isalpha():
+            return None
+        codes.add(code)
+    return next(iter(codes)) if len(codes) == 1 else None
+
+
+def _declared_language(call):
+    """Use the persisted tested-agent version before any mutable definition.
+
+    A present but empty/ambiguous snapshot stays unknown. Never resolve the
+    latest version or use the simulator's language to fill missing evidence.
+    """
+    execution = call.test_execution
+    run = execution.run_test
+    for owner in (call, execution, run):
+        version = owner.agent_version
+        if version is not None:
+            if version.organization_id != run.organization_id:
+                return None
+            snapshot = version.configuration_snapshot
+            if not isinstance(snapshot, dict):
+                return None
+            return _single_declared_language(
+                snapshot.get("language"), snapshot.get("languages")
+            )
+    agent = execution.agent_definition or run.agent_definition
+    if agent is None or agent.organization_id != run.organization_id:
+        return None
+    return _single_declared_language(agent.language, agent.languages)
+
+
 def _load_current(input):
     from ee.voice.services.audio_analysis.errors import StaleAnalysisError
     from simulate.models.test_execution import CallExecution
 
     call = (
-        CallExecution.objects.select_related("test_execution__run_test")
+        CallExecution.objects.select_related(
+            "agent_version",
+            "test_execution__agent_version",
+            "test_execution__agent_definition",
+            "test_execution__run_test__agent_version",
+            "test_execution__run_test__agent_definition",
+        )
         .filter(id=input.call_id, deleted=False)
         .first()
     )
@@ -244,7 +296,9 @@ def _finalize_audio_analysis_failure(input: FinalizeFailureInput) -> None:
         return
 
 
-def _commit_result(input, envelope, *, provenance=None, decoded=None):
+def _commit_result(
+    input, envelope, *, provenance=None, decoded=None, declared_language=None
+):
     from django.db import transaction
 
     from ee.voice.services.audio_analysis.commit import commit_envelope
@@ -264,6 +318,8 @@ def _commit_result(input, envelope, *, provenance=None, decoded=None):
         ):
             return _output(current.audio_metrics, False)
         if decoded is not None:
+            if _declared_language(current) != declared_language:
+                raise StaleAnalysisError("stale_identity")
             if _identity(current) != input.analysis_id:
                 raise StaleAnalysisError("stale_identity")
             artifact = current.audio_provenance["artifacts"][
@@ -276,6 +332,7 @@ def _commit_result(input, envelope, *, provenance=None, decoded=None):
                 channels=decoded.original_channel_count,
                 sample_count=len(decoded.waveform),
             )
+            current.audio_provenance["declared_language"] = declared_language
             current.save(update_fields=["audio_provenance"])
         commit_envelope(input.call_id, input.generation, input.analysis_id, envelope)
     return _output(envelope, True)
@@ -308,6 +365,7 @@ def _analyze(input, checkpoint):
             return _output(env, False)
         provenance = call.audio_provenance
         decoded = None
+        declared_language = None
         try:
             if _tenant_mismatch(input, call.test_execution.run_test):
                 activity.logger.warning(
@@ -320,6 +378,7 @@ def _analyze(input, checkpoint):
             )
             if _identity(call) != input.analysis_id:
                 raise StaleAnalysisError("stale_identity")
+            declared_language = _declared_language(call)
             checkpoint("fetch")
             data = fetch_audio(
                 get_audio_storage(checkpoint=lambda: checkpoint(None)),
@@ -355,6 +414,7 @@ def _analyze(input, checkpoint):
                     decoded.sample_rate_hz,
                     transport=provenance["transport"],
                     capture_origin=provenance["capture_origin"],
+                    language=declared_language,
                 )
             env["source"] = {
                 "capture_origin": provenance["capture_origin"],
@@ -381,7 +441,13 @@ def _analyze(input, checkpoint):
             env = _terminal_pending(
                 original_env if exc.reason == "timeout" else env, exc.reason, exc.state
             )
-        return _commit_result(input, env, provenance=provenance, decoded=decoded)
+        return _commit_result(
+            input,
+            env,
+            provenance=provenance,
+            decoded=decoded,
+            declared_language=declared_language,
+        )
     except StaleAnalysisError as exc:
         activity.logger.info(
             "audio_metrics.stale_skip",
@@ -447,9 +513,11 @@ async def analyze_call_audio(input: AnalyzeCallAudioInput) -> AnalyzeCallAudioOu
         try:
             result = await asyncio.shield(task)
             activity.logger.info(
-                "audio_metrics.committed"
-                if result.committed
-                else "audio_metrics.skipped",
+                (
+                    "audio_metrics.committed"
+                    if result.committed
+                    else "audio_metrics.skipped"
+                ),
                 extra={
                     **log_context,
                     "state": result.state,

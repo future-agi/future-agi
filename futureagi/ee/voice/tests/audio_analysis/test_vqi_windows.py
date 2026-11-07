@@ -51,7 +51,7 @@ def analyze(tmp_path, seconds=9.01, spans=None, output=3.0, **kwargs):
         calibration=load(tmp_path),
         language="en",
         transport="sip",
-        capture_origin="provider_recording",
+        capture_origin="provider_received_track",
         **kwargs,
     )
     return result, session
@@ -98,7 +98,16 @@ def test_invalid_model_output(tmp_path, output, reason):
     assert analyze(tmp_path, output=output)[0]["reason"] == reason
 
 
-def test_cohort_not_in_allowlist(tmp_path):
+@pytest.mark.parametrize(
+    "language,capture_origin",
+    [
+        ("fr", "provider_received_track"),
+        (None, "provider_received_track"),
+        ("en", "provider_source_track"),
+        ("en", "unknown"),
+    ],
+)
+def test_cohort_not_in_allowlist(tmp_path, language, capture_origin):
     cal = load(tmp_path)
     result = vqi.analyze_vqi(
         np.ones(144160, dtype=np.float32),
@@ -106,9 +115,9 @@ def test_cohort_not_in_allowlist(tmp_path):
         detector=Detector([(0, 9.01)]),
         registry=Mock(get=Mock(return_value=(Session(), MODEL_SHA))),
         calibration=cal,
-        language="fr",
+        language=language,
         transport="sip",
-        capture_origin="provider_recording",
+        capture_origin=capture_origin,
     )
     assert result["reason"] == "out_of_domain"
 
@@ -149,7 +158,7 @@ def test_vad_missing_dependency_clear_error(monkeypatch, adapter, module):
 def test_model_and_calibration_precedence(tmp_path, settings):
     kwargs = {
         "transport": "sip",
-        "capture_origin": "provider_recording",
+        "capture_origin": "provider_received_track",
         "detector": Detector([(0, 10)]),
     }
     registry = Mock()

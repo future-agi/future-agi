@@ -36,6 +36,9 @@ COVERAGE_FIELDS = {
         "polynomial_version",
         "window_policy_version",
         "preprocessing_version",
+        # language/transport/capture-origin tag the score was admitted under;
+        # carries no identifiers.
+        "cohort",
     },
 }
 SOURCE_FIELDS = {

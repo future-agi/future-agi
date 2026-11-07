@@ -30,10 +30,13 @@ def manifest(**kwargs):
 
 
 @pytest.mark.parametrize(
-    "direction,owner,role",
-    [("inbound", "system", "customer"), ("outbound", "client", "assistant")],
+    "direction,owner,role,origin",
+    [
+        ("inbound", "system", "customer", "provider_received_track"),
+        ("outbound", "client", "assistant", "provider_source_track"),
+    ],
 )
-def test_role_follows_direction_and_ownership(direction, owner, role):
+def test_role_follows_direction_and_ownership(direction, owner, role, origin):
     prov = build_vapi_provenance(
         call_id="call",
         artifacts=[artifact("assistant"), artifact("customer")],
@@ -42,6 +45,7 @@ def test_role_follows_direction_and_ownership(direction, owner, role):
     )
     target = validate_manifest(asdict(prov), "call", "recordings")
     assert target.provider_role == role
+    assert prov.capture_origin == origin
     assert prov.target.normalized_role == "tested_agent"
     assert f"owner={owner}" in prov.target.evidence
 
@@ -115,3 +119,32 @@ def test_generated_fixture_target_pitch_and_immutable_bytes(tmp_path):
     pitch, _ = analyze_pitch_snr(decoded.waveform, decoded.sample_rate_hz)
     assert pitch["value"] == pytest.approx(220, rel=0.05)
     assert data == before
+
+
+@pytest.mark.parametrize(
+    "direction,owner,bridge",
+    [
+        ("inbound", "client", False),
+        ("outbound", "system", False),
+        ("inbound", "system", True),
+    ],
+)
+def test_unsupported_ownership_has_unknown_capture_origin(direction, owner, bridge):
+    prov = build_vapi_provenance(
+        call_id="call",
+        artifacts=[artifact("assistant"), artifact("customer")],
+        direction=direction,
+        recording_owner_account=owner,
+        is_web_bridge=bridge,
+    )
+    assert prov.capture_origin == "unknown"
+    assert prov.target is None
+
+
+def test_declared_language_round_trips_internal_manifest():
+    prov = manifest(declared_language="en")
+    assert asdict(prov)["declared_language"] == "en"
+    assert (
+        validate_manifest(asdict(prov), "call", "recordings").provider_role
+        == "customer"
+    )

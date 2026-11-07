@@ -35,7 +35,7 @@ def artifact():
         "support": {"x_min": 1.0, "x_max": 5.0},
         "cohorts": [
             {
-                "tag": "en/sip/provider_recording",
+                "tag": "en/sip/provider_received_track",
                 "n_heldout": 50,
                 "bias": 0.1,
                 "rmse": 0.5,
@@ -132,3 +132,42 @@ def test_bad_digest_and_missing_file(tmp_path):
         calibration.load_calibration(
             str(path), "f" * 64, model_sha256=MODEL_SHA, detector_id=DETECTOR_ID
         )
+
+
+@pytest.mark.parametrize("failure", ["missing", "digest", "version", "gate"])
+def test_refusal_warning_is_sanitized_once_per_process(
+    tmp_path, monkeypatch, caplog, failure
+):
+    monkeypatch.setattr(calibration, "_logged_refusal", False)
+    raw = artifact()
+    if failure == "version":
+        raw["detector_id"] = "secret-detector"
+    elif failure == "gate":
+        raw["gates"]["rmse"] = 0.9
+    path = tmp_path / "secret-calibration.json"
+    data = json.dumps(raw).encode()
+    if failure != "missing":
+        path.write_bytes(data)
+    digest = "0" * 64 if failure == "digest" else hashlib.sha256(data).hexdigest()
+    for _ in range(2):
+        with pytest.raises(AudioDeterministicError, match="not_validated"):
+            calibration.load_calibration(
+                str(path), digest, model_sha256=MODEL_SHA, detector_id=DETECTOR_ID
+            )
+    records = [r for r in caplog.records if r.name == calibration.__name__]
+    assert len(records) == 1
+    record = records[0]
+    assert record.levelname == "WARNING"
+    assert record.getMessage() == "audio_metrics.calibration_refused"
+    assert record.reason_class == (
+        "FileNotFoundError" if failure == "missing" else "ValueError"
+    )
+    assert record.exc_info is None
+    assert "secret" not in str(record.__dict__)
+    assert str(tmp_path) not in str(record.__dict__)
+
+
+def test_successful_calibration_does_not_warn(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(calibration, "_logged_refusal", False)
+    load(tmp_path)
+    assert not [r for r in caplog.records if r.name == calibration.__name__]

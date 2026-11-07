@@ -7,6 +7,14 @@ from .audio_analysis.errors import AudioProvenanceError
 
 MAPPING_VERSION_VAPI = "vapi_role_v1"
 MANIFEST_UNSUPPORTED = "unsupported_v1"
+CAPTURE_ORIGIN_RECEIVED = "provider_received_track"
+CAPTURE_ORIGIN_SOURCE = "provider_source_track"
+CAPTURE_ORIGIN_UNKNOWN = "unknown"
+
+_VAPI_TARGETS = {
+    ("inbound", "system"): ("customer", CAPTURE_ORIGIN_RECEIVED),
+    ("outbound", "client"): ("assistant", CAPTURE_ORIGIN_SOURCE),
+}
 
 
 @dataclass
@@ -39,7 +47,9 @@ class AudioProvenance:
     transport: str = "sip"
     provider_call_id: str | None = None
     recording_owner_account: str = "system"
-    capture_origin: str = "unknown"
+    capture_origin: str = CAPTURE_ORIGIN_UNKNOWN
+    # Persisted agent configuration, not speech-language detection; internal only.
+    declared_language: str | None = None
     artifacts: list[ProvenanceArtifact] = field(default_factory=list)
     target: ProvenanceTarget | None = None
     unsupported_reason: str | None = None
@@ -49,6 +59,8 @@ class AudioProvenance:
 
 
 def unsupported_provenance(reason, **context) -> AudioProvenance:
+    # Unsupported providers cannot establish where the target was captured.
+    context["capture_origin"] = CAPTURE_ORIGIN_UNKNOWN
     return AudioProvenance(
         manifest_version=MANIFEST_UNSUPPORTED, unsupported_reason=reason, **context
     )
@@ -89,14 +101,13 @@ def build_vapi_provenance(
         artifacts=artifacts,
         direction=direction,
         recording_owner_account=recording_owner_account,
-        capture_origin="provider_recording",
         is_web_bridge=is_web_bridge,
         **context,
     )
     if is_web_bridge:
         prov.transport = "web_bridge"
-    role = {("inbound", "system"): "customer", ("outbound", "client"): "assistant"}.get(
-        (direction, recording_owner_account)
+    role, capture_origin = _VAPI_TARGETS.get(
+        (direction, recording_owner_account), (None, CAPTURE_ORIGIN_UNKNOWN)
     )
     reason = "unknown_agent_track"
     try:
@@ -125,6 +136,7 @@ def build_vapi_provenance(
                     ]
                     evidence[0] = stereo_evidence
             if len(candidates) == 1:
+                prov.capture_origin = capture_origin
                 prov.target = ProvenanceTarget(
                     "tested_agent",
                     candidates[0],
@@ -202,10 +214,10 @@ def validate_manifest(
     elif target.channel_index is not None:
         raise AudioProvenanceError("unknown_agent_track")
     if prov.manifest_version == MAPPING_VERSION_VAPI:
-        expected_role = {
-            ("inbound", "system"): "customer",
-            ("outbound", "client"): "assistant",
-        }.get((prov.direction, prov.recording_owner_account))
+        expected_role, _ = _VAPI_TARGETS.get(
+            (prov.direction, prov.recording_owner_account),
+            (None, CAPTURE_ORIGIN_UNKNOWN),
+        )
         if (
             prov.is_web_bridge
             or expected_role is None

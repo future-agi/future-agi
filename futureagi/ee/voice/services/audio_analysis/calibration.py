@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import logging
 import math
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,21 @@ from .constants import (
     WINDOW_POLICY_VERSION,
 )
 from .errors import AudioDeterministicError
+
+logger = logging.getLogger(__name__)
+_refusal_log_lock = threading.Lock()
+_logged_refusal = False
+
+
+def _log_refusal_once(exc):
+    global _logged_refusal
+    with _refusal_log_lock:
+        if not _logged_refusal:
+            logger.warning(
+                "audio_metrics.calibration_refused",
+                extra={"reason_class": type(exc).__name__},
+            )
+            _logged_refusal = True
 
 
 def normalize_mos(mos):
@@ -123,5 +140,6 @@ def load_calibration(path, sha256, *, model_sha256, detector_id) -> Calibration:
             hi,
             PchipInterpolator(x, y, extrapolate=False),
         )
-    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+    except (OSError, ValueError, TypeError, KeyError, OverflowError) as exc:
+        _log_refusal_once(exc)
         raise AudioDeterministicError("not_validated") from None

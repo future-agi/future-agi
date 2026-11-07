@@ -45,8 +45,16 @@ def worker_case(monkeypatch, settings):
         id="call",
         audio_metrics=env,
         audio_provenance=prov,
+        agent_version=None,
         test_execution=SimpleNamespace(
-            run_test=SimpleNamespace(organization_id="org", workspace_id="ws")
+            agent_version=None,
+            agent_definition=None,
+            run_test=SimpleNamespace(
+                organization_id="org",
+                workspace_id="ws",
+                agent_version=None,
+                agent_definition=None,
+            ),
         ),
     )
     monkeypatch.setattr(aa, "_load_current", lambda _: copy.deepcopy(call))
@@ -123,9 +131,9 @@ async def test_worker_blocks_fetch_before_authorization(worker_case, kind, reaso
     if kind == "tenant":
         worker_case.input.org_id = "wrong-org"
     elif kind == "key":
-        worker_case.call.audio_provenance["artifacts"][0]["object_key"] = (
-            "call-recordings/other/customer.wav"
-        )
+        worker_case.call.audio_provenance["artifacts"][0][
+            "object_key"
+        ] = "call-recordings/other/customer.wav"
     else:
         worker_case.input.attempt_deadline_at = "2000-01-01T00:00:00+00:00"
     result = await ActivityEnvironment().run(aa.analyze_call_audio, worker_case.input)

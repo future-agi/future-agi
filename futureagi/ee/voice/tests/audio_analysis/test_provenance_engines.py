@@ -98,6 +98,11 @@ async def test_vapi_emits_owned_role(
     if expected:
         assert prov.manifest_version == "vapi_role_v1"
         artifact = prov.artifacts[prov.target.artifact_index]
+        assert prov.capture_origin == (
+            "provider_received_track"
+            if expected == "customer"
+            else "provider_source_track"
+        )
         assert artifact.provider_role == expected
         assert artifact.object_version_or_etag == '"etag"'
         assert artifact.object_key.startswith("call-recordings/call/")
@@ -105,6 +110,7 @@ async def test_vapi_emits_owned_role(
     else:
         assert prov.manifest_version == "unsupported_v1"
         assert prov.target is None
+        assert prov.capture_origin == "unknown"
         assert prov.unsupported_reason == "unknown_agent_track"
 
 
@@ -116,7 +122,7 @@ async def test_retell_emits_unsupported(recording_seam):
     result = await RetellService(api_key="test").extract_and_persist_recordings("call")
     assert result.provenance.manifest_version == "unsupported_v1"
     assert result.provenance.unsupported_reason == "unknown_agent_track"
-    assert result.provenance.capture_origin == "provider_recording"
+    assert result.provenance.capture_origin == "unknown"
     assert result.provenance.target is None
     assert len(result.provenance.artifacts) == 1
 
@@ -127,5 +133,21 @@ async def test_livekit_without_egress_emits_unsupported(recording_seam):
     result = await service.extract_and_persist_recordings("call")
     assert result.provenance.manifest_version == "unsupported_v1"
     assert result.provenance.unsupported_reason == "unknown_agent_track"
-    assert result.provenance.capture_origin == "livekit_egress"
+    assert result.provenance.capture_origin == "unknown"
     assert result.provenance.target is None
+
+
+@pytest.mark.asyncio
+async def test_vapi_without_recording_context_has_unknown_origin(recording_seam):
+    service = VapiService.__new__(VapiService)
+    service.api_key = "test-key"
+    service._extract_recording_urls = Mock(
+        return_value={"customer": "https://source/customer"}
+    )
+    service._normalize_to_fagi_call_data = Mock(
+        return_value=SimpleNamespace(recording_url=None, call_id="provider-call")
+    )
+    result = await service.extract_and_persist_recordings("call")
+    assert result.provenance.capture_origin == "unknown"
+    assert result.provenance.target is None
+    assert result.provenance.unsupported_reason == "unknown_agent_track"

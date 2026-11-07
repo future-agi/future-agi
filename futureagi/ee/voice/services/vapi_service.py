@@ -2649,7 +2649,6 @@ class VapiService(VoiceServiceBlueprint):
                 "unknown_agent_track",
                 artifacts=artifacts,
                 system_engine="vapi",
-                capture_origin="provider_recording",
                 provider_call_id=vapi_call_id,
             )
         else:
