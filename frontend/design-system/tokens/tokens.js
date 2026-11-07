@@ -3,7 +3,7 @@ window.DS = {
  "tokens": {
   "$meta": {
    "name": "Future AGI Design System",
-   "version": "0.2.3",
+   "version": "0.2.4",
    "status": "draft for review",
    "updated": "2026-10-31",
    "notes": "Source of truth. Components read only the semantic tier (color.*, shadow.*); primitives exist to be referenced. Run `python3 design-system/tools/build_tokens.py` after any change to regenerate tokens.css, tokens.js and mui-theme.js."
@@ -574,8 +574,8 @@ window.DS = {
      "use": "Section title, panel title, group heading."
     },
     "body-md": {
-     "size": 13,
-     "line": 20,
+     "size": 12,
+     "line": 18,
      "weight": 400,
      "tracking": "0",
      "use": "Paragraphs, input values, long text."
@@ -658,7 +658,7 @@ window.DS = {
     "s3": "caption",
     "m1": "title-sm",
     "m2": "title-sm",
-    "m3": "body-md",
+    "m3": "title-xs",
     "l1": "title-lg",
     "l2": "title-lg",
     "l3": "title-md",

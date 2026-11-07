@@ -93,7 +93,7 @@ const CostCell = ({ value, data }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.disabled",
           px: 1.5,
           width: "100%",
@@ -120,7 +120,7 @@ const CostCell = ({ value, data }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
         }}

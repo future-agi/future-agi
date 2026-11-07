@@ -23,8 +23,8 @@ export const paper = ({ theme, bgcolor, dropdown }) => ({
 // ----------------------------------------------------------------------
 
 export const menuItem = (theme) => ({
-  fontSize: 13,
-  lineHeight: "20px",
+  fontSize: 12,
+  lineHeight: "18px",
   minHeight: 30,
   padding: "5px 8px",
   borderRadius: 4,
