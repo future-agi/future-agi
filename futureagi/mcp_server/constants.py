@@ -49,6 +49,10 @@ TOOL_GROUPS = {
         "name": "Prompt Workbench",
         "description": "Manage prompt templates, versions, labels, folders, simulations, and evaluations",
     },
+    "skills": {
+        "name": "Skills",
+        "description": "Discover, publish, promote and read versioned agent skills",
+    },
     "usage": {
         "name": "Usage & Costs",
         "description": "Cost analytics and billing information",
@@ -75,6 +79,7 @@ DEFAULT_TOOL_GROUPS = [
     "agents",
     "simulation",
     "prompts",
+    "skills",
     "usage",
     "gateway",
     "dashboards",

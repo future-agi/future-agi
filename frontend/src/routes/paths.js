@@ -44,6 +44,7 @@ export const paths = {
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations`,
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
+      apiKeys: `${ROOTS.DASHBOARD}/settings/api_keys`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
       falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
@@ -63,6 +64,12 @@ export const paths = {
     sync: `${ROOTS.DASHBOARD}/sync`,
     develop: `${ROOTS.DASHBOARD}/develop`,
     prompt: `${ROOTS.DASHBOARD}/prompt`,
+    skills: {
+      root: `${ROOTS.DASHBOARD}/skills`,
+      detail: (id) => `${ROOTS.DASHBOARD}/skills/${id}`,
+      edit: (id) => `${ROOTS.DASHBOARD}/skills/${id}/edit`,
+      compare: (id) => `${ROOTS.DASHBOARD}/skills/${id}/compare`,
+    },
     workbench: `${ROOTS.DASHBOARD}/workbench`,
     getstarted: `${ROOTS.DASHBOARD}/get-started`,
     // projects: `${ROOTS.DASHBOARD}/projects/experiment`,

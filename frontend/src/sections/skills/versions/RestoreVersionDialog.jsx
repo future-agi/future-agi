@@ -22,7 +22,9 @@ export default function RestoreVersionDialog({ skill, number, onClose }) {
       );
       onClose();
     } catch {
-      setError("Could not restore this version. Try again. No labels have been moved.");
+      setError(
+        "Could not restore this version. Try again. No labels have been moved.",
+      );
     }
   };
 
@@ -30,20 +32,32 @@ export default function RestoreVersionDialog({ skill, number, onClose }) {
     <ConfirmDialog
       open
       title={`Restore v${number} as new version?`}
-      content={error || `Publish the files from v${number} as a new version of ${skill.name}. Existing versions and labels will not change.`}
-      onClose={() => { if (!restore.isPending) onClose(); }}
+      content={
+        error ||
+        `Publish the files from v${number} as a new version of ${skill.name}. Existing versions and labels will not change.`
+      }
+      onClose={() => {
+        if (!restore.isPending) onClose();
+      }}
       closeDisabled={restore.isPending}
-      action={(
-        <Button variant="contained" disabled={restore.isPending} onClick={handleRestore}>
+      action={
+        <Button
+          variant="contained"
+          disabled={restore.isPending}
+          onClick={handleRestore}
+        >
           {restore.isPending ? "Restoring…" : "Restore as new version"}
         </Button>
-      )}
+      }
     />
   );
 }
 
 RestoreVersionDialog.propTypes = {
-  skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired }).isRequired,
+  skill: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    name: PropTypes.string.isRequired,
+  }).isRequired,
   number: PropTypes.number.isRequired,
   onClose: PropTypes.func.isRequired,
 };

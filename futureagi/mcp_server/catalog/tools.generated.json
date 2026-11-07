@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "440b8a52a3dc0c2df0b2ec0261fa94a86ab1b0297ed04950903ae78e475167ab",
-  "tool_count": 107,
+  "source_contract_sha256": "05c28bfcb899745e3617ec6e067913302b46773fc0063386014ed4e1ddb1faee",
+  "tool_count": 113,
   "tools": [
     {
       "name": "whoami",
@@ -11022,6 +11022,429 @@
       },
       "source": {
         "operationId": "tracer_dashboard_filter_values"
+      }
+    },
+    {
+      "name": "list_skills",
+      "description": "List versioned skills in the authenticated workspace. Call get_skill to resolve a label or version before reading instructions.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "search": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "updated",
+              "name",
+              "created"
+            ],
+            "default": "updated"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "page_size",
+            "search",
+            "tag",
+            "label",
+            "sort",
+            "order"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_list"
+      }
+    },
+    {
+      "name": "get_skill",
+      "description": "Resolve a skill manifest without file contents. Choose label or version; neither means production and missing labels never fall back. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "include_content": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/resolve/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "label",
+            "version",
+            "name",
+            "include_content"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_resolve_list"
+      }
+    },
+    {
+      "name": "read_skill_file",
+      "description": "Read a lossless text chunk from an immutable skill version. Start with SKILL.md after get_skill, use max_bytes 24000, follow the character next_offset until eof, concatenate text and verify its UTF-8 sha256. Read supporting files only when needed. MCP reads are capped at 24000 bytes even if a larger size is requested.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "max_bytes": {
+            "type": "integer",
+            "default": 32768,
+            "minimum": 1,
+            "maximum": 49152
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id",
+          "number",
+          "path"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/{skill_id}/versions/{number}/files/",
+        "parameters": {
+          "path": [
+            "skill_id",
+            "number"
+          ],
+          "query": [
+            "path",
+            "offset",
+            "max_bytes"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_versions_files_list"
+      }
+    },
+    {
+      "name": "publish_skill",
+      "description": "Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/SkillsHubFileInput"
+            }
+          },
+          "note": {
+            "title": "Note",
+            "type": "string",
+            "default": "",
+            "maxLength": 2000
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+              "minLength": 1
+            },
+            "default": [],
+            "maxItems": 20
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+              "minLength": 1
+            },
+            "default": [],
+            "maxItems": 20
+          },
+          "acknowledge_warnings": {
+            "title": "Acknowledge warnings",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "files"
+        ],
+        "definitions": {
+          "SkillsHubFileInput": {
+            "required": [
+              "path",
+              "content"
+            ],
+            "type": "object",
+            "properties": {
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "content": {
+                "title": "Content",
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/skills/publish/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "files",
+            "note",
+            "labels",
+            "tags",
+            "acknowledge_warnings"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_publish_create"
+      }
+    },
+    {
+      "name": "set_skill_label",
+      "description": "Move a skill label to a published version. Use expected_version for compare-and-swap; null requires that the label does not exist. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "title": "Expected version",
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer",
+            "minimum": 1
+          },
+          "note": {
+            "title": "Note",
+            "type": "string",
+            "default": "",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id",
+          "label",
+          "version"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/model-hub/skills/{skill_id}/labels/{label}/",
+        "parameters": {
+          "path": [
+            "skill_id",
+            "label"
+          ],
+          "query": [],
+          "body": [
+            "expected_version",
+            "version",
+            "note"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_labels_update"
+      }
+    },
+    {
+      "name": "update_skill_tags",
+      "description": "Replace a skill's discovery tags without changing its immutable versions or labels. Pass the complete desired tags list, or an empty list to remove all tags.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+              "minLength": 1
+            },
+            "maxItems": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PATCH",
+        "path": "/model-hub/skills/{skill_id}/",
+        "parameters": {
+          "path": [
+            "skill_id"
+          ],
+          "query": [],
+          "body": [
+            "tags"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_partial_update"
       }
     },
     {

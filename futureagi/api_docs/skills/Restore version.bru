@@ -1,0 +1,21 @@
+meta {
+  name: Restore version
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/versions/{{version}}/restore/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"note":"Restore reviewed instructions"}
+}

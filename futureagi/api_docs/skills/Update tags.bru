@@ -1,0 +1,21 @@
+meta {
+  name: Update tags
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"tags":["support","approved"]}
+}

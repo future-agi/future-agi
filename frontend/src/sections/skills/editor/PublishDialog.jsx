@@ -5,6 +5,7 @@ import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Typography } from "@mui/material";
 
 import { getSkillErrorCode, usePublishSkillDraft, useSkillCompare } from "src/api/skills";
+import { paths } from "src/routes/paths";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -43,7 +44,7 @@ function PublishReview({ onClose, skill, draft }) {
       const result = await publish.mutateAsync({ note, labels, acknowledgeWarnings: acknowledged, force: stale });
       enqueueSnackbar(result.unchanged ? "This version is already published." : `Published v${result.version.number}.`, { variant: "success" });
       onClose();
-      navigate(`/dashboard/skills/${skill.id}`);
+      navigate(paths.dashboard.skills.detail(skill.id));
     } catch (error) {
       const code = getSkillErrorCode(error);
       if (code === "stale_base") {

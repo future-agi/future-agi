@@ -1,7 +1,7 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { Button, IconButton, ListItemIcon, Menu, MenuItem } from "@mui/material";
+import { Box, Button, IconButton, ListItemIcon, Menu, MenuItem } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { downloadSkillsZip, useArchiveSkill } from "src/api/skills";
 import { HOST_API } from "src/config-global";
@@ -33,6 +33,7 @@ export default function SkillRowMenu({ skill }) {
     finally { setDownloading(false); }
   };
   const archiveSkill = async () => {
+    if (archive.isPending) return;
     try {
       await archive.mutateAsync(skill.id);
       setConfirm(false);
@@ -40,7 +41,7 @@ export default function SkillRowMenu({ skill }) {
     } catch (_failure) { enqueueSnackbar("Couldn't archive this skill. Try again.", { variant: "error" }); }
   };
   return (
-    <>
+    <Box onClick={(event) => event.stopPropagation()}>
       <IconButton size="small" aria-label={`Actions for ${skill.name}`} aria-haspopup="menu" aria-expanded={Boolean(anchor)}
         onClick={(event) => { event.stopPropagation(); setAnchor(event.currentTarget); }}>
         <Iconify icon="solar:menu-dots-bold" />
@@ -55,7 +56,7 @@ export default function SkillRowMenu({ skill }) {
       <ConfirmDialog open={confirm} onClose={() => { if (!archive.isPending) setConfirm(false); }} closeDisabled={archive.isPending}
         title={`Archive ${skill.name}?`} content="This hides the skill from your workspace. Agents will no longer be able to fetch it, including by a label."
         action={<Button variant="contained" color="error" disabled={archive.isPending} onClick={(event) => { event.stopPropagation(); archiveSkill(); }}>Archive</Button>} />
-    </>
+    </Box>
   );
 }
 

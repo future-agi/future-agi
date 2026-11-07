@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { LinearProgress, Stack, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -21,14 +21,14 @@ export default function DraftChecksPanel({ files, name, onSelect }) {
         {checks && <ChecksList checks={checks} onSelect={onSelect} dense />}
       </Section>
       <Section title="SKILL.md token budget">
-        <Box sx={{ mb: 1 }}>
+        <Stack spacing={0.5} sx={{ mb: 1 }}>
           <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {tokens.toLocaleString()} ≈ tokens of 5,000
           </Typography>
           <Typography variant="s3" color="text.secondary">
             {overBudget ? "Over the recommended budget. Move supporting detail into other files." : "Estimated from character count. Supporting files load separately."}
           </Typography>
-        </Box>
+        </Stack>
         <LinearProgress
           variant="determinate"
           value={Math.min(100, tokens / 50)}

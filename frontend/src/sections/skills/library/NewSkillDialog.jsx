@@ -5,6 +5,7 @@ import { Alert, MenuItem, Stack, TextField } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { getSkillErrorCode, useCreateSkill, useSkillTemplates } from "src/api/skills";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { paths } from "src/routes/paths";
 import { LIMITS, SKILL_NAME_PATTERN } from "src/sections/skills/constants";
 
 export default function NewSkillDialog({ open, onClose, initialTemplate = "blank" }) {
@@ -26,7 +27,7 @@ export default function NewSkillDialog({ open, onClose, initialTemplate = "blank
       const skill = await create.mutateAsync({ name, description: description.trim(), templateId });
       enqueueSnackbar("Skill created", { variant: "success" });
       onClose();
-      navigate(`/dashboard/skills/${skill.id}/edit`);
+      navigate(paths.dashboard.skills.edit(skill.id));
     } catch (failure) {
       if (getSkillErrorCode(failure) === "name_taken") setNameTaken(true);
       else setError("Couldn't create this skill. Your inputs are still here. Try again.");
@@ -53,7 +54,7 @@ export default function NewSkillDialog({ open, onClose, initialTemplate = "blank
             <MenuItem key={template.id} value={template.id}>{template.title}</MenuItem>
           ))}
         </TextField>
-        {templates.isError && <Alert severity="warning">Templates couldn't load. You can still start with a blank skill.</Alert>}
+        {templates.isError && <Alert severity="warning">Templates could not load. You can still start with a blank skill.</Alert>}
       </Stack>
     </ModalWrapper>
   );

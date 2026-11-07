@@ -15,7 +15,10 @@ export default function useUnsavedNavigation(unsaved) {
   const [blocked, setBlocked] = useState(false);
   useBeforeUnload(unsaved);
 
-  useEffect(() => { index.current = window.history.state?.idx; }, [location]);
+  useEffect(() => {
+    index.current = window.history.state?.idx;
+    bypass.current = false;
+  }, [location]);
 
   useEffect(() => {
     const originals = {};

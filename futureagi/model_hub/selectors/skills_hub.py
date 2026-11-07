@@ -35,21 +35,23 @@ def get_skill_for_scope(
 ) -> HubSkill:
     """Fetch an identity without revealing objects in another tenant."""
     try:
-        return skills_for_request_scope(organization, workspace).select_related(
-            "created_by", "updated_by"
-        ).get(pk=skill_id)
+        return (
+            skills_for_request_scope(organization, workspace)
+            .select_related("created_by", "updated_by")
+            .get(pk=skill_id)
+        )
     except HubSkill.DoesNotExist as exc:
         raise SkillsHubError("skill_not_found", "Skill not found.", status=404) from exc
 
 
-def scoped_skill(skill: HubSkill, *, for_update: bool = False) -> HubSkill:
+def scoped_skill(skill: HubSkill, *, lock: bool = False) -> HubSkill:
     """Recheck a caller's tenant-scoped object; optionally serialize its writes."""
     queryset = HubSkill.no_workspace_objects.filter(
         organization_id=skill.organization_id,
         workspace_id=skill.workspace_id,
         workspace__organization_id=skill.organization_id,
     )
-    if for_update:
+    if lock:
         queryset = queryset.select_for_update(of=("self",))
     try:
         return queryset.get(pk=skill.pk)
@@ -63,7 +65,9 @@ def version_for_skill(skill: HubSkill, number: int) -> HubSkillVersion:
     try:
         return skill.versions.get(number=number)
     except HubSkillVersion.DoesNotExist as exc:
-        raise SkillsHubError("version_not_found", "Version not found.", status=404) from exc
+        raise SkillsHubError(
+            "version_not_found", "Version not found.", status=404
+        ) from exc
 
 
 def list_skills(
@@ -92,11 +96,15 @@ def list_skills(
         queryset = queryset.filter(labels__name=label)
     fields = {"updated": "updated_at", "name": "name", "created": "created_at"}
     if sort not in fields or order not in {"asc", "desc"}:
-        raise SkillsHubError("invalid_selector", "Choose a valid sort order.", status=400)
+        raise SkillsHubError(
+            "invalid_selector", "Choose a valid sort order.", status=400
+        )
     ordering = ("-" if order == "desc" else "") + fields[sort]
-    return queryset.select_related("created_by", "updated_by").prefetch_related(
-        "labels__version", "labels__updated_by", "drafts__user"
-    ).order_by(ordering, "id")
+    return (
+        queryset.select_related("created_by", "updated_by")
+        .prefetch_related("labels__version", "labels__updated_by", "drafts__user")
+        .order_by(ordering, "id")
+    )
 
 
 def workspace_stats(
@@ -109,8 +117,11 @@ def workspace_stats(
         in_production=Count("id", filter=Q(labels__name="production"), distinct=True),
         my_drafts=Count("drafts", filter=Q(drafts__user=user), distinct=True),
     )
-    since = timezone.now().date() - timedelta(days=6)
-    counts["fetches_7d"] = HubSkillUsageDaily.objects.filter(
-        skill__in=skills, day__gte=since
-    ).aggregate(total=Sum("count"))["total"] or 0
+    today = timezone.now().date()
+    counts["fetches_7d"] = (
+        HubSkillUsageDaily.objects.filter(
+            skill__in=skills, day__gte=today - timedelta(days=6), day__lte=today
+        ).aggregate(total=Sum("count"))["total"]
+        or 0
+    )
     return counts

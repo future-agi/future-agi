@@ -1,0 +1,17 @@
+meta {
+  name: List skills
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/?page=1&page_size=25
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

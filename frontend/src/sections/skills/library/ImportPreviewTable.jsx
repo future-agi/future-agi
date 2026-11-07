@@ -12,11 +12,11 @@ const STATUS = {
   invalid: { status: "failed", label: "Invalid" },
 };
 
-export default function ImportPreviewTable({ bundles, selected, onToggle }) {
+export default function ImportPreviewTable({ bundles, selected, onToggle, disabled = false }) {
   const columns = [
     { id: "selection", header: "Select", size: 64, cell: ({ row: { original: bundle } }) => (
       <Checkbox size="small" checked={selected.includes(bundle.key)}
-        disabled={bundle.status === "invalid" || bundle.checks.summary.errors > 0}
+        disabled={disabled || bundle.status === "invalid" || bundle.checks.summary.errors > 0}
         inputProps={{ "aria-label": `Select ${bundle.name}` }} onChange={() => onToggle(bundle.key)} />
     ) },
     { accessorKey: "name", header: "Name", minSize: 160, meta: { flex: 1 }, cell: ({ row: { original: bundle } }) => (
@@ -43,4 +43,5 @@ ImportPreviewTable.propTypes = {
   bundles: PropTypes.arrayOf(PropTypes.object).isRequired,
   selected: PropTypes.arrayOf(PropTypes.string).isRequired,
   onToggle: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
 };

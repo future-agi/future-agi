@@ -25,7 +25,7 @@ function reducer(state, action) {
 }
 
 /** Keep saves serialized and retain edits made while a request is in flight. */
-export default function useDraftSession(skillId, initialDraft) {
+export default function useDraftSession(skillId, initialDraft, paused = false) {
   const [state, dispatch] = useReducer(reducer, {
     ...initialDraft,
     savedFiles: initialDraft.files,
@@ -41,7 +41,7 @@ export default function useDraftSession(skillId, initialDraft) {
   const save = useCallback(async (revision) => {
     if (inFlight.current) return inFlight.current;
     const snapshot = latest.current;
-    if (revision === undefined && snapshot.files === snapshot.savedFiles && snapshot.revision > 0) {
+    if (revision === undefined && snapshot.status === "saved" && snapshot.files === snapshot.savedFiles && snapshot.revision > 0) {
       return snapshot;
     }
     dispatch({ type: "saving" });
@@ -62,12 +62,12 @@ export default function useDraftSession(skillId, initialDraft) {
   }, [mutateAsync]);
 
   useEffect(() => {
-    if (!dirty || state.status === "saving" || state.status === "error" || state.status === "conflict") {
+    if (paused || !dirty || state.status === "saving" || state.status === "error" || state.status === "conflict") {
       return undefined;
     }
     const timer = setTimeout(() => { save(); }, 1000);
     return () => clearTimeout(timer);
-  }, [dirty, state.files, state.status, save]);
+  }, [dirty, state.files, state.status, save, paused]);
 
   return {
     ...state,

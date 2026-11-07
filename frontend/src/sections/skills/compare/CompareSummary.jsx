@@ -7,7 +7,13 @@ const STATUSES = ["added", "removed", "modified", "unchanged"];
 
 export default function CompareSummary({ summary }) {
   return (
-    <Stack direction="row" useFlexGap flexWrap="wrap" spacing={2} aria-label="File changes">
+    <Stack
+      direction="row"
+      useFlexGap
+      flexWrap="wrap"
+      spacing={2}
+      aria-label="File changes"
+    >
       {STATUSES.map((status) => (
         <Stack key={status} direction="row" alignItems="center" spacing={0.5}>
           <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>

@@ -30,6 +30,8 @@ export function buildFileTree(files = []) {
   return sort(roots);
 }
 
+export const hasControlCharacters = (text) => [...text].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+
 // Returns a bundle path, never a URL or a path outside the bundle. Anchors
 // and query strings identify locations in the document, not separate files.
 export function resolveRelativePath(fromPath, href) {
@@ -37,7 +39,7 @@ export function resolveRelativePath(fromPath, href) {
   const raw = href.split(/[?#]/)[0];
   let relative;
   try { relative = decodeURIComponent(raw); } catch { return null; }
-  if (/^[a-z][a-z\d+.-]*:/i.test(relative) || relative.startsWith('/') || /[\\\u0000-\u001f\u007f]/.test(relative)) return null;
+  if (/^[a-z][a-z\d+.-]*:/i.test(relative) || relative.startsWith('/') || relative.includes('\\') || hasControlCharacters(relative)) return null;
   if (!relative) return fromPath || null;
   const parts = (fromPath || '').split('/').slice(0, -1);
   for (const part of relative.split('/')) {

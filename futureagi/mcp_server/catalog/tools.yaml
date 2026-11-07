@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 107
+expected_tool_count: 113
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -641,6 +641,40 @@ tools:
     access: read
     pagination:
       page_size: {maximum: 100}
+  # skills: a separate default-enabled group, like prompts. Existing explicit
+  # group selections stay unchanged; callers can opt into skills independently.
+  - name: list_skills
+    group: skills
+    description: List versioned skills in the authenticated workspace. Call get_skill to resolve a label or version before reading instructions.
+    operation: {method: GET, path: "/model-hub/skills/"}
+    access: read
+    pagination:
+      page_size: {maximum: 100}
+  - name: get_skill
+    group: skills
+    description: Resolve a skill manifest without file contents. Choose label or version; neither means production and missing labels never fall back. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed.
+    operation: {method: GET, path: "/model-hub/skills/resolve/"}
+    access: read
+  - name: read_skill_file
+    group: skills
+    description: Read a lossless text chunk from an immutable skill version. Start with SKILL.md after get_skill, use max_bytes 24000, follow the character next_offset until eof, concatenate text and verify its UTF-8 sha256. Read supporting files only when needed. MCP reads are capped at 24000 bytes even if a larger size is requested.
+    operation: {method: GET, path: "/model-hub/skills/{skill_id}/versions/{number}/files/"}
+    access: read
+  - name: publish_skill
+    group: skills
+    description: Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied.
+    operation: {method: POST, path: "/model-hub/skills/publish/"}
+    access: write
+  - name: set_skill_label
+    group: skills
+    description: Move a skill label to a published version. Use expected_version for compare-and-swap; null requires that the label does not exist. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.
+    operation: {method: PUT, path: "/model-hub/skills/{skill_id}/labels/{label}/"}
+    access: write
+  - name: update_skill_tags
+    group: skills
+    description: Replace a skill's discovery tags without changing its immutable versions or labels. Pass the complete desired tags list, or an empty list to remove all tags.
+    operation: {method: PATCH, path: "/model-hub/skills/{skill_id}/"}
+    access: write
   # usage
   - name: get_usage_overview
     group: usage

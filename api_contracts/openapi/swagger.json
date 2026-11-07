@@ -84624,6 +84624,2611 @@
                 ]
             },
             "parameters": []
+        },
+        "/model-hub/skills/": {
+            "get": {
+                "operationId": "model-hub_skills_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "sort",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "updated",
+                            "name",
+                            "created"
+                        ],
+                        "default": "updated"
+                    },
+                    {
+                        "name": "order",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "default": "desc"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsSkillPageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "model-hub_skills_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubCreateSkillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsSkillDetailResponse"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsSkillDetailResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/checks/": {
+            "post": {
+                "operationId": "model-hub_skills_checks_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubChecksRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/download/": {
+            "get": {
+                "operationId": "model-hub_skills_download_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "version",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "names",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "ZIP archive",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "application/zip",
+                    "application/json"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/import/": {
+            "post": {
+                "operationId": "model-hub_skills_import_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "files",
+                        "in": "formData",
+                        "description": "Repeat this multipart part for each file. Filename is its relative POSIX path.",
+                        "required": true,
+                        "type": "file"
+                    },
+                    {
+                        "name": "selected",
+                        "in": "formData",
+                        "description": "JSON array of bundle keys returned by preview.",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "labels",
+                        "in": "formData",
+                        "description": "JSON array of labels to move.",
+                        "required": false,
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "acknowledge_warnings",
+                        "in": "formData",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsImportResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/import/preview/": {
+            "post": {
+                "operationId": "model-hub_skills_import_preview_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "files",
+                        "in": "formData",
+                        "description": "Repeat this multipart part for each file. Filename is its relative POSIX path.",
+                        "required": true,
+                        "type": "file"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsImportPreviewResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/publish/": {
+            "post": {
+                "operationId": "model-hub_skills_publish_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubPushRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPushResultResponse"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPushResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/resolve/": {
+            "get": {
+                "operationId": "model-hub_skills_resolve_list",
+                "description": "Resolve an immutable skill manifest. Returns ETag: \"<digest>\". Send If-None-Match with that value for HTTP 304; a missing label never falls back.",
+                "parameters": [
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "version",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "name",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "include_content",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsManifestResponse"
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/templates/": {
+            "get": {
+                "operationId": "model-hub_skills_templates_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsTemplateListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/{skill_id}/": {
+            "get": {
+                "operationId": "model-hub_skills_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsSkillDetailResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "model-hub_skills_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubTagsRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsSkillDetailResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "model-hub_skills_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubEmptyRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "204": {
+                        "description": "No content"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/compare/": {
+            "get": {
+                "operationId": "model-hub_skills_compare_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "pattern": "^(draft|[1-9][0-9]*)$",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "pattern": "^(draft|[1-9][0-9]*)$",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsCompareResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/draft/": {
+            "get": {
+                "operationId": "model-hub_skills_draft_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsDraftOutResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "model-hub_skills_draft_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubDraftRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsDraftOutResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "model-hub_skills_draft_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubEmptyRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "204": {
+                        "description": "No content"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/draft/publish/": {
+            "post": {
+                "operationId": "model-hub_skills_draft_publish_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubPublishOptions"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/labels/": {
+            "get": {
+                "operationId": "model-hub_skills_labels_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsLabelOutListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/labels/history/": {
+            "get": {
+                "operationId": "model-hub_skills_labels_history_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHistoryPageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/labels/{label}/": {
+            "put": {
+                "operationId": "model-hub_skills_labels_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubSetLabelRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "label",
+                        "in": "path",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsLabelOutResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "model-hub_skills_labels_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubRemoveLabelRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "label",
+                        "in": "path",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "204": {
+                        "description": "No content"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "label",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/usage/": {
+            "get": {
+                "operationId": "model-hub_skills_usage_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "enum": [
+                            7,
+                            30,
+                            90
+                        ],
+                        "default": 7
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsUsageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/versions/": {
+            "get": {
+                "operationId": "model-hub_skills_versions_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsVersionPageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "model-hub_skills_versions_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubPublishVersionRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/versions/{number}/": {
+            "get": {
+                "operationId": "model-hub_skills_versions_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "number",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsVersionDetailResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "number",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/versions/{number}/download/": {
+            "get": {
+                "operationId": "model-hub_skills_versions_download_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "number",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "ZIP archive",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "application/zip",
+                    "application/json"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "number",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/versions/{number}/files/": {
+            "get": {
+                "operationId": "model-hub_skills_versions_files_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "max_bytes",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 32768,
+                        "maximum": 49152,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "number",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsFileChunkResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "number",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/model-hub/skills/{skill_id}/versions/{number}/restore/": {
+            "post": {
+                "operationId": "model-hub_skills_versions_restore_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubRestoreRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "number",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsPublishResultResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "skill_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "number",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         }
     },
     "definitions": {
@@ -181251,6 +183856,2679 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "SkillsChecksError": {
+            "required": [
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "$ref": "#/definitions/SkillsHubChecksResult"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SkillsChecksResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubChecksResult"
+                }
+            }
+        },
+        "SkillsCompareResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubCompareResult"
+                }
+            }
+        },
+        "SkillsConflictError": {
+            "required": [
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "$ref": "#/definitions/SkillsHubConflictDetail"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SkillsDraftOutResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubDraftOut"
+                }
+            }
+        },
+        "SkillsError": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SkillsFileChunkResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubFileChunk"
+                }
+            }
+        },
+        "SkillsHistoryPageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubHistoryPage"
+                }
+            }
+        },
+        "SkillsHubChannels": {
+            "required": [
+                "api",
+                "download",
+                "mcp"
+            ],
+            "type": "object",
+            "properties": {
+                "api": {
+                    "title": "Api",
+                    "type": "integer"
+                },
+                "download": {
+                    "title": "Download",
+                    "type": "integer"
+                },
+                "mcp": {
+                    "title": "Mcp",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubCheck": {
+            "required": [
+                "code",
+                "severity",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity": {
+                    "title": "Severity",
+                    "type": "string",
+                    "enum": [
+                        "error",
+                        "warning",
+                        "info"
+                    ]
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "line": {
+                    "title": "Line",
+                    "type": "integer"
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "object"
+                }
+            }
+        },
+        "SkillsHubCheckSummary": {
+            "required": [
+                "errors",
+                "warnings",
+                "infos"
+            ],
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "title": "Errors",
+                    "type": "integer"
+                },
+                "warnings": {
+                    "title": "Warnings",
+                    "type": "integer"
+                },
+                "infos": {
+                    "title": "Infos",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubChecksRequest": {
+            "required": [
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubFileInput"
+                    }
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsHubChecksResult": {
+            "required": [
+                "items",
+                "summary",
+                "tokens",
+                "frontmatter"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubCheck"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/SkillsHubCheckSummary"
+                },
+                "tokens": {
+                    "$ref": "#/definitions/SkillsHubTokens"
+                },
+                "frontmatter": {
+                    "title": "Frontmatter",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubCompareFile": {
+            "required": [
+                "path",
+                "status",
+                "from_sha256",
+                "to_sha256"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "added",
+                        "removed",
+                        "modified",
+                        "unchanged"
+                    ]
+                },
+                "from_sha256": {
+                    "title": "From sha256",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "to_sha256": {
+                    "title": "To sha256",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "from_text": {
+                    "title": "From text",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "to_text": {
+                    "title": "To text",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubCompareResult": {
+            "required": [
+                "from",
+                "to",
+                "files",
+                "summary"
+            ],
+            "type": "object",
+            "properties": {
+                "from": {
+                    "title": "From",
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
+                },
+                "to": {
+                    "title": "To",
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubCompareFile"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/SkillsHubCompareSummary"
+                }
+            }
+        },
+        "SkillsHubCompareSummary": {
+            "required": [
+                "added",
+                "removed",
+                "modified",
+                "unchanged"
+            ],
+            "type": "object",
+            "properties": {
+                "added": {
+                    "title": "Added",
+                    "type": "integer"
+                },
+                "removed": {
+                    "title": "Removed",
+                    "type": "integer"
+                },
+                "modified": {
+                    "title": "Modified",
+                    "type": "integer"
+                },
+                "unchanged": {
+                    "title": "Unchanged",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubConflictDetail": {
+            "type": "object",
+            "properties": {
+                "base_version": {
+                    "title": "Base version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "current_version": {
+                    "title": "Current version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubConsumer": {
+            "required": [
+                "label",
+                "channel",
+                "count",
+                "last_at"
+            ],
+            "type": "object",
+            "properties": {
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "enum": [
+                        "api",
+                        "download",
+                        "mcp"
+                    ]
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "last_at": {
+                    "title": "Last at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SkillsHubCreateSkillRequest": {
+            "required": [
+                "name",
+                "description"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "maxLength": 1024,
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "template_id": {
+                    "title": "Template id",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsHubDraftOut": {
+            "required": [
+                "base_version",
+                "files",
+                "note",
+                "revision",
+                "updated_at"
+            ],
+            "type": "object",
+            "properties": {
+                "base_version": {
+                    "title": "Base version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubFileInput"
+                    }
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string"
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SkillsHubDraftRequest": {
+            "required": [
+                "files",
+                "base_version",
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubFileInput"
+                    }
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "base_version": {
+                    "title": "Base version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SkillsHubDraftSummary": {
+            "required": [
+                "user",
+                "updated_at",
+                "base_version"
+            ],
+            "type": "object",
+            "properties": {
+                "user": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    }
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "base_version": {
+                    "title": "Base version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "is_mine": {
+                    "title": "Is mine",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "SkillsHubEmptyRequest": {
+            "type": "object",
+            "properties": {}
+        },
+        "SkillsHubFileChunk": {
+            "required": [
+                "path",
+                "sha256",
+                "size_bytes",
+                "total_chars",
+                "offset",
+                "next_offset",
+                "eof",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size_bytes": {
+                    "title": "Size bytes",
+                    "type": "integer"
+                },
+                "total_chars": {
+                    "title": "Total chars",
+                    "type": "integer"
+                },
+                "offset": {
+                    "title": "Offset",
+                    "type": "integer"
+                },
+                "next_offset": {
+                    "title": "Next offset",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "eof": {
+                    "title": "Eof",
+                    "type": "boolean"
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
+        "SkillsHubFileInput": {
+            "required": [
+                "path",
+                "content"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                }
+            }
+        },
+        "SkillsHubHistoryPage": {
+            "required": [
+                "count",
+                "page",
+                "page_size",
+                "total_pages",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer"
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubLabelEvent"
+                    }
+                }
+            }
+        },
+        "SkillsHubImportBundle": {
+            "required": [
+                "key",
+                "root",
+                "name",
+                "file_count",
+                "total_bytes",
+                "status",
+                "checks"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "root": {
+                    "title": "Root",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "file_count": {
+                    "title": "File count",
+                    "type": "integer"
+                },
+                "total_bytes": {
+                    "title": "Total bytes",
+                    "type": "integer"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "new",
+                        "changed",
+                        "unchanged",
+                        "invalid"
+                    ]
+                },
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "checks": {
+                    "$ref": "#/definitions/SkillsHubChecksResult"
+                }
+            }
+        },
+        "SkillsHubImportFailure": {
+            "required": [
+                "key",
+                "name",
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsHubImportPreview": {
+            "required": [
+                "bundles",
+                "rejected",
+                "skipped"
+            ],
+            "type": "object",
+            "properties": {
+                "bundles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubImportBundle"
+                    }
+                },
+                "rejected": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubRejected"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "SkillsHubImportResult": {
+            "required": [
+                "created",
+                "updated",
+                "unchanged",
+                "failed"
+            ],
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubImported"
+                    }
+                },
+                "updated": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubImported"
+                    }
+                },
+                "unchanged": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubImported"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubImportFailure"
+                    }
+                }
+            }
+        },
+        "SkillsHubImported": {
+            "required": [
+                "key",
+                "name",
+                "skill_id",
+                "version",
+                "version_id",
+                "digest"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsHubLabelEvent": {
+            "required": [
+                "label",
+                "from_version",
+                "to_version",
+                "note",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "from_version": {
+                    "title": "From version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "to_version": {
+                    "title": "To version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "actor": {
+                    "required": [
+                        "id",
+                        "name",
+                        "kind"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        },
+                        "kind": {
+                            "title": "Kind",
+                            "type": "string",
+                            "enum": [
+                                "user",
+                                "api_key"
+                            ]
+                        }
+                    },
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SkillsHubLabelOut": {
+            "required": [
+                "name",
+                "version",
+                "version_id",
+                "updated_at",
+                "updated_by"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_by": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    },
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubLabelSummary": {
+            "required": [
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubManifest": {
+            "required": [
+                "skill_id",
+                "name",
+                "description",
+                "version",
+                "version_id",
+                "digest",
+                "requested",
+                "frontmatter",
+                "files",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "requested": {
+                    "$ref": "#/definitions/SkillsHubRequested"
+                },
+                "frontmatter": {
+                    "title": "Frontmatter",
+                    "type": "object"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubManifestFile"
+                    }
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SkillsHubManifestFile": {
+            "required": [
+                "path",
+                "size_bytes",
+                "sha256"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size_bytes": {
+                    "title": "Size bytes",
+                    "type": "integer"
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                }
+            }
+        },
+        "SkillsHubPublishOptions": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "acknowledge_warnings": {
+                    "title": "Acknowledge warnings",
+                    "type": "boolean",
+                    "default": false
+                },
+                "force": {
+                    "title": "Force",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "SkillsHubPublishResult": {
+            "required": [
+                "version",
+                "unchanged",
+                "checks"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "required": [
+                        "id",
+                        "number",
+                        "digest",
+                        "note",
+                        "created_at",
+                        "created_by",
+                        "file_count",
+                        "total_bytes",
+                        "source"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "number": {
+                            "title": "Number",
+                            "type": "integer"
+                        },
+                        "digest": {
+                            "title": "Digest",
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "note": {
+                            "title": "Note",
+                            "type": "string"
+                        },
+                        "created_at": {
+                            "title": "Created at",
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "created_by": {
+                            "required": [
+                                "id",
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "title": "Id",
+                                    "type": "string",
+                                    "format": "uuid"
+                                },
+                                "name": {
+                                    "title": "Name",
+                                    "type": "string"
+                                }
+                            },
+                            "x-nullable": true
+                        },
+                        "file_count": {
+                            "title": "File count",
+                            "type": "integer"
+                        },
+                        "total_bytes": {
+                            "title": "Total bytes",
+                            "type": "integer"
+                        },
+                        "labels": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "readOnly": true
+                        },
+                        "source": {
+                            "title": "Source",
+                            "type": "object"
+                        }
+                    }
+                },
+                "unchanged": {
+                    "title": "Unchanged",
+                    "type": "boolean"
+                },
+                "checks": {
+                    "$ref": "#/definitions/SkillsHubChecksResult"
+                }
+            }
+        },
+        "SkillsHubPublishVersionRequest": {
+            "required": [
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "acknowledge_warnings": {
+                    "title": "Acknowledge warnings",
+                    "type": "boolean",
+                    "default": false
+                },
+                "force": {
+                    "title": "Force",
+                    "type": "boolean",
+                    "default": false
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubFileInput"
+                    }
+                },
+                "base_version": {
+                    "title": "Base version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubPushRequest": {
+            "required": [
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubFileInput"
+                    }
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "acknowledge_warnings": {
+                    "title": "Acknowledge warnings",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "SkillsHubPushResult": {
+            "required": [
+                "skill",
+                "version",
+                "unchanged"
+            ],
+            "type": "object",
+            "properties": {
+                "skill": {
+                    "$ref": "#/definitions/SkillsHubSkillSummary"
+                },
+                "version": {
+                    "required": [
+                        "id",
+                        "number",
+                        "digest",
+                        "note",
+                        "created_at",
+                        "created_by",
+                        "file_count",
+                        "total_bytes",
+                        "source"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "number": {
+                            "title": "Number",
+                            "type": "integer"
+                        },
+                        "digest": {
+                            "title": "Digest",
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "note": {
+                            "title": "Note",
+                            "type": "string"
+                        },
+                        "created_at": {
+                            "title": "Created at",
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "created_by": {
+                            "required": [
+                                "id",
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "title": "Id",
+                                    "type": "string",
+                                    "format": "uuid"
+                                },
+                                "name": {
+                                    "title": "Name",
+                                    "type": "string"
+                                }
+                            },
+                            "x-nullable": true
+                        },
+                        "file_count": {
+                            "title": "File count",
+                            "type": "integer"
+                        },
+                        "total_bytes": {
+                            "title": "Total bytes",
+                            "type": "integer"
+                        },
+                        "labels": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "readOnly": true
+                        },
+                        "source": {
+                            "title": "Source",
+                            "type": "object"
+                        }
+                    }
+                },
+                "unchanged": {
+                    "title": "Unchanged",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsHubRejected": {
+            "required": [
+                "path",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsHubRemoveLabelRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubRequested": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubRestoreRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                }
+            }
+        },
+        "SkillsHubSetLabelRequest": {
+            "required": [
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 500
+                }
+            }
+        },
+        "SkillsHubSkillDetail": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "tags",
+                "labels",
+                "updated_at",
+                "updated_by",
+                "created_at",
+                "source",
+                "created_by",
+                "drafts"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubLabelOut"
+                    }
+                },
+                "has_draft": {
+                    "title": "Has draft",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_by": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    },
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "fetches_7d": {
+                    "title": "Fetches 7d",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "file_count": {
+                    "title": "File count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object"
+                },
+                "created_by": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    },
+                    "x-nullable": true
+                },
+                "latest": {
+                    "required": [
+                        "id",
+                        "number",
+                        "digest",
+                        "note",
+                        "created_at",
+                        "created_by",
+                        "file_count",
+                        "total_bytes",
+                        "source"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "number": {
+                            "title": "Number",
+                            "type": "integer"
+                        },
+                        "digest": {
+                            "title": "Digest",
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "note": {
+                            "title": "Note",
+                            "type": "string"
+                        },
+                        "created_at": {
+                            "title": "Created at",
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "created_by": {
+                            "required": [
+                                "id",
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "title": "Id",
+                                    "type": "string",
+                                    "format": "uuid"
+                                },
+                                "name": {
+                                    "title": "Name",
+                                    "type": "string"
+                                }
+                            },
+                            "x-nullable": true
+                        },
+                        "file_count": {
+                            "title": "File count",
+                            "type": "integer"
+                        },
+                        "total_bytes": {
+                            "title": "Total bytes",
+                            "type": "integer"
+                        },
+                        "labels": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "readOnly": true
+                        },
+                        "source": {
+                            "title": "Source",
+                            "type": "object"
+                        }
+                    },
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "drafts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubDraftSummary"
+                    }
+                }
+            }
+        },
+        "SkillsHubSkillPage": {
+            "required": [
+                "count",
+                "page",
+                "page_size",
+                "total_pages",
+                "results",
+                "stats"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer"
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubSkillSummary"
+                    }
+                },
+                "stats": {
+                    "$ref": "#/definitions/SkillsHubStats"
+                }
+            }
+        },
+        "SkillsHubSkillSummary": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "tags",
+                "labels",
+                "updated_at",
+                "updated_by",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "latest_version": {
+                    "title": "Latest version",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubLabelSummary"
+                    }
+                },
+                "has_draft": {
+                    "title": "Has draft",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_by": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    },
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "fetches_7d": {
+                    "title": "Fetches 7d",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "file_count": {
+                    "title": "File count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubStats": {
+            "required": [
+                "total",
+                "in_production",
+                "fetches_7d",
+                "my_drafts"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "in_production": {
+                    "title": "In production",
+                    "type": "integer"
+                },
+                "fetches_7d": {
+                    "title": "Fetches 7d",
+                    "type": "integer"
+                },
+                "my_drafts": {
+                    "title": "My drafts",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubTagsRequest": {
+            "required": [
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+                        "minLength": 1
+                    },
+                    "maxItems": 20
+                }
+            }
+        },
+        "SkillsHubTemplate": {
+            "required": [
+                "id",
+                "name",
+                "title",
+                "description",
+                "tags",
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubTemplateFile"
+                    }
+                }
+            }
+        },
+        "SkillsHubTemplateFile": {
+            "required": [
+                "path",
+                "size_bytes"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size_bytes": {
+                    "title": "Size bytes",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubTokens": {
+            "required": [
+                "metadata",
+                "skill_md",
+                "total"
+            ],
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "integer"
+                },
+                "skill_md": {
+                    "title": "Skill md",
+                    "type": "integer"
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubUsage": {
+            "required": [
+                "days",
+                "total",
+                "by_day",
+                "by_channel",
+                "by_version",
+                "consumers",
+                "last_fetched_at"
+            ],
+            "type": "object",
+            "properties": {
+                "days": {
+                    "title": "Days",
+                    "type": "integer"
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "by_day": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubUsageDay"
+                    }
+                },
+                "by_channel": {
+                    "$ref": "#/definitions/SkillsHubChannels"
+                },
+                "by_version": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubUsageVersion"
+                    }
+                },
+                "consumers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubConsumer"
+                    }
+                },
+                "last_fetched_at": {
+                    "title": "Last fetched at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SkillsHubUsageDay": {
+            "required": [
+                "day",
+                "version",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "day": {
+                    "title": "Day",
+                    "type": "string",
+                    "format": "date"
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubUsageVersion": {
+            "required": [
+                "version",
+                "count",
+                "last_at"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "last_at": {
+                    "title": "Last at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SkillsHubVersionDetail": {
+            "required": [
+                "id",
+                "number",
+                "digest",
+                "note",
+                "created_at",
+                "created_by",
+                "file_count",
+                "total_bytes",
+                "source",
+                "frontmatter",
+                "checks",
+                "files"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "created_by": {
+                    "required": [
+                        "id",
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "title": "Id",
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "name": {
+                            "title": "Name",
+                            "type": "string"
+                        }
+                    },
+                    "x-nullable": true
+                },
+                "file_count": {
+                    "title": "File count",
+                    "type": "integer"
+                },
+                "total_bytes": {
+                    "title": "Total bytes",
+                    "type": "integer"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object"
+                },
+                "frontmatter": {
+                    "title": "Frontmatter",
+                    "type": "object"
+                },
+                "checks": {
+                    "$ref": "#/definitions/SkillsHubChecksResult"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubVersionFile"
+                    }
+                }
+            }
+        },
+        "SkillsHubVersionFile": {
+            "required": [
+                "path",
+                "size_bytes",
+                "sha256",
+                "token_estimate"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size_bytes": {
+                    "title": "Size bytes",
+                    "type": "integer"
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "token_estimate": {
+                    "title": "Token estimate",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillsHubVersionPage": {
+            "required": [
+                "count",
+                "page",
+                "page_size",
+                "total_pages",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer"
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "required": [
+                            "id",
+                            "number",
+                            "digest",
+                            "note",
+                            "created_at",
+                            "created_by",
+                            "file_count",
+                            "total_bytes",
+                            "source"
+                        ],
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "title": "Id",
+                                "type": "string",
+                                "format": "uuid"
+                            },
+                            "number": {
+                                "title": "Number",
+                                "type": "integer"
+                            },
+                            "digest": {
+                                "title": "Digest",
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "note": {
+                                "title": "Note",
+                                "type": "string"
+                            },
+                            "created_at": {
+                                "title": "Created at",
+                                "type": "string",
+                                "format": "date-time"
+                            },
+                            "created_by": {
+                                "required": [
+                                    "id",
+                                    "name"
+                                ],
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "title": "Id",
+                                        "type": "string",
+                                        "format": "uuid"
+                                    },
+                                    "name": {
+                                        "title": "Name",
+                                        "type": "string"
+                                    }
+                                },
+                                "x-nullable": true
+                            },
+                            "file_count": {
+                                "title": "File count",
+                                "type": "integer"
+                            },
+                            "total_bytes": {
+                                "title": "Total bytes",
+                                "type": "integer"
+                            },
+                            "labels": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                },
+                                "readOnly": true
+                            },
+                            "source": {
+                                "title": "Source",
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "SkillsImportPreviewResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubImportPreview"
+                }
+            }
+        },
+        "SkillsImportResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubImportResult"
+                }
+            }
+        },
+        "SkillsLabelOutListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubLabelOut"
+                    }
+                }
+            }
+        },
+        "SkillsLabelOutResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubLabelOut"
+                }
+            }
+        },
+        "SkillsManifestResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubManifest"
+                }
+            }
+        },
+        "SkillsPublishResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubPublishResult"
+                }
+            }
+        },
+        "SkillsPushResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubPushResult"
+                }
+            }
+        },
+        "SkillsSkillDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubSkillDetail"
+                }
+            }
+        },
+        "SkillsSkillPageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubSkillPage"
+                }
+            }
+        },
+        "SkillsTemplateListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsHubTemplate"
+                    }
+                }
+            }
+        },
+        "SkillsUsageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubUsage"
+                }
+            }
+        },
+        "SkillsVersionDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubVersionDetail"
+                }
+            }
+        },
+        "SkillsVersionPageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SkillsHubVersionPage"
                 }
             }
         }

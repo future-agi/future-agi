@@ -1,0 +1,21 @@
+meta {
+  name: Publish draft
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/draft/publish/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"labels":[],"acknowledge_warnings":false,"force":false}
+}

@@ -36384,6 +36384,854 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+export interface SkillsHubLabelSummaryApi {
+  /** @minLength 1 */
+  name: string;
+  version: number;
+}
+
+export type SkillsHubSkillSummaryApiUpdatedBy = {
+  id: string;
+  name: string;
+};
+
+export interface SkillsHubSkillSummaryApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  tags: string[];
+  readonly latest_version?: number;
+  labels: SkillsHubLabelSummaryApi[];
+  readonly has_draft?: boolean;
+  updated_at: string;
+  updated_by: SkillsHubSkillSummaryApiUpdatedBy;
+  created_at: string;
+  readonly fetches_7d?: number;
+  readonly file_count?: number;
+}
+
+export interface SkillsHubStatsApi {
+  total: number;
+  in_production: number;
+  fetches_7d: number;
+  my_drafts: number;
+}
+
+export interface SkillsHubSkillPageApi {
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: SkillsHubSkillSummaryApi[];
+  stats: SkillsHubStatsApi;
+}
+
+export interface SkillsSkillPageResponseApi {
+  status: boolean;
+  result: SkillsHubSkillPageApi;
+}
+
+export type SkillsErrorApiType =
+  (typeof SkillsErrorApiType)[keyof typeof SkillsErrorApiType];
+
+export const SkillsErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsErrorApiDetails = { [key: string]: string[] };
+
+export interface SkillsErrorApi {
+  status?: boolean;
+  type?: SkillsErrorApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SkillsErrorApiDetails;
+}
+
+export type SkillsConflictErrorApiType =
+  (typeof SkillsConflictErrorApiType)[keyof typeof SkillsConflictErrorApiType];
+
+export const SkillsConflictErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsConflictErrorApiDetails = { [key: string]: string[] };
+
+export interface SkillsHubConflictDetailApi {
+  base_version?: number;
+  latest_version?: number;
+  current_version?: number;
+  revision?: number;
+  updated_at?: string;
+}
+
+export interface SkillsConflictErrorApi {
+  status?: boolean;
+  type?: SkillsConflictErrorApiType;
+  code?: string;
+  detail: SkillsHubConflictDetailApi;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SkillsConflictErrorApiDetails;
+}
+
+export type SkillsChecksErrorApiType =
+  (typeof SkillsChecksErrorApiType)[keyof typeof SkillsChecksErrorApiType];
+
+export const SkillsChecksErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsChecksErrorApiDetails = { [key: string]: string[] };
+
+export type SkillsHubCheckApiSeverity =
+  (typeof SkillsHubCheckApiSeverity)[keyof typeof SkillsHubCheckApiSeverity];
+
+export const SkillsHubCheckApiSeverity = {
+  error: "error",
+  warning: "warning",
+  info: "info",
+} as const;
+
+export type SkillsHubCheckApiDetail = { [key: string]: unknown };
+
+export interface SkillsHubCheckApi {
+  /** @minLength 1 */
+  code: string;
+  severity: SkillsHubCheckApiSeverity;
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  path?: string;
+  line?: number;
+  detail?: SkillsHubCheckApiDetail;
+}
+
+export interface SkillsHubCheckSummaryApi {
+  errors: number;
+  warnings: number;
+  infos: number;
+}
+
+export interface SkillsHubTokensApi {
+  metadata: number;
+  skill_md: number;
+  total: number;
+}
+
+export type SkillsHubChecksResultApiFrontmatter = { [key: string]: unknown };
+
+export interface SkillsHubChecksResultApi {
+  items: SkillsHubCheckApi[];
+  summary: SkillsHubCheckSummaryApi;
+  tokens: SkillsHubTokensApi;
+  frontmatter: SkillsHubChecksResultApiFrontmatter;
+}
+
+export interface SkillsChecksErrorApi {
+  status?: boolean;
+  type?: SkillsChecksErrorApiType;
+  code?: string;
+  detail: SkillsHubChecksResultApi;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SkillsChecksErrorApiDetails;
+}
+
+export interface SkillsHubCreateSkillRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z0-9]+(-[a-z0-9]+)*$
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  description: string;
+  /** @maxItems 20 */
+  tags?: string[];
+  /** @minLength 1 */
+  template_id?: string;
+}
+
+export type SkillsHubLabelOutApiUpdatedBy = {
+  id: string;
+  name: string;
+};
+
+export interface SkillsHubLabelOutApi {
+  /** @minLength 1 */
+  name: string;
+  version: number;
+  version_id: string;
+  updated_at: string;
+  updated_by: SkillsHubLabelOutApiUpdatedBy;
+}
+
+export type SkillsHubDraftSummaryApiUser = {
+  id: string;
+  name: string;
+};
+
+export interface SkillsHubDraftSummaryApi {
+  user: SkillsHubDraftSummaryApiUser;
+  updated_at: string;
+  base_version: number;
+  readonly is_mine?: boolean;
+}
+
+export type SkillsHubSkillDetailApiUpdatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubSkillDetailApiSource = { [key: string]: unknown };
+
+export type SkillsHubSkillDetailApiCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubSkillDetailApiLatestCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubSkillDetailApiLatestSource = { [key: string]: unknown };
+
+export type SkillsHubSkillDetailApiLatest = {
+  readonly id: string;
+  readonly number: number;
+  /** @minLength 1 */
+  readonly digest: string;
+  readonly note: string;
+  readonly created_at: string;
+  readonly created_by: SkillsHubSkillDetailApiLatestCreatedBy;
+  readonly file_count: number;
+  readonly total_bytes: number;
+  readonly labels?: readonly string[];
+  readonly source: SkillsHubSkillDetailApiLatestSource;
+};
+
+export interface SkillsHubSkillDetailApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  tags: string[];
+  readonly latest_version?: number;
+  labels: SkillsHubLabelOutApi[];
+  readonly has_draft?: boolean;
+  updated_at: string;
+  updated_by: SkillsHubSkillDetailApiUpdatedBy;
+  created_at: string;
+  readonly fetches_7d?: number;
+  readonly file_count?: number;
+  source: SkillsHubSkillDetailApiSource;
+  created_by: SkillsHubSkillDetailApiCreatedBy;
+  readonly latest?: SkillsHubSkillDetailApiLatest;
+  drafts: SkillsHubDraftSummaryApi[];
+}
+
+export interface SkillsSkillDetailResponseApi {
+  status: boolean;
+  result: SkillsHubSkillDetailApi;
+}
+
+export interface SkillsHubFileInputApi {
+  path: string;
+  content: string;
+}
+
+export interface SkillsHubChecksRequestApi {
+  files: SkillsHubFileInputApi[];
+  /** @minLength 1 */
+  name?: string;
+}
+
+export interface SkillsChecksResultResponseApi {
+  status: boolean;
+  result: SkillsHubChecksResultApi;
+}
+
+export interface SkillsHubImportedApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  skill_id: string;
+  version: number;
+  version_id: string;
+  /** @minLength 1 */
+  digest: string;
+}
+
+export interface SkillsHubImportFailureApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface SkillsHubImportResultApi {
+  created: SkillsHubImportedApi[];
+  updated: SkillsHubImportedApi[];
+  unchanged: SkillsHubImportedApi[];
+  failed: SkillsHubImportFailureApi[];
+}
+
+export interface SkillsImportResultResponseApi {
+  status: boolean;
+  result: SkillsHubImportResultApi;
+}
+
+export type SkillsHubImportBundleApiStatus =
+  (typeof SkillsHubImportBundleApiStatus)[keyof typeof SkillsHubImportBundleApiStatus];
+
+export const SkillsHubImportBundleApiStatus = {
+  new: "new",
+  changed: "changed",
+  unchanged: "unchanged",
+  invalid: "invalid",
+} as const;
+
+export interface SkillsHubImportBundleApi {
+  /** @minLength 1 */
+  key: string;
+  root: string;
+  /** @minLength 1 */
+  name: string;
+  file_count: number;
+  total_bytes: number;
+  status: SkillsHubImportBundleApiStatus;
+  skill_id?: string;
+  latest_version?: number;
+  checks: SkillsHubChecksResultApi;
+}
+
+export interface SkillsHubRejectedApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface SkillsHubImportPreviewApi {
+  bundles: SkillsHubImportBundleApi[];
+  rejected: SkillsHubRejectedApi[];
+  skipped: string[];
+}
+
+export interface SkillsImportPreviewResponseApi {
+  status: boolean;
+  result: SkillsHubImportPreviewApi;
+}
+
+export interface SkillsHubPushRequestApi {
+  files: SkillsHubFileInputApi[];
+  /** @maxLength 2000 */
+  note?: string;
+  /** @maxItems 20 */
+  labels?: string[];
+  /** @maxItems 20 */
+  tags?: string[];
+  acknowledge_warnings?: boolean;
+}
+
+export type SkillsHubPushResultApiVersionCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubPushResultApiVersionSource = { [key: string]: unknown };
+
+export type SkillsHubPushResultApiVersion = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubPushResultApiVersionCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubPushResultApiVersionSource;
+};
+
+export interface SkillsHubPushResultApi {
+  skill: SkillsHubSkillSummaryApi;
+  version: SkillsHubPushResultApiVersion;
+  unchanged: boolean;
+}
+
+export interface SkillsPushResultResponseApi {
+  status: boolean;
+  result: SkillsHubPushResultApi;
+}
+
+export interface SkillsHubRequestedApi {
+  /** @minLength 1 */
+  label?: string;
+  version?: number;
+}
+
+export interface SkillsHubManifestFileApi {
+  /** @minLength 1 */
+  path: string;
+  size_bytes: number;
+  /** @minLength 1 */
+  sha256: string;
+  content?: string;
+}
+
+export type SkillsHubManifestApiFrontmatter = { [key: string]: unknown };
+
+export interface SkillsHubManifestApi {
+  skill_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  version: number;
+  version_id: string;
+  /** @minLength 1 */
+  digest: string;
+  requested: SkillsHubRequestedApi;
+  frontmatter: SkillsHubManifestApiFrontmatter;
+  files: SkillsHubManifestFileApi[];
+  created_at: string;
+}
+
+export interface SkillsManifestResponseApi {
+  status: boolean;
+  result: SkillsHubManifestApi;
+}
+
+export interface SkillsHubTemplateFileApi {
+  /** @minLength 1 */
+  path: string;
+  size_bytes: number;
+}
+
+export interface SkillsHubTemplateApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  tags: string[];
+  files: SkillsHubTemplateFileApi[];
+}
+
+export interface SkillsTemplateListResponseApi {
+  status: boolean;
+  result: SkillsHubTemplateApi[];
+}
+
+export interface SkillsHubTagsRequestApi {
+  /** @maxItems 20 */
+  tags: string[];
+}
+
+export interface SkillsHubEmptyRequestApi {
+  [key: string]: unknown;
+}
+
+export type SkillsHubCompareFileApiStatus =
+  (typeof SkillsHubCompareFileApiStatus)[keyof typeof SkillsHubCompareFileApiStatus];
+
+export const SkillsHubCompareFileApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+  unchanged: "unchanged",
+} as const;
+
+export interface SkillsHubCompareFileApi {
+  /** @minLength 1 */
+  path: string;
+  status: SkillsHubCompareFileApiStatus;
+  /** @minLength 1 */
+  from_sha256: string;
+  /** @minLength 1 */
+  to_sha256: string;
+  from_text?: string;
+  to_text?: string;
+}
+
+export interface SkillsHubCompareSummaryApi {
+  added: number;
+  removed: number;
+  modified: number;
+  unchanged: number;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type SkillsHubCompareResultApiFrom = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type SkillsHubCompareResultApiTo = { [key: string]: unknown };
+
+export interface SkillsHubCompareResultApi {
+  /** Any valid JSON value. */
+  from: SkillsHubCompareResultApiFrom;
+  /** Any valid JSON value. */
+  to: SkillsHubCompareResultApiTo;
+  files: SkillsHubCompareFileApi[];
+  summary: SkillsHubCompareSummaryApi;
+}
+
+export interface SkillsCompareResultResponseApi {
+  status: boolean;
+  result: SkillsHubCompareResultApi;
+}
+
+export interface SkillsHubDraftOutApi {
+  base_version: number;
+  files: SkillsHubFileInputApi[];
+  note: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface SkillsDraftOutResponseApi {
+  status: boolean;
+  result: SkillsHubDraftOutApi;
+}
+
+export interface SkillsHubDraftRequestApi {
+  files: SkillsHubFileInputApi[];
+  /** @maxLength 2000 */
+  note?: string;
+  /** @minimum 1 */
+  base_version: number;
+  /** @minimum 0 */
+  revision: number;
+}
+
+export interface SkillsHubPublishOptionsApi {
+  /** @maxLength 2000 */
+  note?: string;
+  /** @maxItems 20 */
+  labels?: string[];
+  acknowledge_warnings?: boolean;
+  force?: boolean;
+}
+
+export type SkillsHubPublishResultApiVersionCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubPublishResultApiVersionSource = { [key: string]: unknown };
+
+export type SkillsHubPublishResultApiVersion = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubPublishResultApiVersionCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubPublishResultApiVersionSource;
+};
+
+export interface SkillsHubPublishResultApi {
+  version: SkillsHubPublishResultApiVersion;
+  unchanged: boolean;
+  checks: SkillsHubChecksResultApi;
+}
+
+export interface SkillsPublishResultResponseApi {
+  status: boolean;
+  result: SkillsHubPublishResultApi;
+}
+
+export interface SkillsLabelOutListResponseApi {
+  status: boolean;
+  result: SkillsHubLabelOutApi[];
+}
+
+export type SkillsHubLabelEventApiActorKind =
+  (typeof SkillsHubLabelEventApiActorKind)[keyof typeof SkillsHubLabelEventApiActorKind];
+
+export const SkillsHubLabelEventApiActorKind = {
+  user: "user",
+  api_key: "api_key",
+} as const;
+
+export type SkillsHubLabelEventApiActor = {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: SkillsHubLabelEventApiActorKind;
+};
+
+export interface SkillsHubLabelEventApi {
+  /** @minLength 1 */
+  label: string;
+  from_version: number;
+  to_version: number;
+  readonly actor?: SkillsHubLabelEventApiActor;
+  note: string;
+  created_at: string;
+}
+
+export interface SkillsHubHistoryPageApi {
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: SkillsHubLabelEventApi[];
+}
+
+export interface SkillsHistoryPageResponseApi {
+  status: boolean;
+  result: SkillsHubHistoryPageApi;
+}
+
+export interface SkillsHubSetLabelRequestApi {
+  /** @minimum 1 */
+  expected_version?: number;
+  /** @minimum 1 */
+  version: number;
+  /** @maxLength 500 */
+  note?: string;
+}
+
+export interface SkillsLabelOutResponseApi {
+  status: boolean;
+  result: SkillsHubLabelOutApi;
+}
+
+export interface SkillsHubRemoveLabelRequestApi {
+  /** @minimum 1 */
+  expected_version?: number;
+}
+
+export interface SkillsHubUsageDayApi {
+  day: string;
+  version: number;
+  count: number;
+}
+
+export interface SkillsHubChannelsApi {
+  api: number;
+  download: number;
+  mcp: number;
+}
+
+export interface SkillsHubUsageVersionApi {
+  version: number;
+  count: number;
+  last_at: string;
+}
+
+export type SkillsHubConsumerApiChannel =
+  (typeof SkillsHubConsumerApiChannel)[keyof typeof SkillsHubConsumerApiChannel];
+
+export const SkillsHubConsumerApiChannel = {
+  api: "api",
+  download: "download",
+  mcp: "mcp",
+} as const;
+
+export interface SkillsHubConsumerApi {
+  label: string;
+  channel: SkillsHubConsumerApiChannel;
+  count: number;
+  last_at: string;
+}
+
+export interface SkillsHubUsageApi {
+  days: number;
+  total: number;
+  by_day: SkillsHubUsageDayApi[];
+  by_channel: SkillsHubChannelsApi;
+  by_version: SkillsHubUsageVersionApi[];
+  consumers: SkillsHubConsumerApi[];
+  last_fetched_at: string;
+}
+
+export interface SkillsUsageResponseApi {
+  status: boolean;
+  result: SkillsHubUsageApi;
+}
+
+export type SkillsHubVersionPageApiResultsItemCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubVersionPageApiResultsItemSource = {
+  [key: string]: unknown;
+};
+
+export type SkillsHubVersionPageApiResultsItem = {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubVersionPageApiResultsItemCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubVersionPageApiResultsItemSource;
+};
+
+export interface SkillsHubVersionPageApi {
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: SkillsHubVersionPageApiResultsItem[];
+}
+
+export interface SkillsVersionPageResponseApi {
+  status: boolean;
+  result: SkillsHubVersionPageApi;
+}
+
+export interface SkillsHubPublishVersionRequestApi {
+  /** @maxLength 2000 */
+  note?: string;
+  /** @maxItems 20 */
+  labels?: string[];
+  acknowledge_warnings?: boolean;
+  force?: boolean;
+  files: SkillsHubFileInputApi[];
+  /** @minimum 1 */
+  base_version?: number;
+}
+
+export interface SkillsHubVersionFileApi {
+  /** @minLength 1 */
+  path: string;
+  size_bytes: number;
+  /** @minLength 1 */
+  sha256: string;
+  token_estimate: number;
+}
+
+export type SkillsHubVersionDetailApiCreatedBy = {
+  id: string;
+  name: string;
+};
+
+export type SkillsHubVersionDetailApiSource = { [key: string]: unknown };
+
+export type SkillsHubVersionDetailApiFrontmatter = { [key: string]: unknown };
+
+export interface SkillsHubVersionDetailApi {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  digest: string;
+  note: string;
+  created_at: string;
+  created_by: SkillsHubVersionDetailApiCreatedBy;
+  file_count: number;
+  total_bytes: number;
+  readonly labels?: readonly string[];
+  source: SkillsHubVersionDetailApiSource;
+  frontmatter: SkillsHubVersionDetailApiFrontmatter;
+  checks: SkillsHubChecksResultApi;
+  files: SkillsHubVersionFileApi[];
+}
+
+export interface SkillsVersionDetailResponseApi {
+  status: boolean;
+  result: SkillsHubVersionDetailApi;
+}
+
+export interface SkillsHubFileChunkApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+  total_chars: number;
+  offset: number;
+  next_offset: number;
+  eof: boolean;
+  text: string;
+}
+
+export interface SkillsFileChunkResponseApi {
+  status: boolean;
+  result: SkillsHubFileChunkApi;
+}
+
+export interface SkillsHubRestoreRequestApi {
+  /** @maxLength 2000 */
+  note?: string;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -41523,4 +42371,158 @@ export type UsageWorkspaceUsageSummaryListParams = {
    */
   month?: number;
   year?: number;
+};
+
+export type ModelHubSkillsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  search?: string;
+  tag?: string;
+  label?: string;
+  sort?: ModelHubSkillsListSort;
+  order?: ModelHubSkillsListOrder;
+};
+
+export type ModelHubSkillsListSort =
+  (typeof ModelHubSkillsListSort)[keyof typeof ModelHubSkillsListSort];
+
+export const ModelHubSkillsListSort = {
+  updated: "updated",
+  name: "name",
+  created: "created",
+} as const;
+
+export type ModelHubSkillsListOrder =
+  (typeof ModelHubSkillsListOrder)[keyof typeof ModelHubSkillsListOrder];
+
+export const ModelHubSkillsListOrder = {
+  asc: "asc",
+  desc: "desc",
+} as const;
+
+export type ModelHubSkillsDownloadListParams = {
+  /**
+   * @minLength 1
+   */
+  label?: string;
+  /**
+   * @minimum 1
+   */
+  version?: number;
+  /**
+   * @minLength 1
+   */
+  names?: string;
+  /**
+   * @minLength 1
+   */
+  tag?: string;
+};
+
+export type ModelHubSkillsImportCreateBody = {
+  /** Repeat this multipart part for each file. Filename is its relative POSIX path. */
+  files: Blob;
+  /** JSON array of bundle keys returned by preview. */
+  selected: string;
+  /** JSON array of labels to move. */
+  labels?: string;
+  acknowledge_warnings?: boolean;
+};
+
+export type ModelHubSkillsImportPreviewCreateBody = {
+  /** Repeat this multipart part for each file. Filename is its relative POSIX path. */
+  files: Blob;
+};
+
+export type ModelHubSkillsResolveListParams = {
+  /**
+   * @minLength 1
+   */
+  label?: string;
+  /**
+   * @minimum 1
+   */
+  version?: number;
+  /**
+   * @minLength 1
+   */
+  name: string;
+  include_content?: boolean;
+};
+
+export type ModelHubSkillsCompareListParams = {
+  /**
+   * @minLength 1
+   * @pattern ^(draft|[1-9][0-9]*)$
+   */
+  from: string;
+  /**
+   * @minLength 1
+   * @pattern ^(draft|[1-9][0-9]*)$
+   */
+  to: string;
+};
+
+export type ModelHubSkillsLabelsHistoryListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  /**
+   * @minLength 1
+   */
+  label?: string;
+};
+
+export type ModelHubSkillsUsageListParams = {
+  days?: ModelHubSkillsUsageListDays;
+};
+
+export type ModelHubSkillsUsageListDays =
+  (typeof ModelHubSkillsUsageListDays)[keyof typeof ModelHubSkillsUsageListDays];
+
+export const ModelHubSkillsUsageListDays = {
+  NUMBER_7: 7,
+  NUMBER_30: 30,
+  NUMBER_90: 90,
+} as const;
+
+export type ModelHubSkillsVersionsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
+
+export type ModelHubSkillsVersionsFilesListParams = {
+  /**
+   * @minLength 1
+   */
+  path: string;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+  /**
+   * @minimum 1
+   * @maximum 49152
+   */
+  max_bytes?: number;
 };

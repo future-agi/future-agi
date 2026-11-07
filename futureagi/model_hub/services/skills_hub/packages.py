@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import lzma
 import posixpath
 import re
 import stat
@@ -16,8 +17,13 @@ import zlib
 from collections import Counter
 
 from model_hub.services.skills_hub import limits
-from model_hub.services.skills_hub.checks import path_is_valid, run_checks, text_is_valid
+from model_hub.services.skills_hub.checks import (
+    path_is_valid,
+    run_checks,
+    text_is_valid,
+)
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.types import FileInput
 
 _LOCK_PATH = ".futureagi-skills.lock.json"
 _ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
@@ -30,7 +36,15 @@ def file_sha256(content: str) -> str:
 
 def manifest_digest(files: list[dict]) -> str:
     """Hash canonical path/hash pairs independently of input order."""
-    manifest = sorted([[file["path"], file["sha256"] if "sha256" in file else file_sha256(file["content"])] for file in files])
+    manifest = sorted(
+        [
+            [
+                file["path"],
+                file["sha256"] if "sha256" in file else file_sha256(file["content"]),
+            ]
+            for file in files
+        ]
+    )
     encoded = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
@@ -39,7 +53,9 @@ def _too_large(message: str) -> SkillsHubError:
     return SkillsHubError("payload_too_large", message, status=413)
 
 
-def build_zip(skills: list[dict], *, origin: str, skipped: list[dict] | None = None) -> bytes:
+def build_zip(
+    skills: list[dict], *, origin: str, skipped: list[dict] | None = None
+) -> bytes:
     """Build byte-identical downloads for identical skill and lock metadata."""
     if len(skills) > limits.MAX_DOWNLOAD_SKILLS:
         raise _too_large("Download at most 50 skills at a time.")
@@ -48,8 +64,16 @@ def build_zip(skills: list[dict], *, origin: str, skipped: list[dict] | None = N
     names: set[str] = set()
     for skill in sorted(skills, key=lambda entry: entry["name"]):
         name = skill["name"]
-        if len(name) > limits.MAX_NAME or not re.fullmatch(limits.NAME_RE, name) or name in names:
-            raise SkillsHubError("import_invalid", "Each downloaded skill needs a unique valid name.", status=400)
+        if (
+            len(name) > limits.MAX_NAME
+            or not re.fullmatch(limits.NAME_RE, name)
+            or name in names
+        ):
+            raise SkillsHubError(
+                "import_invalid",
+                "Each downloaded skill needs a unique valid name.",
+                status=400,
+            )
         names.add(name)
         if len(skill["files"]) > limits.MAX_FILES:
             raise _too_large("Keep each skill within 200 files.")
@@ -57,28 +81,51 @@ def build_zip(skills: list[dict], *, origin: str, skipped: list[dict] | None = N
         total = 0
         for file in skill["files"]:
             path, content = file["path"], file["content"]
-            if not path_is_valid(path) or path.casefold() in paths or not text_is_valid(content):
-                raise SkillsHubError("import_invalid", "Download files must have unique safe paths and UTF-8 text.", status=400)
+            if (
+                not path_is_valid(path)
+                or path.casefold() in paths
+                or not text_is_valid(content)
+            ):
+                raise SkillsHubError(
+                    "import_invalid",
+                    "Download files must have unique safe paths and UTF-8 text.",
+                    status=400,
+                )
             paths.add(path.casefold())
             encoded = content.encode("utf-8")
             total += len(encoded)
             if len(encoded) > limits.MAX_FILE_BYTES or total > limits.MAX_VERSION_BYTES:
                 raise _too_large("The skill exceeds the file or total size limit.")
             entries[f"{name}/{path}"] = encoded
-        lock_skills.append({key: skill[key] for key in ("name", "version", "version_id", "digest", "label")})
+        lock_skills.append(
+            {
+                key: skill[key]
+                for key in ("name", "version", "version_id", "digest", "label")
+            }
+        )
     lock = {
-        "schema": 1, "origin": origin, "skills": lock_skills,
-        "skipped": sorted(skipped or [], key=lambda entry: (entry["name"], entry["reason"])),
+        "schema": 1,
+        "origin": origin,
+        "skills": lock_skills,
+        "skipped": sorted(
+            skipped or [], key=lambda entry: (entry["name"], entry["reason"])
+        ),
     }
-    entries[_LOCK_PATH] = json.dumps(lock, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    entries[_LOCK_PATH] = json.dumps(
+        lock, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    with zipfile.ZipFile(
+        output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
         for path, content in sorted(entries.items()):
             info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
             info.create_system = 3
             info.external_attr = (stat.S_IFREG | 0o644) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, content, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            archive.writestr(
+                info, content, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9
+            )
     return output.getvalue()
 
 
@@ -109,7 +156,9 @@ def _decode_file(path: str, raw: bytes, rejected: list[dict]) -> str | None:
     return content
 
 
-def _zip_files(filename: str, raw: bytes, rejected: list[dict], skipped: list[str], budget: dict) -> dict[str, str]:
+def _zip_files(
+    filename: str, raw: bytes, rejected: list[dict], skipped: list[str], budget: dict
+) -> dict[str, str]:
     if len(raw) > limits.MAX_ZIP_BYTES:
         _reject(rejected, filename, "compressed_too_large")
         return {}
@@ -123,7 +172,9 @@ def _zip_files(filename: str, raw: bytes, rejected: list[dict], skipped: list[st
                 raise _too_large("Import at most 1,000 ZIP entries at a time.")
             if budget["bytes"] > limits.MAX_UNZIPPED_BYTES:
                 raise _too_large("Keep the uncompressed import within 20 MiB.")
-            counts = Counter(entry.orig_filename.rstrip("/").casefold() for entry in entries)
+            counts = Counter(
+                entry.orig_filename.rstrip("/").casefold() for entry in entries
+            )
             for entry in entries:
                 # orig_filename preserves NULs, which ZipInfo.filename truncates.
                 path = entry.orig_filename
@@ -152,7 +203,15 @@ def _zip_files(filename: str, raw: bytes, rejected: list[dict], skipped: list[st
                     content = _decode_file(path, data, rejected)
                     if content is not None:
                         files[path] = content
-                except (zipfile.BadZipFile, NotImplementedError, RuntimeError, EOFError, zlib.error):
+                except (
+                    zipfile.BadZipFile,
+                    NotImplementedError,
+                    RuntimeError,
+                    EOFError,
+                    zlib.error,
+                    lzma.LZMAError,
+                    OSError,
+                ):
                     _reject(rejected, path, "archive_invalid")
     except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, ValueError):
         _reject(rejected, filename, "archive_invalid")
@@ -166,7 +225,7 @@ def _entry_rejection(entry: zipfile.ZipInfo, path: str, counts: Counter) -> str 
         return "symlink"
     if mode not in (0, stat.S_IFREG, stat.S_IFDIR):
         return "special_file"
-    if entry.flag_bits & 1:
+    if entry.flag_bits & (1 | 64):
         return "encrypted"
     if counts[path.casefold()] > 1:
         return "path_duplicate"
@@ -179,7 +238,9 @@ def _entry_rejection(entry: zipfile.ZipInfo, path: str, counts: Counter) -> str 
     return None
 
 
-def _bundles(files: dict[str, str], source: str, fallback_name: str, rejected: list[dict]) -> list[dict]:
+def _bundles(
+    files: dict[str, str], source: str, fallback_name: str, rejected: list[dict]
+) -> list[dict]:
     roots: list[str] = []
     for path in sorted(files, key=lambda name: (name.count("/"), name)):
         if posixpath.basename(path) != "SKILL.md":
@@ -192,13 +253,31 @@ def _bundles(files: dict[str, str], source: str, fallback_name: str, rejected: l
     bundles = []
     for root in roots:
         prefix = root + "/" if root else ""
-        bundle_files = [{"path": path[len(prefix):], "content": content} for path, content in sorted(files.items()) if path.startswith(prefix)]
+        bundle_files: list[FileInput] = [
+            {"path": path[len(prefix) :], "content": content}
+            for path, content in sorted(files.items())
+            if path.startswith(prefix)
+        ]
         checks = run_checks(bundle_files)
         name = (checks["frontmatter"] or {}).get("name")
-        if not isinstance(name, str) or len(name) > limits.MAX_NAME or not re.fullmatch(limits.NAME_RE, name):
+        if (
+            not isinstance(name, str)
+            or len(name) > limits.MAX_NAME
+            or not re.fullmatch(limits.NAME_RE, name)
+        ):
             name = posixpath.basename(root) or fallback_name
-        key = hashlib.sha256(json.dumps([source, root], separators=(",", ":")).encode("utf-8")).hexdigest()
-        bundles.append({"key": key, "root": root, "name": name, "files": bundle_files, "checks": checks})
+        key = hashlib.sha256(
+            json.dumps([source, root], separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        bundles.append(
+            {
+                "key": key,
+                "root": root,
+                "name": name,
+                "files": bundle_files,
+                "checks": checks,
+            }
+        )
     if not roots and files:
         _reject(rejected, source, "root_missing")
     return bundles
@@ -224,7 +303,14 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
             continue
         if filename.lower().endswith(".zip") or raw.startswith(_ZIP_MAGIC):
             files = _zip_files(filename, raw, rejected, skipped, budget)
-            bundles.extend(_bundles(files, f"{index}:{filename}", posixpath.splitext(posixpath.basename(filename))[0], rejected))
+            bundles.extend(
+                _bundles(
+                    files,
+                    f"{index}:{filename}",
+                    posixpath.splitext(posixpath.basename(filename))[0],
+                    rejected,
+                )
+            )
         else:
             loose.append((filename, raw))
     if len(loose) > limits.MAX_LOOSE_FILES:

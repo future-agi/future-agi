@@ -6,6 +6,7 @@ import {
   useWorkspacesList,
 } from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { SKILLS_NAV_ICON } from "src/sections/skills/components/skillIcons";
 import { agentsSidebarPath } from "src/sections/agent-playground/agentsTabs";
 import { usePathname } from "src/routes/hooks";
 import { HELP_LINK } from "src/config-global";
@@ -130,6 +131,11 @@ export function useNavData() {
             [PropertyName.click]: true,
           });
         },
+      },
+      {
+        title: "Skills",
+        path: paths.dashboard.skills.root,
+        icon: <Iconify icon={SKILLS_NAV_ICON} />,
       },
       {
         title: "Agents",

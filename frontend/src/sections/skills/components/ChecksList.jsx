@@ -22,7 +22,8 @@ export default function ChecksList({ checks, onSelect, dense = false }) {
             <List disablePadding dense={dense}>
               {items.map((item, index) => {
                 const content = <Stack spacing={0.5} sx={{ py: dense ? 0.5 : 1, minWidth: 0 }}>
-                  <StatusBadge status={status} label={item.message} size="sm" />
+                  <StatusBadge status={status} label={severity === 'info' ? 'Note' : severity === 'error' ? 'Error' : 'Warning'} size="sm" sx={{ alignSelf: 'flex-start' }} />
+                  <Typography variant="s1" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.message}</Typography>
                   {item.path && <Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{item.path}{item.line ? `:${item.line}` : ''}</Typography>}
                 </Stack>;
                 return <ListItem key={`${item.code}-${item.path || ''}-${item.line || ''}-${index}`} disablePadding>

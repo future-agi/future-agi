@@ -1,0 +1,17 @@
+meta {
+  name: Resolve skill
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/resolve/?name={{skill_name}}&label=production&include_content=false
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

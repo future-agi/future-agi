@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import EmptyState from "src/components/empty-state";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -21,13 +21,14 @@ export default function LibraryEmptyState({ onCreate, onImport }) {
         {templates.isError && <ErrorState title="Couldn't load templates" onRetry={templates.refetch} />}
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(3, minmax(0, 1fr))" }, gap: 1 }}>
           {(templates.data || []).filter((template) => template.id !== "blank").map((template) => (
-            <Button key={template.id} variant="outlined" color="inherit" onClick={() => onCreate(template.id)}
-              sx={{ p: 1.5, justifyContent: "flex-start", textAlign: "left", borderColor: "divider" }}>
+            <ButtonBase key={template.id} onClick={() => onCreate(template.id)}
+              sx={{ p: 1.5, justifyContent: "flex-start", textAlign: "left", border: 1, borderColor: "divider", borderRadius: 1,
+                "&:hover": { bgcolor: "action.hover" }, "&.Mui-focusVisible": { outline: "2px solid", outlineColor: "primary.main" } }}>
               <Stack spacing={0.5}>
                 <Typography variant="m3" color="text.primary">{template.title}</Typography>
                 <Typography variant="s3" color="text.secondary">{template.description}</Typography>
               </Stack>
-            </Button>
+            </ButtonBase>
           ))}
         </Box>
       </Stack>

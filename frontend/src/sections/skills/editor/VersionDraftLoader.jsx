@@ -26,20 +26,22 @@ FileLoader.propTypes = {
 export default function VersionDraftLoader({ skillId, number, children }) {
   const query = useSkillVersion(skillId, number);
   const [contents, setContents] = useState({});
+  const [draft, setDraft] = useState(null);
   const onLoad = useCallback((path, content) => {
     setContents((previous) => previous[path] === content ? previous : { ...previous, [path]: content });
   }, []);
-  if (query.isError) return <ErrorState title="Couldn't load the latest version" onRetry={query.refetch} />;
-  if (!query.data) return <ContentSkeleton variant="panel" label="Loading version files" />;
-  const ready = query.data.files.every(({ path }) => Object.hasOwn(contents, path));
-  if (ready) {
-    return children({
+  useEffect(() => {
+    if (draft || !query.data || !query.data.files.every(({ path }) => Object.hasOwn(contents, path))) return;
+    setDraft({
       baseVersion: number,
       files: query.data.files.map(({ path }) => ({ path, content: contents[path] })),
       note: "",
       revision: 0,
     });
-  }
+  }, [draft, query.data, contents, number]);
+  if (draft) return children(draft);
+  if (query.isError) return <ErrorState title="Couldn't load the latest version" onRetry={query.refetch} />;
+  if (!query.data) return <ContentSkeleton variant="panel" label="Loading version files" />;
   return (
     <>
       <ContentSkeleton variant="panel" label="Loading version files" />

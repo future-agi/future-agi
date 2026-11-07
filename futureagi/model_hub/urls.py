@@ -283,6 +283,7 @@ queue_items_router.register(
 )
 
 urlpatterns = [
+    path("skills/", include("model_hub.urls_skills_hub")),
     path("", include(router.urls)),
     path(
         "annotation-queues/<uuid:queue_id>/",

@@ -109,6 +109,18 @@ const ProfileSettings = lazyWithRetry(
 const OrgSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/OrgSettings"),
 );
+const SkillsLibraryPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillsLibraryPage"),
+);
+const SkillDetailPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillDetailPage"),
+);
+const SkillEditorPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillEditorPage"),
+);
+const SkillComparePage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillComparePage"),
+);
 const Prompt = lazyWithRetry(() => import("src/pages/dashboard/Prompt/Prompt"));
 const Evals = lazyWithRetry(() => import("src/pages/dashboard/evals/Evals"));
 const EvalsUsage = lazyWithRetry(
@@ -1310,6 +1322,15 @@ export const dashboardRoutes = (
           path: "add/:id",
           element: <AddNewPrompt />,
         },
+      ],
+    },
+    {
+      path: "skills",
+      children: [
+        { index: true, element: <SkillsLibraryPage /> },
+        { path: ":skillId", element: <SkillDetailPage /> },
+        { path: ":skillId/edit", element: <SkillEditorPage /> },
+        { path: ":skillId/compare", element: <SkillComparePage /> },
       ],
     },
     {
