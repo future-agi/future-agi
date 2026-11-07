@@ -26,7 +26,7 @@ import { CSS } from "@dnd-kit/utilities";
 import ContentSkeleton from "src/components/content-skeleton";
 
 // Sortable Image Item Component
-const SortableImageItem = ({ url, index, onDelete }) => {
+const SortableImageItem = ({ id, url, index, onDelete }) => {
   const {
     attributes,
     listeners,
@@ -34,7 +34,7 @@ const SortableImageItem = ({ url, index, onDelete }) => {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `image-${index}` });
+  } = useSortable({ id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -99,7 +99,7 @@ const SortableImageItem = ({ url, index, onDelete }) => {
         size="small"
         onClick={(e) => {
           e.stopPropagation();
-          onDelete(index);
+          onDelete(id);
         }}
         sx={{
           position: "absolute",
@@ -124,18 +124,25 @@ const SortableImageItem = ({ url, index, onDelete }) => {
 };
 
 SortableImageItem.propTypes = {
+  id: PropTypes.string.isRequired,
   url: PropTypes.string.isRequired,
   index: PropTypes.number.isRequired,
   onDelete: PropTypes.func.isRequired,
 };
 
+const createImageItem = (url, nextImageIdRef) => ({
+  id: `image-${nextImageIdRef.current++}`,
+  url,
+});
+
 const EditImages = ({ params, onClose, onCellValueChanged }) => {
   const fileInputRef = useRef(null);
-  const [imageUrls, setImageUrls] = useState([]);
+  const nextImageIdRef = useRef(0);
+  const [images, setImages] = useState([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [deleteIndex, setDeleteIndex] = useState(null);
+  const [deleteImageId, setDeleteImageId] = useState(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -154,20 +161,26 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
           typeof params.value === "string"
             ? JSON.parse(params.value)
             : params.value;
-        setImageUrls(Array.isArray(parsed) ? parsed : [parsed]);
+        const urls = Array.isArray(parsed) ? parsed : [parsed];
+        setImages(urls.map((url) => createImageItem(url, nextImageIdRef)));
       } catch {
-        setImageUrls([params.value]);
+        setImages([createImageItem(params.value, nextImageIdRef)]);
       }
     }
   }, [params?.value]);
 
   const handleDragEnd = (event) => {
     const { active, over } = event;
-    if (active.id !== over?.id) {
-      const oldIndex = parseInt(active.id.replace("image-", ""), 10);
-      const newIndex = parseInt(over.id.replace("image-", ""), 10);
-      setImageUrls((items) => arrayMove(items, oldIndex, newIndex));
-    }
+    if (!over || active.id === over.id) return;
+
+    setImages((items) => {
+      const oldIndex = items.findIndex((item) => item.id === active.id);
+      const newIndex = items.findIndex((item) => item.id === over.id);
+
+      if (oldIndex === -1 || newIndex === -1) return items;
+
+      return arrayMove(items, oldIndex, newIndex);
+    });
   };
 
   const handleClose = () => {
@@ -181,7 +194,8 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
   const onSubmit = (e) => {
     e.preventDefault();
     try {
-      const newValue = imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
+      const newValue =
+        images.length > 0 ? JSON.stringify(images.map(({ url }) => url)) : null;
       onCellValueChanged({
         ...params,
         newValue,
@@ -199,17 +213,17 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
   };
 
   const handleConfirmDelete = () => {
-    if (deleteIndex !== null) {
-      setImageUrls((prev) => prev.filter((_, i) => i !== deleteIndex));
+    if (deleteImageId !== null) {
+      setImages((prev) => prev.filter(({ id }) => id !== deleteImageId));
     }
     setIsDeleteDialogOpen(false);
-    setDeleteIndex(null);
+    setDeleteImageId(null);
   };
 
   const handleDeleteAll = () => {
-    setImageUrls([]);
+    setImages([]);
     setIsDeleteDialogOpen(false);
-    setDeleteIndex(null);
+    setDeleteImageId(null);
   };
 
   const processFiles = (files) => {
@@ -237,7 +251,10 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
         newUrls.push(reader.result);
         processed++;
         if (processed === validFiles.length) {
-          setImageUrls((prev) => [...prev, ...newUrls]);
+          setImages((prev) => [
+            ...prev,
+            ...newUrls.map((url) => createImageItem(url, nextImageIdRef)),
+          ]);
           setIsLoading(false);
         }
       };
@@ -247,7 +264,10 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
         });
         processed++;
         if (processed === validFiles.length) {
-          setImageUrls((prev) => [...prev, ...newUrls]);
+          setImages((prev) => [
+            ...prev,
+            ...newUrls.map((url) => createImageItem(url, nextImageIdRef)),
+          ]);
           setIsLoading(false);
         }
       };
@@ -288,10 +308,12 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
     }
   };
 
-  const handleDeleteClick = (index) => {
-    setDeleteIndex(index);
+  const handleDeleteClick = (imageId) => {
+    setDeleteImageId(imageId);
     setIsDeleteDialogOpen(true);
   };
+
+  const deleteImageIndex = images.findIndex(({ id }) => id === deleteImageId);
 
   const containerStyles = {
     display: "grid",
@@ -308,7 +330,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
     transition: "all 0.2s ease",
   };
 
-  const sortableItems = imageUrls.map((_, index) => `image-${index}`);
+  const sortableItems = images.map(({ id }) => id);
 
   return (
     <>
@@ -345,7 +367,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={!isLoading && imageUrls.length === 0}>
+          <ShowComponent condition={!isLoading && images.length === 0}>
             <Box {...getRootProps()} sx={containerStyles}>
               <input {...getInputProps()} />
               <Box
@@ -385,7 +407,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={!isLoading && imageUrls.length > 0}>
+          <ShowComponent condition={!isLoading && images.length > 0}>
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
@@ -396,9 +418,10 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 strategy={rectSortingStrategy}
               >
                 <Box sx={containerStyles}>
-                  {imageUrls.map((url, index) => (
+                  {images.map(({ id, url }, index) => (
                     <SortableImageItem
-                      key={`image-${index}`}
+                      key={id}
+                      id={id}
                       url={url}
                       index={index}
                       onDelete={handleDeleteClick}
@@ -424,9 +447,9 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
           >
             <Box>
               <Typography variant="body2" color="text.secondary">
-                {imageUrls.length} image{imageUrls.length !== 1 ? "s" : ""}
+                {images.length} image{images.length !== 1 ? "s" : ""}
               </Typography>
-              {imageUrls.length > 1 && (
+              {images.length > 1 && (
                 <Typography variant="caption" color="text.secondary">
                   Drag to reorder
                 </Typography>
@@ -458,7 +481,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   onChange={handleImageChange}
                 />
               </LoadingButton>
-              {imageUrls.length > 0 && (
+              {images.length > 0 && (
                 <LoadingButton
                   size="small"
                   startIcon={
@@ -469,7 +492,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                     />
                   }
                   onClick={() => {
-                    setDeleteIndex(null);
+                    setDeleteImageId(null);
                     setIsDeleteDialogOpen(true);
                   }}
                   sx={{
@@ -512,12 +535,16 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
         open={isDeleteDialogOpen}
         onClose={() => {
           setIsDeleteDialogOpen(false);
-          setDeleteIndex(null);
+          setDeleteImageId(null);
         }}
-        onDelete={deleteIndex !== null ? handleConfirmDelete : handleDeleteAll}
+        onDelete={
+          deleteImageId !== null ? handleConfirmDelete : handleDeleteAll
+        }
         isPending={false}
         fileName={
-          deleteIndex !== null ? `Image ${deleteIndex + 1}` : "all images"
+          deleteImageIndex !== -1
+            ? `Image ${deleteImageIndex + 1}`
+            : "all images"
         }
         fileType="image"
       />
