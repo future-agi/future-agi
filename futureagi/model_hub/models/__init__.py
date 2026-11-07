@@ -34,4 +34,5 @@ from .optimize_dataset import OptimizeDataset
 from .performance_report import PerformanceReport
 from .prompt import Prompt
 from .score import Score
+from .skills_hub import (HubSkill, HubSkillBlob, HubSkillDraft, HubSkillFile, HubSkillLabel, HubSkillLabelEvent, HubSkillUsageDaily, HubSkillVersion)
 from .tts_voices import TTSVoice

@@ -104,6 +104,8 @@ fi-collector/
 # Docs (not needed in the image)
 # ---------------------------------------------------------------------------
 **/*.md
+# Skills built-in templates are product data (SKILL.md files), not docs.
+!futureagi/model_hub/services/skills_hub/templates/**
 docs/
 changelog/
 
