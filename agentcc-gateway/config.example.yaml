@@ -312,6 +312,7 @@ providers:
 #     failure_threshold: 5             # Consecutive failures to open circuit (default: 5)
 #     success_threshold: 2             # Successes in half-open to close (default: 2)
 #     cooldown: 30s                    # Time before half-open test (default: 30s)
+#     half_open_max_probes: 1          # In-flight probes allowed while half-open (default: 1)
 #   retry:
 #     enabled: true                    # Auto-retry on same provider (default: true when routing)
 #     max_retries: 2                   # Max retries per provider (default: 2)

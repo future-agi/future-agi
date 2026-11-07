@@ -34,6 +34,12 @@ futureagi/agentcc-gateway/config.*.yaml
 !futureagi/agentcc-gateway/config.e2e.yaml
 !futureagi/agentcc-gateway/config.loadtest.yaml
 
+# Gateway build output: `make build` writes bin/, and a bare
+# `go build ./cmd/agentcc` writes agentcc (agentcc.exe on Windows).
+agentcc-gateway/bin/
+agentcc-gateway/agentcc
+agentcc-gateway/*.exe
+
 # Private compose overlays (workspace-specific, internal testing, etc.)
 docker-compose.ws*.yml
 docker-compose.local.yml
