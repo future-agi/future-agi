@@ -188,7 +188,8 @@ const VoiceLeftPanel = ({
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
                     <TranscriptView
-                      transcript={filteredTranscript}
+                      transcript={data?.transcript}
+                      hideSystemRows
                       embedded={embedded}
                     />
                   </Box>
