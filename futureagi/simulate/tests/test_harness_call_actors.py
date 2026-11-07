@@ -639,3 +639,24 @@ def test_a_rerun_snapshot_keeps_who_spoke_each_turn(organization, workspace):
         "Rowan",
         "friend",
     )
+
+
+def test_a_member_stored_before_the_new_fields_reads_unchanged_against_the_same_scenario_now():
+    from simulate.services.harness_versioning.diffs import suite_diff
+    from simulate.services.harness_versioning.versions import _member_content
+
+    old = {"scenario_key": "a", "name": "a", "instruction": "Cancel it."}
+    now = {
+        **old,
+        "pre_run": [],
+        "faults": [],
+        "starts_with": None,
+        "limits": {},
+        "history": [],
+    }
+    assert _member_content(now) == _member_content(old)
+    assert suite_diff([old], [now])["changed"] == {}
+    assert suite_diff(
+        [old],
+        [{**now, "faults": [{"action": "crm.apply", "mode": "timeout_after_commit"}]}],
+    )["changed"] == {"a": ["faults"]}

@@ -465,8 +465,18 @@ def _proved_at(proof: Mapping[str, Any]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+# Fields a scenario only has when it uses them; empty is the same as absent, so a member stored before they were kept
+# compares equal to the same scenario now.
+OPTIONAL_MEMBER_FIELDS = ("pre_run", "history", "starts_with", "faults", "limits")
+
+
 def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
-    return {field: document[field] for field in MEMBER_FIELDS if field in document}
+    return {
+        field: document[field]
+        for field in MEMBER_FIELDS
+        if field in document
+        and not (field in OPTIONAL_MEMBER_FIELDS and not document[field])
+    }
 
 
 def _add_members(

@@ -13,6 +13,11 @@ _CONTRACT_IGNORED_FIELDS = frozenset({"chosen_evals", "amendments"})
 _SCENARIO_IGNORED_FIELDS = frozenset({"scenario_key", "scenario_id"})
 
 
+def _present(value: Any) -> Any:
+    """A field's value, with an empty list or object read as the field being absent."""
+    return None if value in ([], {}) else value
+
+
 def _added_removed(previous: Iterable[str], current: Iterable[str]) -> dict[str, list]:
     before, after = set(previous), set(current)
     return {"added": sorted(after - before), "removed": sorted(before - after)}
@@ -158,7 +163,7 @@ def suite_diff(
             field
             for field in set(before[key]) | set(after[key])
             if field not in _SCENARIO_IGNORED_FIELDS
-            and before[key].get(field) != after[key].get(field)
+            and _present(before[key].get(field)) != _present(after[key].get(field))
         )
         if fields:
             changed[key] = fields
