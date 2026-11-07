@@ -1491,6 +1491,9 @@ def _ingest_hosted_transcript(
                 }
                 if message.get("tool_calls"):
                     segment["tool_calls"] = message["tool_calls"]
+                if segment["speaker_role"] == CallTranscript.SpeakerRole.ACTOR:
+                    segment["actor"] = str(message.get("actor") or "")
+                    segment["name"] = str(message.get("name") or "")
                 at = sent_at(message)
                 if base_time is not None and at is not None:
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))

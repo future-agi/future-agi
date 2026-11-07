@@ -1562,6 +1562,7 @@ def _store_alk_chat_messages(
     supplied one; transcripts without timing leave it null, as native does.
     """
     from simulate.utils.chat_simulation import estimate_tokens_text
+    from simulate.utils.stored_transcript_roles import call_actor_label
 
     run_test = call_execution.test_execution.run_test
     base = call_execution.started_at or timezone.now()
@@ -1577,7 +1578,8 @@ def _store_alk_chat_messages(
         role = (seg.get("speaker_role") or "").lower()
         if not (seg.get("content") or "").strip():
             continue
-        if role in {"user", "customer"}:
+        if role in {"user", "customer", "actor"}:
+            # Someone else in the conversation (an actor) writes on the person's side, as their own turn.
             current = {"user": seg, "agent": []}
             exchanges.append(current)
         elif role in _CHAT_AGENT_SPEAKER_ROLES:
@@ -1586,11 +1588,18 @@ def _store_alk_chat_messages(
                 exchanges.append(current)
             current["agent"].append(seg)
 
+    def _text(seg: dict) -> str:
+        if (seg.get("speaker_role") or "").lower() == "actor":
+            return f"{call_actor_label(seg.get('name'))}: {seg.get('content') or ''}"
+        return seg.get("content") or ""
+
     def _row(role, role_str, segs, created_at, latency_ms=None) -> ChatMessageModel:
-        texts = [seg.get("content") or "" for seg in segs]
+        texts = [_text(seg) for seg in segs]
         content_items: list[dict] = []
         for seg in segs:
-            item = {"role": role_str, "content": seg.get("content") or ""}
+            item = {"role": role_str, "content": _text(seg)}
+            if seg.get("actor"):
+                item["actor"] = seg["actor"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
             speaker = (seg.get("speaker_role") or "").lower()

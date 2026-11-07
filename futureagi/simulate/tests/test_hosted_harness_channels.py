@@ -32,8 +32,8 @@ from simulate.services.hosted_harness import (
     update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
-    _apply_target_metrics,
     _apply_receipt_to_call,
+    _apply_target_metrics,
     _call_lifecycle_status,
     _ingest_hosted_transcript,
     _normalized_artifact_content_type,
@@ -752,6 +752,13 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
             "messages": [
                 {"role": "user", "content": "Where is my invoice?"},
                 {"role": "assistant", "content": "I can look that up."},
+                {
+                    "role": "actor",
+                    "actor": "partner",
+                    "name": "Sam",
+                    "content": "It is invoice 1046.",
+                },
+                {"role": "assistant", "content": "Looking up invoice 1046."},
             ]
         }
     ).encode()
@@ -768,7 +775,12 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
         ChatMessageModel.objects.filter(call_execution=call)
         .order_by("created_at", "role")
         .values_list("role", flat=True)
-    ) == ["user", "assistant"]
+    ) == ["user", "assistant", "user", "assistant"]
+    # What someone else in the conversation wrote reaches the chat view and every judge, named as not the person.
+    assert ChatMessageModel.objects.filter(
+        call_execution=call,
+        messages=["Sam (not the person being served): It is invoice 1046."],
+    ).exists()
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
 
