@@ -18,7 +18,8 @@ func orResolved(t *testing.T, model string, seconds float64, resolution, ratio s
 }
 
 // Upper-bound reservations for the seven smoke clips, from the pinned
-// 2026-11-06 catalog SKUs (Wan's advertised discount is ignored on purpose).
+// 2026-11-06 catalog SKUs (Wan's advertised discount is ignored on purpose),
+// the 5s minimum billed duration of Kling and Wan, and Seedance token headroom.
 func TestOpenRouterEstimatesForSmokeClips(t *testing.T) {
 	var total int64
 	for _, tc := range []struct {
@@ -27,10 +28,10 @@ func TestOpenRouterEstimatesForSmokeClips(t *testing.T) {
 		audio             bool
 		micros            int64
 	}{
-		{"bytedance/seedance-1-5-pro", "480p", 4, false, 46116},
+		{"bytedance/seedance-1-5-pro", "480p", 4, false, 53034},
 		{"google/veo-3.1-lite", "720p", 4, false, 120000},
-		{"kwaivgi/kling-v3.0-std", "720p", 3, false, 252000},
-		{"alibaba/wan-3.0", "480p", 2, false, 100000},
+		{"kwaivgi/kling-v3.0-std", "720p", 3, false, 420000},
+		{"alibaba/wan-3.0", "480p", 2, false, 250000},
 		{"minimax/hailuo-3-max", "480p", 5, false, 250000},
 		{"runway/gen-4.5", "720p", 2, false, 240000},
 		{"x-ai/grok-imagine-video-1.5-lite", "480p", 1, false, 20000},
@@ -41,7 +42,7 @@ func TestOpenRouterEstimatesForSmokeClips(t *testing.T) {
 		}
 		total += e.Micros
 	}
-	if total != 1028116 || total >= 5_000_000 {
+	if total != 1353034 || total >= 5_000_000 {
 		t.Fatalf("smoke reservation total %d", total)
 	}
 }
@@ -53,7 +54,7 @@ func TestOpenRouterEstimateAudioAndInputs(t *testing.T) {
 		t.Fatal(a.Micros, b.Micros)
 	}
 	seedance, _ := Estimate(orResolved(t, "bytedance/seedance-1-5-pro", 4, "480p", "16:9", true), Options{})
-	if seedance.Micros != 92232 {
+	if seedance.Micros != 106068 {
 		t.Fatal(seedance.Micros)
 	}
 	frame := video.Input{Role: video.FirstFrame, MediaType: "image/png", Source: video.Source{Data: "aW1n"}}
@@ -96,5 +97,28 @@ func TestUSDMicrosRoundsUpWithoutFloatNoise(t *testing.T) {
 	}
 	if n, err := USDRate(OpenRouterRevision).Price(0.12); err != nil || n != 120000 {
 		t.Fatal(n, err)
+	}
+}
+
+// The usage.cost OpenRouter reported for each clip in the 2026-11-07 live smoke
+// (gateway micros, rounded up). Every reservation must cover what was billed.
+func TestOpenRouterEstimatesCoverLiveBilledCosts(t *testing.T) {
+	for _, tc := range []struct {
+		model, resolution string
+		seconds           float64
+		billed            int64
+	}{
+		{"x-ai/grok-imagine-video-1.5-lite", "480p", 1, 19800},
+		{"bytedance/seedance-1-5-pro", "480p", 4, 48226},
+		{"alibaba/wan-3.0", "480p", 2, 210375},
+		{"google/veo-3.1-lite", "720p", 4, 118800},
+		{"runway/gen-4.5", "720p", 2, 237600},
+		{"minimax/hailuo-3-max", "480p", 5, 247500},
+		{"kwaivgi/kling-v3.0-std", "720p", 3, 415800},
+	} {
+		e, err := Estimate(orResolved(t, tc.model, tc.seconds, tc.resolution, "16:9", false), Options{})
+		if err != nil || e.Micros < tc.billed {
+			t.Fatalf("%s: reserved %v below billed %d (%v)", tc.model, e, tc.billed, err)
+		}
 	}
 }

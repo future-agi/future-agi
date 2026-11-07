@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,6 +49,54 @@ func (s *Service) priceObservation(j *video.VideoJob, obs provider.Observation) 
 	}
 	j.BillingKnown = true
 	j.BillingMicros = micros
+}
+
+// maxUsagePolls bounds accounting-only reads of a terminal job (one per five
+// minutes, about an hour) while its charge is still unknown.
+const maxUsagePolls = 12
+
+// refreshUsage re-reads a terminal job's provider status only to learn a
+// charge that was unknown when the job ended (for example OpenRouter reporting
+// usage.cost:null at completion). It never copies output, resubmits, or changes
+// the job's lifecycle state; the reservation stays held until a reported
+// charge settles it.
+func (s *Service) refreshUsage(ctx context.Context, j *video.VideoJob, l video.Lease) error {
+	a, ok := s.adapterFor(j)
+	if !ok {
+		return s.saveLater(ctx, j, l, 5*time.Minute)
+	}
+	allowed, delay, err := s.rate(ctx, j, "poll")
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return s.saveLater(ctx, j, l, delay)
+	}
+	var obs provider.Observation
+	err = s.withPermit(ctx, j, "poll", func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, s.cfg.Providers[j.Service].Deadlines.Read)
+		defer cancel()
+		var e error
+		obs, e = a.Poll(ctx, ref(j))
+		return e
+	})
+	if errors.Is(err, errLimited) {
+		return s.saveLater(ctx, j, l, time.Second)
+	}
+	j.UsagePolls++
+	terminal := obs.Normalized == provider.StateCompleted || obs.Normalized == provider.StateFailed || obs.Normalized == provider.StateCancelled
+	if err != nil || !terminal || obs.Usage == nil || len(obs.Usage.Lines) == 0 {
+		return s.saveLater(ctx, j, l, 5*time.Minute)
+	}
+	if j.Usage == nil {
+		j.Usage = &video.VideoUsage{Model: j.Model}
+	}
+	j.Usage.Lines = append([]provider.UsageLine(nil), obs.Usage.Lines...)
+	s.priceObservation(j, obs)
+	if e := s.save(ctx, j, l); e != nil {
+		return e
+	}
+	return s.settle(ctx, j, l)
 }
 func (s *Service) settle(ctx context.Context, j *video.VideoJob, l video.Lease) error {
 	if j.SettlementState == video.SettlementSettled || j.SettlementState == video.SettlementReleased {

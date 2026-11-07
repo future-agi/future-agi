@@ -177,6 +177,10 @@ func (j jobResponse) observation(providerJobID string) (video.Observation, error
 			obs.Outputs = append(obs.Outputs, out)
 		}
 	}
+	// With is_byok the model vendor bills the operator's own key directly and
+	// usage.cost is only OpenRouter's share, so the job's total charge is not
+	// observable here: it stays unsettled with the reservation held, for
+	// operator reconciliation, instead of settling at a partial amount.
 	if j.Usage != nil && j.Usage.Cost != nil && (j.Usage.IsBYOK == nil || !*j.Usage.IsBYOK) {
 		cost, e := j.Usage.Cost.Float64()
 		if e != nil || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {

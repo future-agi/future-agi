@@ -106,7 +106,8 @@ func TestOpenAISizeMapping(t *testing.T) {
 		}
 	}
 	// Sora-only sizes and arbitrary sizes are refused, not rounded to another paid tier.
-	for _, size := range []string{"1792x1024", "1024x1792", "1000x700", "0x720", "big", ""} {
+	// Near-canonical sizes are refused too: 1283x720 must not become 1280x720.
+	for _, size := range []string{"1792x1024", "1024x1792", "1000x700", "1283x720", "1281x720", "848x480", "0x720", "big", ""} {
 		if _, _, err := ParseSize(size); err == nil {
 			t.Fatalf("accepted %q", size)
 		}
@@ -121,13 +122,6 @@ func TestOpenAISizeMapping(t *testing.T) {
 	}
 	if _, err := (OpenAICreate{Model: "m", Seconds: "4.5"}).Request(); err == nil {
 		t.Fatal("fractional seconds accepted")
-	}
-}
-func TestOpenAIStatusEnum(t *testing.T) {
-	for native, want := range map[string]string{"submitting": "queued", "submission_unknown": "queued", "queued": "queued", "running": "in_progress", "completed": "completed", "failed": "failed", "cancelled": "failed"} {
-		if got := OpenAIStatus(native); got != want {
-			t.Fatalf("%s: %s", native, got)
-		}
 	}
 }
 

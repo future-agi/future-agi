@@ -231,9 +231,9 @@ var resolutions = []struct {
 	short int
 }{{"480p", 480}, {"720p", 720}, {"768p", 768}, {"1080p", 1080}, {"4k", 2160}}
 
-// ParseSize maps an exact WIDTHxHEIGHT onto a resolution tier (the short side)
-// and aspect ratio. Sizes that match neither exactly are rejected rather than
-// silently rounded to a different paid output.
+// ParseSize maps an exact canonical WIDTHxHEIGHT (as SizeFor renders it, for
+// example 854x480 or 1280x720) onto a resolution tier and aspect ratio. Any
+// other size is rejected rather than silently rounded to a different output.
 func ParseSize(size string) (resolution, aspect string, err error) {
 	a, b, ok := strings.Cut(strings.ToLower(strings.TrimSpace(size)), "x")
 	w, e1 := strconv.Atoi(a)
@@ -241,21 +241,15 @@ func ParseSize(size string) (resolution, aspect string, err error) {
 	if !ok || e1 != nil || e2 != nil || w <= 0 || h <= 0 {
 		return "", "", invalid("invalid_parameter", "size", "WIDTHxHEIGHT required")
 	}
-	short := min(w, h)
+	want := fmt.Sprintf("%dx%d", w, h)
 	for _, r := range resolutions {
-		if r.short == short {
-			resolution = r.name
+		for _, q := range ratios {
+			if SizeFor(r.name, q.name) == want {
+				return r.name, q.name, nil
+			}
 		}
 	}
-	for _, r := range ratios {
-		if math.Abs(float64(w)/float64(h)-r.w/r.h) < 0.005 {
-			aspect = r.name
-		}
-	}
-	if resolution == "" || aspect == "" {
-		return "", "", invalid("unsupported_combination", "size", "size has no supported resolution and aspect ratio")
-	}
-	return resolution, aspect, nil
+	return "", "", invalid("unsupported_combination", "size", "size is not a supported resolution and aspect ratio")
 }
 
 // SizeFor renders the canonical WIDTHxHEIGHT for a resolution tier and aspect
@@ -305,19 +299,4 @@ func (c OpenAICreate) Request() (Request, error) {
 		req.Inputs = []Input{*c.InputReference}
 	}
 	return req, nil
-}
-
-// OpenAIStatus maps the durable gateway status onto the OpenAI enum. Cancelled
-// jobs report failed (with error code "cancelled") because OpenAI clients poll
-// until completed or failed.
-func OpenAIStatus(status string) string {
-	switch status {
-	case "running":
-		return "in_progress"
-	case "completed", "failed":
-		return status
-	case "cancelled":
-		return "failed"
-	}
-	return "queued"
 }

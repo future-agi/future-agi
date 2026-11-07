@@ -84,6 +84,16 @@ func TestVideoOpenAIWireCreateStatusListDelete(t *testing.T) {
 	if w = f.request("GET", "/v1/videos?after=x&offset=1", f.keyA, "", ""); w.Code != 400 {
 		t.Fatal("after and offset together accepted", w.Code)
 	}
+	// Unknown and foreign cursors are refused, not answered with an empty page.
+	for _, cursor := range []string{"video_unknown", id} {
+		key := f.keyA
+		if cursor == id {
+			key = f.keyB
+		}
+		if w = f.request("GET", "/v1/videos?after="+cursor, key, "", ""); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_filter") {
+			t.Fatal("cursor", cursor, w.Code, w.Body.String())
+		}
+	}
 	if other := jsonObject(t, f.request("GET", "/v1/videos", f.keyB, "", "")); len(other["data"].([]any)) != 0 {
 		t.Fatal("cross-tenant list", other)
 	}
@@ -96,6 +106,25 @@ func TestVideoOpenAIWireCreateStatusListDelete(t *testing.T) {
 	}
 	if nativeDel := jsonObject(t, f.request("DELETE", "/v1/videos/"+native["id"].(string), f.keyA, "", "")); nativeDel["object"] != "video" {
 		t.Fatal(nativeDel)
+	}
+}
+
+// One Idempotency-Key cannot be replayed across the native and OpenAI shapes:
+// the response dialect is fixed at creation, so the second shape conflicts.
+func TestVideoIdempotencyKeyIsBoundToWire(t *testing.T) {
+	f := newVideoHTTP(t)
+	if w := f.request("POST", "/v1/videos", f.keyA, "cross-wire", videoTestBody); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	body, ct := openAIForm(t, map[string]string{"model": videoTestModel, "prompt": "private prompt"})
+	if w := f.form(f.keyA, "cross-wire", body, ct); w.Code != 409 || !strings.Contains(w.Body.String(), "idempotency_conflict") {
+		t.Fatal("cross-wire replay", w.Code, w.Body.String())
+	}
+	if w := f.form(f.keyA, "openai-first", body, ct); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := f.request("POST", "/v1/videos", f.keyA, "openai-first", videoTestBody); w.Code != 409 {
+		t.Fatal("reverse cross-wire replay", w.Code, w.Body.String())
 	}
 }
 func TestVideoOpenAIWireValidation(t *testing.T) {

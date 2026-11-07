@@ -247,6 +247,13 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 	if err != nil {
 		return fail(err)
 	}
+	// A job's response shape is fixed when it is created, so one
+	// Idempotency-Key replayed across the native and OpenAI shapes is a
+	// conflict rather than a replay that answers in the other dialect.
+	if rc.Metadata["video_wire"] == capability.WireOpenAI {
+		sum := sha256.Sum256([]byte(fp + "|wire=" + capability.WireOpenAI))
+		fp = hex.EncodeToString(sum[:])
+	}
 	estimate, err := tariff.Estimate(resolved, tariff.Options{MinTokensWithVideoInput: pc.MinTokensWithVideoInput})
 	priced := err == nil && pc.TariffRevision != "" && pc.TariffRevision == tariff.RevisionFor(service)
 	if !priced && !pc.AllowUnpricedModels {
@@ -348,6 +355,14 @@ func (s *Service) ingress(ctx context.Context, id string, res *capability.Resolv
 		total += v.Bytes
 		if total > 64<<20 {
 			return out, api(413, "media_too_large")
+		}
+		// Images carry the sniffed type forward, so a guessed or mislabelled
+		// type never reaches the provider; the exact format must be allowed.
+		if family, _, _ := strings.Cut(in.MediaType, "/"); family == "image" && v.ContentType != "" && v.ContentType != in.MediaType {
+			if _, format, _ := strings.Cut(v.ContentType, "/"); !slices.Contains(spec.Formats, format) {
+				return out, api(400, "unsupported_combination")
+			}
+			in.MediaType = v.ContentType
 		}
 		in.Digest = v.Digest
 		in.Bytes = v.Bytes

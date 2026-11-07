@@ -242,16 +242,28 @@ func filterJobs(all []*VideoJob, org string, f VideoListFilters) ([]*VideoJob, i
 	})
 	n := len(out)
 	if f.After != "" {
-		start := -1
-		for i, j := range out {
-			if j.ID == f.After {
-				start = i + 1
+		// The cursor is resolved among the organization's own jobs before the
+		// status and model filters, so a job that changed state (or was deleted)
+		// since the previous page still positions the next one. Unknown and
+		// foreign cursors are rejected rather than answered with an empty page.
+		var cursor *VideoJob
+		for _, j := range all {
+			if org != "" && j.OrgID == org && j.ID == f.After {
+				cursor = j
 			}
 		}
-		if start < 0 {
-			return []*VideoJob{}, n, nil
+		if cursor == nil {
+			return nil, 0, fmt.Errorf("invalid_filter")
 		}
-		out = out[start:]
+		kept := make([]*VideoJob, 0, len(out))
+		for _, j := range out {
+			later := j.CreatedAt.After(cursor.CreatedAt) || j.CreatedAt.Equal(cursor.CreatedAt) && j.ID > cursor.ID
+			earlier := j.CreatedAt.Before(cursor.CreatedAt) || j.CreatedAt.Equal(cursor.CreatedAt) && j.ID < cursor.ID
+			if f.Order == "asc" && later || f.Order != "asc" && earlier {
+				kept = append(kept, j)
+			}
+		}
+		out = kept
 		n = len(out)
 	}
 	if f.Offset >= n {

@@ -14,6 +14,12 @@ import (
 // the USD cost OpenRouter reports for the finished job; a missing or null cost
 // leaves the job unsettled and is never treated as zero. Advertised discounts
 // are deliberately ignored so the estimate stays an upper bound.
+//
+// The 2026-11-07 live smoke showed where list SKUs alone under-reserve: Kling
+// 3.0 Std and Wan 3.0 billed 5 output seconds for 3s and 2s requests, and
+// Seedance billed tokens on its real output (864x496, 97 frames for a 4s 480p
+// 16:9 request, 5.6% above the nominal 854x480x96). Hence minBilledSeconds and
+// tokenHeadroom below.
 const OpenRouterRevision = capability.OpenRouterRevision
 
 // USDRate converts a provider-reported USD charge into microdollars: one
@@ -37,13 +43,19 @@ type openRouterPrice struct {
 	// perMillionTokens prices Seedance video tokens [without audio, with audio].
 	perMillionTokens [2]float64
 	perInputImage    float64
+	// minBilledSeconds is the shortest duration the route bills.
+	minBilledSeconds float64
 }
+
+// tokenHeadroom covers output dimensions and frame counts above the nominal
+// size for token-priced models.
+const tokenHeadroom = 1.15
 
 var openRouterPrices = map[string]openRouterPrice{
 	"bytedance/seedance-1-5-pro":       {perMillionTokens: [2]float64{1.2, 2.4}},
 	"google/veo-3.1-lite":              {perSecond: map[string][2]float64{"720p": {0.03, 0.05}, "1080p": {0.05, 0.08}}},
-	"kwaivgi/kling-v3.0-std":           {perSecond: map[string][2]float64{"720p": {0.084, 0.126}}},
-	"alibaba/wan-3.0":                  {perSecond: map[string][2]float64{"480p": {0.05, 0.05}, "720p": {0.1, 0.1}, "1080p": {0.2, 0.2}}},
+	"kwaivgi/kling-v3.0-std":           {perSecond: map[string][2]float64{"720p": {0.084, 0.126}}, minBilledSeconds: 5},
+	"alibaba/wan-3.0":                  {perSecond: map[string][2]float64{"480p": {0.05, 0.05}, "720p": {0.1, 0.1}, "1080p": {0.2, 0.2}}, minBilledSeconds: 5},
 	"minimax/hailuo-3-max":             {perSecond: map[string][2]float64{"480p": {0.05, 0.05}, "768p": {0.08, 0.08}}},
 	"runway/gen-4.5":                   {perSecond: map[string][2]float64{"720p": {0.12, 0.12}}},
 	"x-ai/grok-imagine-video-1.5-lite": {perSecond: map[string][2]float64{"480p": {0.02, 0.02}, "720p": {0.03, 0.03}, "1080p": {0.14, 0.14}}, perInputImage: 0.01},
@@ -62,6 +74,7 @@ func estimateOpenRouter(res capability.Resolved) (*EstimateResult, error) {
 	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return nil, fmt.Errorf("invalid duration")
 	}
+	duration = max(duration, price.minBilledSeconds)
 	audio := 0
 	if req.Audio != nil && *req.Audio {
 		audio = 1
@@ -78,7 +91,7 @@ func estimateOpenRouter(res capability.Resolved) (*EstimateResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		tokens := math.Ceil(width * height * duration * 24 / 1024)
+		tokens := math.Ceil(width * height * duration * 24 / 1024 * tokenHeadroom)
 		usd = tokens * price.perMillionTokens[audio] / 1e6
 	}
 	for _, in := range req.Inputs {

@@ -137,6 +137,8 @@ func (w *Worker) process(parent context.Context, c video.Claim) (err error) {
 		return s.reconcile(ctx, j, c.Lease)
 	case j.BillingKnown && j.IsTerminal():
 		return s.settle(ctx, j, c.Lease)
+	case j.IsTerminal() && j.SettlementState == video.SettlementUnsettled && j.ProviderJobID != "" && j.UsagePolls < maxUsagePolls:
+		return s.refreshUsage(ctx, j, c.Lease)
 	case j.Observation != nil && j.Observation.Normalized == "completed":
 		return s.copyResult(ctx, j, c.Lease)
 	case j.IsTerminal():

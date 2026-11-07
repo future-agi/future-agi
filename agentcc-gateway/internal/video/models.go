@@ -31,6 +31,9 @@ type VideoJob struct {
 	TraceParentID      string                `json:"-" store:"trace_parent_id"`
 	// Wire is "openai" for jobs created through the OpenAI Videos API shape.
 	Wire string `json:"-" store:"wire"`
+	// UsagePolls counts accounting-only provider reads made after a job ended
+	// with an unknown charge.
+	UsagePolls int `json:"-" store:"usage_polls"`
 
 	KeyID                string              `json:"-" store:"key_id"`
 	Creator              string              `json:"-" store:"creator"`
@@ -187,18 +190,14 @@ func (j *VideoJob) ToStatusResponse() map[string]interface{} {
 	if j.SettlementState == SettlementSettled || j.SettlementState == SettlementReleased {
 		resp["cost"] = map[string]any{"usd": float64(j.SettledMicros) / 1e6, "source": "reconciled", "tariff_revision": j.TariffRevision, "currency": "USD"}
 	}
-	// Additive fields shared with the OpenAI Videos API object.
-	resp["seconds"] = nil
+	// Additive fields shared with the OpenAI Videos API object. Native
+	// responses only gain keys that have a value; existing keys such as
+	// completed_at keep their absent-until-set contract.
 	if j.Duration > 0 {
 		resp["seconds"] = strconv.FormatFloat(j.Duration, 'f', -1, 64)
 	}
-	resp["size"] = nil
 	if j.Size != "" {
 		resp["size"] = j.Size
-	}
-	resp["completed_at"] = nil
-	if j.CompletedAt != nil {
-		resp["completed_at"] = j.CompletedAt.Unix()
 	}
 	if j.Wire == WireOpenAI {
 		openAIOverlay(j, resp)
@@ -233,6 +232,11 @@ func openAIOverlay(j *VideoJob, resp map[string]any) {
 	}
 	resp["progress"] = progress
 	resp["remixed_from_video_id"] = nil
+	for _, k := range []string{"seconds", "size", "completed_at"} {
+		if _, ok := resp[k]; !ok {
+			resp[k] = nil
+		}
+	}
 	switch {
 	case j.Error != nil:
 		resp["error"] = map[string]any{"code": j.Error.Code, "message": j.Error.Message}

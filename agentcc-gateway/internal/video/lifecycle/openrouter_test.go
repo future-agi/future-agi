@@ -2,8 +2,10 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,7 +64,7 @@ func TestOpenRouter_SettlesReportedUSDCost(t *testing.T) {
 	cost := 0.0461
 	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(&cost))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
 	j := f.acceptOpenRouter(t)
-	if j.EstimateUnit != provider.USD || j.ReservedMicros != 46116 || j.TariffRevision != capability.OpenRouterRevision || j.RateUSDPerMillion != 1e6 {
+	if j.EstimateUnit != provider.USD || j.ReservedMicros != 53034 || j.TariffRevision != capability.OpenRouterRevision || j.RateUSDPerMillion != 1e6 {
 		t.Fatalf("estimate unit=%s reserved=%d revision=%s rate=%v", j.EstimateUnit, j.ReservedMicros, j.TariffRevision, j.RateUSDPerMillion)
 	}
 	j = f.runToTerminal(t, j.ID)
@@ -88,7 +90,7 @@ func TestOpenRouter_NullCostIsUnknownNotZero(t *testing.T) {
 	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
 	j := f.acceptOpenRouter(t)
 	j = f.runToTerminal(t, j.ID)
-	if j.Status != video.StatusCompleted || j.SettlementState != video.SettlementUnsettled || j.BillingKnown || j.SettledMicros != 0 || j.ReservedMicros != 46116 {
+	if j.Status != video.StatusCompleted || j.SettlementState != video.SettlementUnsettled || j.BillingKnown || j.SettledMicros != 0 || j.ReservedMicros != 53034 {
 		t.Fatalf("status=%s settlement=%s known=%v settled=%d reserved=%d", j.Status, j.SettlementState, j.BillingKnown, j.SettledMicros, j.ReservedMicros)
 	}
 	if _, ok := j.ToStatusResponse()["cost"]; ok {
@@ -179,5 +181,67 @@ func TestOpenRouter_CancelUnsupportedDeleteLocalOnly(t *testing.T) {
 	d, e := f.s.Delete(context.Background(), j.ID, "org-a")
 	if e != nil || d.DeletedAt == nil || !d.UpstreamMayContinue {
 		t.Fatalf("%v %+v", e, d)
+	}
+}
+
+// OpenRouter may answer completed with usage.cost:null and report the charge
+// on a later read. The terminal job is re-read for accounting only (no copy, no
+// resubmit) and settles at the reported amount.
+func TestOpenRouter_LaterReportedCostSettles(t *testing.T) {
+	cost := 0.0482
+	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil)), videotest.JSONReply(orCompleted(&cost))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
+	j := f.runToTerminal(t, f.acceptOpenRouter(t).ID)
+	if j.Status != video.StatusCompleted || j.SettlementState != video.SettlementUnsettled || len(j.Artifacts) != 1 {
+		t.Fatalf("status=%s settlement=%s", j.Status, j.SettlementState)
+	}
+	f.clock.Advance(6 * time.Minute)
+	f.tick(t)
+	j = f.job(t, j.ID)
+	if j.SettlementState != video.SettlementSettled || j.SettledMicros != 48200 || j.UsagePolls != 1 || j.Status != video.StatusCompleted || len(j.Artifacts) != 1 || f.fake.SubmitCount(j.ID) != 1 {
+		t.Fatalf("settlement=%s settled=%d usage_polls=%d status=%s submits=%d", j.SettlementState, j.SettledMicros, j.UsagePolls, j.Status, f.fake.SubmitCount(j.ID))
+	}
+	total, _, _ := f.budget.GetSpend(j.OrgID, "org", "", "total")
+	if total < 0.04819 || total > 0.04821 {
+		t.Fatalf("budget spend %v", total)
+	}
+}
+
+// A charge that never becomes known stops being re-read after maxUsagePolls;
+// the reservation stays held.
+func TestOpenRouter_UsageRefreshIsBounded(t *testing.T) {
+	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
+	j := f.runToTerminal(t, f.acceptOpenRouter(t).ID)
+	for i := 0; i < maxUsagePolls+4; i++ {
+		f.clock.Advance(6 * time.Minute)
+		f.tick(t)
+	}
+	j = f.job(t, j.ID)
+	if j.UsagePolls != maxUsagePolls || j.SettlementState != video.SettlementUnsettled || j.ReservedMicros != 53034 {
+		t.Fatalf("usage_polls=%d settlement=%s reserved=%d", j.UsagePolls, j.SettlementState, j.ReservedMicros)
+	}
+	total, _, _ := f.budget.GetSpend(j.OrgID, "org", "", "total")
+	if total != float64(j.ReservedMicros)/1e6 {
+		t.Fatalf("reservation released without a known charge: %v", total)
+	}
+}
+
+// The sniffed image type replaces a guessed or mislabelled one before the
+// request is persisted, so the provider never receives PNG bytes as JPEG.
+func TestOpenRouter_VerifiedImageTypeReplacesDeclared(t *testing.T) {
+	f := setupOpenRouter(t, videotest.Script{})
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.EndpointType = "video"
+	rc.Metadata["org_id"] = "org-a"
+	rc.Metadata["auth_key_id"] = "key-a"
+	rc.Metadata["key_type"] = "byok"
+	in := provider.Input{Role: provider.FirstFrame, MediaType: "image/jpeg", Source: provider.Source{Data: base64.StdEncoding.EncodeToString(videotest.PNG())}}
+	r, e := f.s.Accept(context.Background(), rc, provider.Request{Model: "openrouter/" + orModel, Prompt: "p", DurationSeconds: 4, Resolution: "480p", Inputs: []provider.Input{in}}, video.NewID(), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	j := f.job(t, r.Job.ID)
+	if !strings.Contains(string(j.RequestCanonical), `"media_type":"image/png"`) || strings.Contains(string(j.RequestCanonical), "image/jpeg") {
+		t.Fatalf("%s", j.RequestCanonical)
 	}
 }
