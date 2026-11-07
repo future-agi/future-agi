@@ -222,6 +222,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
+                    elif row['name']=='0130_observationspan_internal_type': expected_row={'tracer_observation_span'}
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
