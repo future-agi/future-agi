@@ -2325,7 +2325,10 @@ def check_creation_credentials(
 
 def _connector_agent_type(connector: str) -> str:
     Types = AgentDefinition.AgentTypeChoices
-    return Types.TEXT if connector in ("retell_chat", "auto") else Types.VOICE
+    from simulate.services.microsoft_agents import MICROSOFT_CONNECTORS
+
+    chat_connectors = ("retell_chat", "auto", *MICROSOFT_CONNECTORS)
+    return Types.TEXT if connector in chat_connectors else Types.VOICE
 
 
 def connector_provider(connector: str) -> str:

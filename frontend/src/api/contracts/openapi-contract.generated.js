@@ -102480,7 +102480,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
+          enum: [
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            "copilot_studio",
+            "foundry",
+          ],
         },
         mode: {
           title: "Mode",

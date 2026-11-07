@@ -81,6 +81,12 @@ from simulate.services.hosted_sandbox import (
     SandboxProviderUnavailableError,
     get_sandbox_provider,
 )
+from simulate.services.microsoft_agents import (
+    MICROSOFT_CLIENT_SECRET,
+    MICROSOFT_CONNECTORS,
+    is_microsoft_connector,
+    microsoft_egress_domains,
+)
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -1736,6 +1742,10 @@ def _connector_egress_domains(
                 "wss://retell-ai-4ihahnq7.livekit.cloud",
             )
         _add_livekit_host(domains, _hostname_from_url(livekit_url))
+    elif is_microsoft_connector(connector):
+        # Entra for the token, then the customer's own Dataverse or Foundry host. The
+        # serializer pinned that host to a Microsoft domain at admission.
+        domains.update(microsoft_egress_domains(connector, config))
     return domains
 
 
@@ -1938,7 +1948,11 @@ _KNOWN_SIMULATOR_CONFIG_NAMES = (
 
 
 def _authoring_egress_domains(
-    simulator_env: Mapping[str, str], connector: str, *, provider_profile: bool
+    simulator_env: Mapping[str, str],
+    connector: str,
+    *,
+    provider_profile: bool,
+    agent_config: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """What authoring reaches: the source host, AgentCC and package indexes.
 
@@ -1975,6 +1989,14 @@ def _authoring_egress_domains(
         }.get(connector)
         if provider_domain and provider_domain not in allowed_domains:
             allowed_domains.insert(0, provider_domain)
+        if is_microsoft_connector(connector):
+            # Entra for the token, then the customer's own Dataverse or Foundry host. The
+            # serializer pinned that host to a Microsoft domain at admission.
+            for domain in reversed(
+                microsoft_egress_domains(connector, agent_config or {})
+            ):
+                if domain not in allowed_domains:
+                    allowed_domains.insert(0, domain)
     return allowed_domains
 
 
@@ -2260,7 +2282,10 @@ class HostedHarnessGateway:
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
 
         allowed_domains = _authoring_egress_domains(
-            simulator_env, connector, provider_profile=bool(authoring_target_secrets)
+            simulator_env,
+            connector,
+            provider_profile=bool(authoring_target_secrets),
+            agent_config=(payload.get("agent") or {}).get("config") or {},
         )
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
@@ -5034,13 +5059,16 @@ def _provider_import_authoring_material(
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "")
-    inspect_connect_only_chat = mode == "connect_only" and connector == "retell_chat"
+    inspect_connect_only_chat = mode == "connect_only" and (
+        connector == "retell_chat" or is_microsoft_connector(connector)
+    )
     if mode != "provider_import" and not inspect_connect_only_chat:
         return {}, connector
     secret_name = {
         "vapi": "VAPI_API_KEY",
         "retell": "RETELL_API_KEY",
         "retell_chat": "RETELL_API_KEY",
+        **dict.fromkeys(MICROSOFT_CONNECTORS, MICROSOFT_CLIENT_SECRET),
     }.get(connector)
     if not secret_name:
         return {}, connector

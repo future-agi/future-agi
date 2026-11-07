@@ -509,6 +509,8 @@ def _connector_credential_readiness(
     agent = payload["agent"]
     connector = agent["connector"]
     remote = payload["source"]["kind"] == "remote"
+    from simulate.services.microsoft_agents import MICROSOFT_CONNECTOR_ALIASES
+
     detected = [name for name in detected_connectors if name in CONNECTOR_ALIASES]
     missing = [] if remote else missing_provider_credentials(agent, detected)
     present = present_provider_aliases(agent)
@@ -523,7 +525,10 @@ def _connector_credential_readiness(
         )
     else:
         # ``get`` -- a phone target has no credential family, so it asks for nothing.
-        families = {connector: CONNECTOR_ALIASES.get(connector, ())}
+        families = {
+            connector: CONNECTOR_ALIASES.get(connector)
+            or MICROSOFT_CONNECTOR_ALIASES.get(connector, ())
+        }
         required = set() if remote else {connector}
 
     def _status(name, alias):
@@ -629,8 +634,10 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     """
     from simulate.services.harness_credential_probes import (
         probe_all,
+        probe_microsoft_agent,
         probe_provider_target,
     )
+    from simulate.services.microsoft_agents import is_microsoft_connector
 
     if secret_payload["source"]["kind"] == "remote":
         return []
@@ -659,6 +666,8 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
         )
         if target is not None:
             results.append(target)
+    if is_microsoft_connector(connector) and mode == "connect_only":
+        results.extend(probe_microsoft_agent(connector, config, secret_values))
     if connector == "livekit" and mode == "connect_only":
         target = probe_provider_target(
             connector, config.get("agent_name"), secret_values

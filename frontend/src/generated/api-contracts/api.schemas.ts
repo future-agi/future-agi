@@ -20483,6 +20483,8 @@ export const HarnessAgentApiConnector = {
   retell_chat: "retell_chat",
   phone: "phone",
   auto: "auto",
+  copilot_studio: "copilot_studio",
+  foundry: "foundry",
 } as const;
 
 export type HarnessAgentApiMode =
