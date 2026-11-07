@@ -687,6 +687,7 @@ class TestAddToNewDatasetAPI:
         ).exists()
         mock_task.delay.assert_not_called()
 
+    @pytest.mark.requires_ee
     def test_dataset_creation_limit_reached(
         self, auth_client, organization, observe_project, observe_spans
     ):
@@ -744,6 +745,7 @@ class TestAddToNewDatasetAPI:
         ).exists()
         logger.exception.assert_not_called()
 
+    @pytest.mark.requires_ee
     @patch("tracer.views.dataset.process_spans_chunk_task")
     def test_reached_limit_still_refuses_when_the_alert_cannot_be_sent(
         self, mock_task, auth_client, organization, observe_project, observe_spans
@@ -784,6 +786,7 @@ class TestAddToNewDatasetAPI:
         ).exists()
         mock_task.delay.assert_not_called()
 
+    @pytest.mark.requires_ee
     @patch("tracer.views.dataset.process_spans_chunk_task")
     def test_denied_entitlement_answers_429_with_upgrade_alert(
         self, mock_task, auth_client, organization, observe_project, observe_spans

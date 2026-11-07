@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import requests
 from django.test import override_settings
 
 from model_hub.utils import call_websocket, is_forbidden_vendor_endpoint
@@ -122,3 +123,85 @@ def test_cloud_keeps_its_public_api_default():
         "https://api.futureagi.com",
         "https://api.futureagi.com/call-websocket/",
     ]
+
+
+class _RelayResponse:
+    """The test client's response, shaped like the requests.Response call_websocket reads."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def raise_for_status(self):
+        if self._response.status_code >= 400:
+            raise requests.HTTPError(f"{self._response.status_code} from the relay")
+
+    def json(self):
+        return self._response.json()
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+@override_settings(CLOUD_DEPLOYMENT="", WEBSOCKET_ENDPOINT="http://backend/call-websocket/")
+@pytest.mark.parametrize(
+    ("message", "send_to_uuid", "uuid"),
+    [
+        (
+            {
+                "alert_title": "Dataset limit reached.",
+                "alert_description": "Your current plan supports only 1 dataset.",
+                "subscription_title": "Upgrade",
+                "subscription_description": "Upgrade to add datasets.",
+            },
+            False,
+            None,
+        ),
+        ({"type": "generate_prompt", "status": "running"}, True, "a-generation-id"),
+        ("a plain text message", False, None),
+    ],
+    ids=["upgrade_alert_to_org", "live_update_to_uuid", "string_message"],
+)
+def test_relay_accepts_what_call_websocket_sends(
+    api_client, user, organization, workspace, message, send_to_uuid, uuid
+):
+    """call_websocket's own request reaches the org's channel through the relay.
+
+    It posts ``message`` as a JSON object and ``uuid`` as null. The relay's
+    request contract once declared ``message`` a string and ``uuid`` non-null,
+    so every such request was refused with 400 and no upgrade alert or live
+    update reached a browser.
+    """
+    from accounts.models.user import OrgApiKey
+
+    OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, type="system"
+    )
+    delivered = []
+
+    def relay(url, json, timeout, headers):
+        return _RelayResponse(
+            api_client.post(
+                "/call-websocket/",
+                data=json,
+                format="json",
+                HTTP_X_API_KEY=headers["X-Api-Key"],
+                HTTP_X_SECRET_KEY=headers["X-Secret-Key"],
+            )
+        )
+
+    with (
+        patch("model_hub.utils.requests.post", side_effect=relay),
+        patch(
+            "tfc.views.socket.send_message_to_channel",
+            side_effect=lambda org_id, msg: delivered.append(("org", org_id, msg)),
+        ),
+        patch(
+            "tfc.views.socket.send_message_to_uuid",
+            side_effect=lambda to, msg, org_id: delivered.append((to, org_id, msg)),
+        ),
+    ):
+        result = call_websocket(
+            str(organization.id), message, send_to_uuid=send_to_uuid, uuid=uuid
+        )
+
+    assert result.get("status") is True, result
+    assert delivered == [("org" if not send_to_uuid else uuid, organization.id, message)]

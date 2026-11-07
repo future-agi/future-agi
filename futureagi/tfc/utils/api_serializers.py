@@ -269,9 +269,11 @@ class LangfuseTracesResponseSerializer(serializers.Serializer):
 
 
 class CallWebsocketRequestSerializer(serializers.Serializer):
-    message = serializers.CharField()
+    # call_websocket (model_hub.utils) is the relay's only caller: it posts the
+    # message as a JSON object and ``uuid`` as null unless sending to one uuid.
+    message = serializers.JSONField()
     send_to_uuid = serializers.BooleanField(required=False, default=False)
-    uuid = serializers.CharField(required=False, allow_blank=True)
+    uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class CallWebsocketResponseSerializer(serializers.Serializer):
