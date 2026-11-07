@@ -5,6 +5,7 @@ request bodies, response bodies or browser trace is written to evidence.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import sys
@@ -42,23 +43,37 @@ def main():
             page.goto(origin + "/auth/jwt/login?" + urlencode({"returnTo": profile}), wait_until="domcontentloaded")
             page.get_by_label("Email address", exact=True).fill(config["email"])
             page.get_by_label("Password", exact=True).fill(config["password"])
-            stage = "real login"
-            with page.expect_response(lambda r: r.url == api + "/accounts/token/" and r.request.method == "POST") as login_response:
+            stage = "real login and initial onboarding read"
+            with ExitStack() as responses:
+                if config["first_login"]:
+                    initial_onboarding = responses.enter_context(page.expect_response(
+                        lambda r: r.url == api + "/accounts/onboarding/" and r.request.method == "GET"))
+                login_response = responses.enter_context(page.expect_response(
+                    lambda r: r.url == api + "/accounts/token/" and r.request.method == "POST"))
                 page.get_by_role("button", name="Continue", exact=True).click()
             result["login_status"] = login_response.value.status
             if result["login_status"] != 200:
                 raise AssertionError("login response was not successful")
             if config["first_login"]:
+                # setup-org resets the form when this initial GET resolves. A
+                # visible role input is not yet evidence that it is hydrated.
+                initial_onboarding.value.finished()
+                if initial_onboarding.value.status != 200:
+                    raise AssertionError("initial onboarding read was not successful")
+                result["initial_onboarding_read_status"] = initial_onboarding.value.status
                 # Bootstrap creates an account, not a completed onboarding flow.
                 # Perform it once through the UI; never seed a bypass flag or
                 # silently repeat it after an upgrade loses the account state.
                 stage = "first-login role"
                 expect(page.get_by_text("What's your role", exact=True)).to_be_visible()
-                page.get_by_placeholder("Tell us about your role", exact=True).fill("Platform Engineer")
+                role = page.get_by_placeholder("Tell us about your role", exact=True)
+                role.fill("Platform Engineer")
+                expect(role).to_have_value("Platform Engineer")
                 page.get_by_role("button", name="Continue", exact=True).click()
                 stage = "first-login goals"
                 expect(page.get_by_text("Tell us about your goals", exact=True)).to_be_visible()
                 page.get_by_text("Monitor LLMs and Agents", exact=True).click()
+                expect(page.get_by_role("checkbox").first).to_be_checked()
                 with page.expect_response(lambda r: r.url == api + "/accounts/onboarding/" and r.request.method == "POST") as onboarding_response:
                     page.get_by_role("button", name="Continue", exact=True).click()
                 if onboarding_response.value.status != 200:
