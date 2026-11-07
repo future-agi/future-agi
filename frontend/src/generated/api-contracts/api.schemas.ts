@@ -5325,9 +5325,10 @@ export interface SpanAttributeValuesResponseApi {
   query_window_end: string;
 }
 
+export type CallWebsocketRequestApiMessage = { [key: string]: unknown };
+
 export interface CallWebsocketRequestApi {
-  /** @minLength 1 */
-  message: string;
+  message: CallWebsocketRequestApiMessage;
   send_to_uuid?: boolean;
   uuid?: string;
 }

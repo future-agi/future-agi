@@ -11512,7 +11512,7 @@ export const ApiTracesSpanAttributeValuesListResponse = zod.object({
 export const callWebsocketCreateBodySendToUuidDefault = false;
 
 export const CallWebsocketCreateBody = zod.object({
-  message: zod.string().min(1),
+  message: zod.object({}).passthrough(),
   send_to_uuid: zod.boolean().default(callWebsocketCreateBodySendToUuidDefault),
   uuid: zod.string().optional(),
 });

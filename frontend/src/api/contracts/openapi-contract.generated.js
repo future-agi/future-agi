@@ -56714,8 +56714,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         message: {
           title: "Message",
-          type: "string",
-          minLength: 1,
+          type: "object",
         },
         send_to_uuid: {
           title: "Send to uuid",
@@ -56725,6 +56724,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         uuid: {
           title: "Uuid",
           type: "string",
+          "x-nullable": true,
         },
       },
     },
