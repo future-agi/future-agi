@@ -38,14 +38,39 @@ VOICE_AUDIO_METRICS_DNSMOS_MODEL_PATH=/opt/futureagi/audio-metrics/sig_bak_ovr.o
 VOICE_AUDIO_METRICS_DNSMOS_MODEL_SHA256=269fbebdb513aa23cddfbb593542ecc540284a91849ac50516870e1ac78f6edd
 ```
 
-Install the separately shipped study calibration JSON read-only, verify its
-published exact-byte SHA-256, and set `VOICE_AUDIO_METRICS_CALIBRATION_PATH` and
-`VOICE_AUDIO_METRICS_CALIBRATION_SHA256` identically on **both** process types.
-The study commit supplies the file, digest, supported score interval and admitted
-cohorts; this document intentionally supplies no substitute calibration. It must
-match the pinned DNSMOS digest, `silero-vad:6.2.3:threshold0.5`, polynomial,
-resampling, window policy and scale versions. Restart workers after configuration
-changes. Retain the artifact, manifest and validation evidence for audit.
+Install only a separately approved, **release-qualified** calibration JSON
+read-only, verify its published exact-byte SHA-256, and set
+`VOICE_AUDIO_METRICS_CALIBRATION_PATH` and `VOICE_AUDIO_METRICS_CALIBRATION_SHA256`
+identically on **both** process types. This document supplies no substitute
+calibration. The artifact must match the pinned DNSMOS digest,
+`silero-vad:6.2.3:threshold0.5`, polynomial, resampling, window policy and scale
+versions, and pass all statistical and cohort gates.
+
+The loader also requires a `release_qualifications` object with all three literal
+JSON booleans set to `true`, each backed by a non-empty evidence-reference string:
+
+- `detector_activity_validated` and `detector_activity_evidence_ref`: adjudicated
+  detector activity precision/recall validation.
+- `target_domain_validated` and `target_domain_evidence_ref`: qualification on
+  synthesized tested-agent voice in the admitted capture/transport cohorts.
+- `paired_degradations_validated` and `paired_degradations_evidence_ref`:
+  listener-confirmed, same-source paired degradation validation.
+
+Missing, false or malformed qualifications/evidence return `not_validated`, even
+when numerical gates pass. Evidence references must identify the reviewed study
+records; setting flags or inventing references is not a substitute for validation.
+
+The public-data study writes only `candidate-artifact.json` when cohort statistics
+pass, with all three qualifications false and no release evidence. **Do not install
+this research candidate**: the production loader deliberately refuses it.
+`report.json` separates `statistical_gates_passed` from `release_qualified` (always
+false for this study), and is saved before candidate output. Cohorts are admitted
+independently for statistical reporting only; candidate-level gates take the worst
+values across those cohorts, not a failing or excluded English cohort. A cohort
+with no in-support predictions has zero coverage and fails its statistical gates.
+The frozen preregistration and completed study evidence are not changed by these
+release checks. Restart workers after configuration changes and retain the
+approved artifact, manifest and validation evidence for audit.
 
 Only regular `DNSMOS/DNSMOS/sig_bak_ovr.onnx` is supported. **pDNSMOS** (personalized
 coefficients), **model_v8.onnx** (P.808 features/score) and **NISQA** weights are not

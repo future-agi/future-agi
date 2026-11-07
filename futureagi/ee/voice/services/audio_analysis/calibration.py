@@ -72,7 +72,7 @@ def _number(value):
 
 
 def load_calibration(path, sha256, *, model_sha256, detector_id) -> Calibration:
-    """Validate the exact pipeline, monotone mapping and declared held-out gates."""
+    """Validate the pipeline, mapping, held-out gates and release evidence."""
     from scipy.interpolate import PchipInterpolator
 
     try:
@@ -110,6 +110,17 @@ def load_calibration(path, sha256, *, model_sha256, detector_id) -> Calibration:
         lo, hi = _number(raw["support"]["x_min"]), _number(raw["support"]["x_max"])
         if not x[0] <= lo < hi <= x[-1] or not 1 <= min(y) <= max(y) <= 5:
             raise ValueError("invalid support")
+        qualifications = raw.get("release_qualifications")
+        if not isinstance(qualifications, dict):
+            raise ValueError("missing release qualifications")
+        for name in ("detector_activity", "target_domain", "paired_degradations"):
+            evidence = qualifications.get(f"{name}_evidence_ref")
+            if (
+                qualifications.get(f"{name}_validated") is not True
+                or not isinstance(evidence, str)
+                or not evidence.strip()
+            ):
+                raise ValueError("release qualification missing evidence")
         gates = raw["gates"]
         if not (
             0 <= _number(gates["rmse"]) <= 0.5

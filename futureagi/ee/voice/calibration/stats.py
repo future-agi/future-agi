@@ -93,6 +93,8 @@ def group_bootstrap_spearman_lb(pred, mos, groups, *, n_boot=2000, seed=2094):
     mos = np.asarray(mos, dtype=float)
     groups = np.asarray(groups)
     unique = np.unique(groups)
+    if not len(unique):
+        return float("nan"), 0
     index = {g: np.flatnonzero(groups == g) for g in unique}
     values = []
     for _ in range(n_boot):

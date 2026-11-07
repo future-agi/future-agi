@@ -10,8 +10,8 @@ Two stages, run in an authorized cloud sandbox (never in request/worker code):
           samples, compute the calibration input x with the product
           ``mean_adjusted_ovrl``, fit a monotone PCHIP on the calibration split,
           choose its knot count on the selection split, evaluate the locked
-          test split once, and write a report. A loader-compatible artifact is
-          written only when every preregistered gate passes.
+          test split once, and write a report. Passing statistics produce only
+          a research candidate; public data cannot satisfy release qualifications.
 
 See ``PREREGISTRATION.md`` next to this file for the protocol. Usage:
 
@@ -30,6 +30,7 @@ import os
 import re
 import struct
 import sys
+import tempfile
 import time
 import zlib
 from importlib.metadata import PackageNotFoundError, version
@@ -80,7 +81,16 @@ PIPELINE_FILES = (
     "ee/voice/calibration/stats.py",
     "ee/voice/calibration/vqi_study.py",
 )
-PACKAGES = ("numpy", "scipy", "librosa", "soxr", "soundfile", "onnxruntime", "torch", "silero-vad")
+PACKAGES = (
+    "numpy",
+    "scipy",
+    "librosa",
+    "soxr",
+    "soundfile",
+    "onnxruntime",
+    "torch",
+    "silero-vad",
+)
 ROOT = Path(__file__).resolve().parents[3]  # futureagi/
 
 
@@ -89,7 +99,9 @@ def _sha256(data: bytes) -> str:
 
 
 def _canonical(obj) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
 
 
 def _pkg(name):
@@ -129,7 +141,9 @@ def pipeline_fingerprint():
         "study._evaluate": _evaluate,
         "study._gates": _gates,
     }
-    return {name: _sha256(inspect.getsource(obj).encode()) for name, obj in objects.items()}
+    return {
+        name: _sha256(inspect.getsource(obj).encode()) for name, obj in objects.items()
+    }
 
 
 def _pipeline_constants(detector_id):
@@ -165,7 +179,11 @@ class ZipRanges:
     def members(self, subset):
         prefix = f"NISQA_Corpus/{subset}/deg/"
         return sorted(
-            (i for n, i in self.infos.items() if n.startswith(prefix) and n.endswith(".wav")),
+            (
+                i
+                for n, i in self.infos.items()
+                if n.startswith(prefix) and n.endswith(".wav")
+            ),
             key=lambda i: i.header_offset,
         )
 
@@ -175,39 +193,78 @@ class ZipRanges:
 
         infos = self.members(subset)
         start = infos[0].header_offset
-        end = max(i.header_offset + 30 + len(i.filename.encode()) + 1024 + i.compress_size for i in infos)
+        end = max(
+            i.header_offset + 30 + len(i.filename.encode()) + 1024 + i.compress_size
+            for i in infos
+        )
         if end - start > 3 * sum(i.compress_size for i in infos) + (1 << 24):
             # Members are not contiguous: read them one by one instead.
             return {i.filename.split("/")[-1]: self.zip.read(i.filename) for i in infos}
+
+        def extract(blob):
+            if len(blob) != end - start + 1:
+                raise RuntimeError("range size mismatch")
+            out = {}
+            for info in infos:
+                off = info.header_offset - start
+                (sig,) = struct.unpack_from("<I", blob, off)
+                if sig != 0x04034B50:
+                    raise RuntimeError(f"bad local header for {info.filename}")
+                name_len, extra_len = struct.unpack_from("<HH", blob, off + 26)
+                data_start = off + 30 + name_len + extra_len
+                raw = blob[data_start : data_start + info.compress_size]
+                if len(raw) != info.compress_size:
+                    raise RuntimeError(f"compressed size mismatch for {info.filename}")
+                if info.compress_type == 8:
+                    decoder = zlib.decompressobj(-15)
+                    data = decoder.decompress(raw)
+                    if not decoder.eof or decoder.unused_data:
+                        raise RuntimeError(
+                            f"incomplete deflate stream for {info.filename}"
+                        )
+                elif info.compress_type == 0:
+                    data = raw
+                else:
+                    raise RuntimeError(f"unsupported compression {info.compress_type}")
+                if (zlib.crc32(data) & 0xFFFFFFFF) != info.CRC or len(
+                    data
+                ) != info.file_size:
+                    raise RuntimeError(f"CRC/size mismatch for {info.filename}")
+                out[info.filename.split("/")[-1]] = data
+            return out
+
         target = self.cache / f"{subset}.range" if self.cache else None
-        if target is None or not target.exists():
-            headers = {"Range": f"bytes={start}-{end}"}
-            with requests.get(self.url, headers=headers, stream=True, timeout=120) as r:
-                if r.status_code != 206:
-                    raise RuntimeError(f"range request refused: HTTP {r.status_code}")
-                with open(target, "wb") as out:
+        if target is not None and target.exists():
+            try:
+                return extract(target.read_bytes())
+            except (RuntimeError, struct.error, zlib.error):
+                target.unlink()
+
+        temporary = None
+        try:
+            # Keep partial responses off the cache path, on the same filesystem
+            # so replacement is atomic after every member's size/CRC is verified.
+            with tempfile.NamedTemporaryFile(
+                dir=self.cache, prefix=f".{subset}.", suffix=".tmp", delete=False
+            ) as download:
+                temporary = Path(download.name)
+                headers = {"Range": f"bytes={start}-{end}"}
+                with requests.get(
+                    self.url, headers=headers, stream=True, timeout=120
+                ) as r:
+                    if r.status_code != 206:
+                        raise RuntimeError(
+                            f"range request refused: HTTP {r.status_code}"
+                        )
                     for chunk in r.iter_content(chunk_size=1 << 20):
-                        out.write(chunk)
-        blob = target.read_bytes()
-        out = {}
-        for info in infos:
-            off = info.header_offset - start
-            sig, = struct.unpack_from("<I", blob, off)
-            if sig != 0x04034B50:
-                raise RuntimeError(f"bad local header for {info.filename}")
-            name_len, extra_len = struct.unpack_from("<HH", blob, off + 26)
-            data_start = off + 30 + name_len + extra_len
-            raw = blob[data_start : data_start + info.compress_size]
-            if info.compress_type == 8:
-                data = zlib.decompressobj(-15).decompress(raw)
-            elif info.compress_type == 0:
-                data = raw
-            else:
-                raise RuntimeError(f"unsupported compression {info.compress_type}")
-            if (zlib.crc32(data) & 0xFFFFFFFF) != info.CRC or len(data) != info.file_size:
-                raise RuntimeError(f"CRC/size mismatch for {info.filename}")
-            out[info.filename.split("/")[-1]] = data
-        return out
+                        download.write(chunk)
+            result = extract(temporary.read_bytes())
+            if target is not None:
+                temporary.replace(target)
+            return result
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def _read_csv(text):
@@ -253,7 +310,9 @@ def assign_splits(clips):
     """Speaker-grouped, seeded split; VAL_LIVE readers are always locked test."""
     rng = np.random.default_rng(SEED)
     eligible = [c for c in clips if c["eligible"]]
-    train_readers = sorted({c["group"] for c in eligible if c["subset"] == "NISQA_TRAIN_LIVE"})
+    train_readers = sorted(
+        {c["group"] for c in eligible if c["subset"] == "NISQA_TRAIN_LIVE"}
+    )
     order = list(rng.permutation(len(train_readers)))
     n_test = round(TEST_TRAIN_READER_FRACTION * len(train_readers))
     test_readers = {train_readers[i] for i in order[:n_test]}
@@ -284,7 +343,9 @@ def stage1(args):
     cache = out / "cache"
     cache.mkdir(exist_ok=True)
     zr = ZipRanges(cache=cache)
-    size = zr.zip.fp.size if hasattr(zr.zip, "fp") and hasattr(zr.zip.fp, "size") else None
+    size = (
+        zr.zip.fp.size if hasattr(zr.zip, "fp") and hasattr(zr.zip.fp, "size") else None
+    )
     detector = SileroVad()
     detector_id = detector.detector_id
     licenses = {}
@@ -301,13 +362,19 @@ def stage1(args):
     clips = []
     t0 = time.time()
     for subset, language in SUBSETS.items():
-        rows = _read_csv(zr.read_small(f"NISQA_Corpus/{subset}/{subset}_file.csv").decode())
+        rows = _read_csv(
+            zr.read_small(f"NISQA_Corpus/{subset}/{subset}_file.csv").decode()
+        )
         audio = zr.fetch_subset(subset)
         for row in rows:
             name = row["filename_deg"]
             data = audio[name]
             votes = float(row["votes"])
-            mos_std = float(row["mos_std"]) if row.get("mos_std") not in (None, "") else float("nan")
+            mos_std = (
+                float(row["mos_std"])
+                if row.get("mos_std") not in (None, "")
+                else float("nan")
+            )
             result, _ = _qualify(data, detector)
             reason = result["reason"]
             if reason is None and votes < MIN_VOTES:
@@ -322,7 +389,9 @@ def stage1(args):
                 "mos": float(row["mos"]),
                 "votes": votes,
                 "mos_std": mos_std,
-                "mos_ci95": 1.96 * mos_std / math.sqrt(votes) if votes > 0 and math.isfinite(mos_std) else None,
+                "mos_ci95": 1.96 * mos_std / math.sqrt(votes)
+                if votes > 0 and math.isfinite(mos_std)
+                else None,
                 "bytes_sha256": _sha256(data),
                 "reason": reason,
                 "eligible": reason is None,
@@ -369,13 +438,18 @@ def stage1(args):
                 "en": f"en/{TRANSPORT}/{CAPTURE_ORIGIN}",
                 "de": f"de/{TRANSPORT}/{CAPTURE_ORIGIN}",
             },
-            "cohort_admission": "a cohort is admitted only if its own held-out data passes every gate (rmse, spearman, lb95, pair_rank_acc, n_heldout, |bias|, cohort rmse); the artifact 'gates' block reports the primary English cohort",
+            "cohort_admission": "a cohort is statistically admitted only if its own held-out data passes every statistical gate (rmse, spearman, lb95, pair_rank_acc, n_heldout, |bias|, cohort rmse); candidate gates report the worst values across admitted cohorts; release qualifications remain unmet by public data",
             "pair_rule": {
                 "name": "material_difference_pair_concordance_v1",
                 "definition": f"all held-out clip pairs with |MOS_i - MOS_j| >= {PAIR_MIN_DELTA_MOS} and non-overlapping per-clip 95% CIs (1.96*std/sqrt(votes)); accuracy = share ordered like human MOS by calibrated prediction, ties wrong",
                 "note": "substitute: the PRD's listener-confirmed same-source paired degradations are not available in this corpus",
             },
-            "bootstrap": {"unit": "speaker group", "n": 2000, "seed": SEED, "statistic": "Spearman 2.5th percentile"},
+            "bootstrap": {
+                "unit": "speaker group",
+                "n": 2000,
+                "seed": SEED,
+                "statistic": "Spearman 2.5th percentile",
+            },
         },
         "counts": counts,
         "clips": clips,
@@ -399,8 +473,20 @@ def _fit_and_select(cal_x, cal_y, sel_x, sel_y):
         g = pchip(kx, ky)
         pred = np.asarray(g(np.asarray(sel_x)), dtype=float)
         keep = np.isfinite(pred)
-        rmse = float(np.sqrt(np.mean((pred[keep] - np.asarray(sel_y)[keep]) ** 2))) if keep.any() else float("inf")
-        trials.append({"knots": k, "knots_x": kx, "knots_y": ky, "selection_rmse": rmse, "selection_in_support": int(keep.sum())})
+        rmse = (
+            float(np.sqrt(np.mean((pred[keep] - np.asarray(sel_y)[keep]) ** 2)))
+            if keep.any()
+            else float("inf")
+        )
+        trials.append(
+            {
+                "knots": k,
+                "knots_x": kx,
+                "knots_y": ky,
+                "selection_rmse": rmse,
+                "selection_in_support": int(keep.sum()),
+            }
+        )
     best = min(trials, key=lambda t: (t["selection_rmse"], t["knots"]))
     return best, trials
 
@@ -427,6 +513,7 @@ def _evaluate(clips, g):
         {
             "n_eligible": len(clips),
             "n_out_of_support": int((~keep).sum()),
+            "in_support_coverage": len(used) / len(clips) if clips else 0.0,
             "n_groups": len({c["group"] for c in used}),
             "spearman_lb95_group_bootstrap": lb,
             "bootstrap_valid_resamples": n_ok,
@@ -447,7 +534,8 @@ def _gates(s):
         "rmse": s["rmse_mos"] <= g["rmse_max"],
         "spearman": s["spearman"] >= g["spearman_min"],
         "spearman_lb95": s["spearman_lb95_group_bootstrap"] >= g["spearman_lb95_min"],
-        "pair_rank_acc": math.isfinite(s["pair_rank_acc"]) and s["pair_rank_acc"] >= g["pair_rank_acc_min"],
+        "pair_rank_acc": math.isfinite(s["pair_rank_acc"])
+        and s["pair_rank_acc"] >= g["pair_rank_acc_min"],
         "n_heldout": s["n"] >= g["cohort_n_heldout_min"],
         "cohort_bias": abs(s["bias_mos"]) <= g["cohort_abs_bias_max"],
         "cohort_rmse": s["rmse_mos"] <= g["cohort_rmse_max"],
@@ -467,13 +555,8 @@ def _finite(obj):
 
 
 def stage2(args):
-    from ee.voice.services.audio_analysis.calibration import load_calibration
     from ee.voice.services.audio_analysis.vad import SileroVad
-    from ee.voice.services.audio_analysis.vqi import (
-        _session,
-        analyze_vqi,
-        mean_adjusted_ovrl,
-    )
+    from ee.voice.services.audio_analysis.vqi import _session, mean_adjusted_ovrl
 
     raw = Path(args.manifest).read_bytes()
     if _sha256(raw) != args.manifest_sha256:
@@ -498,9 +581,6 @@ def stage2(args):
     for c in clips:
         by_subset.setdefault(c["subset"], []).append(c)
     t0 = time.time()
-    demo_ids = {c["id"] for c in [c for c in clips if c["split"] == "test"][:3]}
-    demo_ids |= {c["id"] for c in [c for c in clips if c["split"] == "external_test"][:1]}
-    demo_bytes = {}
     for subset, items in by_subset.items():
         audio = zr.fetch_subset(subset)
         for n, c in enumerate(items, 1):
@@ -508,21 +588,39 @@ def stage2(args):
             if _sha256(data) != c["bytes_sha256"]:
                 raise SystemExit(f"clip bytes changed: {c['id']}")
             result, prepared = _qualify(data, detector)
-            if result["reason"] is not None or result["y16_sha256"] != c["y16_sha256"] or result["coverage"] != c["coverage"]:
+            if (
+                result["reason"] is not None
+                or result["y16_sha256"] != c["y16_sha256"]
+                or result["coverage"] != c["coverage"]
+            ):
                 raise SystemExit(f"stage-1 qualification not reproduced for {c['id']}")
             y16, admitted = prepared
             c["x"] = mean_adjusted_ovrl(session, y16, admitted)
-            if c["id"] in demo_ids:
-                demo_bytes[c["id"]] = data
             if n % 100 == 0:
-                print(f"stage2 {subset}: {n}/{len(items)} scored, {time.time() - t0:.0f}s", flush=True)
+                print(
+                    f"stage2 {subset}: {n}/{len(items)} scored, {time.time() - t0:.0f}s",
+                    flush=True,
+                )
         del audio
-        (out / "x_partial.json").write_text(json.dumps({c["id"]: c.get("x") for c in clips}))
-        print(f"stage2 {subset}: {len(items)} clips scored, {time.time() - t0:.0f}s", flush=True)
+        (out / "x_partial.json").write_text(
+            json.dumps({c["id"]: c.get("x") for c in clips})
+        )
+        print(
+            f"stage2 {subset}: {len(items)} clips scored, {time.time() - t0:.0f}s",
+            flush=True,
+        )
     split = lambda name: [c for c in clips if c["split"] == name]  # noqa: E731
-    cal, sel, test, ext = split("calibration"), split("selection"), split("test"), split("external_test")
+    cal, sel, test, ext = (
+        split("calibration"),
+        split("selection"),
+        split("test"),
+        split("external_test"),
+    )
     best, trials = _fit_and_select(
-        [c["x"] for c in cal], [c["mos"] for c in cal], [c["x"] for c in sel], [c["mos"] for c in sel]
+        [c["x"] for c in cal],
+        [c["mos"] for c in cal],
+        [c["x"] for c in sel],
+        [c["mos"] for c in sel],
     )
     from .stats import pchip
 
@@ -532,11 +630,30 @@ def stage2(args):
     en_checks, en_pass = _gates(en_summary)
     de_checks, de_pass = _gates(de_summary) if ext else ({}, False)
     calibration_id = f"vqi_nisqa_live_v1_{args.manifest_sha256[:12]}_k{best['knots']}"
-    cohorts = []
-    if en_pass:
-        cohorts.append({"tag": manifest["protocol"]["cohorts"]["en"], "n_heldout": en_summary["n"], "bias": en_summary["bias_mos"], "rmse": en_summary["rmse_mos"]})
-    if de_pass:
-        cohorts.append({"tag": manifest["protocol"]["cohorts"]["de"], "n_heldout": de_summary["n"], "bias": de_summary["bias_mos"], "rmse": de_summary["rmse_mos"]})
+    cohorts, admitted_summaries = [], []
+    for language, summary, passed in (
+        ("en", en_summary, en_pass),
+        ("de", de_summary, de_pass),
+    ):
+        if passed:
+            cohorts.append(
+                {
+                    "tag": manifest["protocol"]["cohorts"][language],
+                    "n_heldout": summary["n"],
+                    "bias": summary["bias_mos"],
+                    "rmse": summary["rmse_mos"],
+                }
+            )
+            admitted_summaries.append(summary)
+    # Public natural-speech statistics do not establish any release qualification.
+    qualifications = {
+        "detector_activity_validated": False,
+        "detector_activity_evidence_ref": None,
+        "target_domain_validated": False,
+        "target_domain_evidence_ref": None,
+        "paired_degradations_validated": False,
+        "paired_degradations_evidence_ref": None,
+    }
     report = {
         "study": manifest["study"],
         "stage": 2,
@@ -544,9 +661,18 @@ def stage2(args):
         "manifest_sha256": args.manifest_sha256,
         "model_sha256": args.model_sha256,
         "calibration_id": calibration_id,
-        "split_sizes": {"calibration": len(cal), "selection": len(sel), "test": len(test), "external_test": len(ext)},
+        "split_sizes": {
+            "calibration": len(cal),
+            "selection": len(sel),
+            "test": len(test),
+            "external_test": len(ext),
+        },
         "selection_trials": trials,
-        "chosen": {"knots": best["knots"], "knots_x": best["knots_x"], "knots_y": best["knots_y"]},
+        "chosen": {
+            "knots": best["knots"],
+            "knots_x": best["knots_x"],
+            "knots_y": best["knots_y"],
+        },
         "calibration_x_range": [best["knots_x"][0], best["knots_x"][-1]],
         "heldout_en": en_summary,
         "heldout_en_gates": en_checks,
@@ -555,28 +681,52 @@ def stage2(args):
         "external_de_gates": de_checks,
         "external_de_pass": de_pass,
         "admitted_cohorts": [c["tag"] for c in cohorts],
-        "outcome": "gates_passed" if cohorts else "gates_failed",
+        "statistical_gates_passed": bool(cohorts),
+        "release_qualified": False,
+        "release_qualifications": qualifications,
+        "outcome": "statistical_gates_passed"
+        if cohorts
+        else "statistical_gates_failed",
         "x_by_clip": {c["id"]: c["x"] for c in clips},
     }
+    # Preserve the statistical outcome even if candidate output fails. Never
+    # validate/promote this research candidate through the production loader.
+    report_path = out / "report.json"
+    report_path.write_bytes(
+        json.dumps(_finite(report), indent=1, sort_keys=True).encode()
+    )
     if cohorts:
         artifact = {
             "calibration_id": calibration_id,
             "model_sha256": args.model_sha256,
-            "polynomial_version": manifest["pipeline"]["constants"]["polynomial_version"],
-            "preprocessing_version": manifest["pipeline"]["constants"]["preprocessing_version"],
+            "polynomial_version": manifest["pipeline"]["constants"][
+                "polynomial_version"
+            ],
+            "preprocessing_version": manifest["pipeline"]["constants"][
+                "preprocessing_version"
+            ],
             "detector_id": manifest["pipeline"]["constants"]["detector_id"],
-            "window_policy_version": manifest["pipeline"]["constants"]["window_policy_version"],
+            "window_policy_version": manifest["pipeline"]["constants"][
+                "window_policy_version"
+            ],
             "scale_id": manifest["pipeline"]["constants"]["scale_id"],
             "dataset_manifest_sha256": args.manifest_sha256,
-            "g": {"type": "monotone_pchip", "knots_x": best["knots_x"], "knots_y": best["knots_y"]},
+            "g": {
+                "type": "monotone_pchip",
+                "knots_x": best["knots_x"],
+                "knots_y": best["knots_y"],
+            },
             "support": {"x_min": best["knots_x"][0], "x_max": best["knots_x"][-1]},
             "gates": {
-                "rmse": en_summary["rmse_mos"],
-                "spearman": en_summary["spearman"],
-                "spearman_lb95": en_summary["spearman_lb95_group_bootstrap"],
-                "pair_rank_acc": en_summary["pair_rank_acc"],
+                "rmse": max(s["rmse_mos"] for s in admitted_summaries),
+                "spearman": min(s["spearman"] for s in admitted_summaries),
+                "spearman_lb95": min(
+                    s["spearman_lb95_group_bootstrap"] for s in admitted_summaries
+                ),
+                "pair_rank_acc": min(s["pair_rank_acc"] for s in admitted_summaries),
                 "pair_rank_definition": manifest["protocol"]["pair_rule"]["name"],
             },
+            "release_qualifications": qualifications,
             "cohorts": cohorts,
             "source": {
                 "dataset": "NISQA Corpus (Mittag et al., 2021), subsets NISQA_TRAIN_LIVE, NISQA_VAL_LIVE, NISQA_TEST_LIVETALK",
@@ -586,34 +736,32 @@ def stage2(args):
             },
         }
         artifact_raw = _canonical(_finite(artifact))
-        (out / "artifact.json").write_bytes(artifact_raw)
-        artifact_sha = _sha256(artifact_raw)
-        report["artifact_sha256"] = artifact_sha
-        # The real loader must accept it, and the real product path must score with it.
-        cal_obj = load_calibration(out / "artifact.json", artifact_sha, model_sha256=args.model_sha256, detector_id=detector.detector_id)
-        class _Pinned:
-            @staticmethod
-            def get():
-                return session, args.model_sha256
-
-        demo = []
-        from ee.voice.services.audio_analysis.decode import decode_audio
-
-        for c in (test[:3] + ext[:1]):
-            decoded = decode_audio(demo_bytes[c["id"]])
-            entry = analyze_vqi(
-                decoded.waveform, decoded.sample_rate_hz, detector=detector,
-                registry=_Pinned, calibration=cal_obj, language=c["language"], transport=TRANSPORT, capture_origin=CAPTURE_ORIGIN,
-            )
-            demo.append({"id": c["id"], "human_mos": c["mos"], "vqi_entry": entry})
-        mismatch = analyze_vqi(
-            decoded.waveform, decoded.sample_rate_hz, detector=detector,
-            registry=_Pinned, calibration=cal_obj, language=None, transport=TRANSPORT, capture_origin="provider_source_track",
+        (out / "candidate-artifact.json").write_bytes(artifact_raw)
+        report["candidate_artifact_sha256"] = _sha256(artifact_raw)
+        report_path.write_bytes(
+            json.dumps(_finite(report), indent=1, sort_keys=True).encode()
         )
-        report["product_path_demo"] = demo
-        report["product_path_out_of_domain_demo"] = mismatch
-    (out / "report.json").write_bytes(json.dumps(_finite(report), indent=1, sort_keys=True).encode())
-    print(json.dumps(_finite({k: report[k] for k in ("calibration_id", "split_sizes", "heldout_en", "heldout_en_gates", "external_de_gates", "admitted_cohorts", "outcome")}), indent=1))
+    print(
+        json.dumps(
+            _finite(
+                {
+                    k: report[k]
+                    for k in (
+                        "calibration_id",
+                        "split_sizes",
+                        "heldout_en",
+                        "heldout_en_gates",
+                        "external_de_gates",
+                        "admitted_cohorts",
+                        "statistical_gates_passed",
+                        "release_qualified",
+                        "outcome",
+                    )
+                }
+            ),
+            indent=1,
+        )
+    )
 
 
 def main(argv=None):

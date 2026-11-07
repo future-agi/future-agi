@@ -47,6 +47,14 @@ def artifact():
             "spearman_lb95": 0.6,
             "pair_rank_acc": 0.9,
         },
+        "release_qualifications": {
+            "detector_activity_validated": True,
+            "detector_activity_evidence_ref": "fixture://detector-activity",
+            "target_domain_validated": True,
+            "target_domain_evidence_ref": "fixture://synthesized-agent-voice",
+            "paired_degradations_validated": True,
+            "paired_degradations_evidence_ref": "fixture://listener-confirmed-pairs",
+        },
         "dataset_manifest_sha256": "b" * 64,
         "created_at": "2026-10-01T00:00:00Z",
     }
@@ -121,6 +129,45 @@ def test_rejects_failed_validation_gate(tmp_path, gate, value):
         load(tmp_path, raw)
 
 
+@pytest.mark.parametrize("qualifications", [None, {}, [], True, "validated", "missing"])
+def test_rejects_missing_release_qualifications(tmp_path, qualifications):
+    raw = artifact()  # All numerical gates pass; release admission is independent.
+    if qualifications == "missing":
+        del raw["release_qualifications"]
+    else:
+        raw["release_qualifications"] = qualifications
+    with pytest.raises(AudioDeterministicError, match="not_validated"):
+        load(tmp_path, raw)
+
+
+@pytest.mark.parametrize(
+    "name", ["detector_activity", "target_domain", "paired_degradations"]
+)
+@pytest.mark.parametrize("validated", [False, None, 0, 1, "true", "missing"])
+def test_each_release_qualification_requires_boolean_true(tmp_path, name, validated):
+    raw = artifact()
+    if validated == "missing":
+        del raw["release_qualifications"][f"{name}_validated"]
+    else:
+        raw["release_qualifications"][f"{name}_validated"] = validated
+    with pytest.raises(AudioDeterministicError, match="not_validated"):
+        load(tmp_path, raw)
+
+
+@pytest.mark.parametrize(
+    "name", ["detector_activity", "target_domain", "paired_degradations"]
+)
+@pytest.mark.parametrize("evidence", [None, "", " \n\t", True, [], "missing"])
+def test_each_release_qualification_requires_evidence(tmp_path, name, evidence):
+    raw = artifact()
+    if evidence == "missing":
+        del raw["release_qualifications"][f"{name}_evidence_ref"]
+    else:
+        raw["release_qualifications"][f"{name}_evidence_ref"] = evidence
+    with pytest.raises(AudioDeterministicError, match="not_validated"):
+        load(tmp_path, raw)
+
+
 def test_bad_digest_and_missing_file(tmp_path):
     path = tmp_path / "missing.json"
     with pytest.raises(AudioDeterministicError, match="not_validated"):
@@ -134,7 +181,9 @@ def test_bad_digest_and_missing_file(tmp_path):
         )
 
 
-@pytest.mark.parametrize("failure", ["missing", "digest", "version", "gate"])
+@pytest.mark.parametrize(
+    "failure", ["missing", "digest", "version", "gate", "qualification"]
+)
 def test_refusal_warning_is_sanitized_once_per_process(
     tmp_path, monkeypatch, caplog, failure
 ):
@@ -144,6 +193,11 @@ def test_refusal_warning_is_sanitized_once_per_process(
         raw["detector_id"] = "secret-detector"
     elif failure == "gate":
         raw["gates"]["rmse"] = 0.9
+    elif failure == "qualification":
+        raw["release_qualifications"]["detector_activity_validated"] = False
+        raw["release_qualifications"]["detector_activity_evidence_ref"] = (
+            "secret-evidence"
+        )
     path = tmp_path / "secret-calibration.json"
     data = json.dumps(raw).encode()
     if failure != "missing":
