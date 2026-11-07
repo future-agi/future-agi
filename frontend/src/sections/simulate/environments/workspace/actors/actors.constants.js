@@ -17,7 +17,7 @@ export const ACTORS_COPY = {
       caller_takes_back_after_turns:
         "Default: 4 on a phone line, none in a chat",
       actor_seconds_per_call: "Default: 60 on a phone line, none in a chat",
-      max_messages: "Default: 500",
+      max_messages: "Default: 20",
     },
     none: "none",
     badNumber: "A number above 0, or none",
