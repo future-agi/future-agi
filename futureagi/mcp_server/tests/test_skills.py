@@ -12,7 +12,7 @@ from mcp_server.api_executor import (
     MCPRequestContext,
 )
 from mcp_server.constants import DEFAULT_TOOL_GROUPS, TOOL_GROUPS
-from mcp_server.generated_registry import GeneratedToolRegistry
+from mcp_server.generated_registry import GeneratedTool, GeneratedToolRegistry
 from mcp_server.response_limits import bounded_response
 from model_hub.models.skills_hub import HubSkillUsageDaily
 from model_hub.services.skills_hub.types import Actor
@@ -28,17 +28,25 @@ SKILLS = {
 }
 
 
+def required_tool(registry: GeneratedToolRegistry, name: str) -> GeneratedTool:
+    tool = registry.get(name)
+    assert tool is not None, f"Missing Skills tool: {name}"
+    return tool
+
+
 def test_skills_registry_count_and_default_group():
     registry = GeneratedToolRegistry.from_manifest()
     assert registry.count() == 113
     assert {tool.name for tool in registry.list_by_groups(["skills"])} == SKILLS
     assert "skills" in TOOL_GROUPS and "skills" in DEFAULT_TOOL_GROUPS
     for name in SKILLS:
-        assert registry.get(name).annotations["readOnlyHint"] == (
+        assert required_tool(registry, name).annotations["readOnlyHint"] == (
             name in {"list_skills", "get_skill", "read_skill_file"}
         )
     assert (
-        registry.get("list_skills").input_schema["properties"]["page_size"]["maximum"]
+        required_tool(registry, "list_skills").input_schema["properties"]["page_size"][
+            "maximum"
+        ]
         == 100
     )
 
@@ -54,9 +62,9 @@ def test_skills_openapi_has_all_routes_and_errors():
         for path, item in contract["paths"].items()
         if path.startswith("/model-hub/skills/")
     }
-    assert len(paths) == 21
+    assert len(paths) == 46
     methods = {"get", "post", "put", "patch", "delete"}
-    assert sum(len(methods.intersection(item)) for item in paths.values()) == 28
+    assert sum(len(methods.intersection(item)) for item in paths.values()) == 56
     for item in paths.values():
         for method in methods.intersection(item):
             assert {"400", "401", "403", "404", "409", "413", "422"} <= item[method][
@@ -85,11 +93,12 @@ def test_read_skill_file_reassembles_100kib_through_executor(
         files=[{"path": "SKILL.md", "content": content}],
         note="",
         labels=["production"],
+        expected_release_revision=0,
         tags=[],
         acknowledge_warnings=True,
     )
     manifest = executor.execute_sync(
-        registry.get("get_skill"),
+        required_tool(registry, "get_skill"),
         {"name": "large-skill", "include_content": True},
         context,
     )
@@ -98,7 +107,7 @@ def test_read_skill_file_reassembles_100kib_through_executor(
     text, offset = "", 0
     while True:
         response = executor.execute_sync(
-            registry.get("read_skill_file"),
+            required_tool(registry, "read_skill_file"),
             {
                 "skill_id": manifest["skill_id"],
                 "number": manifest["version"],
@@ -124,7 +133,7 @@ def test_read_skill_file_reassembles_100kib_through_executor(
     ]
     with pytest.raises(APIExecutionError) as error:
         executor.execute_sync(
-            registry.get("get_skill"),
+            required_tool(registry, "get_skill"),
             {"name": "large-skill", "label": "missing"},
             context,
         )
@@ -142,30 +151,36 @@ def test_all_skill_tools_execute_against_generated_contract(
     )
     content = "---\nname: mcp-skill\ndescription: Use when a workspace needs reusable instructions for reviewing a request.\n---\n\nRead the request.\n"
     pushed = executor.execute_sync(
-        registry.get("publish_skill"),
+        required_tool(registry, "publish_skill"),
         {"files": [{"path": "SKILL.md", "content": content}]},
         context,
     )
     skill_id = pushed["skill"]["id"]
+    before = executor.execute_sync(required_tool(registry, "list_skills"), {}, context)[
+        "results"
+    ][0]
+    assert before["protected_label_names"] == ["production"]
+    assert before["release_revision"] == 0
     label = executor.execute_sync(
-        registry.get("set_skill_label"),
+        required_tool(registry, "set_skill_label"),
         {
             "skill_id": skill_id,
             "label": "production",
             "version": 1,
             "expected_version": None,
+            "expected_release_revision": before["release_revision"],
         },
         context,
     )
     assert label["version"] == 1
     updated = executor.execute_sync(
-        registry.get("update_skill_tags"),
+        required_tool(registry, "update_skill_tags"),
         {"skill_id": skill_id, "tags": ["approved"]},
         context,
     )
     assert updated["tags"] == ["approved"]
     listed = executor.execute_sync(
-        registry.get("list_skills"), {"tag": "approved"}, context
+        required_tool(registry, "list_skills"), {"tag": "approved"}, context
     )
     assert listed["count"] == 1
     assert listed["stats"]["in_production"] == 1

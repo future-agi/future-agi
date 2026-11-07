@@ -1,12 +1,41 @@
 """Skills fixtures reuse the root's real user/org/workspace memberships."""
 
+from uuid import uuid4
+
 import pytest
 
 from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.services.skills_hub.types import Actor
 from model_hub.services.skills_hub.versions import create_skill, publish_files
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
+
+
+@pytest.fixture
+def actor_for_workspace():
+    """Create foreign fixtures with their own authorized author, never the reader."""
+
+    def make(workspace):
+        author = User.objects.create_user(
+            email=f"skills-fixture-{uuid4()}@example.test",
+            name="Scoped fixture author",
+            organization=workspace.organization,
+        )
+        OrganizationMembership.no_workspace_objects.update_or_create(
+            user=author,
+            organization=workspace.organization,
+            defaults={
+                "role": OrganizationRoles.OWNER,
+                "level": Level.OWNER,
+                "is_active": True,
+            },
+        )
+        return Actor(user=author, api_key=None)
+
+    return make
 
 
 @pytest.fixture
@@ -38,7 +67,9 @@ def make_skill_files():
 
 @pytest.fixture
 def hub_skill(organization, workspace, hub_actor):
-    return create_skill(
+    # The v1 regression suite exercises migrated identities, whose labels remain
+    # unprotected. New-identity protection is covered by v1.1 integration tests.
+    skill = create_skill(
         organization=organization,
         workspace=workspace,
         actor=hub_actor,
@@ -46,6 +77,16 @@ def hub_skill(organization, workspace, hub_actor):
         description="Use when a support request needs a clear and verifiable next step.",
         tags=["support"],
     )
+    skill.protected_label_names = []
+    skill.save(update_fields=["protected_label_names"])
+    return skill
+
+
+@pytest.fixture(autouse=True)
+def enable_test_slice(settings):
+    # Synthetic provider fixtures exercise the enabled service path explicitly.
+    # Tests of the operational disabled state override this setting themselves.
+    settings.SKILLS_TESTING_ENABLED = True
 
 
 @pytest.fixture
@@ -56,7 +97,7 @@ def publish_skill(hub_actor, make_skill_files):
             base_version = skill.latest_version_number or None
         return publish_files(
             skill=skill,
-            actor=hub_actor,
+            actor=kwargs.pop("actor", hub_actor),
             files=files if files is not None else make_skill_files(skill.name),
             note=kwargs.pop("note", ""),
             base_version=base_version,

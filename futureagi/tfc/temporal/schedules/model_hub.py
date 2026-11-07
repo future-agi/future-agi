@@ -10,6 +10,20 @@ from tfc.temporal.schedules.config import ScheduleConfig
 # Note: execute_run_prompt removed - workflows are now triggered directly from API
 MODEL_HUB_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
+        schedule_id="reconcile-skills-jobs",
+        activity_name="reconcile_skills_jobs",
+        interval_seconds=30,
+        queue="tasks_l",
+        description="Recover committed Skills jobs and settle reservations",
+    ),
+    ScheduleConfig(
+        schedule_id="purge-skills-payloads",
+        activity_name="purge_skills_payloads",
+        interval_seconds=86400,
+        queue="tasks_l",
+        description="Purge expired private Skills evidence",
+    ),
+    ScheduleConfig(
         schedule_id="eval-evaluation",
         activity_name="execute_evaluation",
         interval_seconds=10,

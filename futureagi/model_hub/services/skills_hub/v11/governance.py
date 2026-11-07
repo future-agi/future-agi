@@ -21,16 +21,22 @@ from model_hub.services.skills_hub.v11.principals import (
     require_scope_access,
     require_skill_admin,
 )
-from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
+from model_hub.services.skills_hub.v11.types import (
+    PrincipalKind,
+    SkillPrincipal,
+    SkillScope,
+)
 
 
 def principal_for_actor(*, skill: HubSkill, actor: Actor) -> SkillPrincipal:
     """Bridge v1's actor without borrowing the authenticator's synthetic user."""
     key = actor.api_key
+    kind: PrincipalKind
     if key is None:
         kind, user_id = "human", actor.user.pk if actor.user else None
     elif key.type in ("user", "mcp"):
-        kind, user_id = f"{key.type}_key", key.user_id
+        kind = "mcp_key" if key.type == "mcp" else "user_key"
+        user_id = key.user_id
         if actor.user is None or actor.user.pk != user_id:
             raise SkillsHubError(
                 "principal_not_supported",
@@ -166,7 +172,7 @@ def authorize_label_change_locked(
             status=409,
             detail={
                 "current_version": current,
-                "release_revision": skill.release_revision,
+                **({"release_revision": skill.release_revision} if protected else {}),
             },
         )
 

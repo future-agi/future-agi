@@ -19,7 +19,12 @@ from model_hub.services.skills_hub.limits import (
     MAX_PATH_SEGMENTS,
     MAX_VERSION_BYTES,
 )
-from model_hub.services.skills_hub.types import Actor, FileInput, PublishResult
+from model_hub.services.skills_hub.types import MISSING, Actor, FileInput, PublishResult
+from model_hub.services.skills_hub.v11.governance import principal_for_actor
+from model_hub.services.skills_hub.v11.principals import (
+    require_private_principal,
+    require_scope_access,
+)
 from model_hub.services.skills_hub.versions import publish_files
 
 
@@ -135,7 +140,15 @@ def save_draft(
     ):
         raise SkillsHubError("version_not_found", "Base version not found.", status=404)
     if draft is None:
-        draft = HubSkillDraft(skill=skill, user=user)
+        basis = (
+            skill.versions.filter(number=base_version).first() if base_version else None
+        )
+        source = (
+            dict(basis.source)
+            if basis and basis.source.get("provider") == "github"
+            else {}
+        )
+        draft = HubSkillDraft(skill=skill, user=user, source=source)
     draft.files = files
     draft.note = note
     draft.base_version = base_version
@@ -161,8 +174,20 @@ def publish_draft(
     acknowledge_warnings: bool,
     force: bool = False,
     revision: int | None = None,
+    actor: Actor | None = None,
+    expected_digest: str | None = None,
+    expected_release_revision: object = MISSING,
+    evidence_run_id=None,
 ) -> PublishResult:
     """Publish and remove the same locked draft, retaining it on any failure."""
+    actor = actor or Actor(user=user, api_key=None)
+    principal = principal_for_actor(skill=skill, actor=actor)
+    require_private_principal(principal=principal)
+    require_scope_access(principal=principal, write=True)
+    if principal.user_id != user.pk:
+        raise SkillsHubError(
+            "principal_not_supported", "Publish only your own draft.", status=403
+        )
     skill = scoped_skill(skill, lock=True)
     draft = get_draft(skill=skill, user=user)
     if revision is not None and revision != draft.revision:
@@ -177,14 +202,23 @@ def publish_draft(
         )
     result = publish_files(
         skill=skill,
-        actor=Actor(user=user, api_key=None),
+        actor=actor,
         files=draft.files,
         note=draft.note if note is None else note,
         base_version=draft.base_version,
         labels=labels,
         acknowledge_warnings=acknowledge_warnings,
         force=force,
-        source={"type": "draft"},
+        source=draft.source or {"type": "draft"},
+        expected_digest=expected_digest,
+        expected_release_revision=expected_release_revision,
+        evidence_run_id=evidence_run_id,
     )
+    if draft.source.get("provider") == "github":
+        from model_hub.services.skills_hub.v11.github import adopt_draft_source_locked
+
+        adopt_draft_source_locked(
+            skill=result.version.skill, draft=draft, version=result.version
+        )
     draft.delete()
     return result

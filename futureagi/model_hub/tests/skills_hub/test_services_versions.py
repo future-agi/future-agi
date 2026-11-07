@@ -250,7 +250,7 @@ def test_metadata_updates_do_not_mutate_versions(hub_skill, publish_skill, hub_a
 
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_publishes_allocate_distinct_monotonic_numbers(
-    hub_skill, make_skill_files
+    hub_skill, hub_actor, make_skill_files
 ):
     """Two real connections race after checks, not a mocked database lock."""
     from model_hub.services.skills_hub import versions
@@ -268,7 +268,7 @@ def test_concurrent_publishes_allocate_distinct_monotonic_numbers(
         try:
             return publish_files(
                 skill=hub_skill,
-                actor=Actor(user=None, api_key=None),
+                actor=hub_actor,
                 files=make_skill_files(body=body),
                 note="Concurrent publish",
                 base_version=None,

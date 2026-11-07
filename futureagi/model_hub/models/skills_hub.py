@@ -8,6 +8,11 @@ from django.db import models
 from tfc.utils.base_model import BaseModel
 
 
+def default_protected_labels():
+    """New identities opt into protection; migration preserves legacy policy."""
+    return ["production"]
+
+
 class HubSkill(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -20,6 +25,8 @@ class HubSkill(BaseModel):
     description = models.CharField(max_length=1024)
     tags = models.JSONField(default=list)
     latest_version_number = models.PositiveIntegerField(default=0)
+    protected_label_names = models.JSONField(default=default_protected_labels)
+    release_revision = models.PositiveBigIntegerField(default=0)
     source = models.JSONField(default=dict)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -174,6 +181,7 @@ class HubSkillLabelEvent(models.Model):
     label = models.CharField(max_length=40)
     from_version = models.PositiveIntegerField(null=True)
     to_version = models.PositiveIntegerField(null=True)
+    release_revision = models.PositiveBigIntegerField(null=True)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -207,6 +215,7 @@ class HubSkillDraft(models.Model):
     )
     base_version = models.PositiveIntegerField(null=True)
     files = models.JSONField(default=list)
+    source = models.JSONField(default=dict)
     note = models.TextField(blank=True)
     revision = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)

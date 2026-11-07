@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+from typing import Any, cast
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.v11.types import Limits
+from model_hub.services.skills_hub.v11.types import Limits, ProfileLimits
 
 MAX_SUITE_CASES = 20
 MAX_CASE_PROMPT_BYTES = 16 * 1024
@@ -49,26 +50,32 @@ _COMMON_PROFILE = {
 }
 DEFAULT_LIMITS: Limits = {
     "profiles": {
-        "quick": {
-            **_COMMON_PROFILE,
-            "max_cases": 3,
-            "max_variants": 2,
-            "repetitions": 1,
-            "max_attempts": 6,
-            "deadline_seconds": 300,
-            "max_task_output_tokens": 1536,
-            "max_total_tokens": 150_000,
-        },
-        "repeated": {
-            **_COMMON_PROFILE,
-            "max_cases": 20,
-            "max_variants": 3,
-            "repetitions": 3,
-            "max_attempts": 180,
-            "deadline_seconds": 1800,
-            "max_task_output_tokens": 2048,
-            "max_total_tokens": 1_000_000,
-        },
+        "quick": cast(
+            ProfileLimits,
+            {
+                **_COMMON_PROFILE,
+                "max_cases": 3,
+                "max_variants": 2,
+                "repetitions": 1,
+                "max_attempts": 6,
+                "deadline_seconds": 300,
+                "max_task_output_tokens": 1536,
+                "max_total_tokens": 150_000,
+            },
+        ),
+        "repeated": cast(
+            ProfileLimits,
+            {
+                **_COMMON_PROFILE,
+                "max_cases": 20,
+                "max_variants": 3,
+                "repetitions": 3,
+                "max_attempts": 180,
+                "deadline_seconds": 1800,
+                "max_task_output_tokens": 2048,
+                "max_total_tokens": 1_000_000,
+            },
+        ),
     },
     "max_competitors": 5,
     "max_active_attempts_per_run": 2,
@@ -81,7 +88,7 @@ DEFAULT_LIMITS: Limits = {
 
 def effective_limits() -> Limits:
     """Return a fresh JSON-compatible object containing the actual ceilings."""
-    result = deepcopy(DEFAULT_LIMITS)
+    result = cast(dict[str, Any], deepcopy(DEFAULT_LIMITS))
     overrides = getattr(settings, "SKILLS_TEST_LIMITS", {})
     if not isinstance(overrides, dict):
         raise ImproperlyConfigured("SKILLS_TEST_LIMITS must be an object.")
@@ -103,7 +110,7 @@ def effective_limits() -> Limits:
                     amount is None
                     or not amount.is_finite()
                     or not 0 < amount < Decimal("10000000000")
-                    or amount.as_tuple().exponent < -8
+                    or int(amount.as_tuple().exponent) < -8
                 ):
                     raise ImproperlyConfigured(
                         "Skills cost ceiling must be a positive decimal string (18,8)."
@@ -122,7 +129,7 @@ def effective_limits() -> Limits:
                 target[name] = value
 
     apply(result, overrides)
-    return result
+    return cast(Limits, result)
 
 
 def retention_days() -> int:
@@ -147,9 +154,18 @@ def validate_competitors(*, skill_id: object, competitors: list[dict]) -> None:
         )
 
 
-def validate_run_limits(configuration: dict, *, skill_id: object | None = None) -> None:
-    limits = effective_limits()
-    profile = limits["profiles"][configuration["profile"]]
+def validate_run_limits(
+    configuration: dict,
+    *,
+    skill_id: object | None = None,
+    deployment_limits: bool = True,
+) -> None:
+    limits = effective_limits() if deployment_limits else DEFAULT_LIMITS
+    profile = (
+        limits["profiles"]["quick"]
+        if configuration["profile"] == "quick"
+        else limits["profiles"]["repeated"]
+    )
     baselines = configuration["baselines"]
     if (
         len(set(baselines)) != len(baselines)
@@ -197,10 +213,14 @@ def validate_run_limits(configuration: dict, *, skill_id: object | None = None) 
                 status=400,
             )
     budget = configuration["limits"]
-    if not 0 < budget["max_total_tokens"] <= profile[
-        "max_total_tokens"
-    ] or not 0 < Decimal(budget["max_estimated_cost_usd"]) <= Decimal(
-        limits["max_estimated_cost_usd"]
+    if (
+        not 0 < budget["max_total_tokens"] <= profile["max_total_tokens"]
+        or not 0 < Decimal(budget["max_estimated_cost_usd"])
+        or (
+            deployment_limits
+            and Decimal(budget["max_estimated_cost_usd"])
+            > Decimal(limits["max_estimated_cost_usd"])
+        )
     ):
         raise SkillsHubError(
             "invalid_test_config",

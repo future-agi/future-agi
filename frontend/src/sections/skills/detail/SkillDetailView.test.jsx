@@ -32,7 +32,7 @@ vi.mock("../versions/VersionsTab", () => ({
 }));
 const skill = {
   id: "skill-a",
-  name: "support-policy",
+  name: "support-policy", permissions: { canArchive: true }, releaseRevision: 2,
   description: "Use when answering support policy questions.",
   latestVersion: 4,
   labels: [{ name: "production", version: 2 }],
@@ -93,6 +93,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Skill detail route", () => {
+  it('archives with the release revision reviewed when confirmation opened', async () => {
+    const current = { ...skill, releaseRevision: 2 };
+    useSkill.mockReturnValue(success(current));
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Skill actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
+    // A later refetch/policy change must not silently advance this precondition.
+    current.releaseRevision = 5;
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(useArchiveSkill().mutateAsync).toHaveBeenCalledWith({ id: skill.id, expectedReleaseRevision: 2 }));
+  });
   it("reads the route ID, shows production and own/other draft actions", () => {
     show();
     expect(useSkill).toHaveBeenCalledWith("skill-a");
@@ -222,7 +233,7 @@ describe("Skill detail route", () => {
     await waitFor(() =>
       expect(screen.getByText("Skills library")).toBeInTheDocument(),
     );
-    expect(useArchiveSkill().mutateAsync).toHaveBeenCalledWith("skill-a");
+    expect(useArchiveSkill().mutateAsync).toHaveBeenCalledWith({ id: "skill-a", expectedReleaseRevision: 2 });
   });
   it("retains the confirmation and page on archive failure", async () => {
     useArchiveSkill().mutateAsync.mockRejectedValueOnce(new Error("Denied"));
@@ -288,3 +299,15 @@ describe("Skill detail route", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });
+
+vi.mock("src/sections/skills/tests/TestsTab", () => ({ default: () => <div>Skill tests</div> }));
+vi.mock("src/sections/skills/sources/GitHubSourcePanel", () => ({ default: () => <div>GitHub source</div> }));
+
+it('mounts Tests without losing immutable result deep links or competing primary actions', () => {
+  show('?tab=tests&run=run-id&case=case-id&attempt=attempt-id');
+  expect(screen.getByText('Skill tests')).toBeInTheDocument();
+  expect(screen.getByLabelText('URL')).toHaveTextContent('run=run-id&case=case-id&attempt=attempt-id');
+  expect(screen.getByRole('link', { name: 'Continue draft' })).toHaveClass('MuiButton-outlined');
+});
+
+vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));

@@ -34,3 +34,12 @@ describe('skills wire mappers', () => {
     expect(mapPublish({ version, unchanged: true })).toMatchObject({ unchanged: true, version: { fileCount: 2 } });
   });
 });
+
+it('preserves authoritative permissions, aggregate revisions and evidence on release responses', () => {
+  const mapped = mapSkill({ id: 'unpublished', release_revision: 0, protected_label_names: ['production'], labels: [], permissions: { can_manage_label_protection: false, can_archive: true, can_run_tests: false } });
+  expect(mapped).toMatchObject({ releaseRevision: 0, protectedLabelNames: ['production'], permissions: { canManageLabelProtection: false, canArchive: true, canRunTests: false } });
+  const currentness = { content: true, baseline: false, suite: true, competitors: null, payload_available: true };
+  expect(mapPublish({ version, unchanged: true, release_revision: 8, evidence: { run_id: 'run', validity: 'diagnostic', currentness } })).toMatchObject({ releaseRevision: 8, evidence: { runId: 'run', validity: 'diagnostic', currentness: { baseline: false, payloadAvailable: true } } });
+  const source = { provider: 'github', commit_sha: 'immutable', local_modifications: true };
+  expect(mapDraft({ files: [], revision: 2, source }).source).toEqual(source);
+});

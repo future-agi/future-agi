@@ -8,6 +8,7 @@ from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.db.models import F, Max, Sum
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from model_hub.models.skills_hub import HubSkill, HubSkillUsageDaily, HubSkillVersion
@@ -41,7 +42,9 @@ def record_fetch(
             }
             rows = HubSkillUsageDaily.objects.filter(**lookup)
             if rows.update(
-                count=F("count") + 1, last_at=now, consumer_label=consumer_label
+                count=F("count") + 1,
+                last_at=Greatest(F("last_at"), now),
+                consumer_label=consumer_label,
             ):
                 return
             try:
@@ -52,7 +55,9 @@ def record_fetch(
             except IntegrityError:
                 # Another reader created the same daily bucket after our miss.
                 if not rows.update(
-                    count=F("count") + 1, last_at=now, consumer_label=consumer_label
+                    count=F("count") + 1,
+                    last_at=Greatest(F("last_at"), now),
+                    consumer_label=consumer_label,
                 ):
                     raise
     except Exception:

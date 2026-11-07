@@ -156,3 +156,5 @@ describe("Usage tab", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 });
+
+vi.mock("src/sections/skills/governance/AdoptionPanel", () => ({ default: () => <div>Adoption panel</div> }));

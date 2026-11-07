@@ -1,17 +1,19 @@
 import { useState } from "react";
+import { useSkillV11Scope } from "src/api/skills/testing";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { Alert, MenuItem, Stack, TextField } from "@mui/material";
+import { Alert, Button, MenuItem, Stack, TextField } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { getSkillErrorCode, useCreateSkill, useSkillTemplates } from "src/api/skills";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { paths } from "src/routes/paths";
 import { LIMITS, SKILL_NAME_PATTERN } from "src/sections/skills/constants";
 
-export default function NewSkillDialog({ open, onClose, initialTemplate = "blank" }) {
+function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
   const navigate = useNavigate();
   const templates = useSkillTemplates();
   const create = useCreateSkill();
+  const [created, setCreated] = useState(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState(initialTemplate);
@@ -26,14 +28,21 @@ export default function NewSkillDialog({ open, onClose, initialTemplate = "blank
     try {
       const skill = await create.mutateAsync({ name, description: description.trim(), templateId });
       enqueueSnackbar("Skill created", { variant: "success" });
-      onClose();
-      navigate(paths.dashboard.skills.edit(skill.id));
+      setCreated(skill);
     } catch (failure) {
       if (getSkillErrorCode(failure) === "name_taken") setNameTaken(true);
       else setError("Couldn't create this skill. Your inputs are still here. Try again.");
     }
   };
 
+  if (created) return (
+    <ModalWrapper open={open} onClose={onClose} title="Skill draft created" subTitle="Nothing is published. Continue writing, or ask for a private AI proposal to review."
+      actionBtnTitle="Open editor" isValid onSubmit={() => { onClose(); navigate(paths.dashboard.skills.edit(created.id)); }}>
+      <Stack spacing={2}><Alert severity="info">Provide your policy. Missing facts will be questions, not invented rules.</Alert>
+        <Button variant="outlined" disabled={created.permissions?.canRunTests !== true} onClick={() => { onClose(); navigate(`${paths.dashboard.skills.edit(created.id)}?assist=draft`); }}>Draft with AI</Button>
+      </Stack>
+    </ModalWrapper>
+  );
   return (
     <ModalWrapper open={open} onClose={onClose} title="New skill" actionBtnTitle="Create skill"
       onSubmit={submit} isValid={validName && validDescription && !nameTaken} isLoading={create.isPending}>
@@ -61,3 +70,9 @@ export default function NewSkillDialog({ open, onClose, initialTemplate = "blank
 }
 
 NewSkillDialog.propTypes = { open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, initialTemplate: PropTypes.string };
+
+export default function NewSkillDialog(props) {
+  const { identity } = useSkillV11Scope();
+  return props.open ? <NewSkillDialogContent key={identity} {...props} /> : null;
+}
+NewSkillDialogContent.propTypes = NewSkillDialog.propTypes;

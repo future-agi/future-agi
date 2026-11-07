@@ -153,7 +153,8 @@ export const mapGitHubPreview = (value) => ({
   diff: nullable(mapCompare, value.diff), consumed: nullable((receipt) => ({ skillId: receipt.skill_id, draftRevision: receipt.draft_revision }), value.consumed),
 });
 export const mapSourceDraft = (value) => value == null ? value : { ...mapDraft(value), source: value.source };
-export const mapStagedImport = (value) => ({ skill: mapSkill(value.skill), draft: mapSourceDraft(value.draft), published: value.published });
+export const mapStagedSource = (value) => ({ draft: mapSourceDraft(value.draft), published: value.published, consumed: value.consumed ? { skillId: value.consumed.skill_id, draftRevision: value.consumed.draft_revision } : null });
+export const mapStagedImport = (value) => ({ ...mapStagedSource(value), skill: mapSkill(value.skill) });
 export const mapAssistAck = (value) => ({ ...mapJobAck(value), kind: value.kind, baseRevision: value.base_revision, baseDigest: value.base_digest });
 export const mapAssist = (value) => ({
   ...fields(value, [['id'], ['status'], ['kind'], ['base_revision', 'baseRevision'], ['base_digest', 'baseDigest'], ['input_fingerprint', 'inputFingerprint'], ['proposal'], ['missing_information', 'missingInformation'], ['exposed_case_ids', 'exposedCaseIds'], ['error'], ['payload_expired', 'payloadExpired']]),

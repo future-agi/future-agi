@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, IconButton, Stack, Tab, Typography } from "@mui/material";
 
@@ -12,6 +12,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import FileTree from "src/sections/skills/components/FileTree";
 import SkillMarkdownPreview from "src/sections/skills/components/SkillMarkdownPreview";
+import EditorTestsPanel from '../tests/EditorTestsPanel';
+import AssistPanel from '../assist/AssistPanel';
 import DraftChecksPanel from "./DraftChecksPanel";
 import DraftConflictDialog from "./DraftConflictDialog";
 import PublishDialog from "./PublishDialog";
@@ -21,6 +23,22 @@ import useUnsavedNavigation from "./useUnsavedNavigation";
 
 export default function SkillEditorSession({ skill, initialDraft, refetchDraft }) {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [panel, setPanel] = useState(params.get('tab') === 'tests' ? 'tests' : 'checks');
+  const assistKind = ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
+  const sourceRunId = params.get('run');
+  const openAssist = (kind, selection = {}) => setParams((previous) => {
+    const next = new URLSearchParams(previous);
+    next.set('assist', kind);
+    if (selection.sourceRunId) next.set('run', selection.sourceRunId);
+    if (selection.caseId) next.set('case', selection.caseId);
+    return next;
+  });
+  const closeAssist = () => setParams((previous) => {
+    const next = new URLSearchParams(previous);
+    next.delete('assist');
+    return next;
+  });
   const [discardOpen, setDiscardOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [publishDraft, setPublishDraft] = useState(null);
@@ -47,13 +65,13 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
   };
   const startPublish = async () => {
     setPreparing(true);
-    const saved = await session.save(session.revision);
+    const saved = await session.flush();
     if (saved) setPublishDraft(saved);
     setPreparing(false);
   };
   const compareLatest = async () => {
     setPreparing(true);
-    const saved = await session.save(session.revision);
+    const saved = await session.flush();
     if (saved) guard.allow(() => navigate(`${paths.dashboard.skills.compare(skill.id)}?from=draft&to=${skill.latestVersion}`));
     setPreparing(false);
   };
@@ -84,8 +102,9 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
             <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
             {session.status === "error" && <Button size="small" onClick={() => session.save()}>Retry</Button>}
             {session.status === "conflict" && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
+            <Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests} onClick={() => openAssist("draft")}>Draft with AI</Button>
             <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
-            <Button variant="contained" disabled={locked || saving || session.status === "conflict" || session.status === "error"} onClick={startPublish}>Publish</Button>
+            <Button variant="contained" disabled={locked || session.status === "conflict" || session.status === "error"} onClick={startPublish}>Publish</Button>
           </Box>
         )}
         sx={{ flexWrap: "wrap", rowGap: 1.5 }}
@@ -132,9 +151,15 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
           ))}
         </Stack>
         <Box sx={{ minWidth: 0, gridColumn: { md: "1 / -1", lg: "auto" } }}>
-          <DraftChecksPanel files={session.files} name={skill.name} onSelect={(check) => openFile(check.path, check.line)} />
+          <SegmentedTabs value={panel} onChange={(_, value) => setPanel(value)} aria-label="Draft review panels"><Tab value="checks" label="Checks" /><Tab value="tests" label="Tests" /></SegmentedTabs>
+          <Box sx={{ pt: 1.5 }} hidden={panel !== 'checks'}><DraftChecksPanel files={session.files} name={skill.name} onSelect={(check) => openFile(check.path, check.line)} /></Box>
+          <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}><EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={(selection) => openAssist('description', selection)} /></Box>
         </Box>
       </Box>
+      {assistKind && !publishDraft && <Stack spacing={1.5}>
+        <Box><Button size="small" onClick={closeAssist}>Close assistance</Button></Box>
+        <AssistPanel skill={skill} draft={session} kind={assistKind} sourceRunId={sourceRunId} isDirty={session.dirty} onSave={session.flush} onApplied={session.reload} />
+      </Stack>}
       <DraftConflictDialog open={conflictOpen} onClose={() => setConflictOpen(false)} refetch={refetchDraft} onOverwrite={session.save} onReload={(draft) => {
         if (draft) session.reload(draft);
         else guard.allow(() => navigate(paths.dashboard.skills.detail(skill.id)));
@@ -147,7 +172,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
 }
 
 SkillEditorSession.propTypes = {
-  skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired, latestVersion: PropTypes.number }).isRequired,
+  skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired, latestVersion: PropTypes.number, permissions: PropTypes.object }).isRequired,
   initialDraft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, revision: PropTypes.number.isRequired, baseVersion: PropTypes.number }).isRequired,
   refetchDraft: PropTypes.func.isRequired,
 };

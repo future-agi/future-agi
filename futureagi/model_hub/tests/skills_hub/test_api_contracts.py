@@ -84,7 +84,11 @@ def test_actual_success_and_error_payloads_match_schema(client, make_skill_files
         client.post(BASE + "checks/", {"files": make_skill_files()}, format="json")
     )
     assert_contract(
-        client.post(path + "draft/publish/", {"labels": ["production"]}, format="json")
+        client.post(
+            path + "draft/publish/",
+            {"labels": ["production"], "expected_release_revision": 0},
+            format="json",
+        )
     )
     for route, query in [
         (path, {}),

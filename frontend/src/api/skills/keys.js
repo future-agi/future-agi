@@ -1,5 +1,6 @@
 export const skillsKeys = {
   all: ['skills'],
+  v11: ({ organizationId, workspaceId, userId }, ...parts) => ['skills', 'v11', organizationId, workspaceId, userId, ...parts],
   list: (params = {}) => ['skills', 'list', params],
   detail: (id) => ['skills', id, 'detail'],
   templates: () => ['skills', 'templates'],

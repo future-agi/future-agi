@@ -143,3 +143,5 @@ describe("VersionsTab", () => {
     },
   );
 });
+
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: () => null }));

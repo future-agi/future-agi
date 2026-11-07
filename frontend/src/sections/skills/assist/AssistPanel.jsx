@@ -5,6 +5,7 @@ import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextFi
 
 import { useApplySkillAssist, useCancelSkillAssist, useCreateSkillAssist, usePreviewSkillAssist, useSkillAssist } from 'src/api/skills/assist';
 import { isActiveSkillJob, useSkillTestingOptions, useSkillTestAttempt, useSkillTestResults, useSkillV11Scope } from 'src/api/skills/testing';
+import { skillFilesDigest } from 'src/api/skills/digest';
 import Section from 'src/components/section';
 import ContentSkeleton from 'src/components/content-skeleton';
 import EmptyState from 'src/components/empty-state';
@@ -16,7 +17,7 @@ const titles = { draft: 'Draft with AI', description: 'Improve when this skill i
 const stamp = (draft) => JSON.stringify([draft?.revision, draft?.files]);
 const fileShape = PropTypes.shape({ path: PropTypes.string.isRequired, content: PropTypes.string.isRequired });
 const panelProps = {
-  skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired }).isRequired,
+  skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired, permissions: PropTypes.object }).isRequired,
   draft: PropTypes.shape({ revision: PropTypes.number.isRequired, files: PropTypes.arrayOf(fileShape).isRequired, baseVersion: PropTypes.number }),
   kind: PropTypes.oneOf(['draft', 'description', 'summary']).isRequired,
   sourceRunId: PropTypes.string,
@@ -26,21 +27,6 @@ const panelProps = {
   onSave: PropTypes.func,
 };
 
-async function draftDigest(files) {
-  const hash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  const manifest = await Promise.all(files.map(async (file) => [file.path, await hash(file.content)]));
-  // Python's canonical manifest sorts Unicode code points and escapes non-ASCII.
-  manifest.sort(([left], [right]) => {
-    const a = Array.from(left, (char) => char.codePointAt(0));
-    const b = Array.from(right, (char) => char.codePointAt(0));
-    for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
-      if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-  });
-  const canonical = JSON.stringify(manifest).replace(/[\u007f-￿]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
-  return `sha256:${await hash(canonical)}`;
-}
 
 function RoutingExample({ skillId, runId, row }) {
   const attemptId = row.variants.find((variant) => variant.variant === 'candidate')?.attempts[0]?.id;
@@ -107,7 +93,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
     try {
       const saved = onSave ? await onSave() : current.current.draft;
       if (!saved || (!onSave && current.current.isDirty) || saved.revision < 1) throw new Error('Save the draft and resolve any conflict before previewing assistance.');
-      const digest = await draftDigest(saved.files);
+      const digest = await skillFilesDigest(saved.files);
       const input = { kind, model: { modelId, temperature: 0, maxOutputTokens: 4096 }, maxEstimatedCostUsd: spend, ...(kind === 'summary' ? { fromVersion: saved.baseVersion, to: { kind: 'draft', revision: saved.revision, digest } } : { revision: saved.revision, expectedDigest: digest }), ...(kind === 'draft' ? { instruction, contextText } : {}), ...(kind === 'description' ? { sourceRunId, caseIds } : {}) };
       if (!mounted.current) return;
       const plan = await previewMutation.mutateAsync(input);
@@ -163,7 +149,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
   if (previewState === 'loading' || options.isLoading) return <ContentSkeleton rows={4} />;
   if (previewState === 'error' || options.isError) return <ErrorState title="Could not load assistance options" onRetry={options.refetch} />;
   if (!draft) return <EmptyState variant="no-results" title="Save a draft first" description="Assistance belongs to your private saved draft. Create or open a draft to continue." />;
-  if (previewState === 'forbidden') return <ErrorState title="Write access is required" detail="A current workspace member can request and apply a private proposal." />;
+  if (previewState === 'forbidden' || skill.permissions?.canRunTests !== true) return <ErrorState title="Write access is required" detail="A current workspace member can request and apply a private proposal." />;
   if (!options.data?.enabled || previewState === 'missing-key' || !options.data.models.some((model) => model.canRun)) return <EmptyState variant="no-results" title="Connect a supported workspace model" description="Assistance uses your workspace provider connection. No managed model or organization-global key is substituted." />;
 
   return (

@@ -19,12 +19,13 @@ from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.checks import path_is_valid, run_checks
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import (
-    _decode_file,
-    _entry_rejection,
-    _ignored,
+    archive_member_rejection,
+    decode_text_file,
     file_sha256,
+    is_ignored_path,
     manifest_digest,
 )
+from model_hub.services.skills_hub.types import FileInput
 
 # Identify a complete grant, not two phrases inside potentially modified terms.
 _MIT_GRANT = """Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -104,7 +105,7 @@ def _members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     counts = Counter(entry.orig_filename.rstrip("/").casefold() for entry in entries)
     roots = set()
     files = set()
-    spellings = {}
+    spellings: dict[str, str] = {}
     members = {}
     for entry in entries:
         raw = entry.orig_filename
@@ -123,7 +124,7 @@ def _members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
             raise _invalid("directory_metadata_mismatch")
         if entry.is_dir() and (mode not in (0, stat.S_IFDIR) or entry.file_size):
             raise _invalid("directory_metadata_mismatch")
-        reason = _entry_rejection(entry, path, counts)
+        reason = archive_member_rejection(entry, path, counts)
         if reason and reason != "nested_zip":
             raise _invalid(reason)
         # An unrelated archive payload is never opened. A selected one is
@@ -143,9 +144,9 @@ def _members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
 
 
 def _roots(members: dict, path: str) -> list[str]:
-    roots = []
+    roots: list[str] = []
     for name in sorted(members, key=lambda item: (item.count("/"), item)):
-        if _ignored(name) or posixpath.basename(name) != "SKILL.md":
+        if is_ignored_path(name) or posixpath.basename(name) != "SKILL.md":
             continue
         root = posixpath.dirname(name)
         if path and root != path and not root.startswith(path + "/"):
@@ -163,8 +164,8 @@ def _read(archive: zipfile.ZipFile, entry: zipfile.ZipInfo, budget: list[int]) -
         raise _large()
     if len(raw) != entry.file_size:
         raise _invalid("size_mismatch")
-    rejected = []
-    text = _decode_file(entry.orig_filename, raw, rejected)
+    rejected: list[dict] = []
+    text = decode_text_file(entry.orig_filename, raw, rejected)
     if text is None:
         raise _invalid(rejected[0]["reason"])
     if text.startswith("version https://git-lfs.github.com/spec/v1"):
@@ -244,12 +245,12 @@ def parse_repository_zip(raw: bytes, *, path: str) -> dict:
             selected = {
                 name: entry
                 for name, entry in members.items()
-                if name.startswith(prefix) and not _ignored(name)
+                if name.startswith(prefix) and not is_ignored_path(name)
             }
             if len(selected) > limits.MAX_FILES:
                 raise _invalid("too_many_files")
             budget = [0]
-            files = []
+            files: list[FileInput] = []
             notices = []
             for name, entry in sorted(selected.items()):
                 relative = name[len(prefix) :]
@@ -302,9 +303,9 @@ def parse_repository_zip(raw: bytes, *, path: str) -> dict:
             license_evidence = _license(notices, checks)
             return {
                 "roots": roots,
-                "outcome": "blocked"
-                if license_evidence["status"] == "restricted"
-                else "ready",
+                "outcome": (
+                    "blocked" if license_evidence["status"] == "restricted" else "ready"
+                ),
                 "bundle": {
                     "name": checks["frontmatter"]["name"],
                     "root": root,

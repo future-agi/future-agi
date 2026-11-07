@@ -6,8 +6,10 @@ import json
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from functools import partial
+from typing import NoReturn
 from uuid import UUID
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -21,6 +23,7 @@ from model_hub.models.skills_hub_v11 import (
 from model_hub.services.skills_hub.checks import parse_frontmatter, run_checks
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import file_sha256, manifest_digest
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v11.grading import EVALUATOR_VERSION, validate_schema
 from model_hub.services.skills_hub.v11.inventory import (
     bind_findings,
@@ -65,15 +68,15 @@ _CASE_FIELDS = {
 }
 
 
-def _invalid(message: str) -> None:
+def _invalid(message: str) -> NoReturn:
     raise SkillsHubError("invalid_test_config", message, status=400)
 
 
-def _configuration(value: dict) -> dict:
+def _configuration(value: object) -> dict:
     if not isinstance(value, dict):
         _invalid("Test configuration must be an object.")
     try:
-        config = json.loads(canonical_json(value))
+        config: dict = json.loads(canonical_json(value))
     except (ValueError, TypeError, RecursionError):
         _invalid("Test configuration must contain finite JSON values.")
     fields = {
@@ -123,7 +126,7 @@ def _configuration(value: dict) -> dict:
         _invalid("Choose explicit token and decimal-string spend ceilings.")
     try:
         cost = Decimal(config["limits"]["max_estimated_cost_usd"])
-        if not cost.is_finite() or cost <= 0 or cost.as_tuple().exponent < -8:
+        if not cost.is_finite() or cost <= 0 or int(cost.as_tuple().exponent) < -8:
             _invalid(
                 "Choose a positive finite spend ceiling with at most eight decimal places."
             )
@@ -192,7 +195,7 @@ def snapshot_identity(bundle: dict) -> dict:
 
 
 def _bundle(
-    skill: HubSkill, *, files: list[dict], version=None, draft_revision=None
+    skill: HubSkill, *, files: list[FileInput], version=None, draft_revision=None
 ) -> dict:
     checks = run_checks(files, expected_name=skill.name)
     if checks["summary"]["errors"]:
@@ -206,6 +209,8 @@ def _bundle(
     metadata, _, _ = parse_frontmatter(
         next(item["content"] for item in files if item["path"] == "SKILL.md")
     )
+    if metadata is None:
+        _invalid("The root instruction metadata is invalid.")
     digest = manifest_digest(files)
     return {
         "skill_id": str(skill.id),
@@ -234,7 +239,7 @@ def _version_bundle(skill: HubSkill, number: int) -> dict:
         raise SkillsHubError(
             "version_not_found", "Published version not found.", status=404
         )
-    files = [
+    files: list[FileInput] = [
         {"path": item.path, "content": item.blob.content}
         for item in version.files.select_related("blob").order_by("path")
     ]
@@ -248,8 +253,13 @@ def _plan(
     configuration: dict,
     lock: bool = False,
 ) -> tuple[dict, dict]:
+    if not settings.SKILLS_TESTING_ENABLED:
+        raise SkillsHubError(
+            "skills_unavailable", "Skills model testing is not enabled.", status=503
+        )
     config = _configuration(configuration)
     validate_run_limits(config, skill_id=skill_id)
+    assert principal.user_id is not None
     scope = principal.scope
     requested_ids = {
         str(skill_id),
@@ -348,7 +358,6 @@ def _plan(
     exposed_groups = set()
     for groups in HubSkillAssistProposal.objects.filter(
         skill=skill,
-        application_receipt__isnull=False,
         job__organization_id=scope.organization_id,
         job__workspace_id=scope.workspace_id,
     ).values_list("exposed_source_group_ids", flat=True):
@@ -375,18 +384,21 @@ def _plan(
             raise SkillsHubError(
                 "resource_not_found", "Parent run not found.", status=404
             )
-    connections = {
-        "task": resolve_test_connection(
-            scope=scope, model_id=config["model"]["model_id"]
-        ),
-        "judge": resolve_test_connection(
-            scope=scope, model_id=config["judge"]["model_id"]
-        )
+    task_connection = resolve_test_connection(
+        scope=scope, model_id=config["model"]["model_id"]
+    )
+    judge_connection = (
+        resolve_test_connection(scope=scope, model_id=config["judge"]["model_id"])
         if config["judge"]
-        else None,
-    }
+        else None
+    )
+    connections = {"task": task_connection, "judge": judge_connection}
     limits = effective_limits()
-    profile = limits["profiles"][config["profile"]]
+    profile = (
+        limits["profiles"]["quick"]
+        if config["profile"] == "quick"
+        else limits["profiles"]["repeated"]
+    )
     bundles = [candidate, *([production] if production else []), *competitors]
     inventory = build_inventory(bundles=bundles, cases=cases)
     attempts = len(cases) * (1 + len(config["baselines"])) * config["repetitions"]
@@ -399,7 +411,7 @@ def _plan(
         * config["repetitions"]
     )
     # Worst possible per-call input is context minus output; admission does not promise all work fits the user's stop budget.
-    upper = 0
+    upper = Decimal(0)
     for name, count, output in (
         (
             "task",
@@ -426,9 +438,9 @@ def _plan(
         "competitors": competitors,
         "cases": cases,
         "suite_id": str(suite.id) if suite and selection["kind"] == "saved" else None,
-        "suite_revision": suite.revision
-        if suite and selection["kind"] == "saved"
-        else None,
+        "suite_revision": (
+            suite.revision if suite and selection["kind"] == "saved" else None
+        ),
         "full_suite": bool(
             suite
             and selection["kind"] == "saved"
@@ -491,7 +503,7 @@ def _plan(
                 snapshot=snapshot, case=case, variant=variant
             )
             call_allowance(
-                connection=connections["task"],
+                connection=task_connection,
                 messages=messages,
                 tools=tool_definitions() if catalog else [],
                 max_output_tokens=config["model"]["max_output_tokens"],
@@ -517,24 +529,26 @@ def _plan(
         "max_judge_calls": semantic_attempts,
         "estimate": {
             "upper_bound_usd": format(upper, ".8f"),
-            "pricing_source": connections["task"].pricing_source,
+            "pricing_source": task_connection.pricing_source,
         },
         "limits": limits,
         "inventory": inventory["inventory"],
         "outbound_findings": snapshot["outbound_findings"],
-        "warnings": [
-            {
-                "code": "identical_inputs",
-                "message": "Candidate and production have identical files.",
-            }
-        ]
-        if production and production["digest"] == candidate["digest"]
-        else [],
+        "warnings": (
+            [
+                {
+                    "code": "identical_inputs",
+                    "message": "Candidate and production have identical files.",
+                }
+            ]
+            if production and production["digest"] == candidate["digest"]
+            else []
+        ),
         "provider_disclosure": {
-            "task_provider": connections["task"].provider,
-            "judge_provider": connections["judge"].provider
-            if connections["judge"]
-            else None,
+            "task_provider": task_connection.provider,
+            "judge_provider": (
+                connections["judge"].provider if connections["judge"] else None
+            ),
         },
     }
     return preview, snapshot
@@ -665,9 +679,9 @@ def create_test_run(
             candidate=preview["candidate"],
             production=preview["production"],
             competitors=preview["competitors"],
-            baseline_version_id=snapshot["production"]["version_id"]
-            if snapshot["production"]
-            else None,
+            baseline_version_id=(
+                snapshot["production"]["version_id"] if snapshot["production"] else None
+            ),
             baseline_event_id=snapshot["production_event_id"],
             snapshot=snapshot,
             validity="diagnostic" if reasons else "reviewed",

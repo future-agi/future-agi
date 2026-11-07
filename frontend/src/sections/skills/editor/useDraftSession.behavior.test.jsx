@@ -101,3 +101,64 @@ describe("draft save concurrency", () => {
     expect(result.current.dirty).toBe(false);
   });
 });
+
+describe("acknowledged flush", () => {
+  it("waits for an older save then persists later edits before returning", async () => {
+    let finish;
+    api.save.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    api.save.mockResolvedValueOnce({ ...initial, files: newer, revision: 6 });
+    const { result } = renderHook(() => useDraftSession("skill-id", initial));
+    act(() => result.current.edit(changed));
+    await advance(1000);
+    let flushed;
+    await act(async () => {
+      // Neither edit nor the first acknowledgment needs a React render before flush.
+      result.current.edit(newer);
+      const promise = result.current.flush();
+      finish({ ...initial, files: changed, revision: 5 });
+      flushed = await promise;
+    });
+    expect(api.save).toHaveBeenNthCalledWith(2, expect.objectContaining({ files: newer, revision: 5 }));
+    expect(flushed).toMatchObject({ files: newer, revision: 6 });
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it("does not return a runnable snapshot when the older request conflicts", async () => {
+    let reject;
+    api.save.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const { result } = renderHook(() => useDraftSession("skill-id", initial));
+    act(() => result.current.edit(changed));
+    await advance(1000);
+    let flushed;
+    await act(async () => {
+      result.current.edit(newer);
+      const promise = result.current.flush();
+      reject({ code: 'draft_conflict' });
+      flushed = await promise;
+    });
+    expect(flushed).toBeNull();
+    expect(await result.current.flush()).toBeNull();
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(result.current.files).toBe(newer);
+  });
+
+  it("serializes concurrent flush callers on the same acknowledged snapshot", async () => {
+    api.save.mockResolvedValue({ ...initial, revision: 5 });
+    const { result } = renderHook(() => useDraftSession("skill-id", initial));
+    let snapshots;
+    await act(async () => { snapshots = await Promise.all([result.current.flush(), result.current.flush()]); });
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(snapshots[0]).toEqual(snapshots[1]);
+  });
+
+  it("discards a late acknowledgment after session disposal", async () => {
+    let finish;
+    api.save.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const { result, unmount } = renderHook(() => useDraftSession("skill-id", initial));
+    let promise;
+    act(() => { promise = result.current.flush(); });
+    unmount();
+    finish({ ...initial, revision: 5 });
+    expect(await promise).toBeNull();
+  });
+});

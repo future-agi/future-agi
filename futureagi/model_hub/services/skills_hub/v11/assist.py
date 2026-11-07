@@ -14,6 +14,7 @@ from uuid import UUID
 
 import yaml
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -26,6 +27,7 @@ from model_hub.services.skills_hub.checks import (
 from model_hub.services.skills_hub.drafts import save_draft
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import manifest_digest
+from model_hub.services.skills_hub.types import FileInput
 
 if TYPE_CHECKING:
     from model_hub.models.skills_hub_v11 import HubSkillAssistProposal
@@ -108,8 +110,8 @@ def _output_error() -> SkillsHubError:
 
 
 def replace_description(
-    files: list[dict], description: str, *, name: str
-) -> list[dict]:
+    files: list[FileInput], description: str, *, name: str
+) -> list[FileInput]:
     """Replace one YAML scalar server-side, leaving unrelated frontmatter/body intact."""
     if not _bounded_text(description, 1024):
         raise _output_error()
@@ -171,7 +173,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
 
 
 def validate_assist_output(
-    *, kind: str, content: str, name: str, files: list[dict]
+    *, kind: str, content: object, name: str, files: list[FileInput]
 ) -> dict:
     """Strictly validate the single completion; never issue a repair completion."""
     if (
@@ -190,7 +192,7 @@ def validate_assist_output(
         raise _output_error() from exc
     if not isinstance(output, dict):
         raise _output_error()
-    proposed = {"files": None, "description": None, "summary": None}
+    proposed: dict = {"files": None, "description": None, "summary": None}
     questions = []
     checks = None
     if kind == "draft":
@@ -304,6 +306,8 @@ def _request_input(request: dict, *, creation: bool = False) -> dict:
         "summary": {"kind", "from_version", "to", "model", "max_estimated_cost_usd"},
     }
     kind = request.get("kind")
+    if not isinstance(kind, str):
+        raise _invalid("Choose a supported assistance action.")
     required = fields.get(kind)
     accepted = (
         {
@@ -380,6 +384,7 @@ def _draft(
     digest: str,
     lock: bool = False,
 ) -> HubSkillDraft:
+    assert principal.user_id is not None
     queryset = skill.drafts.filter(user_id=principal.user_id)
     if lock:
         queryset = queryset.select_for_update()
@@ -398,7 +403,7 @@ def _draft(
     return draft
 
 
-def _version_files(skill: HubSkill, number: int) -> list[dict]:
+def _version_files(skill: HubSkill, number: int) -> list[FileInput]:
     version = skill.versions.filter(number=number).first()
     if version is None:
         raise _invalid("Version not found.", code="version_not_found", status=404)
@@ -665,6 +670,10 @@ def _resolve_plan(
         resolve_test_connection,
     )
 
+    if not settings.SKILLS_TESTING_ENABLED:
+        raise SkillsHubError(
+            "skills_unavailable", "Skills assistance is not enabled.", status=503
+        )
     inputs = _resolve_inputs(
         principal=principal, skill=skill, request=request, lock=lock
     )
@@ -696,7 +705,7 @@ def _resolve_plan(
     if (
         not stop.is_finite()
         or not 0 < stop <= Decimal(effective_limits()["max_estimated_cost_usd"])
-        or stop.as_tuple().exponent < -8
+        or int(stop.as_tuple().exponent) < -8
     ):
         raise _invalid(
             "Choose a positive estimated-cost stop within deployment limits."
@@ -754,6 +763,7 @@ def preview_assist_proposal(
     )
 
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     skill = _skill(scope=principal.scope, skill_id=skill_id)
     plan, _ = _resolve_plan(
@@ -800,6 +810,7 @@ def create_assist_proposal(
     )
 
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     _skill(scope=principal.scope, skill_id=skill_id)
     request_digest = _digest({"skill_id": str(skill_id), "request": request})
@@ -887,6 +898,7 @@ def apply_assist_proposal(
     )
 
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     proposal = get_owned_proposal(principal=principal, proposal_id=proposal_id)
     with transaction.atomic():
@@ -984,9 +996,9 @@ def apply_assist_proposal(
             "digest": manifest_digest(saved.files),
             "updated_at": saved.updated_at.isoformat(),
             "applied_by": str(principal.user_id),
-            "applied_by_api_key": str(principal.api_key_id)
-            if principal.api_key_id
-            else None,
+            "applied_by_api_key": (
+                str(principal.api_key_id) if principal.api_key_id else None
+            ),
         }
         proposal.save(update_fields=["application_receipt"])
         return saved
@@ -1089,6 +1101,8 @@ def _store_generated(
         ):
             return False
         proposal = HubSkillAssistProposal.objects.get(job=job)
+        if proposal.input is None or proposal.payload_purged_at is not None:
+            return False
         proposal.proposal = output["proposal"]
         proposal.missing_information = output["missing_information"]
         proposal.checks = output["checks"]
@@ -1122,7 +1136,8 @@ async def generate_assist_proposal(*, scope: SkillScope, proposal_id: UUID) -> d
     if prepared is None:
         return {"id": str(proposal_id), "already_claimed": True}
     proposal, call, connection = prepared
-    result, error = None, None
+    result = None
+    error: dict | None = None
     try:
         await sync_to_async(mark_in_flight)(
             call_id=call.pk,

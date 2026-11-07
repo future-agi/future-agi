@@ -26,6 +26,7 @@ import SelectionBar from "src/components/selection-bar";
 import LabelChip from "src/sections/skills/components/LabelChip";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import { shortDigest } from "src/sections/skills/utils/format";
+import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 import MoveLabelDialog from "./MoveLabelDialog";
 import RestoreVersionDialog from "./RestoreVersionDialog";
@@ -40,6 +41,7 @@ export default function VersionsTab({ skill }) {
   const [menu, setMenu] = useState(null);
   const [move, setMove] = useState(null);
   const [history, setHistory] = useState(null);
+  const [protectionOpen, setProtectionOpen] = useState(false);
   const [restore, setRestore] = useState(null);
   const versions = useSkillVersions(skill.id, { page: page + 1, pageSize });
   const labels = useSkillLabels(skill.id);
@@ -181,7 +183,7 @@ export default function VersionsTab({ skill }) {
     return (
       <ErrorState title="Could not load versions" onRetry={retryVersions} />
     );
-  if (preview === "empty" || (!preview && !rows.length && !skill.latestVersion))
+  if (preview === "empty")
     return (
       <EmptyState
         title="No published versions yet"
@@ -195,6 +197,7 @@ export default function VersionsTab({ skill }) {
         title="Labels"
         description="Agents fetching a label receive the version it points to."
         actions={
+          <Stack direction="row" spacing={1}><Button variant="outlined" size="small" disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => setProtectionOpen(true)}>Protection</Button>
           <Button
             variant="outlined"
             size="small"
@@ -204,9 +207,10 @@ export default function VersionsTab({ skill }) {
             onClick={() => setMove({})}
           >
             Set label
-          </Button>
+          </Button></Stack>
         }
       >
+        <Typography variant="s3" color="text.secondary">Protected names: {skill.protectedLabelNames?.join(', ') || 'None'}. Protection remains even when a label is unassigned.</Typography>
         {labels.isLoading && (
           <ContentSkeleton variant="rows" rows={2} label="Loading labels" />
         )}
@@ -230,10 +234,12 @@ export default function VersionsTab({ skill }) {
             >
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <LabelChip name={label.name} version={label.version} />
+                <Typography variant="s3" color="text.secondary">{label.isProtected ? "Protected" : "Not protected"}</Typography>
               </Box>
               <Button
                 size="small"
                 color="inherit"
+                disabled={label.canMove !== true}
                 aria-label={`Move ${label.name}`}
                 onClick={() => setMove({ label: label.name })}
               >
@@ -361,6 +367,7 @@ export default function VersionsTab({ skill }) {
           Set label…
         </MenuItem>
       </Menu>
+      <LabelProtectionDialog open={protectionOpen} onClose={() => setProtectionOpen(false)} skill={skill} />
       <MoveLabelDialog
         open={move !== null}
         onClose={() => setMove(null)}
@@ -389,5 +396,6 @@ VersionsTab.propTypes = {
     id: PropTypes.string.isRequired,
     name: PropTypes.string.isRequired,
     latestVersion: PropTypes.number,
+    protectedLabelNames: PropTypes.array, permissions: PropTypes.object,
   }).isRequired,
 };

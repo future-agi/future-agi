@@ -122,7 +122,7 @@ class TestGet:
 class TestBudget:
     @pytest.fixture(autouse=True)
     def one_hour(self):
-        with patch.object(github, "_hour_key", return_value="h:fixed"):
+        with patch.object(github.github_public, "_hour_key", return_value="h:fixed"):
             yield
 
     def test_the_51st_call_in_an_hour_is_refused_unsent(self, settings):
@@ -255,11 +255,15 @@ class TestBudget:
 
     def test_a_new_hour_starts_a_new_count(self):
         with patch.object(github.requests, "get", return_value=_response()):
-            with patch.object(github, "_hour_key", return_value="h:2026101610"):
+            with patch.object(
+                github.github_public, "_hour_key", return_value="h:2026101610"
+            ):
                 for _ in range(50):
                     github_get("/x", accept="a", purpose="t")
                 assert github_get("/x", accept="a", purpose="t").status == "budget"
-            with patch.object(github, "_hour_key", return_value="h:2026101611"):
+            with patch.object(
+                github.github_public, "_hour_key", return_value="h:2026101611"
+            ):
                 assert github_get("/x", accept="a", purpose="t").status == "ok"
 
     def test_low_remaining_stops_a_reserving_caller(self):

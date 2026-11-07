@@ -1,7 +1,7 @@
 import axios from 'src/utils/axios';
 import { endpoints } from './endpoints';
 import { skillsKeys } from './keys';
-import { mapGitHubPreview, mapJobAck, mapSource, mapSourceDraft, mapStagedImport } from './v11-mappers';
+import { mapGitHubPreview, mapJobAck, mapSource, mapStagedSource, mapStagedImport } from './v11-mappers';
 import { idempotencyHeaders, skillV11Result, useSkillV11Mutation, useSkillV11Query } from './testing';
 
 export function githubPreviewInput(input) {
@@ -21,7 +21,7 @@ export function useStageGitHubImport() {
   return useSkillV11Mutation({
     send: async ({ previewId, rights }, config) => mapStagedImport(skillV11Result(await axios.post(endpoints.githubImport(), { preview_id: previewId, rights: { confirmed: rights.confirmed, review_note: rights.reviewNote } }, config))),
     invalidate: (_, input) => [['githubPreview', input.previewId]],
-    invalidateLegacy: (value) => [['skills', 'list'], skillsKeys.detail(value.skill.id), skillsKeys.draft(value.skill.id)],
+    invalidateLegacy: (value) => [['skills', 'list'], skillsKeys.detail((value.consumed?.skillId ?? value.skill?.id)), skillsKeys.draft((value.consumed?.skillId ?? value.skill?.id))],
   });
 }
 export function useSkillSource(skillId) {
@@ -38,7 +38,7 @@ export function useStageSkillSourceUpdate(skillId) {
         expected_latest_version: expectedLatestVersion, expected_latest_digest: expectedLatestDigest,
         accept_replacement: acceptReplacement, rights: { confirmed: rights.confirmed, review_note: rights.reviewNote },
       }, config));
-      return { draft: mapSourceDraft(value.draft), published: value.published };
+      return mapStagedSource(value);
     },
     invalidate: (_, input) => [['githubPreview', input.previewId], [skillId, 'source'], [skillId, 'evidence'], [skillId, 'runs']],
     invalidateLegacy: () => [skillsKeys.draft(skillId), skillsKeys.detail(skillId), ['skills', skillId, 'compare'], ['skills', 'list']],

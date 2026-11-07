@@ -84,18 +84,23 @@ def test_same_name_in_other_workspace_is_independent(
 
 
 def test_blob_deduplication_is_organization_local(
-    hub_skill, publish_skill, hub_actor, hub_other_organization, hub_other_org_workspace
+    hub_skill,
+    publish_skill,
+    actor_for_workspace,
+    hub_other_organization,
+    hub_other_org_workspace,
 ):
     first = publish_skill(hub_skill).version
+    foreign_actor = actor_for_workspace(hub_other_org_workspace)
     foreign = create_skill(
         organization=hub_other_organization,
         workspace=hub_other_org_workspace,
-        actor=hub_actor,
+        actor=foreign_actor,
         name=hub_skill.name,
         description=hub_skill.description,
         tags=[],
     )
-    second = publish_skill(foreign).version
+    second = publish_skill(foreign, actor=foreign_actor).version
     assert first.digest == second.digest
     first_file = first.files.get(path="SKILL.md")
     second_file = second.files.get(path="SKILL.md")
@@ -149,7 +154,9 @@ def test_library_filters_and_workspace_stats_are_independent(
         description=hub_skill.description,
         tags=["support"],
     )
-    foreign_version = publish_skill(foreign, labels=["production"]).version
+    foreign_version = publish_skill(
+        foreign, labels=["production"], expected_release_revision=0
+    ).version
     for item in [version, version, foreign_version]:
         record_fetch(
             version=item,

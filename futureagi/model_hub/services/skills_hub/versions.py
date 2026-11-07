@@ -18,7 +18,7 @@ from model_hub.models.skills_hub import (
 from model_hub.selectors.skills_hub import scoped_skill, skills_for_request_scope
 from model_hub.services.skills_hub.checks import estimate_tokens, run_checks
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.labels import set_label
+from model_hub.services.skills_hub.labels import _set_label_locked, _validate_name
 from model_hub.services.skills_hub.limits import (
     MAX_DESCRIPTION,
     MAX_NAME,
@@ -29,7 +29,17 @@ from model_hub.services.skills_hub.limits import (
 )
 from model_hub.services.skills_hub.packages import file_sha256, manifest_digest
 from model_hub.services.skills_hub.templates_registry import get_template_files
-from model_hub.services.skills_hub.types import Actor, FileInput, PublishResult
+from model_hub.services.skills_hub.types import MISSING, Actor, FileInput, PublishResult
+from model_hub.services.skills_hub.v11.evidence import attach_test_evidence_locked
+from model_hub.services.skills_hub.v11.governance import (
+    authorize_archive_locked,
+    authorize_release_locked,
+    principal_for_actor,
+)
+from model_hub.services.skills_hub.v11.principals import (
+    require_private_principal,
+    require_scope_access,
+)
 
 
 def _validate_tags(tags: list[str]) -> None:
@@ -161,6 +171,9 @@ def create_skill(
     files = get_template_files(
         template_id or "blank", name=name, description=description
     )
+    principal = principal_for_actor(skill=skill, actor=actor)
+    require_scope_access(principal=principal, write=True)
+    require_private_principal(principal=principal)
     if actor.user is not None:
         HubSkillDraft.objects.create(
             skill=skill,
@@ -185,9 +198,21 @@ def _publish_checked(
     source: dict,
     force: bool,
     always_new: bool = False,
+    expected_digest: str | None = None,
+    expected_release_revision: object = MISSING,
+    evidence_run_id=None,
 ) -> PublishResult:
     """Caller owns an atomic transaction; the lock serializes all publishers."""
     skill = scoped_skill(skill, lock=True)
+    principal = principal_for_actor(skill=skill, actor=actor)
+    authorize_release_locked(
+        principal=principal,
+        skill=skill,
+        label_names=labels,
+        expected_release_revision=expected_release_revision,
+    )
+    for label in labels:
+        _validate_name(label)
     latest_number = skill.latest_version_number or None
     if not force and base_version != latest_number:
         raise SkillsHubError(
@@ -205,6 +230,15 @@ def _publish_checked(
         for file in sorted(files, key=lambda file: file["path"])
     ]
     digest = manifest_digest(hashed)
+    if expected_digest is not None and expected_digest != digest:
+        raise SkillsHubError(
+            "candidate_changed", "The reviewed content changed.", status=409
+        )
+    if source.get("provider") == "github":
+        source = {
+            **source,
+            "local_modifications": digest != source.get("upstream_digest"),
+        }
     latest = (
         skill.versions.filter(number=latest_number).first() if latest_number else None
     )
@@ -256,8 +290,34 @@ def _publish_checked(
             ]
         )
     for label in dict.fromkeys(labels):
-        set_label(skill=skill, actor=actor, name=label, version_number=version.number)
-    return PublishResult(version=version, unchanged=unchanged, checks=checks)
+        _set_label_locked(
+            skill=skill,
+            actor=actor,
+            name=label,
+            version_number=version.number,
+            evidence_run_id=evidence_run_id,
+        )
+    evidence = None
+    if evidence_run_id is not None:
+        attached = attach_test_evidence_locked(
+            principal=principal,
+            skill=skill,
+            version=version,
+            run_id=evidence_run_id,
+        )
+        evidence = {
+            "run_id": str(attached.run_id),
+            "currentness": attached.currentness_at_action,
+            "validity": attached.run.validity,
+        }
+    version.skill = skill
+    return PublishResult(
+        version=version,
+        unchanged=unchanged,
+        checks=checks,
+        release_revision=skill.release_revision,
+        evidence=evidence,
+    )
 
 
 @transaction.atomic
@@ -272,6 +332,9 @@ def publish_files(
     acknowledge_warnings: bool,
     force: bool = False,
     source: dict,
+    expected_digest: str | None = None,
+    expected_release_revision: object = MISSING,
+    evidence_run_id=None,
 ) -> PublishResult:
     """Check and atomically publish content, optionally moving requested labels."""
     _validate_note(note)
@@ -286,6 +349,9 @@ def publish_files(
         checks=checks,
         source=source,
         force=force,
+        expected_digest=expected_digest,
+        expected_release_revision=expected_release_revision,
+        evidence_run_id=evidence_run_id,
     )
 
 
@@ -301,6 +367,9 @@ def publish_by_name(
     tags: list[str],
     acknowledge_warnings: bool,
     source: dict | None = None,
+    expected_digest: str | None = None,
+    expected_release_revision: object = MISSING,
+    evidence_run_id=None,
 ) -> PublishResult:
     """Push by name, preserving provenance; identical pushes are no-ops."""
     source = {"type": "api"} if source is None else source
@@ -341,6 +410,9 @@ def publish_by_name(
         checks=checks,
         source=source,
         force=True,
+        expected_digest=expected_digest,
+        expected_release_revision=expected_release_revision,
+        evidence_run_id=evidence_run_id,
     )
 
 
@@ -368,7 +440,11 @@ def restore_version(
         base_version=skill.latest_version_number or None,
         labels=[],
         checks=checks,
-        source={"type": "restore", "version": number},
+        source=(
+            {**version.source, "operation": "restore", "restored_from_version": number}
+            if version.source.get("provider") == "github"
+            else {"type": "restore", "version": number}
+        ),
         force=False,
         always_new=True,
     )
@@ -386,9 +462,19 @@ def update_tags(*, skill: HubSkill, actor: Actor, tags: list[str]) -> HubSkill:
 
 
 @transaction.atomic
-def archive_skill(*, skill: HubSkill, actor: Actor) -> None:
+def archive_skill(
+    *,
+    skill: HubSkill,
+    actor: Actor,
+    expected_release_revision: object = MISSING,
+) -> None:
     """Hide an identity while retaining versions, labels and their history."""
     skill = scoped_skill(skill, lock=True)
+    authorize_archive_locked(
+        principal=principal_for_actor(skill=skill, actor=actor),
+        skill=skill,
+        expected_release_revision=expected_release_revision,
+    )
     skill.deleted = True
     skill.deleted_at = timezone.now()
     skill.updated_by = actor.user

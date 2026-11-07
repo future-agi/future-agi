@@ -6,6 +6,8 @@ import { enqueueSnackbar } from "notistack";
 import {
   getSkillErrorCode,
   useSetSkillLabel,
+  useSkill,
+  useSkillVersion,
   useSkillCompare,
   useSkillLabels,
 } from "src/api/skills";
@@ -14,6 +16,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { LABEL_PATTERN, LIMITS } from "src/sections/skills/constants";
+import TestEvidence from '../tests/TestEvidence';
 import CompareSummary from "../compare/CompareSummary";
 
 function MoveLabelForm({ onClose, skill, label, version }) {
@@ -26,6 +29,12 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   const [refreshing, setRefreshing] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const labels = useSkillLabels(skill.id);
+  const detail = useSkill(skill.id);
+  const targetVersion = useSkillVersion(skill.id, target);
+  const [evidenceRunId, setEvidenceRunId] = useState(null);
+  const authoritative = detail.data ?? skill;
+  const pointer = authoritative.labels?.find((item) => item.name === name);
+  const canMove = pointer ? pointer.canMove === true : !authoritative.protectedLabelNames?.includes(name) || authoritative.permissions?.canManageLabelProtection === true;
   const move = useSetSkillLabel(skill.id);
   const validName = LABEL_PATTERN.test(name) && name !== "latest";
   const validTarget = Number.isInteger(target) && target > 0;
@@ -33,14 +42,15 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   // Keep the reviewed pointer stable across background refetches. Only an
   // explicit conflict reload may change the CAS precondition for this label.
   useEffect(() => {
-    if (labels.data && snapshot?.name !== name) {
+    if (detail.data && labels.data && snapshot?.name !== name) {
       setSnapshot({
         name,
         version:
-          labels.data.find((item) => item.name === name)?.version ?? null,
+          detail.data.labels.find((item) => item.name === name)?.version ?? null,
+        releaseRevision: detail.data.releaseRevision,
       });
     }
-  }, [labels.data, name, snapshot?.name]);
+  }, [labels.data, detail.data, name, snapshot?.name]);
 
   const ready = snapshot?.name === name;
   const current = ready ? snapshot.version : null;
@@ -58,13 +68,15 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   const refreshLabel = async () => {
     setRefreshing(true);
     try {
-      const result = await labels.refetch();
+      const result = await detail.refetch();
+      await labels.refetch();
       if (result.isError || !result.data)
         throw new Error("Label reload failed");
       setSnapshot({
         name,
         version:
-          result.data.find((item) => item.name === name)?.version ?? null,
+          result.data.labels.find((item) => item.name === name)?.version ?? null,
+        releaseRevision: result.data.releaseRevision,
       });
       setConflict(false);
       setError("");
@@ -79,6 +91,7 @@ function MoveLabelForm({ onClose, skill, label, version }) {
 
   const handleMove = async () => {
     if (
+      !canMove || detail.isError || targetVersion.isError || !targetVersion.data?.digest ||
       !ready ||
       !validName ||
       !validTarget ||
@@ -93,6 +106,9 @@ function MoveLabelForm({ onClose, skill, label, version }) {
         label: name,
         version: target,
         expectedVersion: current,
+        expectedReleaseRevision: snapshot.releaseRevision,
+        expectedDigest: targetVersion.data.digest,
+        evidenceRunId,
         note,
       });
       enqueueSnackbar(`${name} now points to v${target}.`, {
@@ -100,11 +116,13 @@ function MoveLabelForm({ onClose, skill, label, version }) {
       });
       onClose();
     } catch (failure) {
-      if (getSkillErrorCode(failure) === "label_conflict") {
+      if (["label_conflict", "release_conflict", "release_precondition_required", "protected_label_forbidden"].includes(getSkillErrorCode(failure))) {
         setConflict(true);
         setError(
           "This label changed while you were reviewing it. Reload the current label, review the changes, then try again.",
         );
+      } else if (['candidate_changed', 'evidence_mismatch', 'evidence_expired', 'evidence_share_required'].includes(getSkillErrorCode(failure))) {
+        setError('The selected evidence cannot be attached. Review it, run tests again, or explicitly continue without attachment. Your selections are preserved.');
       } else {
         setError("Could not move this label. Try again.");
       }
@@ -115,11 +133,14 @@ function MoveLabelForm({ onClose, skill, label, version }) {
     <ModalWrapper
       open
       title="Move label"
+      modalWidth="960px"
+      paperSx={{ maxWidth: "100%" }}
       subTitle="A label controls which version agents fetch. Existing versions stay unchanged."
       onClose={onClose}
       onSubmit={handleMove}
       isLoading={move.isPending || refreshing}
       isValid={Boolean(
+        canMove && !detail.isError && !targetVersion.isError && targetVersion.data?.digest &&
         validName &&
           validTarget &&
           ready &&
@@ -129,9 +150,9 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           summaryReady &&
           current !== target,
       )}
-      actionBtnTitle={`Move ${name || "label"} to ${validTarget ? `v${target}` : "version"}`}
+      actionBtnTitle={`Move ${name || "label"} from ${current === null ? "unassigned" : `v${current}`} to ${validTarget ? `v${target}` : "version"}`}
     >
-      <Stack spacing={2}>
+      <Stack spacing={2} sx={{ minWidth: 0, overflowY: "auto" }}>
         {error && (
           <Alert
             severity="error"
@@ -193,6 +214,8 @@ function MoveLabelForm({ onClose, skill, label, version }) {
             label="Loading current label"
           />
         )}
+        {detail.isError && <ErrorState title="Could not load release permissions" onRetry={detail.refetch} />}
+        {detail.isLoading && <ContentSkeleton variant="rows" rows={1} label="Loading release permissions" />}
         {labels.isError && (
           <ErrorState title="Could not load labels" onRetry={labels.refetch} />
         )}
@@ -221,6 +244,9 @@ function MoveLabelForm({ onClose, skill, label, version }) {
             )}
           </Stack>
         )}
+        {!canMove && <Alert severity="info">A workspace admin or organization admin must move this protected label. Publishing an ordinary version remains available.</Alert>}
+        {targetVersion.isError && <ErrorState title="Could not load the target version" onRetry={targetVersion.refetch} />}
+        {validTarget && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />}
         <TextField
           label="Note (optional)"
           size="small"
@@ -245,6 +271,7 @@ const formPropTypes = {
   skill: PropTypes.shape({
     id: PropTypes.string.isRequired,
     latestVersion: PropTypes.number,
+    labels: PropTypes.array, protectedLabelNames: PropTypes.array, permissions: PropTypes.object,
   }).isRequired,
   label: PropTypes.oneOfType([
     PropTypes.string,

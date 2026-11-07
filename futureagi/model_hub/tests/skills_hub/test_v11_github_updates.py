@@ -620,3 +620,114 @@ def test_cancellation_during_download_discards_payload(
     )
     preview.refresh_from_db()
     assert preview.bundle is None
+
+
+def test_staged_source_publish_edit_restore_and_unchanged_adoption(
+    principal, make_skill_files
+):
+    from accounts.models.user import User
+    from model_hub.services.skills_hub.drafts import publish_draft, save_draft
+    from model_hub.services.skills_hub.types import Actor
+    from model_hub.services.skills_hub.versions import restore_version
+
+    user = User.objects.get(pk=principal.user_id)
+    files = make_skill_files("source-lifecycle")
+    preview = make_preview(
+        principal,
+        bundle={
+            "name": "source-lifecycle",
+            "files": files,
+            "digest": manifest_digest(files),
+        },
+    )
+    staged = github.stage_github_preview(
+        principal=principal,
+        preview_id=preview.pk,
+        request={
+            "rights": {"confirmed": True, "review_note": "Synthetic fixture rights"}
+        },
+    )
+    skill, draft = staged["skill"], staged["draft"]
+    assert not HubSkillGitHubSource.objects.filter(skill=skill).exists()
+    first = publish_draft(
+        skill=skill,
+        user=user,
+        revision=draft.revision,
+        labels=[],
+        acknowledge_warnings=True,
+    )
+    first_source = dict(first.version.source)
+    assert (
+        first_source["provider"] == "github"
+        and first_source["local_modifications"] is False
+    )
+    source = HubSkillGitHubSource.objects.get(skill=skill)
+    assert source.imported_sha == SHA and source.associated_version == first.version
+    changed = make_skill_files(
+        "source-lifecycle", body="An explicitly reviewed local change."
+    )
+    draft = save_draft(
+        skill=skill, user=user, files=changed, note="", base_version=1, revision=0
+    )
+    assert draft.source == first_source
+    second = publish_draft(
+        skill=skill,
+        user=user,
+        revision=draft.revision,
+        labels=[],
+        acknowledge_warnings=True,
+    )
+    assert second.version.source["local_modifications"] is True
+    assert second.version.source["commit_sha"] == SHA
+    restored = restore_version(
+        skill=skill, actor=Actor(user=user, api_key=None), number=1
+    )
+    assert restored.version.source["operation"] == "restore"
+    assert restored.version.source["local_modifications"] is False
+    first.version.refresh_from_db()
+    assert first.version.source == first_source
+    source.refresh_from_db()
+    assert source.associated_version_id == first.version.pk
+
+    # A reviewed newer upstream commit with identical files advances the mutable
+    # binding, not an immutable version or its recorded original provenance.
+    update = make_preview(
+        principal,
+        skill=skill,
+        operation="update",
+        outcome="unchanged_content",
+        source_revision=source.revision,
+        expected_latest_version=restored.version.number,
+        expected_latest_digest=restored.version.digest,
+        bundle={"name": skill.name, "files": files, "digest": manifest_digest(files)},
+    )
+    update.commit_sha = "b" * 40
+    update.save(update_fields=["commit_sha"])
+    staged = github.stage_github_preview(
+        principal=principal,
+        preview_id=update.pk,
+        request={
+            "revision": 0,
+            "expected_source_revision": source.revision,
+            "expected_latest_version": restored.version.number,
+            "expected_latest_digest": restored.version.digest,
+            "accept_replacement": False,
+            "rights": {"confirmed": True, "review_note": "Reviewed newer commit"},
+        },
+    )
+    preserved_source = dict(restored.version.source)
+    repeated = publish_draft(
+        skill=skill,
+        user=user,
+        revision=staged["draft"].revision,
+        labels=[],
+        acknowledge_warnings=True,
+    )
+    assert repeated.unchanged and repeated.version.pk == restored.version.pk
+    restored.version.refresh_from_db()
+    source.refresh_from_db()
+    assert restored.version.source == preserved_source
+    assert source.imported_sha == "b" * 40
+    assert source.associated_version_id == restored.version.pk
+    assert skill.versions.count() == 3
+    assert not skill.drafts.filter(user=user).exists()

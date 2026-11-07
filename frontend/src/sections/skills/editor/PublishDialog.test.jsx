@@ -1,10 +1,12 @@
+import { createHash, webcrypto } from "node:crypto";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PublishDialog from "./PublishDialog";
 
-const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn() }));
+const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn(), currentSkill: null }));
 vi.mock("src/api/skills", () => ({
+  useSkill: () => ({ data: api.currentSkill ?? skill, refetch: async () => ({ data: skill }) }),
   usePublishSkillDraft: () => ({ mutateAsync: api.publish, isPending: false }),
   useRunSkillChecks: () => ({ mutateAsync: api.checks }),
   useSkillCompare: (...args) => api.compare(...args),
@@ -16,7 +18,7 @@ vi.mock("react-router-dom", () => ({ useNavigate: () => api.navigate }));
 vi.mock("notistack", () => ({ enqueueSnackbar: api.snackbar }));
 vi.mock("src/sections/skills/components/TextDiff", () => ({ default: ({ fromText, toText }) => <div data-testid="diff">{fromText} → {toText}</div> }));
 
-const skill = { id: "skill-id", name: "sample-skill" };
+const skill = { id: "skill-id", name: "sample-skill", labels: [], protectedLabelNames: [], releaseRevision: 3, permissions: { canRunTests: true } };
 const draft = { baseVersion: null, files: [{ path: "SKILL.md", content: "Instructions" }], note: "", revision: 1 };
 const checks = (errors = 0, warnings = 0) => ({
   summary: { errors, warnings, infos: 0 },
@@ -26,6 +28,8 @@ const renderDialog = (overrides = {}) => render(<PublishDialog open onClose={vi.
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.currentSkill = null;
+  vi.stubGlobal("crypto", webcrypto);
   api.checks.mockResolvedValue(checks());
   api.publish.mockResolvedValue({ version: { number: 3 }, unchanged: false });
   api.compare.mockReturnValue({ data: null, isPending: false, isError: false });
@@ -57,9 +61,9 @@ describe("publish review", () => {
     fireEvent.change(screen.getByLabelText("Version note"), { target: { value: "Reviewed policy" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "production", exact: true }));
     fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the warnings/ }));
-    expect(button).toBeEnabled();
+    await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
-    await waitFor(() => expect(api.publish).toHaveBeenCalledWith({ note: "Reviewed policy", labels: ["production"], acknowledgeWarnings: true, force: false, revision: 1 }));
+    await waitFor(() => expect(api.publish).toHaveBeenCalledWith({ note: "Reviewed policy", labels: ["production"], acknowledgeWarnings: true, force: false, revision: 1, expectedDigest: expect.stringMatching(/^sha256:/), expectedReleaseRevision: 3, evidenceRunId: null }));
     expect(api.navigate).toHaveBeenCalledWith("/dashboard/skills/skill-id");
     expect(api.snackbar).toHaveBeenCalledWith("Published v3.", { variant: "success" });
     expect(close).toHaveBeenCalledOnce();
@@ -73,19 +77,20 @@ describe("publish review", () => {
     fireEvent.click(button);
     const force = await screen.findByRole("button", { name: "Publish anyway" });
     expect(screen.getByText(/Publishing anyway creates a version from your draft/)).toBeInTheDocument();
-    expect(api.publish).toHaveBeenCalledExactlyOnceWith({ note: "", labels: [], acknowledgeWarnings: false, force: false, revision: 1 });
+    expect(api.publish).toHaveBeenCalledExactlyOnceWith({ note: "", labels: [], acknowledgeWarnings: false, force: false, revision: 1, expectedDigest: expect.stringMatching(/^sha256:/), expectedReleaseRevision: 3, evidenceRunId: null });
     fireEvent.click(force);
-    await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true, revision: 1 }));
+    await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true, revision: 1, expectedDigest: expect.stringMatching(/^sha256:/), expectedReleaseRevision: 3, evidenceRunId: null }));
   });
 
   it("renders changed files first, opens their diff, and blocks when comparison fails", async () => {
+    const files = [...draft.files, { path: 'references/policy.md', content: 'New policy' }];
     api.compare.mockReturnValue({ data: { files: [
-      { path: "SKILL.md", status: "unchanged" },
-      { path: "references/policy.md", status: "modified", fromText: "Old policy", toText: "New policy" },
+      { path: "SKILL.md", status: "unchanged", toSha256: createHash('sha256').update(draft.files[0].content).digest('hex') },
+      { path: "references/policy.md", status: "modified", fromText: "Old policy", toText: "New policy", toSha256: createHash('sha256').update('New policy').digest('hex') },
     ] }, isError: false });
-    const { rerender } = renderDialog({ draft: { ...draft, baseVersion: 1 } });
+    const { rerender } = renderDialog({ draft: { ...draft, files, baseVersion: 1 } });
     expect(api.compare).toHaveBeenCalledWith("skill-id", 1, "draft");
-    expect(screen.getByTestId("diff")).toHaveTextContent("Old policy → New policy");
+    expect(await screen.findByTestId("diff")).toHaveTextContent("Old policy → New policy");
     fireEvent.click(screen.getByText("SKILL.md"));
     expect(screen.getByText("This file has no changes.")).toBeInTheDocument();
     api.compare.mockReturnValue({ data: null, isError: true, refetch: vi.fn() });
@@ -128,7 +133,8 @@ describe("publish review", () => {
     expect(screen.queryByRole("button", { name: "Publish", exact: true })).not.toBeInTheDocument();
     fireEvent.click(reload);
     await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ revision: 9, files: [{ path: "SKILL.md", content: "Other tab" }] })));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Version note")).toBeInTheDocument();
     expect(api.publish).toHaveBeenCalledOnce();
     expect(api.save).not.toHaveBeenCalled();
     expect(api.navigate).not.toHaveBeenCalled();
@@ -144,7 +150,8 @@ describe("publish review", () => {
     fireEvent.change(screen.getByLabelText("Version note"), { target: { value: "Keep my review note" } });
     fireEvent.click(button);
     fireEvent.click(await screen.findByRole("button", { name: "Overwrite with mine" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
     expect(api.save).toHaveBeenCalledExactlyOnceWith({ files: draft.files, note: "Keep my review note", baseVersion: null, revision: 9 });
     expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ revision: 10, files: draft.files }));
     expect(api.publish).toHaveBeenCalledOnce();
@@ -166,7 +173,8 @@ describe("publish review", () => {
     expect(onDraftChange).not.toHaveBeenCalled();
     api.refetch.mockResolvedValueOnce({ data: { ...draft, revision: 12 } });
     fireEvent.click(screen.getByRole("button", { name: "Overwrite with mine" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
     expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ files: draft.files, revision: 12 }));
     expect(api.publish).toHaveBeenCalledOnce();
   });
@@ -196,8 +204,80 @@ describe("publish review", () => {
     expect(api.save).not.toHaveBeenCalled();
   });
 
+  it('does not show or publish a diff for a different server draft, including unchanged files', async () => {
+    api.compare.mockReturnValue({ data: { files: [
+      { path: 'SKILL.md', status: 'unchanged', toSha256: createHash('sha256').update('Other tab instructions').digest('hex') },
+      { path: 'removed.md', status: 'removed', toSha256: null },
+    ] } });
+    renderDialog({ draft: { ...draft, baseVersion: 1 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Attach reviewed run' }));
+    fireEvent.change(screen.getByLabelText('Version note'), { target: { value: 'Keep my note' } });
+    await screen.findByText(/The server draft changed after this review opened/);
+    expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+    expect(screen.queryByLabelText('File changes')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review changed draft' }));
+    expect(screen.getByRole('button', { name: 'Overwrite with mine' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    expect(screen.getByLabelText('Version note')).toHaveValue('Keep my note');
+    expect(screen.getByText('Test evidence: shared-run')).toBeInTheDocument();
+    expect(api.publish).not.toHaveBeenCalled();
+  });
+
+  it('blocks publication while a previously matching comparison is refetching', async () => {
+    const data = { files: [{ path: 'SKILL.md', status: 'modified', fromText: 'Old', toText: 'Instructions', toSha256: createHash('sha256').update('Instructions').digest('hex') }] };
+    api.compare.mockReturnValue({ data, isFetching: false });
+    const view = renderDialog({ draft: { ...draft, baseVersion: 1 } });
+    const publish = screen.getByRole('button', { name: 'Publish', exact: true });
+    await waitFor(() => expect(publish).toBeEnabled());
+    api.compare.mockReturnValue({ data, isFetching: true });
+    view.rerender(<PublishDialog open onClose={vi.fn()} skill={skill} draft={{ ...draft, baseVersion: 1 }} />);
+    expect(publish).toBeDisabled();
+    expect(screen.queryByTestId('diff')).not.toBeInTheDocument();
+  });
+
   it("does not run checks when closed", () => {
     renderDialog({ open: false });
     expect(api.checks).not.toHaveBeenCalled();
   });
 });
+
+vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: ({ onSelectRun, selectedRunId }) => <div>Test evidence: {selectedRunId}<button onClick={() => onSelectRun('shared-run')}>Attach reviewed run</button><button onClick={() => onSelectRun(null)}>Remove reviewed run</button></div> }));
+vi.mock("src/sections/skills/assist/AssistPanel", () => ({ default: ({ onUseSummary }) => <button onClick={() => onUseSummary('Reviewed AI suggestion')}>Use summary suggestion</button> }));
+
+ it('preserves explicitly attached evidence and note through a release conflict', async () => {
+   api.publish.mockRejectedValueOnce({ code: 'release_conflict' });
+   renderDialog();
+   fireEvent.click(screen.getByRole('button', { name: 'Attach reviewed run' }));
+   fireEvent.change(screen.getByLabelText('Version note'), { target: { value: 'Keep this note' } });
+   const publish = screen.getByRole('button', { name: 'Publish', exact: true });
+   await waitFor(() => expect(publish).toBeEnabled());
+   fireEvent.click(publish);
+   fireEvent.click(await screen.findByRole('button', { name: 'Reload release state' }));
+   await waitFor(() => expect(publish).toBeEnabled());
+   expect(screen.getByLabelText('Version note')).toHaveValue('Keep this note');
+   expect(screen.getByText('Test evidence: shared-run')).toBeInTheDocument();
+   fireEvent.click(publish);
+   await waitFor(() => expect(api.publish).toHaveBeenLastCalledWith(expect.objectContaining({ evidenceRunId: 'shared-run', note: 'Keep this note' })));
+ });
+
+ it('allows ordinary publication while disabling a member’s protected move', async () => {
+   api.currentSkill = { ...skill, protectedLabelNames: ["production"], permissions: { canManageLabelProtection: false } };
+   renderDialog({ skill: { ...skill, protectedLabelNames: ['production'], permissions: { canManageLabelProtection: false } } });
+   expect(screen.getByRole('checkbox', { name: 'production', exact: true })).toBeDisabled();
+   expect(screen.getByText(/You can publish a version/)).toBeInTheDocument();
+   const publish = screen.getByRole('button', { name: 'Publish', exact: true });
+   await waitFor(() => expect(publish).toBeEnabled());
+   fireEvent.click(publish);
+   await waitFor(() => expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ labels: [] })));
+ });
+
+ it('uses a summary suggestion only as editable version-note text', async () => {
+   renderDialog();
+   fireEvent.click(screen.getByRole('button', { name: 'Summarize changes' }));
+   fireEvent.click(screen.getByRole('button', { name: 'Use summary suggestion' }));
+   expect(screen.getByLabelText('Version note')).toHaveValue('Reviewed AI suggestion');
+   fireEvent.change(screen.getByLabelText('Version note'), { target: { value: 'Human reviewed note' } });
+   expect(screen.getByLabelText('Version note')).toHaveValue('Human reviewed note');
+   expect(api.publish).not.toHaveBeenCalled();
+   expect(api.save).not.toHaveBeenCalled();
+ });

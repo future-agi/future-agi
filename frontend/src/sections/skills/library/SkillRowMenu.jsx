@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import { Box, Button, IconButton, ListItemIcon, Menu, MenuItem } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
-import { downloadSkillsZip, useArchiveSkill } from "src/api/skills";
+import { downloadSkillsZip, useArchiveSkill, useSkill } from "src/api/skills";
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
@@ -17,6 +17,9 @@ export default function SkillRowMenu({ skill }) {
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const detail = useSkill(anchor || confirm ? skill.id : undefined);
+  const [releaseRevision, setReleaseRevision] = useState(null);
+  const canArchive = detail.data?.permissions?.canArchive === true;
   const hasProduction = skill.labels.some((label) => label.name === "production");
   const copyCommand = async () => {
     setAnchor(null);
@@ -33,9 +36,9 @@ export default function SkillRowMenu({ skill }) {
     finally { setDownloading(false); }
   };
   const archiveSkill = async () => {
-    if (archive.isPending) return;
+    if (archive.isPending || !canArchive) return;
     try {
-      await archive.mutateAsync(skill.id);
+      await archive.mutateAsync({ id: skill.id, expectedReleaseRevision: releaseRevision });
       setConfirm(false);
       enqueueSnackbar("Skill archived", { variant: "success" });
     } catch (_failure) { enqueueSnackbar("Couldn't archive this skill. Try again.", { variant: "error" }); }
@@ -51,11 +54,11 @@ export default function SkillRowMenu({ skill }) {
         <MenuItem onClick={() => { setAnchor(null); navigate(paths.dashboard.skills.edit(skill.id)); }}><ListItemIcon><Iconify icon="solar:pen-linear" width={16} /></ListItemIcon>Edit</MenuItem>
         <MenuItem disabled={!hasProduction} onClick={copyCommand}><ListItemIcon><Iconify icon="solar:copy-linear" width={16} /></ListItemIcon>Copy install command</MenuItem>
         <MenuItem disabled={!skill.latestVersion || downloading} onClick={download}><ListItemIcon><Iconify icon="solar:download-linear" width={16} /></ListItemIcon>Download</MenuItem>
-        <MenuItem onClick={() => { setAnchor(null); setConfirm(true); }}><ListItemIcon><Iconify icon="solar:archive-linear" width={16} /></ListItemIcon>Archive</MenuItem>
+        <MenuItem disabled={!canArchive} onClick={() => { setReleaseRevision(detail.data.releaseRevision); setAnchor(null); setConfirm(true); }}><ListItemIcon><Iconify icon="solar:archive-linear" width={16} /></ListItemIcon>Archive</MenuItem>
       </Menu>
       <ConfirmDialog open={confirm} onClose={() => { if (!archive.isPending) setConfirm(false); }} closeDisabled={archive.isPending}
         title={`Archive ${skill.name}?`} content="This hides the skill from your workspace. Agents will no longer be able to fetch it, including by a label."
-        action={<Button variant="contained" color="error" disabled={archive.isPending} onClick={(event) => { event.stopPropagation(); archiveSkill(); }}>Archive</Button>} />
+        action={<Button variant="contained" color="error" disabled={archive.isPending || !canArchive} onClick={(event) => { event.stopPropagation(); archiveSkill(); }}>Archive</Button>} />
     </Box>
   );
 }

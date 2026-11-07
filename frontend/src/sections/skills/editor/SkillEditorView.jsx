@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Box, Button } from "@mui/material";
 
 import { useSkill, useSkillDraft } from "src/api/skills";
+import { useSkillV11Scope } from 'src/api/skills/testing';
 import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
@@ -39,6 +40,7 @@ DraftInitializer.propTypes = {
 
 export default function SkillEditorView() {
   const { skillId } = useParams();
+  const { identity } = useSkillV11Scope();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const preview = usePreviewState();
@@ -51,6 +53,6 @@ export default function SkillEditorView() {
   if (preview === "loading" || (!preview && query.isPending)) content = <ContentSkeleton variant="page" label="Loading skill editor" />;
   else if (preview === "error" || (!preview && query.isError && !query.data)) content = <ErrorState title="Couldn't load this skill" onRetry={retry} />;
   else if (preview === "empty" || !query.data) content = <EmptyState title="No skill to edit" description="Open a skill from your library or create one to start a draft." action={<Button variant="contained" onClick={() => navigate(paths.dashboard.skills.root)}>Back to Skills</Button>} />;
-  else content = <DraftInitializer key={skillId} skill={query.data} />;
+  else content = <DraftInitializer key={`${identity}:${skillId}`} skill={query.data} />;
   return <Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>{content}</Box>;
 }

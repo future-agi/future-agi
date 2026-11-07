@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 import requests
@@ -17,6 +16,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from simulate.services.hosted_harness_gateway import HostedSourceAcquirer
+from tfc.utils import github_public
 
 logger = logging.getLogger(__name__)
 
@@ -68,77 +68,31 @@ def short_ref(ref: str | None) -> str | None:
 
 
 def _hour_key() -> str:
-    return "harness:gh-calls:" + datetime.now(UTC).strftime("%Y%m%d%H")
+    return github_public._hour_key()
 
 
 def rate_limited_now() -> bool:
-    reset = cache.get(RATE_RESET_KEY)
-    return reset is not None and float(reset) > time.time()
+    return github_public.rate_limited_now()
 
 
 def remaining() -> int | None:
-    """GitHub's last reported remaining calls this hour, when known."""
-    value = cache.get(REMAINING_KEY)
-    return int(value) if value is not None else None
+    return github_public.remaining()
 
 
 def _count(key: str) -> int:
-    cache.add(key, 0, _HOUR)
-    try:
-        return cache.incr(key)
-    except ValueError:
-        # Expired between the add and the increment.
-        cache.add(key, 1, _HOUR)
-        return 1
-
-
-# Setting name, one owner's hourly share and the hourly cap of each capped bucket.
-# All three caps full (25 + 10 + 5) still leave the poller 10 of the default 50 calls
-# an hour; with them idle it has its 30 (50 less its reserve of 20). A comparison is
-# one call, two for a roll back, and is cached for ten minutes.
-_BUCKETS = {"create": ("CREATE", 3, 25), "compare": ("COMPARE", 2, 5)}
+    return github_public._count(key)
 
 
 def _limits(bucket: str) -> tuple[int, int]:
-    """One owner's hourly share of ``bucket`` and its hourly cap; pushes' otherwise."""
-    name, share, cap = _BUCKETS.get(bucket, ("WEBHOOK", 3, 10))
-    return (
-        int(getattr(settings, f"HARNESS_GITHUB_{name}_SHARE", share)),
-        int(getattr(settings, f"HARNESS_GITHUB_{name}_BUDGET", cap)),
-    )
+    return github_public._limits(bucket)
 
 
 def within_share(bucket: str, owner: str | None) -> bool:
-    """Count one call against ``owner``'s hourly share of ``bucket``, then against
-    the bucket's hourly cap; an owner past its share takes nothing from the cap."""
-    share, cap = _limits(bucket)
-    key = f"{_hour_key()}:{bucket}"
-    if owner and _count(f"{key}:{owner.lower()}") > share:
-        return False
-    return _count(key) <= cap
+    return github_public.within_share(bucket, owner)
 
 
 def _take_call(reserve: int, purpose: str, owner: str | None = None) -> bool:
-    """Count one call against the hour, unless it would eat into ``reserve``. Push
-    re-reads (by repository owner, one App installation), creation checks and
-    comparisons (by organization) have caps of their own, of which one owner gets a
-    share, and never take a reserving caller's calls."""
-    budget = int(getattr(settings, "HARNESS_GITHUB_HOURLY_BUDGET", 50))
-    key = _hour_key()
-    capped = ("webhook", "create", "compare")
-    if reserve:
-        left = remaining()
-        if left is not None and left <= reserve:
-            return False
-        used = int(cache.get(key) or 0) - sum(
-            min(int(cache.get(f"{key}:{bucket}") or 0), _limits(bucket)[1])
-            for bucket in capped
-        )
-        if used >= budget - reserve:
-            return False
-    if purpose in capped and not within_share(purpose, owner):
-        return False
-    return _count(key) <= budget
+    return github_public.take_call(reserve, purpose, owner)
 
 
 def _reset_at(headers: Any) -> float:

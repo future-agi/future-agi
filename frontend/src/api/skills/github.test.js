@@ -25,3 +25,8 @@ it('stages only a reviewed unpublished replacement, retaining all CAS values', a
 it('refreshes source checked-state when its update preview settles', () => {
   expect(useGitHubPreview('preview', 'skill').terminalParts).toEqual([['skill', 'source']]);
 });
+it('retains the immutable consumed receipt without inventing a draft on replay', async () => {
+  axios.post.mockResolvedValue({ data: { result: { draft: null, published: false, consumed: { skill_id: 'skill', draft_revision: 7 } } } });
+  const value = await useStageSkillSourceUpdate('skill').send({ previewId: 'preview', revision: 0, expectedSourceRevision: 4, expectedLatestVersion: 5, expectedLatestDigest: 'digest', acceptReplacement: false, rights: { confirmed: true, reviewNote: 'Reviewed' } }, {});
+  expect(value).toEqual({ draft: null, published: false, consumed: { skillId: 'skill', draftRevision: 7 } });
+});

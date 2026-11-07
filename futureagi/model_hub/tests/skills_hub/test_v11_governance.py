@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
-from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -340,7 +339,7 @@ def test_policy_event_failure_rolls_back_policy_and_revision(principal, hub_skil
             set_label_protection(
                 principal=principal,
                 skill_id=hub_skill.id,
-                protected_label_names=[],
+                protected_label_names=["production"],
                 expected_release_revision=0,
             )
     hub_skill.refresh_from_db()
@@ -355,6 +354,8 @@ def test_denied_bundled_publication_rolls_back_version_and_preserves_draft(
 ):
     from model_hub.services.skills_hub.drafts import publish_draft
 
+    hub_skill.protected_label_names = ["production"]
+    hub_skill.save(update_fields=["protected_label_names"])
     before = hub_skill.drafts.get(user=user)
     roles(user, organization, workspace)
     with pytest.raises(SkillsHubError) as error:
@@ -379,6 +380,8 @@ def test_integrated_label_aba_noop_and_removal(
 ):
     from model_hub.services.skills_hub.labels import remove_label, set_label
 
+    hub_skill.protected_label_names = ["production"]
+    hub_skill.save(update_fields=["protected_label_names"])
     publish_skill(hub_skill)
     publish_skill(hub_skill, files=make_skill_files(body="Second immutable version."))
     for target, expected, revision in [(1, None, 0), (2, 1, 1), (1, 2, 2)]:
@@ -457,9 +460,7 @@ def test_concurrent_policy_cas_has_exactly_one_winner(principal, hub_skill):
 
 
 def test_revision_advance_only_updates_revision_column():
-    skill = SimpleNamespace(release_revision=4)
-    saved = []
-    skill.save = lambda **kwargs: saved.append(kwargs)
-    with transaction.atomic():
+    skill = HubSkill(release_revision=4)
+    with patch.object(HubSkill, "save") as saved, transaction.atomic():
         assert advance_release_revision_locked(skill=skill) == 5
-    assert saved == [{"update_fields": ["release_revision"]}]
+    saved.assert_called_once_with(update_fields=["release_revision"])

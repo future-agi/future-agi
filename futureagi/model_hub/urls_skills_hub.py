@@ -1,10 +1,11 @@
 """Literal collection routes precede UUID identity routes."""
 
-from django.urls import path
+from django.urls import include, path
 
 from model_hub.views import skills_hub as views
 
 urlpatterns = [
+    path("", include("model_hub.urls_skills_hub_v11")),
     path("", views.SkillListView.as_view(), name="skills-list"),
     path("templates/", views.SkillTemplatesView.as_view(), name="skills-templates"),
     path("checks/", views.SkillChecksView.as_view(), name="skills-checks"),

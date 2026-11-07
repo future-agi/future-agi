@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -28,7 +29,7 @@ from model_hub.services.skills_hub.checks import run_checks
 from model_hub.services.skills_hub.drafts import save_draft
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import file_sha256, manifest_digest
-from model_hub.services.skills_hub.types import Actor
+from model_hub.services.skills_hub.types import Actor, FileInput
 from model_hub.services.skills_hub.v11.principals import (
     require_private_principal,
     require_scope_access,
@@ -38,7 +39,11 @@ from model_hub.services.skills_hub.v11.repository_zip import (
     parse_repository_zip,
     validate_repository_path,
 )
-from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
+from model_hub.services.skills_hub.v11.types import (
+    PrincipalKind,
+    SkillPrincipal,
+    SkillScope,
+)
 from model_hub.services.skills_hub.versions import create_skill
 from tfc.utils import github_public
 
@@ -60,7 +65,9 @@ def _error(
     return SkillsHubError(code, message, status=status, detail=detail)
 
 
-def parse_github_source(*, url: str, path: str | None, ref: str | None) -> GitHubSource:
+def parse_github_source(
+    *, url: object, path: str | None, ref: str | None
+) -> GitHubSource:
     """Parse once, with explicit tree/blob boundaries; never probe ambiguous refs."""
     if (
         not isinstance(url, str)
@@ -132,11 +139,11 @@ def parse_github_source(*, url: str, path: str | None, ref: str | None) -> GitHu
     kind = (
         "default"
         if ref == "HEAD"
-        else "commit"
-        if _SHA.fullmatch(ref)
-        else "tag"
-        if ref.startswith("refs/tags/")
-        else "branch"
+        else (
+            "commit"
+            if _SHA.fullmatch(ref)
+            else "tag" if ref.startswith("refs/tags/") else "branch"
+        )
     )
     return GitHubSource(repo, path, ref, kind)
 
@@ -155,7 +162,9 @@ def _authorize(principal: SkillPrincipal) -> None:
     require_scope_access(principal=principal, write=True)
 
 
-def _skill(scope: SkillScope, skill_id: UUID, *, lock: bool = False) -> HubSkill:
+def _skill(scope: SkillScope, skill_id: UUID | None, *, lock: bool = False) -> HubSkill:
+    if skill_id is None:
+        raise _error("resource_not_found", "Skill not found.", 404)
     rows = HubSkill.no_workspace_objects.filter(
         organization_id=scope.organization_id,
         workspace_id=scope.workspace_id,
@@ -257,6 +266,7 @@ def create_github_preview(
     )
 
     _authorize(principal)
+    assert principal.user_id is not None
     digest = _request_digest(request, skill_id)
     replay = _replay(principal, idempotency_key, digest)
     if replay:
@@ -266,9 +276,7 @@ def create_github_preview(
     allowed = (
         {"parent_preview_id", "path"}
         if continuation
-        else {"expected_source_revision"}
-        if skill_id
-        else {"url", "path", "ref"}
+        else {"expected_source_revision"} if skill_id else {"url", "path", "ref"}
     )
     if set(request) - allowed or (continuation and set(request) != allowed):
         raise _error(
@@ -292,7 +300,7 @@ def create_github_preview(
         existing = HubSkillGitHubPreview.objects.filter(job=job).first()
         if existing:
             return existing
-        values = {
+        values: dict = {
             "job": job,
             "operation": "update" if skill_id else "import",
             "license": {
@@ -374,7 +382,7 @@ def _principal(job: HubSkillJob, scope: SkillScope) -> SkillPrincipal:
         scope=scope,
         user_id=job.owner_user_id,
         api_key_id=job.actor_api_key_id,
-        kind=job.principal_kind,
+        kind=cast(PrincipalKind, job.principal_kind),
     )
 
 
@@ -492,8 +500,12 @@ def _resolve_preview(
         from model_hub.services.skills_hub.compare import compare_file_sets
 
         skill = _skill(scope, preview.job.skill_id)
+        if preview.expected_latest_version is None:
+            raise _error(
+                "source_conflict", "The captured source version is unavailable."
+            )
         latest = skill.versions.get(number=preview.expected_latest_version)
-        before = [
+        before: list[FileInput] = [
             {"path": row.path, "content": row.blob.content}
             for row in latest.files.select_related("blob")
         ]
@@ -540,10 +552,17 @@ def execute_github_preview(*, scope: SkillScope, preview_id: UUID) -> dict:
             return {"id": str(job.pk), "status": job.status}
         job.status = "running"
         job.claim_generation = 2
+        job.github_sender_active = True
         job.started_at = job.started_at or timezone.now()
         job.heartbeat_at = timezone.now()
         job.save(
-            update_fields=["status", "claim_generation", "started_at", "heartbeat_at"]
+            update_fields=[
+                "status",
+                "claim_generation",
+                "started_at",
+                "heartbeat_at",
+                "github_sender_active",
+            ]
         )
     preview = HubSkillGitHubPreview.objects.select_related("job").get(pk=preview_id)
     error = None
@@ -553,10 +572,22 @@ def execute_github_preview(*, scope: SkillScope, preview_id: UUID) -> dict:
     except SkillsHubError as exc:
         error = exc
         result = {
-            "outcome": "blocked"
-            if exc.code in {"github_bundle_invalid", "license_restricted"}
-            else "error"
+            "outcome": (
+                "blocked"
+                if exc.code in {"github_bundle_invalid", "license_restricted"}
+                else "error"
+            )
         }
+    except Exception:
+        # Do not store transport exceptions or upstream response bodies.
+        error = _error(
+            "github_source_unavailable", "GitHub could not be read safely.", 404
+        )
+        result = {"outcome": "error"}
+    finally:
+        # Only the generation-2 claimant reaches this point. A fenced late
+        # sender may settle capacity, but must never overwrite the outcome.
+        HubSkillJob.objects.filter(pk=job.pk).update(github_sender_active=False)
     with transaction.atomic():
         # Source/latest share the same skill lock as staging and publication.
         skill = _skill(scope, job.skill_id, lock=True) if job.skill_id else None
@@ -565,6 +596,10 @@ def execute_github_preview(*, scope: SkillScope, preview_id: UUID) -> dict:
             current.claim_generation != job.claim_generation
             or current.status in _TERMINAL
         ):
+            current.reservation_released_at = (
+                current.reservation_released_at or timezone.now()
+            )
+            current.save(update_fields=["reservation_released_at"])
             return {"id": str(current.pk), "status": current.status}
         if current.cancel_requested_at:
             current.status = "cancelled"
@@ -577,6 +612,10 @@ def execute_github_preview(*, scope: SkillScope, preview_id: UUID) -> dict:
             current.status = "failed" if error else "completed"
         if skill and not error and current.status == "completed":
             source = _source(scope, skill)
+            if preview.source_revision is None:
+                raise _error(
+                    "source_conflict", "The captured source revision is unavailable."
+                )
             updated = HubSkillGitHubSource.objects.filter(
                 pk=source.pk, revision=preview.source_revision
             ).update(
@@ -644,6 +683,10 @@ def _rights(
 
 
 def _provenance(preview: HubSkillGitHubPreview) -> dict:
+    if preview.bundle is None:
+        raise _error(
+            "github_bundle_invalid", "The reviewed bundle is unavailable.", 422
+        )
     return {
         "type": "import",
         "provider": "github",
@@ -665,6 +708,7 @@ def stage_github_preview(
     *, principal: SkillPrincipal, preview_id: UUID, request: dict
 ) -> dict:
     _authorize(principal)
+    assert principal.user_id is not None
     preview = _owned(principal, preview_id)
     allowed = (
         {"preview_id", "rights"}
@@ -727,7 +771,7 @@ def stage_github_preview(
             raise _error(
                 "github_bundle_invalid", "This preview is not ready to stage.", 422
             )
-        files = [
+        files: list[FileInput] = [
             {"path": item["path"], "content": item["content"]}
             for item in preview.bundle["files"]
         ]
@@ -760,7 +804,10 @@ def stage_github_preview(
             ) != (latest.number, latest.digest) or (
                 preview.expected_latest_version,
                 preview.expected_latest_digest,
-            ) != (latest.number, latest.digest):
+            ) != (
+                latest.number,
+                latest.digest,
+            ):
                 raise _error(
                     "candidate_changed",
                     "The local latest version changed. Preview it again.",

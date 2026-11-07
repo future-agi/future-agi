@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 
+import { skillFilesDigest } from 'src/api/skills/digest';
 import { getSkillErrorCode, useSkillsList } from "src/api/skills";
 import {
   useCreateSkillTestRun,
@@ -26,33 +27,7 @@ import Section from "src/components/section";
 import TestInventoryReview from "./TestInventoryReview";
 
 async function draftCandidate(draft) {
-  const sha = async (text) =>
-    Array.from(
-      new Uint8Array(
-        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
-      ),
-      (byte) => byte.toString(16).padStart(2, "0"),
-    ).join("");
-  const manifest = await Promise.all(
-    draft.files.map(async (file) => [file.path, await sha(file.content)]),
-  );
-  // Match Python path ordering and json.dumps(ensure_ascii=True), including astral paths.
-  manifest.sort(([left], [right]) => {
-    const a = Array.from(left, (char) => char.codePointAt(0));
-    const b = Array.from(right, (char) => char.codePointAt(0));
-    for (let index = 0; index < Math.min(a.length, b.length); index += 1)
-      if (a[index] !== b[index]) return a[index] - b[index];
-    return a.length - b.length;
-  });
-  const canonical = JSON.stringify(manifest).replace(
-    /[\u007f-￿]/g,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-  return {
-    kind: "draft",
-    revision: draft.revision,
-    digest: `sha256:${await sha(canonical)}`,
-  };
+  return { kind: 'draft', revision: draft.revision, digest: await skillFilesDigest(draft.files) };
 }
 
 function CompetitorPicker({ skillId, value, onChange, limit, disabled }) {

@@ -7,6 +7,8 @@ from decimal import Decimal
 from typing import Literal, NotRequired, TypedDict
 from uuid import UUID
 
+PrincipalKind = Literal["human", "user_key", "mcp_key", "system_key"]
+
 
 @dataclass(frozen=True)
 class SkillScope:
@@ -19,7 +21,7 @@ class SkillPrincipal:
     scope: SkillScope
     user_id: UUID | None
     api_key_id: UUID | None
-    kind: Literal["human", "user_key", "mcp_key", "system_key"]
+    kind: PrincipalKind
 
 
 @dataclass(frozen=True)

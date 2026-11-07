@@ -5,13 +5,20 @@ from __future__ import annotations
 import json
 from functools import cache
 
+from django.conf import settings
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers as s
 
 from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.usage import fetches_7d_map
+from model_hub.services.skills_hub.v11.principals import (
+    principal_from_request,
+    require_scope_access,
+    require_skill_admin,
+)
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
+from tfc.utils.serializer_fields import StringOrObjectField
 
 
 class HubSerializer(s.Serializer):
@@ -66,7 +73,17 @@ class ChecksRequest(HubSerializer):
     name = s.CharField(required=False)
 
 
-class PublishOptions(HubSerializer):
+class ReleaseRequest(HubSerializer):
+    expected_digest = s.RegexField(r"^sha256:[0-9a-f]{64}$", required=False)
+    expected_release_revision = s.IntegerField(min_value=0, required=False)
+    evidence_run_id = s.UUIDField(required=False)
+
+
+class ArchiveRequest(HubSerializer):
+    expected_release_revision = s.IntegerField(min_value=0, required=False)
+
+
+class PublishOptions(ReleaseRequest):
     note = s.CharField(max_length=limits.MAX_NOTE, allow_blank=True, required=False)
     labels = s.ListField(
         child=s.RegexField(limits.LABEL_RE), max_length=limits.MAX_LABELS, default=list
@@ -75,7 +92,7 @@ class PublishOptions(HubSerializer):
     force = s.BooleanField(default=False)
 
 
-class PushRequest(HubSerializer):
+class PushRequest(ReleaseRequest):
     files = FileInput(many=True)
     note = s.CharField(max_length=limits.MAX_NOTE, allow_blank=True, default="")
     labels = s.ListField(
@@ -112,11 +129,11 @@ class RestoreRequest(HubSerializer):
     note = s.CharField(max_length=limits.MAX_NOTE, allow_blank=True, default="")
 
 
-class RemoveLabelRequest(HubSerializer):
+class RemoveLabelRequest(ArchiveRequest):
     expected_version = s.IntegerField(min_value=1, allow_null=True, required=False)
 
 
-class SetLabelRequest(RemoveLabelRequest):
+class SetLabelRequest(RemoveLabelRequest, ReleaseRequest):
     version = s.IntegerField(min_value=1)
     note = s.CharField(max_length=500, allow_blank=True, default="")
 
@@ -226,7 +243,32 @@ class ImportRequest(ImportPreviewRequest):
     labels = s.CharField(default="[]", help_text="JSON array of labels to move.")
     acknowledge_warnings = s.BooleanField(default=False)
 
+    expected_release_revisions = s.CharField(
+        default="{}",
+        help_text="JSON object mapping preview bundle keys to reviewed release revisions.",
+    )
+
     def validate(self, attrs):
+        try:
+            revisions = json.loads(attrs["expected_release_revisions"])
+        except (ValueError, TypeError) as exc:
+            raise s.ValidationError(
+                {"expected_release_revisions": "Use a JSON object of revisions."}
+            ) from exc
+        if (
+            not isinstance(revisions, dict)
+            or len(revisions) > limits.MAX_IMPORT_SKILLS
+            or any(
+                not isinstance(key, str) or type(value) is not int or value < 0
+                for key, value in revisions.items()
+            )
+        ):
+            raise s.ValidationError(
+                {
+                    "expected_release_revisions": "Use a JSON object of nonnegative revisions."
+                }
+            )
+        attrs["expected_release_revisions"] = revisions
         for field in ("selected", "labels"):
             try:
                 value = json.loads(attrs[field])
@@ -288,10 +330,64 @@ class LabelSummary(HubSerializer):
     version = s.IntegerField(source="version.number")
 
 
+def _principal(context):
+    request = context["request"]
+    principal = getattr(request, "skill_principal", None)
+    if principal is None:
+        principal = principal_from_request(request)
+        request.skill_principal = principal
+    return principal
+
+
+def _release_permissions(context, skill):
+    cache_key = (str(skill.pk), skill.release_revision)
+    cached = context.setdefault("release_permissions", {})
+    if cache_key not in cached:
+        principal = _principal(context)
+        writer = admin = False
+        try:
+            require_scope_access(principal=principal, write=True)
+            writer = True
+            require_skill_admin(principal=principal, skill=skill)
+            admin = True
+        except SkillsHubError:
+            pass
+        assigned = any(
+            label.name in skill.protected_label_names for label in skill.labels.all()
+        )
+        cached[cache_key] = {
+            "writer": writer,
+            "can_manage_label_protection": admin,
+            "can_archive": writer and (not assigned or admin),
+            "can_run_tests": writer
+            and principal.kind != "system_key"
+            and bool(getattr(settings, "SKILLS_TESTING_ENABLED", False)),
+        }
+    return cached[cache_key]
+
+
 class LabelOut(LabelSummary):
     version_id = s.UUIDField()
     updated_at = s.DateTimeField()
     updated_by = Person(allow_null=True)
+    is_protected = s.SerializerMethodField()
+    can_move = s.SerializerMethodField()
+    can_remove = s.SerializerMethodField()
+    release_revision = s.IntegerField(source="skill.release_revision")
+
+    def get_is_protected(self, obj) -> bool:
+        return obj.name in obj.skill.protected_label_names
+
+    def get_can_move(self, obj) -> bool:
+        permissions = _release_permissions(self.context, obj.skill)
+        return bool(
+            permissions["can_manage_label_protection"]
+            if self.get_is_protected(obj)
+            else permissions["writer"]
+        )
+
+    def get_can_remove(self, obj) -> bool:
+        return self.get_can_move(obj)
 
 
 class VersionSummary(HubSerializer):
@@ -331,6 +427,8 @@ class VersionDetail(VersionSummary):
 
 
 class SkillSummary(HubSerializer):
+    release_revision = s.IntegerField()
+    protected_label_names = s.ListField(child=s.CharField())
     id = s.UUIDField()
     name = s.CharField()
     description = s.CharField()
@@ -349,8 +447,10 @@ class SkillSummary(HubSerializer):
         return obj.latest_version_number or None
 
     def get_has_draft(self, obj) -> bool:
-        user = self.context["request"].user
-        return any(draft.user_id == user.pk for draft in obj.drafts.all())
+        principal = _principal(self.context)
+        return principal.kind != "system_key" and any(
+            draft.user_id == principal.user_id for draft in obj.drafts.all()
+        )
 
     def get_fetches_7d(self, obj) -> int:
         counts = self.context.get("fetch_counts")
@@ -387,12 +487,29 @@ class DraftSummary(HubSerializer):
         return bool(obj.user_id == self.context["request"].user.pk)
 
 
+class SkillPermissions(HubSerializer):
+    can_manage_label_protection = s.BooleanField()
+    can_archive = s.BooleanField()
+    can_run_tests = s.BooleanField()
+
+
 class SkillDetail(SkillSummary):
     source = s.JSONField()  # type: ignore[assignment]
     created_by = Person(allow_null=True)
     labels = LabelOut(many=True)
     latest = s.SerializerMethodField()
-    drafts = DraftSummary(many=True)
+    drafts = s.SerializerMethodField()
+    permissions = s.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=DraftSummary(many=True))
+    def get_drafts(self, obj):
+        if _principal(self.context).kind == "system_key":
+            return []
+        return DraftSummary(obj.drafts.all(), many=True, context=self.context).data
+
+    @swagger_serializer_method(serializer_or_field=SkillPermissions())
+    def get_permissions(self, obj):
+        return SkillPermissions(_release_permissions(self.context, obj)).data
 
     @swagger_serializer_method(serializer_or_field=VersionSummary(allow_null=True))
     def get_latest(self, obj):
@@ -457,6 +574,9 @@ class FileChunk(HubSerializer):
 
 
 class DraftOut(HubSerializer):
+    def get_fields(self):
+        return {**super().get_fields(), "source": s.JSONField()}
+
     base_version = s.IntegerField(allow_null=True)
     files = FileInput(many=True)
     note = s.CharField(allow_blank=True)
@@ -464,13 +584,34 @@ class DraftOut(HubSerializer):
     updated_at = s.DateTimeField()
 
 
+class EvidenceCurrentness(HubSerializer):
+    content = s.BooleanField()
+    baseline = s.BooleanField(allow_null=True)
+    suite = s.BooleanField(allow_null=True)
+    competitors = s.BooleanField(allow_null=True)
+    payload_available = s.BooleanField()
+
+
+class ReleaseEvidence(HubSerializer):
+    class Meta:
+        ref_name = None
+
+    run_id = s.UUIDField()
+    currentness = EvidenceCurrentness()
+    validity = s.ChoiceField(choices=["reviewed", "diagnostic"])
+
+
 class PublishResult(HubSerializer):
+    release_revision = s.IntegerField()
+    evidence = ReleaseEvidence(allow_null=True)
     version = VersionSummary()
     unchanged = s.BooleanField()
     checks = ChecksResult()
 
 
 class PushResult(HubSerializer):
+    release_revision = s.IntegerField()
+    evidence = ReleaseEvidence(allow_null=True)
     skill = SkillSummary()
     version = VersionSummary()
     unchanged = s.BooleanField()
@@ -484,6 +625,7 @@ class HistoryActor(Person):
 
 
 class LabelEvent(HubSerializer):
+    release_revision = s.IntegerField(allow_null=True)
     label = s.CharField()  # type: ignore[assignment]
     from_version = s.IntegerField(allow_null=True)
     to_version = s.IntegerField(allow_null=True)
@@ -651,7 +793,10 @@ class ImportResult(HubSerializer):
 
 
 class SkillsError(ManagementAPIErrorResponseSerializer):
-    """Use the standard text error envelope for validation, access and not found."""
+    """Retain standard aliases and structured domain detail for release failures."""
+
+    def get_fields(self):
+        return {**super().get_fields(), "detail": StringOrObjectField(required=False)}
 
 
 class ConflictDetail(HubSerializer):
@@ -660,6 +805,7 @@ class ConflictDetail(HubSerializer):
     current_version = s.IntegerField(required=False, allow_null=True)
     revision = s.IntegerField(required=False)
     updated_at = s.DateTimeField(required=False, allow_null=True)
+    release_revision = s.IntegerField(required=False)
 
 
 class SkillsConflictError(SkillsError):

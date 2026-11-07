@@ -17,6 +17,7 @@ import {
   useTheme,
 } from "@mui/material";
 
+import AdoptionPanel from '../governance/AdoptionPanel';
 import { useSkillUsage } from "src/api/skills";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
@@ -105,6 +106,7 @@ export default function UsageTab({ skill }) {
 
   return (
     <Stack spacing={3}>
+      <AdoptionPanel skill={skill} />
       <TextField
         select
         size="small"

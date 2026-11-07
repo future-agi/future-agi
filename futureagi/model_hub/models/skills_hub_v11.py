@@ -82,6 +82,8 @@ class HubSkillJob(ScopedRecord):
     )
     # Preserve the authentication class if the key row is subsequently removed.
     principal_kind = models.CharField(max_length=16, default="human")
+    # GitHub has no model-call row: retain admission while its local sender lives.
+    github_sender_active = models.BooleanField(default=False)
     kind = models.CharField(max_length=8, choices=Kind.choices)
     idempotency_key = models.UUIDField()
     request_digest = models.CharField(max_length=71)

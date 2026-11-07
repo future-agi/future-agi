@@ -12,13 +12,14 @@ import logging
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 from django.db import transaction
 from django.db.models import Exists, F, Max, OuterRef, Q
 from django.utils import timezone
 
+from model_hub.models.skills_hub import HubSkill
 from model_hub.models.skills_hub_v11 import (
     HubSkillExecutionQuota,
     HubSkillJob,
@@ -36,6 +37,7 @@ from model_hub.services.skills_hub.v11.principals import (
 from model_hub.services.skills_hub.v11.types import (
     ACTIVE_JOB_STATUSES,
     TERMINAL_JOB_STATUSES,
+    PrincipalKind,
     SkillPrincipal,
     SkillScope,
 )
@@ -54,17 +56,18 @@ def principal_for_job(job: HubSkillJob) -> SkillPrincipal:
         SkillScope(job.organization_id, job.workspace_id),
         job.owner_user_id,
         job.actor_api_key_id,
-        job.principal_kind,
+        cast(PrincipalKind, job.principal_kind),
     )
 
 
 def check_job_access(job: HubSkillJob) -> None:
     principal = principal_for_job(job)
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     if (
         job.skill_id
-        and not job.skill.__class__.no_workspace_objects.filter(
+        and not HubSkill.no_workspace_objects.filter(
             id=job.skill_id,
             organization_id=job.organization_id,
             workspace_id=job.workspace_id,
@@ -112,6 +115,7 @@ def create_job_locked(
     limits: dict,
 ) -> HubSkillJob:
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     if not transaction.get_connection().in_atomic_block:
         raise RuntimeError("create_job_locked requires the acceptance transaction")
@@ -205,6 +209,7 @@ def dispatch_job(*, job_id: UUID, scope: SkillScope) -> None:
 
 def cancel_job(*, principal: SkillPrincipal, job_id: UUID) -> HubSkillJob:
     require_private_principal(principal=principal)
+    assert principal.user_id is not None
     require_scope_access(principal=principal, write=True)
     with transaction.atomic():
         job = (
@@ -433,9 +438,7 @@ def settle_call(
         call.state = (
             "completed"
             if result
-            else "unknown"
-            if call.started_at is not None
-            else "failed"
+            else "unknown" if call.started_at is not None else "failed"
         )
         if result:
             call.provider_request_id, call.returned_model = (
@@ -454,12 +457,11 @@ def settle_call(
             if not stale:
                 call.assistant_message = result.assistant_message
         call.error = error
-        known = (
+        if (
             result is not None
             and result.usage is not None
             and result.estimated_cost_usd is not None
-        )
-        if known:
+        ):
             job.reserved_tokens = max(0, job.reserved_tokens - call.reserved_tokens)
             job.reserved_estimate_usd = max(
                 Decimal(0), job.reserved_estimate_usd - call.reserved_estimate_usd
@@ -691,11 +693,14 @@ def start_job(*, scope: SkillScope, job_id: UUID) -> dict:
         )
         concurrency = min(2, effective_limits()["max_active_attempts_per_run"])
         if job.kind == "test":
+            snapshot = job.hub_skill_test_run.snapshot
+            if snapshot is None:
+                raise SkillsHubError(
+                    "evidence_expired", "The execution snapshot expired.", status=410
+                )
             concurrency = min(
                 concurrency,
-                job.hub_skill_test_run.snapshot["limits"][
-                    "max_active_attempts_per_run"
-                ],
+                snapshot["limits"]["max_active_attempts_per_run"],
             )
         return {
             "id": str(job.id),
@@ -764,7 +769,10 @@ def finish_job(
                     Decimal(0),
                     job.reserved_estimate_usd - prepared.reserved_estimate_usd,
                 )
-        live = HubSkillModelCall.objects.filter(LIVE_CALL, job=job).exists()
+        live = (
+            job.github_sender_active
+            or HubSkillModelCall.objects.filter(LIVE_CALL, job=job).exists()
+        )
         if job.status not in TERMINAL_JOB_STATUSES:
             if job.cancel_requested_at:
                 job.status = "cancelled" if not live else "cancelling"
@@ -856,7 +864,11 @@ def reconcile_jobs(*, batch_size: int = 100) -> dict:
         | Q(status="queued", created_at__lte=now - timedelta(seconds=60))
         | Q(status="running", heartbeat_at__lt=now - timedelta(seconds=170))
         | Q(status__in=ACTIVE_JOB_STATUSES, cancel_requested_at__isnull=False)
-        | Q(status__in=TERMINAL_JOB_STATUSES, has_live_sender=False)
+        | Q(
+            status__in=TERMINAL_JOB_STATUSES,
+            has_live_sender=False,
+            github_sender_active=False,
+        )
     )
     # Quarantined terminal senders must not permanently starve later tenants out
     # of the first batch. A late local settlement makes them eligible again.
@@ -908,16 +920,17 @@ def reconcile_jobs(*, batch_size: int = 100) -> dict:
             terminal = finish_job(
                 scope=scope,
                 job_id=job.id,
-                failure_code="queue_timeout"
-                if expired_queue
-                else "execution_unknown"
-                if lost_worker
-                else None,
+                failure_code=(
+                    "queue_timeout"
+                    if expired_queue
+                    else "execution_unknown" if lost_worker else None
+                ),
             )
             result["finalized"] += terminal["status"] in TERMINAL_JOB_STATUSES
-            result["quarantined"] += HubSkillModelCall.objects.filter(
-                LIVE_CALL, job=job
-            ).exists()
+            result["quarantined"] += (
+                job.github_sender_active
+                or HubSkillModelCall.objects.filter(LIVE_CALL, job=job).exists()
+            )
         elif job.dispatch_state in {"pending", "unknown"}:
             dispatch_job(job_id=job.id, scope=scope)
             result["dispatched"] += 1

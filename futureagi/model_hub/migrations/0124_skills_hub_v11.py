@@ -6,6 +6,8 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
+import model_hub.models.skills_hub
+
 
 class Migration(migrations.Migration):
     dependencies = [
@@ -15,6 +17,33 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.AddField(
+            model_name="hubskill",
+            name="protected_label_names",
+            field=models.JSONField(default=list),
+        ),
+        migrations.AlterField(
+            model_name="hubskill",
+            name="protected_label_names",
+            field=models.JSONField(
+                default=model_hub.models.skills_hub.default_protected_labels
+            ),
+        ),
+        migrations.AddField(
+            model_name="hubskill",
+            name="release_revision",
+            field=models.PositiveBigIntegerField(default=0),
+        ),
+        migrations.AddField(
+            model_name="hubskilldraft",
+            name="source",
+            field=models.JSONField(default=dict),
+        ),
+        migrations.AddField(
+            model_name="hubskilllabelevent",
+            name="release_revision",
+            field=models.PositiveBigIntegerField(null=True),
+        ),
         migrations.CreateModel(
             name="HubSkillJob",
             fields=[
@@ -28,6 +57,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("principal_kind", models.CharField(default="human", max_length=16)),
+                ("github_sender_active", models.BooleanField(default=False)),
                 (
                     "kind",
                     models.CharField(

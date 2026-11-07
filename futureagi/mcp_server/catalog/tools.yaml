@@ -645,7 +645,7 @@ tools:
   # group selections stay unchanged; callers can opt into skills independently.
   - name: list_skills
     group: skills
-    description: List versioned skills in the authenticated workspace. Call get_skill to resolve a label or version before reading instructions.
+    description: List versioned skills in the authenticated workspace. Read release_revision, protected_label_names and current label targets here before a protected release; submit that revision as expected_release_revision and the target as expected_version. Call get_skill to resolve a label or version before reading instructions.
     operation: {method: GET, path: "/model-hub/skills/"}
     access: read
     pagination:
@@ -662,12 +662,12 @@ tools:
     access: read
   - name: publish_skill
     group: skills
-    description: Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied.
+    description: Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied. Protected labels require a current admin and expected_release_revision read from list_skills (0 for a new identity); publish without labels otherwise. Optional expected_digest binds reviewed content and evidence_run_id attaches already shared exact-content evidence.
     operation: {method: POST, path: "/model-hub/skills/publish/"}
     access: write
   - name: set_skill_label
     group: skills
-    description: Move a skill label to a published version. Use expected_version for compare-and-swap; null requires that the label does not exist. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.
+    description: Move a skill label to a published version. Read list_skills first and send expected_release_revision plus expected_version for compare-and-swap; null requires that the label does not exist. Both preconditions and current admin access are mandatory for protected labels, even on a no-op. Optional expected_digest and evidence_run_id bind the reviewed target and shared evidence. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.
     operation: {method: PUT, path: "/model-hub/skills/{skill_id}/labels/{label}/"}
     access: write
   - name: update_skill_tags

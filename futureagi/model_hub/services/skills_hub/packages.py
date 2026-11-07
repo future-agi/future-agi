@@ -15,6 +15,8 @@ import stat
 import zipfile
 import zlib
 from collections import Counter
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.checks import (
@@ -34,7 +36,7 @@ def file_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def manifest_digest(files: list[dict]) -> str:
+def manifest_digest(files: Iterable[Mapping[str, Any]]) -> str:
     """Hash canonical path/hash pairs independently of input order."""
     manifest = sorted(
         [
@@ -129,7 +131,7 @@ def build_zip(
     return output.getvalue()
 
 
-def _ignored(path: str) -> bool:
+def is_ignored_path(path: str) -> bool:
     parts = path.split("/")
     return "__MACOSX" in parts or ".git" in parts or parts[-1] == ".DS_Store"
 
@@ -138,7 +140,7 @@ def _reject(rejected: list[dict], path: str, reason: str) -> None:
     rejected.append({"path": path, "reason": reason})
 
 
-def _decode_file(path: str, raw: bytes, rejected: list[dict]) -> str | None:
+def decode_text_file(path: str, raw: bytes, rejected: list[dict]) -> str | None:
     if path.lower().endswith(".zip") or raw.startswith(_ZIP_MAGIC):
         _reject(rejected, path, "nested_zip")
         return None
@@ -183,10 +185,10 @@ def _zip_files(
                 if not path_is_valid(checked_path):
                     _reject(rejected, path, "path_invalid")
                     continue
-                if _ignored(checked_path):
+                if is_ignored_path(checked_path):
                     skipped.append(path)
                     continue
-                reason = _entry_rejection(entry, checked_path, counts)
+                reason = archive_member_rejection(entry, checked_path, counts)
                 if reason:
                     _reject(rejected, path, reason)
                     continue
@@ -200,7 +202,7 @@ def _zip_files(
                     if len(data) != entry.file_size:
                         _reject(rejected, path, "size_mismatch")
                         continue
-                    content = _decode_file(path, data, rejected)
+                    content = decode_text_file(path, data, rejected)
                     if content is not None:
                         files[path] = content
                 except (
@@ -219,7 +221,9 @@ def _zip_files(
     return files
 
 
-def _entry_rejection(entry: zipfile.ZipInfo, path: str, counts: Counter) -> str | None:
+def archive_member_rejection(
+    entry: zipfile.ZipInfo, path: str, counts: Counter
+) -> str | None:
     mode = stat.S_IFMT(entry.external_attr >> 16)
     if mode == stat.S_IFLNK:
         return "symlink"
@@ -304,7 +308,7 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
         if not path_is_valid(filename):
             _reject(rejected, filename, "path_invalid")
             continue
-        if _ignored(filename):
+        if is_ignored_path(filename):
             skipped.append(filename)
             continue
         if filename.lower().endswith(".zip") or raw.startswith(_ZIP_MAGIC):
@@ -331,10 +335,16 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
         if counts[path.casefold()] > 1:
             _reject(rejected, path, "path_duplicate")
             continue
-        content = _decode_file(path, raw, rejected)
+        content = decode_text_file(path, raw, rejected)
         if content is not None:
             loose_files[path] = content
     bundles.extend(_bundles(loose_files, "loose", "skill", rejected))
     if len(bundles) > limits.MAX_IMPORT_SKILLS:
         raise _too_large("Import at most 50 skills at a time.")
     return {"bundles": bundles, "rejected": rejected, "skipped": skipped}
+
+
+# Compatibility for existing package consumers; repository imports use the public seams.
+_entry_rejection = archive_member_rejection
+_decode_file = decode_text_file
+_ignored = is_ignored_path

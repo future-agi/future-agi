@@ -8,6 +8,7 @@ from model_hub.selectors.skills_hub import scoped_skill, version_for_skill
 from model_hub.services.skills_hub.drafts import get_draft
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import file_sha256
+from model_hub.services.skills_hub.types import FileInput
 
 
 def _snapshot(skill: HubSkill, ref: int | str, user: User) -> tuple[int | str, dict]:
@@ -40,6 +41,30 @@ def compare(
     skill = scoped_skill(skill)
     from_ref, before = _snapshot(skill, from_ref, user)
     to_ref, after = _snapshot(skill, to_ref, user)
+    result = _compare_snapshots(before, after)
+    return {"from": from_ref, "to": to_ref, **result}
+
+
+def compare_file_sets(before: list[FileInput], after: list[FileInput]) -> dict:
+    """Diff complete file sets without DB access, omission or truncation."""
+
+    def snapshot(files):
+        return {
+            file["path"]: {
+                "sha256": file_sha256(file["content"]),
+                "text": file["content"],
+            }
+            for file in files
+        }
+
+    return {
+        "from": "draft",
+        "to": "draft",
+        **_compare_snapshots(snapshot(before), snapshot(after)),
+    }
+
+
+def _compare_snapshots(before: dict, after: dict) -> dict:
     summary = {"added": 0, "removed": 0, "modified": 0, "unchanged": 0}
     files = []
     for path in sorted(before.keys() | after.keys()):
@@ -65,4 +90,4 @@ def compare(
             )
         files.append(item)
         summary[status] += 1
-    return {"from": from_ref, "to": to_ref, "files": files, "summary": summary}
+    return {"files": files, "summary": summary}

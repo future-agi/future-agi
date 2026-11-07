@@ -34,6 +34,10 @@ export function useSkillV11Scope() {
   current.current = identity;
   const previous = useRef({ identity, scope });
   useEffect(() => {
+    current.current = identity;
+    return () => { current.current = null; };
+  }, [identity]);
+  useEffect(() => {
     if (previous.current.identity !== identity) {
       const queryKey = skillsKeys.v11(previous.current.scope);
       client.cancelQueries({ queryKey });
@@ -78,7 +82,7 @@ export function idempotencyHeaders(idempotencyKey) {
   return { 'Idempotency-Key': idempotencyKey };
 }
 
-export function useSkillV11Mutation({ send, invalidate = () => [], invalidateLegacy = () => [] }) {
+export function useSkillV11Mutation({ send, invalidate = () => [], invalidateLegacy = () => [], writeLegacy = () => [], refreshOnError = () => [] }) {
   const access = useSkillV11Scope();
   const client = useQueryClient();
   return useMutation({
@@ -91,10 +95,15 @@ export function useSkillV11Mutation({ send, invalidate = () => [], invalidateLeg
       return value;
     },
     retry: false, meta: { errorHandled: true },
+    onError: (error, input) => {
+      if (access.current.current !== access.identity) return;
+      refreshOnError(error, input).forEach((parts) => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, ...parts) }));
+    },
     onSuccess: (value, input) => {
       if (access.current.current !== access.identity) return;
+      writeLegacy(value, input).forEach(([queryKey, data]) => client.setQueryData(skillsKeys.v11(access.scope, 'legacy', ...queryKey.slice(1)), data));
       invalidate(value, input).forEach((parts) => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, ...parts) }));
-      invalidateLegacy(value, input).forEach((queryKey) => client.invalidateQueries({ queryKey }));
+      invalidateLegacy(value, input).forEach((queryKey) => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, 'legacy', ...queryKey.slice(1)) }));
     },
   });
 }

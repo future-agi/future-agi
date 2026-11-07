@@ -34,6 +34,7 @@ from model_hub.services.skills_hub.v11.types import (
     ACTIVE_JOB_STATUSES,
     TERMINAL_JOB_STATUSES,
 )
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 
 JOB_STATUSES = sorted(ACTIVE_JOB_STATUSES | TERMINAL_JOB_STATUSES)
 VARIANTS = ["candidate", "production", "without_target"]
@@ -50,6 +51,13 @@ ATTEMPT_STATUSES = [
 
 
 class HubV11Serializer(s.Serializer):
+    Meta: type
+
+    def __init__(self, *args, **kwargs):
+        # DRF forwards many=True bounds to ListSerializer; the upstream stubs
+        # omit those runtime-supported constructor arguments.
+        super().__init__(*args, **kwargs)
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if "Meta" not in cls.__dict__:
@@ -71,11 +79,11 @@ class SkillsError(V1SkillsError):
     class Meta:
         ref_name = "SkillsHubV11Error"
 
-    detail = s.JSONField(
-        required=False,
-        allow_null=True,
-        help_text="Structured domain conflict/check details, or the standard authentication/validation message.",
-    )
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "detail": StringOrObjectField(required=False, allow_null=True),
+        }
 
 
 class Integer(s.IntegerField):
@@ -226,7 +234,7 @@ class CheckConfig(HubV11Serializer):
     pointer = s.CharField(
         max_length=2000, trim_whitespace=False, allow_blank=True, required=False
     )
-    value = s.JSONField(allow_null=True, required=False)
+    value = JsonValueField(allow_null=True, required=False)
     schema = s.JSONField(required=False)
     path = s.CharField(max_length=255, trim_whitespace=False, required=False)
     complete = Boolean(required=False)
@@ -351,7 +359,9 @@ class RunConfig(HubV11Serializer):
     parent_run_id = s.UUIDField(allow_null=True)
 
     def validate(self, attrs):
-        v11_limits.validate_run_limits(attrs, skill_id=self.context.get("skill_id"))
+        v11_limits.validate_run_limits(
+            attrs, skill_id=self.context.get("skill_id"), deployment_limits=False
+        )
         return attrs
 
 
@@ -571,7 +581,10 @@ class RunCounts(HubV11Serializer):
     finished = Integer()
     answered = Integer()
     graded = Integer()
-    errors = Integer()
+
+    def get_fields(self):
+        return {**super().get_fields(), "errors": Integer()}
+
     incomplete = Integer()
     not_started = Integer()
 
@@ -690,8 +703,8 @@ class CheckResult(HubV11Serializer):
     check_id = s.UUIDField()
     category = s.ChoiceField(choices=["answer", "delivery"])
     verdict = s.ChoiceField(choices=["pass", "fail", "not_applicable", "unverifiable"])
-    expected = s.JSONField(allow_null=True)
-    actual = s.JSONField(allow_null=True)
+    expected = JsonValueField(allow_null=True)
+    actual = JsonValueField(allow_null=True)
     evidence = s.CharField(allow_null=True, allow_blank=True)
     reason = s.CharField(allow_null=True, allow_blank=True)
 
@@ -842,10 +855,6 @@ class AssistInput(HubV11Serializer):
 
     def validate(self, attrs):
         _branch(attrs, _ASSIST_FIELDS[attrs["kind"]])
-        if attrs["max_estimated_cost_usd"] > Decimal(
-            v11_limits.effective_limits()["max_estimated_cost_usd"]
-        ):
-            raise s.ValidationError("Spend stop exceeds the deployment ceiling.")
         if "case_ids" in attrs and len(set(attrs["case_ids"])) != len(
             attrs["case_ids"]
         ):
@@ -912,6 +921,10 @@ class AssistAck(JobAck):
 
 
 class AssistProposedContent(HubV11Serializer):
+    reason = s.CharField(max_length=2000, required=False, allow_blank=True)
+    tradeoffs = s.ListField(
+        child=s.CharField(max_length=2000), max_length=20, required=False
+    )
     files = FileInput(many=True, allow_null=True)
     description = s.CharField(allow_null=True)
     summary = s.CharField(allow_null=True)
@@ -1008,7 +1021,10 @@ class GitHubPreviewOut(HubV11Serializer):
     status = s.ChoiceField(choices=JOB_STATUSES)
     operation = s.ChoiceField(choices=["import", "update"])
     expires_at = s.DateTimeField(allow_null=True)
-    source = GitHubSourceIdentity()
+
+    def get_fields(self):
+        return {**super().get_fields(), "source": GitHubSourceIdentity()}
+
     outcome = s.ChoiceField(
         choices=[
             "pending",
@@ -1079,13 +1095,23 @@ class SourceDraftOut(DraftOut):
     class Meta:
         ref_name = "SkillsHubV11SourceDraftOut"
 
-    source = s.DictField(
-        help_text="Server-verified provenance; not accepted by draft PUT."
-    )
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "source": s.DictField(
+                help_text="Server-verified provenance; not accepted by draft PUT."
+            ),
+        }
+
+
+class SourceAcceptanceReceipt(HubV11Serializer):
+    skill_id = s.UUIDField()
+    draft_revision = Integer(min_value=1)
 
 
 class StageSourceOut(HubV11Serializer):
-    draft = SourceDraftOut()
+    consumed = SourceAcceptanceReceipt()
+    draft = SourceDraftOut(allow_null=True)
     published = s.ChoiceField(choices=[False])
 
 
@@ -1121,12 +1147,19 @@ class PolicyEventOut(HubV11Serializer):
 
 
 class AdoptionQuery(PageQuery):
-    label = s.RegexField(v1_limits.LABEL_RE, default="production")
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "label": s.RegexField(v1_limits.LABEL_RE, default="production"),
+        }
+
     days = s.ChoiceField(choices=[7, 30, 90], default=7)
 
 
 class AdoptionTarget(HubV11Serializer):
-    label = s.CharField()
+    def get_fields(self):
+        return {**super().get_fields(), "label": s.CharField()}
+
     version = Integer()
     version_id = s.UUIDField()
     promotion_event_id = s.UUIDField(allow_null=True)

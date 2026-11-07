@@ -25,6 +25,7 @@ import {
   useArchiveSkill,
   useSkill,
 } from "src/api/skills";
+import { useSkillV11Scope } from 'src/api/skills/testing';
 import { HOST_API } from "src/config-global";
 import { paths } from "src/routes/paths";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -37,15 +38,18 @@ import { CustomTabs } from "src/components/tabs/tabs";
 import LabelChip from "../components/LabelChip";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildInstallCommand } from "../utils/install";
+import TestsTab from '../tests/TestsTab';
+import GitHubSourcePanel from '../sources/GitHubSourcePanel';
 import VersionsTab from "../versions/VersionsTab";
 import FilesTab from "./FilesTab";
 import UsageTab from "./UsageTab";
 import UseSkillPanel from "./UseSkillPanel";
 import { resolveViewedVersion } from "./detail-state";
 
-const TABS = ["files", "versions", "usage", "use"];
+const TABS = ["files", "tests", "versions", "usage", "use"];
 const TAB_LABELS = {
   files: "Files",
+  tests: "Tests",
   versions: "Versions",
   usage: "Usage",
   use: "Use",
@@ -57,10 +61,11 @@ function DetailContent({ skill, preview }) {
   const archive = useArchiveSkill();
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [archiveRevision, setArchiveRevision] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const tab = TABS.includes(params.get("tab")) ? params.get("tab") : "files";
   const production = skill.labels.find((label) => label.name === "production");
-  const otherDrafts = skill.drafts.filter((draft) => !draft.isMine);
+  const otherDrafts = (skill.drafts || []).filter((draft) => !draft.isMine);
   const { number: downloadNumber } = resolveViewedVersion(
     skill,
     params.get("version"),
@@ -104,7 +109,7 @@ function DetailContent({ skill, preview }) {
   };
   const confirmArchive = async () => {
     try {
-      await archive.mutateAsync(skill.id);
+      await archive.mutateAsync({ id: skill.id, expectedReleaseRevision: archiveRevision });
       enqueueSnackbar("Skill archived", { variant: "success" });
       navigate(paths.dashboard.skills.root);
     } catch {
@@ -144,7 +149,7 @@ function DetailContent({ skill, preview }) {
               Use skill
             </Button>
             <Button
-              variant="contained"
+              variant={tab === "tests" ? "outlined" : "contained"}
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
@@ -199,8 +204,9 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <FilesTab skill={skill} />
+            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
           ))}
+        {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "usage" && <UsageTab skill={skill} />}
         {tab === "use" && <UseSkillPanel skill={skill} />}
@@ -224,8 +230,10 @@ function DetailContent({ skill, preview }) {
           Copy install command
         </MenuItem>
         <MenuItem
+          disabled={skill.permissions?.canArchive !== true}
           onClick={() => {
             setMenuAnchor(null);
+            setArchiveRevision(skill.releaseRevision);
             setConfirmOpen(true);
           }}
         >
@@ -247,7 +255,7 @@ function DetailContent({ skill, preview }) {
           <Button
             variant="contained"
             color="error"
-            disabled={archive.isPending}
+            disabled={archive.isPending || skill.permissions?.canArchive !== true}
             onClick={confirmArchive}
           >
             {archive.isPending ? "Archiving…" : "Archive"}
@@ -264,6 +272,7 @@ DetailContent.propTypes = {
 
 export default function SkillDetailView() {
   const { skillId } = useParams();
+  const { identity } = useSkillV11Scope();
   const [params, setParams] = useSearchParams();
   const preview = usePreviewState();
   const query = useSkill(skillId);
@@ -304,7 +313,7 @@ export default function SkillDetailView() {
         )
       ) : query.data ? (
         <DetailContent
-          key={query.data.id}
+          key={`${identity}:${query.data.id}`}
           skill={query.data}
           preview={preview}
         />

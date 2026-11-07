@@ -4,6 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 from importlib import import_module
 from types import SimpleNamespace
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -20,6 +21,7 @@ from accounts.models.auth_token import AuthToken
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey
 from accounts.models.workspace import WorkspaceMembership
+from model_hub.models.skills_hub import HubSkill
 from model_hub.models.skills_hub_v11 import (
     HubSkillAssistProposal,
     HubSkillGitHubPreview,
@@ -38,6 +40,7 @@ from model_hub.services.skills_hub.v11.limits import (
     validate_competitors,
 )
 from model_hub.services.skills_hub.v11.principals import (
+    AuthenticatedRequest,
     principal_from_request,
     require_private_principal,
     require_scope_access,
@@ -287,7 +290,7 @@ def test_schema_local_reference_and_depth_bounds():
     validate_json_schema(
         {"$defs": {"flag": {"type": "boolean"}}, "$ref": "#/$defs/flag"}
     )
-    nested = {}
+    nested: dict = {}
     for _ in range(21):
         nested = {"properties": {"x": nested}}
     with pytest.raises(SkillsHubError):
@@ -491,6 +494,7 @@ def test_github_continuation_is_exclusive():
 def test_real_authentication_classifies_keys_before_private_lookup(
     kind, user, organization, workspace
 ):
+    headers: dict[str, Any]
     if kind == "jwt":
         token = AuthToken.objects.create(
             user=user, auth_type="access", last_used_at=timezone.now()
@@ -514,7 +518,7 @@ def test_real_authentication_classifies_keys_before_private_lookup(
         headers = {"HTTP_X_API_KEY": key.api_key, "HTTP_X_SECRET_KEY": key.secret_key}
     request = Request(APIRequestFactory().get("/model-hub/skills/", **headers))
     request.user, request.auth = APIKeyAuthentication().authenticate(request)
-    resolved = principal_from_request(request)
+    resolved = principal_from_request(cast(AuthenticatedRequest, request))
     assert resolved.kind == ("human" if kind == "jwt" else f"{kind}_key")
     assert resolved.api_key_id == (key.id if key else None)
     if kind == "system":
@@ -699,13 +703,30 @@ def test_evidence_conditional_uniqueness(principal, hub_skill, publish_skill, ma
         HubSkillTestEvidence.objects.create(**values, label_event=first)
 
 
-def test_new_model_migration_has_real_parent_and_no_v1_edits():
+def test_integrated_migration_has_real_parent_and_only_additive_v1_fields():
     migration = import_module("model_hub.migrations.0124_skills_hub_v11").Migration
     assert ("model_hub", "0123_skills_hub") in migration.dependencies
     assert not any(app.startswith("ee") for app, _ in migration.dependencies)
-    old_names = {"hubskill", "hubskilldraft", "hubskillversion", "hubskilllabelevent"}
+    additions = {
+        ("hubskill", "protected_label_names"),
+        ("hubskill", "release_revision"),
+        ("hubskilldraft", "source"),
+        ("hubskilllabelevent", "release_revision"),
+    }
+    observed = set()
     for operation in migration.operations:
-        assert getattr(operation, "model_name", "").lower() not in old_names
+        assert operation.__class__.__name__ not in {"RunPython", "RunSQL"}
+        model_name = getattr(operation, "model_name", "").lower()
+        if model_name in {
+            "hubskill",
+            "hubskilldraft",
+            "hubskillversion",
+            "hubskilllabelevent",
+        }:
+            assert operation.__class__.__name__ in {"AddField", "AlterField"}
+            assert (model_name, operation.name) in additions
+            observed.add((model_name, operation.name))
+    assert observed == additions
     new_models = {
         op.name for op in migration.operations if op.__class__.__name__ == "CreateModel"
     }
@@ -731,16 +752,33 @@ def test_migration_state_matches_registered_new_models():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migration_reverses_new_tables_and_reapplies_without_touching_v1():
+def test_migration_reverses_and_preserves_legacy_policy(organization, workspace):
     executor = MigrationExecutor(connection)
     try:
         executor.migrate([("model_hub", "0123_skills_hub")])
         tables = connection.introspection.table_names()
         assert "model_hub_hubskilljob" not in tables
         assert "model_hub_hubskill" in tables
+        old = executor.loader.project_state(
+            [("model_hub", "0123_skills_hub")]
+        ).apps.get_model("model_hub", "HubSkill")
+        legacy = old.objects.create(
+            name="legacy-migration",
+            description="Legacy policy is retained.",
+            organization_id=organization.pk,
+            workspace_id=workspace.pk,
+        )
     finally:
         MigrationExecutor(connection).migrate([("model_hub", "0124_skills_hub_v11")])
     assert "model_hub_hubskilljob" in connection.introspection.table_names()
+    assert HubSkill.no_workspace_objects.get(pk=legacy.pk).protected_label_names == []
+    fresh = HubSkill.no_workspace_objects.create(
+        name="fresh-migration",
+        description="New policy opts into protection.",
+        organization_id=organization.pk,
+        workspace_id=workspace.pk,
+    )
+    assert fresh.protected_label_names == ["production"]
 
 
 @pytest.mark.django_db(transaction=True)

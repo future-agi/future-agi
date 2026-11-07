@@ -29,6 +29,8 @@ class PublishResult:
     version: HubSkillVersion
     unchanged: bool
     checks: dict
+    release_revision: int = 0
+    evidence: dict | None = None
 
 
 @dataclass

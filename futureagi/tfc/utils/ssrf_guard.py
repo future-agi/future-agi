@@ -7,6 +7,10 @@ DNS-rebinding TOCTOU gap), and every redirect hop is re-validated.
 import enum
 import ipaddress
 import socket
+import threading
+import time
+from collections.abc import Collection
+from contextlib import suppress
 from urllib.parse import urljoin, urlparse
 
 import certifi
@@ -82,7 +86,11 @@ class SsrfResponse:
         # HTTPHeaderDict is case-insensitive (matches requests.Response's
         # CaseInsensitiveDict contract): callers can look up 'Content-Type'
         # regardless of the casing the server sent (or a test constructed).
-        self.headers = urllib3.HTTPHeaderDict(headers) if headers is not None else urllib3.HTTPHeaderDict()
+        self.headers = (
+            urllib3.HTTPHeaderDict(headers)
+            if headers is not None
+            else urllib3.HTTPHeaderDict()
+        )
         self.content = content
         self.final_url = final_url
 
@@ -141,7 +149,7 @@ def _resolve_pinned_ip(host: str) -> str:
     except socket.gaierror as e:
         raise SsrfBlocked(f"Cannot resolve URL host '{host}': {e}") from None
 
-    resolved_ips = sorted({info[4][0] for info in infos})
+    resolved_ips = sorted({str(info[4][0]) for info in infos})
     if not resolved_ips:
         raise SsrfBlocked(f"Cannot resolve URL host '{host}'.")
 
@@ -190,7 +198,13 @@ def safe_fetch(
     method: str = "HEAD",
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = _DEFAULT_MAX_BODY_BYTES,
-    headers: dict = None,
+    headers: dict | None = None,
+    allowed_hosts: Collection[str] | None = None,
+    allowed_schemes: Collection[str] | None = None,
+    allowed_ports: Collection[int] | None = None,
+    deadline: float | None = None,
+    allowed_urls: Collection[str] | None = None,
+    allowed_content_encodings: Collection[str] | None = None,
 ) -> SsrfResponse:
     """Fetch `url` with SSRF protection.
 
@@ -198,18 +212,46 @@ def safe_fetch(
     Redirects are followed manually (5 hops max), re-validating each hop.
     Raises ValueError on any SSRF-relevant rejection.
     """
+
+    def remaining_timeout():
+        if deadline is None:
+            return timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("URL fetch deadline exceeded.")
+        return min(timeout, remaining)
+
+    if method not in {"HEAD", "GET"}:
+        raise ValueError("Use HEAD or GET.")
     current_url = url
     caller_headers = headers or {}
     origin_host = urlparse(url).hostname
     for _ in range(_MAX_REDIRECTS):
+        remaining_timeout()
+        if (
+            any(ord(char) < 32 or ord(char) == 127 for char in current_url)
+            or "\\" in current_url
+        ):
+            raise SsrfBlocked("Invalid URL characters.")
+        if allowed_urls is not None and current_url not in allowed_urls:
+            raise SsrfBlocked("URL is outside the allowed resource set.")
         parsed = urlparse(current_url)
+        if parsed.username is not None or parsed.password is not None:
+            raise SsrfBlocked("URL credentials are not allowed.")
+        if allowed_schemes is not None and parsed.scheme not in allowed_schemes:
+            raise SsrfBlocked("URL scheme is not allowed.")
         if parsed.scheme not in ("http", "https"):
             raise SsrfBlocked(f"Unsupported URL scheme: '{parsed.scheme}'.")
         host = parsed.hostname
         if not host:
             raise SsrfBlocked("Invalid URL: missing host.")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if allowed_hosts is not None and host not in allowed_hosts:
+            raise SsrfBlocked("URL host is not allowed.")
+        if allowed_ports is not None and port not in allowed_ports:
+            raise SsrfBlocked("URL port is not allowed.")
         pinned_ip = _resolve_pinned_ip(host)
+        hop_timeout = remaining_timeout()
 
         path = parsed.path or "/"
         if parsed.query:
@@ -228,9 +270,29 @@ def safe_fetch(
                 hop_headers.pop(sensitive, None)
                 hop_headers.pop(sensitive.lower(), None)
 
-        pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, timeout)
+        pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, hop_timeout)
         response = None
+        deadline_timer = None
         try:
+            if deadline is not None:
+                # This one-request pinned pool has a single connection. Obtain
+                # it before transmission so the watchdog can interrupt a server
+                # dripping HTTP headers too slowly to trigger idle read timeouts.
+                transport = pool._get_conn()
+                pool._put_conn(transport)
+
+                def abort_transport(transport=transport):
+                    sock = transport.sock
+                    if sock is not None:
+                        with suppress(OSError):
+                            sock.shutdown(socket.SHUT_RDWR)
+
+                deadline_timer = threading.Timer(
+                    max(0, deadline - time.monotonic()), abort_transport
+                )
+                deadline_timer.daemon = True
+                deadline_timer.start()
+                remaining_timeout()
             response = pool.request(
                 method,
                 path,
@@ -238,6 +300,14 @@ def safe_fetch(
                 redirect=False,
                 preload_content=False,
             )
+
+            remaining_timeout()
+            encoding = response.headers.get("Content-Encoding", "").strip().lower()
+            if (
+                allowed_content_encodings is not None
+                and encoding not in allowed_content_encodings
+            ):
+                raise SsrfBlocked("URL content encoding is not allowed.")
 
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("Location")
@@ -251,14 +321,34 @@ def safe_fetch(
             content = b""
             if method == "GET" and response.status == 200:
                 body = bytearray()
-                for chunk in response.stream(64 * 1024):
+
+                def chunks(response, body):
+                    if deadline is None:
+                        yield from response.stream(64 * 1024)
+                        return
+                    while True:
+                        remaining = remaining_timeout()
+                        # read1 performs at most one underlying read. Reset its
+                        # socket timeout to the remaining total budget so a slow
+                        # drip cannot reset the deadline on each chunk.
+                        connection = response.connection
+                        if connection is not None and connection.sock is not None:
+                            connection.sock.settimeout(remaining)
+                        chunk = response.read1(
+                            min(64 * 1024, max_bytes - len(body) + 1)
+                        )
+                        remaining_timeout()
+                        if not chunk:
+                            break
+                        yield chunk
+
+                for chunk in chunks(response, body):
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError(
-                            f"URL body exceeds {max_bytes} byte limit."
-                        )
+                        raise ValueError(f"URL body exceeds {max_bytes} byte limit.")
                 content = bytes(body)
 
+            remaining_timeout()
             return SsrfResponse(
                 status_code=response.status,
                 headers=response.headers,
@@ -268,7 +358,10 @@ def safe_fetch(
         except urllib3.exceptions.HTTPError as e:
             raise ValueError(f"Cannot access URL: {e}") from None
         finally:
+            if deadline_timer is not None:
+                deadline_timer.cancel()
             if response is not None:
+                response.close()
                 response.release_conn()
             pool.close()
 

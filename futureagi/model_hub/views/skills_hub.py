@@ -38,6 +38,11 @@ from model_hub.services.skills_hub import (
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.types import MISSING, Actor
+from model_hub.services.skills_hub.v11.principals import (
+    principal_from_request,
+    require_private_principal,
+    require_scope_access,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -46,20 +51,16 @@ class SkillsPermission(BasePermission):
     """Also enforce the central write rule for in-process/forced-auth callers."""
 
     def has_permission(self, request, view):
-        organization = getattr(request, "organization", None)
-        workspace = getattr(request, "workspace", None)
-        if (
-            organization is None
-            or workspace is None
-            or workspace.organization_id != organization.pk
+        principal = principal_from_request(request)
+        request.skill_principal = principal
+        if getattr(view, "private_resource", False) or (
+            isinstance(view, SkillListView) and request.method == "POST"
         ):
-            raise SkillsHubError(
-                "workspace_required", "Select a workspace to use Skills.", status=403
-            )
-        return request.user.can_access_workspace(workspace) and (
-            request.method in {"GET", "HEAD", "OPTIONS"}
-            or request.user.can_write_to_workspace(workspace)
+            require_private_principal(principal=principal)
+        require_scope_access(
+            principal=principal, write=request.method not in {"GET", "HEAD", "OPTIONS"}
         )
+        return True
 
 
 def domain_error(error):
@@ -97,7 +98,7 @@ def invalid_import(errors):
 
 
 def contract(output=None, *, body=None, query=None, status=200, many=False, **kwargs):
-    responses = dict.fromkeys((400, 401, 403, 404, 413), s.SkillsError)
+    responses = dict.fromkeys((400, 401, 403, 404, 410, 413, 428), s.SkillsError)
     responses.update({409: s.SkillsConflictError, 422: s.SkillsChecksError})
     if output:
         responses[status] = s.envelope(output, many=many)
@@ -170,7 +171,10 @@ class SkillsView(APIView):
         )
 
     def actor(self, request):
-        return Actor(user=request.user, api_key=getattr(request, "org_api_key", None))
+        return Actor(
+            user=None if request.skill_principal.kind == "system_key" else request.user,
+            api_key=getattr(request, "org_api_key", None),
+        )
 
     def output(self, request, serializer, value, *, status=200, many=False, **context):
         data = serializer(
@@ -250,7 +254,9 @@ class SkillListView(SkillsView):
             .prefetch_related("labels")
         )
         result["stats"] = selectors.workspace_stats(
-            request.organization, request.workspace, request.user
+            request.organization,
+            request.workspace,
+            None if request.skill_principal.kind == "system_key" else request.user,
         )
         return self.output(
             request,
@@ -306,6 +312,8 @@ class SkillPushView(SkillsView):
                 "skill": result.version.skill,
                 "version": result.version,
                 "unchanged": result.unchanged,
+                "release_revision": result.release_revision,
+                "evidence": result.evidence,
             },
             status=200 if result.unchanged else 201,
         )
@@ -458,10 +466,12 @@ class SkillDetailView(SkillsView):
         )
         return self.output(request, s.SkillDetail, skill)
 
-    @contract(body=s.EmptyRequest, status=204)
+    @contract(body=s.ArchiveRequest, status=204)
     def delete(self, request, skill_id):
         versions.archive_skill(
-            skill=self.skill(request, skill_id), actor=self.actor(request)
+            skill=self.skill(request, skill_id),
+            actor=self.actor(request),
+            **request.validated_data,
         )
         return Response(status=204)
 
@@ -542,6 +552,8 @@ class SkillCompareView(SkillsView):
     @contract(s.CompareResult, query=s.CompareQuery)
     def get(self, request, skill_id):
         query = request.validated_query_data
+        if "draft" in (query["from"], query["to"]):
+            require_private_principal(principal=request.skill_principal)
         result = compare.compare(
             skill=self.skill(request, skill_id),
             from_ref=query["from"],
@@ -583,6 +595,9 @@ class SkillLabelView(SkillsView):
             actor=self.actor(request),
             name=label,
             expected_version=request.validated_data.get("expected_version", MISSING),
+            expected_release_revision=request.validated_data.get(
+                "expected_release_revision", MISSING
+            ),
         )
         return Response(status=204)
 
@@ -598,6 +613,8 @@ class SkillLabelHistoryView(SkillsView):
 
 
 class SkillDraftView(SkillsView):
+    private_resource = True
+
     @contract(s.DraftOut)
     def get(self, request, skill_id):
         return self.output(
@@ -622,6 +639,8 @@ class SkillDraftView(SkillsView):
 
 
 class SkillDraftPublishView(SkillsView):
+    private_resource = True
+
     @contract(s.PublishResult, body=s.PublishDraftRequest, status=201)
     def post(self, request, skill_id):
         return self.published(
@@ -629,6 +648,7 @@ class SkillDraftPublishView(SkillsView):
             drafts.publish_draft(
                 skill=self.skill(request, skill_id),
                 user=request.user,
+                actor=self.actor(request),
                 **request.validated_data,
             ),
         )
@@ -823,6 +843,9 @@ class SkillImportView(SkillsView):
                     labels=data["labels"],
                     tags=existing.tags if existing else [],
                     acknowledge_warnings=data["acknowledge_warnings"],
+                    expected_release_revision=data["expected_release_revisions"].get(
+                        key, MISSING
+                    ),
                     source={
                         "type": "import",
                         "filename": item["filename"],

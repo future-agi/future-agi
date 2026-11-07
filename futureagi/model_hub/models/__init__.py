@@ -44,4 +44,17 @@ from .skills_hub import (
     HubSkillUsageDaily,
     HubSkillVersion,
 )
+from .skills_hub_v11 import (
+    HubSkillAssistProposal,
+    HubSkillExecutionQuota,
+    HubSkillGitHubPreview,
+    HubSkillGitHubSource,
+    HubSkillJob,
+    HubSkillLabelPolicyEvent,
+    HubSkillModelCall,
+    HubSkillTestAttempt,
+    HubSkillTestEvidence,
+    HubSkillTestRun,
+    HubSkillTestSuite,
+)
 from .tts_voices import TTSVoice

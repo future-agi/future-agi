@@ -7,10 +7,11 @@ import ImportSkillsDialog from "./ImportSkillsDialog";
 
 const api = vi.hoisted(() => ({
   list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
-  preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
+  canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
 }));
 vi.mock("src/api/skills", () => ({
   useSkillsList: api.list,
+  useSkill: () => ({ data: { ...skill, labels: skill.labels.map((label) => ({ ...label, canMove: api.canMove })), protectedLabelNames: ["production"], permissions: { canArchive: true, canManageLabelProtection: api.canMove }, releaseRevision: 3 } }),
   useSkillTemplates: api.templates,
   useCreateSkill: () => ({ mutateAsync: api.create, isPending: false }),
   useArchiveSkill: () => ({ mutateAsync: api.archive, isPending: false }),
@@ -43,9 +44,10 @@ const bundle = (key, status = "new", warnings = 0, errors = 0) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.canMove = true;
   api.list.mockReturnValue(listResult());
   api.templates.mockReturnValue({ data: templates, isPending: false, isError: false, refetch: vi.fn() });
-  api.create.mockResolvedValue({ id: "created-1" });
+  api.create.mockResolvedValue({ id: "created-1", permissions: { canRunTests: true } });
   api.archive.mockResolvedValue(undefined);
   api.preview.mockResolvedValue({ bundles: [bundle("valid-skill")], rejected: [], skipped: [] });
   api.importSkills.mockResolvedValue({ created: [{ name: "valid-skill" }], updated: [], unchanged: [], failed: [] });
@@ -176,7 +178,7 @@ describe("Skills library", () => {
     fireEvent.click(screen.getByRole("button", { name: "Actions for support-policy" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archive" }));
-    await waitFor(() => expect(api.archive).toHaveBeenCalledWith("skill-1"));
+    await waitFor(() => expect(api.archive).toHaveBeenCalledWith({ id: "skill-1", expectedReleaseRevision: 3 }));
     expect(window.location.pathname).toBe("/dashboard/skills");
   });
 
@@ -203,6 +205,7 @@ describe("New skill", () => {
     expect(screen.getByRole("button", { name: "Create skill" })).toBeDisabled();
     fillCreate("a".repeat(64));
     fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open editor" }));
     await waitFor(() => expect(window.location.pathname).toBe("/dashboard/skills/created-1/edit"));
     expect(api.create).toHaveBeenCalledWith({ name: "a".repeat(64), description: "Use when reviewing a support request for a refund.", templateId: "blank" });
   });
@@ -320,4 +323,49 @@ describe("Import skills", () => {
     expect(await screen.findByText(/0 created · 0 updated · 0 up to date · 1 failed/)).toBeInTheDocument();
     expect(screen.getByText(/Successful imports are saved/)).toBeInTheDocument();
   });
+});
+
+vi.mock("src/sections/skills/sources/GitHubImportPanel", () => ({ default: () => <div>GitHub draft import</div> }));
+
+it('exposes Draft with AI only after creation succeeds', async () => {
+  renderCreate();
+  expect(screen.queryByRole('button', { name: 'Draft with AI' })).not.toBeInTheDocument();
+  fillCreate();
+  fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Draft with AI' }));
+  expect(window.location.pathname + window.location.search).toBe('/dashboard/skills/created-1/edit?assist=draft');
+});
+
+it('gives the GitHub panel its own draft action without the upload submit', () => {
+  renderWithRouter(<ImportSkillsDialog open onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'GitHub' }));
+  expect(screen.getByText('GitHub draft import')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Preview import' })).not.toBeInTheDocument();
+  expect(api.importSkills).not.toHaveBeenCalled();
+});
+
+vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));
+
+it('sends reviewed aggregate release revisions for existing upload destinations', async () => {
+  api.preview.mockResolvedValueOnce({ bundles: [{ ...bundle('existing', 'changed'), skillId: 'skill-1' }], rejected: [], skipped: [] });
+  await renderImport();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Also label as' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Production' }));
+  await screen.findByText(/release r3/);
+  fireEvent.click(screen.getByRole('button', { name: 'Import', exact: true }));
+  await waitFor(() => expect(api.importSkills).toHaveBeenCalled());
+  expect(JSON.parse(api.importSkills.mock.calls[0][0].get('expected_release_revisions'))).toEqual({ existing: 3 });
+});
+
+it('does not block ordinary uploads when the selected production move is forbidden', async () => {
+  api.canMove = false;
+  api.preview.mockResolvedValueOnce({ bundles: [{ ...bundle('existing', 'changed'), skillId: 'skill-1' }], rejected: [], skipped: [] });
+  await renderImport();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Also label as' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Production' }));
+  await screen.findByText(/An admin must move protected production/);
+  expect(screen.getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Also label as' }));
+  fireEvent.click(screen.getByRole('option', { name: 'None' }));
+  expect(screen.getByRole('button', { name: 'Import', exact: true })).toBeEnabled();
 });

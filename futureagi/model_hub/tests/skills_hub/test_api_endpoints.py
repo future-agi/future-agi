@@ -127,7 +127,11 @@ def test_full_authoring_lifecycle(client, make_skill_files):
     published = result(
         client.post(
             path + "draft/publish/",
-            {"labels": ["production"], "acknowledge_warnings": True},
+            {
+                "labels": ["production"],
+                "acknowledge_warnings": True,
+                "expected_release_revision": 0,
+            },
             format="json",
         ),
         201,
@@ -152,7 +156,12 @@ def test_full_authoring_lifecycle(client, make_skill_files):
     moved = result(
         client.put(
             path + "labels/production/",
-            {"version": 2, "expected_version": 1, "note": "Reviewed"},
+            {
+                "version": 2,
+                "expected_version": 1,
+                "expected_release_revision": 1,
+                "note": "Reviewed",
+            },
             format="json",
         )
     )
@@ -171,7 +180,9 @@ def test_full_authoring_lifecycle(client, make_skill_files):
     assert result(client.get(BASE, {"search": "not-present"}))["stats"]["total"] == 1
     assert (
         client.delete(
-            path + "labels/production/", {"expected_version": 2}, format="json"
+            path + "labels/production/",
+            {"expected_version": 2, "expected_release_revision": 2},
+            format="json",
         ).status_code
         == 204
     )
@@ -245,8 +256,13 @@ def test_real_auth_consumption_etag_zip_and_usage(
 def test_push_idempotency_and_api_key_attribution(
     client, credentials, make_skill_files
 ):
-    payload = {"files": make_skill_files(), "labels": ["production"]}
+    payload = {
+        "files": make_skill_files(),
+        "labels": ["production"],
+        "expected_release_revision": 0,
+    }
     first = result(client.post(BASE + "publish/", payload, format="json"), 201)
+    payload["expected_release_revision"] = first["release_revision"]
     second = result(client.post(BASE + "publish/", payload, format="json"))
     assert second["unchanged"] and first["version"]["id"] == second["version"]["id"]
     key = credentials[1]
@@ -269,6 +285,7 @@ def test_import_preview_commit_and_unchanged(client, make_skill_files):
         "files": archive(files),
         "selected": json.dumps([item["key"]]),
         "labels": '["production"]',
+        "expected_release_revisions": json.dumps({item["key"]: 0}),
         "acknowledge_warnings": "true",
     }
     imported = result(client.post(BASE + "import/", form, format="multipart"))
@@ -280,6 +297,7 @@ def test_import_preview_commit_and_unchanged(client, make_skill_files):
     )
     assert preview["bundles"][0]["status"] == "unchanged"
     form["files"] = archive(files)
+    form["expected_release_revisions"] = json.dumps({item["key"]: 1})
     imported = result(client.post(BASE + "import/", form, format="multipart"))
     assert len(imported["unchanged"]) == 1
 
@@ -336,7 +354,7 @@ SCOPED = [
 @pytest.mark.parametrize("method,suffix,payload", SCOPED)
 @pytest.mark.parametrize("tenant", ["workspace", "organization"])
 def test_every_scoped_endpoint_hides_foreign_tenants(
-    client, request, organization, user, hub_actor, tenant, method, suffix, payload
+    client, request, actor_for_workspace, tenant, method, suffix, payload
 ):
     workspace = request.getfixturevalue(
         "hub_other_workspace" if tenant == "workspace" else "hub_other_org_workspace"
@@ -344,7 +362,7 @@ def test_every_scoped_endpoint_hides_foreign_tenants(
     foreign = create_skill(
         organization=workspace.organization,
         workspace=workspace,
-        actor=hub_actor,
+        actor=actor_for_workspace(workspace),
         name="foreign-skill",
         description="Use when a foreign tenant needs isolated instructions.",
         tags=[],
@@ -359,20 +377,23 @@ def test_every_scoped_endpoint_hides_foreign_tenants(
 
 @pytest.mark.parametrize("tenant", ["workspace", "organization"])
 def test_collections_do_not_leak_foreign_names(
-    client, request, tenant, hub_actor, publish_skill, make_skill_files
+    client, request, tenant, actor_for_workspace, publish_skill, make_skill_files
 ):
     foreign_workspace = request.getfixturevalue(
         "hub_other_workspace" if tenant == "workspace" else "hub_other_org_workspace"
     )
+    foreign_actor = actor_for_workspace(foreign_workspace)
     foreign = create_skill(
         organization=foreign_workspace.organization,
         workspace=foreign_workspace,
-        actor=hub_actor,
+        actor=foreign_actor,
         name="foreign-skill",
         description="Use when a foreign tenant needs isolated instructions.",
         tags=["foreign"],
     )
-    publish_skill(foreign, labels=["production"])
+    publish_skill(
+        foreign, actor=foreign_actor, labels=["production"], expected_release_revision=0
+    )
     assert result(client.get(BASE))["count"] == 0
     assert client.get(BASE + "resolve/", {"name": foreign.name}).status_code == 404
     assert client.get(BASE + "download/", {"names": foreign.name}).status_code == 404

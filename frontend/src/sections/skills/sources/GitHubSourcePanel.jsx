@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Button, Stack, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { useSkillDraft } from 'src/api/skills';
+import { getSkillErrorCode, useSkillDraft } from 'src/api/skills';
 import { useCheckSkillSource, useGitHubPreview, useSkillSource, useStageSkillSourceUpdate } from 'src/api/skills/github';
 import ContentSkeleton from 'src/components/content-skeleton';
 import EmptyState from 'src/components/empty-state';
@@ -26,7 +26,7 @@ export default function GitHubSourcePanel({ skill }) {
   const state = usePreviewState();
   const navigate = useNavigate();
   const busy = check.isPending || stage.isPending || ['queued', 'running', 'cancelling'].includes(preview.data?.status);
-  const openDraft = () => navigate(paths.dashboard.skills.edit(skill.id));
+  const openDraft = () => navigate(`${paths.dashboard.skills.edit(skill.id)}?tab=tests`);
   const start = async () => {
     setError('');
     const revision = source.data.revision;
@@ -51,7 +51,7 @@ export default function GitHubSourcePanel({ skill }) {
   };
 
   if (state === 'loading' || source.isPending) return <ContentSkeleton variant="rows" rows={3} label="Loading GitHub source" />;
-  if (state === 'empty' || source.error?.response?.data?.code === 'source_not_found') {
+  if (state === 'empty' || getSkillErrorCode(source.error) === 'source_not_found') {
     return <EmptyState title="No adopted GitHub source" description="A source is adopted only after its reviewed draft is published." />;
   }
   if (state === 'error' || source.isError) return <ErrorState title="Could not load the source" detail="Check workspace access and try again." onRetry={source.refetch} />;
@@ -74,7 +74,7 @@ export default function GitHubSourcePanel({ skill }) {
     {preview.isError && <ErrorState title="Could not load the update preview" onRetry={preview.refetch} />}
     {staged ? <Stack spacing={1}>
       <Alert severity="info">Replacement draft staged. Nothing was published or promoted.</Alert>
-      <Button variant="contained" onClick={openDraft}>Review and test changes</Button>
+      <Button variant="outlined" onClick={openDraft}>Review and test changes</Button>
     </Stack> : preview.data && <GitHubPreviewReview key={preview.data.id} preview={preview.data} onStage={accept}
       busy={busy || draft.isPending || draft.isError} hasDraft={Boolean(draft.data)} />}
   </Stack>;

@@ -149,3 +149,78 @@ def test_system_key_never_inherits_owner_for_evidence(execution):
             candidate={"kind": "draft", "revision": 1},
         )
     assert caught.value.code == "principal_not_supported"
+
+
+def test_publication_attachment_is_atomic_and_unchanged_publish_keeps_version(
+    execution, user
+):
+    from model_hub.services.skills_hub.drafts import publish_draft
+    from model_hub.services.skills_hub.types import Actor
+    from model_hub.services.skills_hub.versions import publish_files
+
+    run, _, _ = accepted(execution)
+    principal, skill, _, _ = execution
+    draft = skill.drafts.get(user=user)
+    finish_job(scope=principal.scope, job_id=run.pk)
+    args = {
+        "skill": skill,
+        "user": user,
+        "revision": draft.revision,
+        "labels": ["staging"],
+        "acknowledge_warnings": True,
+        "expected_digest": run.candidate_digest,
+        "evidence_run_id": run.pk,
+    }
+    with pytest.raises(SkillsHubError) as error:
+        publish_draft(**args)
+    assert error.value.code == "evidence_share_required"
+    assert not skill.versions.exists() and not skill.labels.exists()
+    assert skill.drafts.get(user=user).revision == draft.revision
+    share_test_run(
+        principal=principal, run_id=run.pk, acknowledge_snapshot_sharing=True
+    )
+    published = publish_draft(**args)
+    assert published.evidence is not None
+    assert published.evidence["run_id"] == str(run.pk)
+    assert published.evidence["currentness"]["content"] is True
+    # Completion is not a pass: this terminal run has no answered attempts.
+    run.refresh_from_db()
+    assert run.counts["answered"] == 0
+    assert HubSkillTestEvidence.objects.filter(version=published.version).count() == 2
+    repeat = publish_files(
+        skill=skill,
+        actor=Actor(user=user, api_key=None),
+        files=draft.files,
+        note="Another note",
+        base_version=1,
+        labels=[],
+        acknowledge_warnings=True,
+        source={"type": "api"},
+        evidence_run_id=run.pk,
+        expected_digest=run.candidate_digest,
+    )
+    assert repeat.unchanged and repeat.version.pk == published.version.pk
+    assert repeat.evidence is not None
+    assert repeat.evidence["run_id"] == str(run.pk)
+    assert skill.versions.count() == 1
+    assert HubSkillTestEvidence.objects.filter(version=published.version).count() == 2
+
+
+def test_replay_survives_lowered_limits_and_disabled_rollout(execution, settings):
+    from model_hub.serializers.skills_hub_v11 import CreateTestRunRequest
+    from model_hub.services.skills_hub.v11.test_runs import create_test_run
+
+    key = uuid4()
+    run, request, _ = accepted(execution, key=key)
+    principal, skill, _, _ = execution
+    settings.SKILLS_TEST_LIMITS = {
+        "max_estimated_cost_usd": "0.01",
+        "profiles": {"quick": {"max_total_tokens": 1}},
+    }
+    settings.SKILLS_TESTING_ENABLED = False
+    serializer = CreateTestRunRequest(data=request, context={"skill_id": skill.pk})
+    assert serializer.is_valid(), serializer.errors
+    replay = create_test_run(
+        principal=principal, skill_id=skill.pk, idempotency_key=key, request=request
+    )
+    assert replay.pk == run.pk

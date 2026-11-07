@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("src/api/skills", () => ({
   useSkillLabels: mocks.labels,
+  useSkill: () => ({ data: { ...skill, labels: mocks.labels().data }, refetch: async () => { const response = await mocks.refetch(); return { ...response, data: response.data ? { ...skill, labels: response.data } : undefined }; } }),
+  useSkillVersion: () => ({ data: { digest: 'sha256:target' } }),
   useSkillCompare: mocks.compare,
   useSetSkillLabel: () => ({ mutateAsync: mocks.move, isPending: false }),
   getSkillErrorCode: (error) => error.code,
@@ -41,9 +43,9 @@ vi.mock("src/sections/skills/components/VersionSelect", () => {
   return { default: VersionSelect };
 });
 
-const skill = { id: "skill-1", latestVersion: 3 };
+const skill = { id: "skill-1", latestVersion: 3, releaseRevision: 4, protectedLabelNames: ["production"], permissions: { canManageLabelProtection: true, canRunTests: true } };
 const labelsResult = (version = 1) => ({
-  data: [{ name: "production", version }],
+  data: [{ name: "production", version, canMove: true }],
   refetch: mocks.refetch,
 });
 const comparison = {
@@ -51,7 +53,7 @@ const comparison = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.labels.mockReturnValue(labelsResult());
   mocks.compare.mockReturnValue({ data: comparison });
   mocks.move.mockResolvedValue({});
@@ -72,13 +74,13 @@ describe("MoveLabelDialog", () => {
     expect(screen.getByText("Currently points to v1.")).toBeInTheDocument();
     expect(screen.getByText("Modified")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
     await waitFor(() =>
       expect(mocks.move).toHaveBeenCalledWith({
         label: "production",
         version: 3,
-        expectedVersion: 1,
+        expectedVersion: 1, expectedReleaseRevision: 4, expectedDigest: "sha256:target", evidenceRunId: null,
         note: "",
       }),
     );
@@ -104,7 +106,7 @@ describe("MoveLabelDialog", () => {
       />,
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
     await waitFor(() =>
       expect(mocks.move).toHaveBeenCalledWith(
@@ -127,14 +129,14 @@ describe("MoveLabelDialog", () => {
       />,
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
     expect(
       await screen.findByText(/This label changed while you were reviewing it/),
     ).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     ).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: "Reload current label" }),
@@ -142,7 +144,7 @@ describe("MoveLabelDialog", () => {
     await screen.findByText("Currently points to v2.");
     expect(mocks.compare).toHaveBeenLastCalledWith(skill.id, 2, 3);
     fireEvent.click(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
     await waitFor(() =>
       expect(mocks.move).toHaveBeenLastCalledWith(
@@ -163,7 +165,7 @@ describe("MoveLabelDialog", () => {
       />,
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "Reload current label" }),
@@ -172,7 +174,7 @@ describe("MoveLabelDialog", () => {
       await screen.findByText(/Could not reload the current label/),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     ).toBeDisabled();
   });
 
@@ -182,12 +184,12 @@ describe("MoveLabelDialog", () => {
       target: { value: "latest" },
     });
     expect(
-      screen.getByRole("button", { name: "Move latest to v3" }),
+      screen.getByRole("button", { name: "Move latest from unassigned to v3" }),
     ).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Label"), {
       target: { value: "staging" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Move staging to v3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move staging from unassigned to v3" }));
     await waitFor(() =>
       expect(mocks.move).toHaveBeenCalledWith(
         expect.objectContaining({ label: "staging", expectedVersion: null }),
@@ -199,19 +201,19 @@ describe("MoveLabelDialog", () => {
     mocks.labels.mockReturnValue({
       data: Array.from({ length: 20 }, (_, index) => ({
         name: `release-${index}`,
-        version: 1,
+        version: 1, canMove: true,
       })),
     });
     render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} />);
     expect(screen.getByText(/already has 20 labels/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     ).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Label"), {
       target: { value: "release-0" },
     });
     expect(
-      screen.getByRole("button", { name: "Move release-0 to v3" }),
+      screen.getByRole("button", { name: "Move release-0 from v1 to v3" }),
     ).toBeEnabled();
   });
 
@@ -229,7 +231,9 @@ describe("MoveLabelDialog", () => {
       screen.getByText("Could not compare these versions"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Move production to v3" }),
+      screen.getByRole("button", { name: /Move production from .* to v3/ }),
     ).toBeDisabled();
   });
 });
+
+vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: () => <div>Test evidence</div> }));
