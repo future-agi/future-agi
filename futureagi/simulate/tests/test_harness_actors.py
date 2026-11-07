@@ -836,6 +836,27 @@ def test_record_changes_on_the_world_s_own_collections_are_actions_when_the_rele
     ] == ["crm.approve"]
 
 
+def test_a_fallback_may_be_one_of_the_actor_s_own_actions_but_not_someone_else_s():
+    from simulate.services.harness_actors import _broken_references
+
+    rules = {"references": {"activation.fallback": ["silent", "decline"]}}
+    dana = {
+        "id": "dana",
+        "name": "Dana",
+        "permitted_actions": ["approvals.change"],
+        "activation": {"fallback": "approvals.change"},
+    }
+    assert _broken_references(dana, {"dana"}, rules) == []
+    stranger = {**dana, "activation": {"fallback": "orders.cancel"}}
+    assert _broken_references(stranger, {"dana"}, rules) == [
+        ("activation.fallback", "orders.cancel")
+    ]
+    # A release that declares no such field keeps every fallback to another actor.
+    assert _broken_references(dana, {"dana"}, {**rules, "own_actions": []}) == [
+        ("activation.fallback", "approvals.change")
+    ]
+
+
 def test_every_actor_has_an_id_its_routes_can_reach_and_a_name(
     user, workspace, storage, auth_client
 ):

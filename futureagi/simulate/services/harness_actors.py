@@ -644,12 +644,17 @@ def _broken_references(
     actor: ActorRecord, known: set[str], rules: ActorRules
 ) -> list[tuple[str, Any]]:
     actor_id = str(actor.get("id") or "")
+    # Fields that may name one of the actor's own actions instead (a fallback taken for it); every release has
+    # allowed that for the fallback, so rules sealed before it was declared get the same.
+    own = set(rules.get("own_actions", ["activation.fallback"]))
+    actions = set(actor.get("permitted_actions") or [])
     return [
         (path, other)
         for path, also in (rules.get("references") or {}).items()
         if (other := _value_at(actor, path)) is not None
         and other not in also
         and other not in known - {actor_id}
+        and not (path in own and other in actions)
     ]
 
 
