@@ -793,6 +793,49 @@ def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_
     assert names(naming) == ["crm.approve", "crm.read", "orders.{order_id}.cancel"]
 
 
+def test_record_changes_on_the_world_s_own_collections_are_actions_when_the_release_seals_the_rule():
+    from simulate.services.harness_actors import world_actions
+
+    files = {
+        "contract.json": json.dumps(
+            {"tool_entrypoints": [{"tool": "approve", "endpoint": "crm/approve"}]}
+        ).encode(),
+        "generic-harness/source-model.json": json.dumps(
+            {
+                "tables": [
+                    {"name": "approvals"},
+                    {"name": "harness_seed_sentinel"},
+                    {"name": "_alk_tool_trace"},
+                ]
+            }
+        ).encode(),
+    }
+    naming = {
+        "from": "tool_entrypoints",
+        "route": "endpoint",
+        "tool": "tool",
+        "separator": ".",
+    }
+    changes = {
+        "from": "generic-harness/source-model.json",
+        "tables": "tables",
+        "name": "name",
+        "verbs": ["put", "change"],
+        "never_prefix": "_alk_",
+        "never": ["harness_seed_sentinel"],
+    }
+    sealed = world_actions(files, {"world_actions": naming, "record_changes": changes})
+    assert [one["action"] for one in sealed] == [
+        "approvals.change",
+        "approvals.put",
+        "crm.approve",
+    ]
+    # A release that seals no such rule offers its routes alone.
+    assert [
+        one["action"] for one in world_actions(files, {"world_actions": naming})
+    ] == ["crm.approve"]
+
+
 def test_every_actor_has_an_id_its_routes_can_reach_and_a_name(
     user, workspace, storage, auth_client
 ):

@@ -362,7 +362,11 @@ function summary(actor, actionIds, loudChannels) {
         : C.nothing
     }`,
     `${C.comesIn}: ${C.comesInLabel(actor.activation?.trigger)}`,
-    `${C.ifNoAnswer}: ${C.form.fallbackLabel(fallback)}`,
+    `${C.ifNoAnswer}: ${
+      permitted.includes(fallback)
+        ? C.form.takesAction(fallback)
+        : C.form.fallbackLabel(fallback)
+    }`,
     ACTORS_COPY.callActors.scenarios(actor.scenarios ?? 0),
   ]
     .filter(Boolean)

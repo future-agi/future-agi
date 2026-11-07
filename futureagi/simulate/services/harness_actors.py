@@ -217,7 +217,39 @@ def world_actions(files: dict[str, bytes], rules: ActorRules) -> list[WorldActio
             "tool": tool,
             "description": about.get(tool, ""),
         }
+    actions.update(_record_changes(files, rules))
     return [{"action": name, **one} for name, one in sorted(actions.items())]
+
+
+def _record_changes(
+    files: dict[str, bytes], rules: ActorRules
+) -> dict[str, dict[str, Any]]:
+    """The record changes an actor may be given on the world's own collections, as the sealing release names them:
+    none for a release that seals no such rule."""
+    naming = rules.get("record_changes") or {}
+    if not naming:
+        return {}
+    model = _read_json(files, str(naming.get("from") or ""))
+    tables = (
+        model.get(naming.get("tables", "tables")) if isinstance(model, dict) else None
+    )
+    never = set(naming.get("never") or [])
+    prefix = str(naming.get("never_prefix") or "")
+    out: dict[str, dict[str, Any]] = {}
+    for table in tables or []:
+        name = (
+            str((table or {}).get(naming.get("name", "name")) or "")
+            if isinstance(table, dict)
+            else ""
+        )
+        if not name or name in never or (prefix and name.lower().startswith(prefix)):
+            continue
+        for verb in naming.get("verbs") or []:
+            out[f"{name}.{verb}"] = {
+                "tool": "",
+                "description": f"A record change on {name}",
+            }
+    return out
 
 
 def _readable_file(path: str, rules: ActorRules) -> bool:

@@ -347,6 +347,34 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
+  it("says a fallback action is taken for the actor, and lists a record change as one of the world's actions", () => {
+    actorsData = cast(
+      [
+        {
+          ...MANAGER,
+          permitted_actions: ["approvals.change"],
+          activation: { fallback: "approvals.change" },
+        },
+      ],
+      {
+        actions: [
+          ...ACTIONS,
+          {
+            action: "approvals.change",
+            tool: "",
+            description: "A record change on approvals",
+          },
+        ],
+      },
+    );
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(
+      screen.getByText(
+        "May do: approvals.change · Comes in: From the start · If they do not answer: approvals.change is taken for them · In 0 scenarios",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows who can reach whom open once there is more than one actor, with limits folded", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByText("Who can reach whom")).toBeNull();
