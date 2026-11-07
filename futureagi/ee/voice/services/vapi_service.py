@@ -2459,7 +2459,7 @@ class VapiService(VoiceServiceBlueprint):
         return NormalizedTranscriptData(messages=messages, token_usage=token_usage)
 
     async def extract_and_persist_recordings(
-        self, call_execution_id: str
+        self, call_execution_id: str, *, recording_context: dict | None = None
     ) -> RecordingUrls:
         """Extract VAPI recordings and persist to S3."""
         from simulate.models.test_execution import CallExecution
@@ -2494,6 +2494,15 @@ class VapiService(VoiceServiceBlueprint):
         )
         organization_id = str(call.test_execution.run_test.organization_id)
 
+        # A rerun uploads new generation-scoped objects, so it is metered under a
+        # new id; the first generation keeps the original (shipped) id.
+        generation = getattr(call, "audio_analysis_generation", 0) or 0
+        usage_key = (
+            f"futureagi:simulate-recording:{call_execution_id}:{generation}"
+            if generation
+            else f"futureagi:simulate-recording:{call_execution_id}"
+        )
+
         def emit_recording_storage_usage(url_type: str, payload_bytes: int) -> None:
             if not payload_bytes:
                 return
@@ -2507,7 +2516,7 @@ class VapiService(VoiceServiceBlueprint):
                         event_id=str(
                             uuid.uuid5(
                                 uuid.NAMESPACE_URL,
-                                f"futureagi:simulate-recording:{call_execution_id}:{url_type}",
+                                f"{usage_key}:{url_type}",
                             )
                         ),
                         org_id=organization_id,
@@ -2527,12 +2536,15 @@ class VapiService(VoiceServiceBlueprint):
         if main_recording_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, main_recording_url, "recording",
+                    call_id_str,
+                    main_recording_url,
+                    "recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.MONO,
                     project_id=project_id,
+                    recording_generation=generation,
                 )
                 result.recording_url = s3_url
                 emit_recording_storage_usage("recording", payload_bytes)
@@ -2548,12 +2560,15 @@ class VapiService(VoiceServiceBlueprint):
         if stereo_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, stereo_url, "stereo_recording",
+                    call_id_str,
+                    stereo_url,
+                    "stereo_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.STEREO,
                     project_id=project_id,
+                    recording_generation=generation,
                 )
                 result.stereo_recording_url = s3_url
                 emit_recording_storage_usage("stereo_recording", payload_bytes)
@@ -2569,12 +2584,15 @@ class VapiService(VoiceServiceBlueprint):
         if assistant_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, assistant_url, "assistant_recording",
+                    call_id_str,
+                    assistant_url,
+                    "assistant_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.ASSISTANT,
                     project_id=project_id,
+                    recording_generation=generation,
                 )
                 result.assistant_recording_url = s3_url
                 emit_recording_storage_usage("assistant_recording", payload_bytes)
@@ -2590,12 +2608,15 @@ class VapiService(VoiceServiceBlueprint):
         if customer_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, customer_url, "customer_recording",
+                    call_id_str,
+                    customer_url,
+                    "customer_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.CUSTOMER,
                     project_id=project_id,
+                    recording_generation=generation,
                 )
                 result.customer_recording_url = s3_url
                 emit_recording_storage_usage("customer_recording", payload_bytes)
@@ -2620,6 +2641,30 @@ class VapiService(VoiceServiceBlueprint):
             _update_recording_payload(provider_data, recording_object)
             provider_call_data[ProviderChoices.VAPI.value] = provider_data
             result.provider_call_data = provider_call_data
+
+        from ee.voice.services.audio_provenance import (
+            build_vapi_provenance,
+            unsupported_provenance,
+        )
+        from ee.voice.services.recording_provenance import recording_artifacts
+
+        artifacts = await recording_artifacts(
+            result, pin_versions=settings.VOICE_AUDIO_METRICS_ENABLED
+        )
+        if recording_context is None:
+            result.provenance = unsupported_provenance(
+                "unknown_agent_track",
+                artifacts=artifacts,
+                system_engine="vapi",
+                provider_call_id=vapi_call_id,
+            )
+        else:
+            result.provenance = build_vapi_provenance(
+                call_id=call_id_str,
+                artifacts=artifacts,
+                provider_call_id=vapi_call_id,
+                **recording_context,
+            )
 
         return result
 

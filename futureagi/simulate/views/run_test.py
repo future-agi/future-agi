@@ -208,6 +208,7 @@ from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
+from tfc.temporal.common.client import terminate_workflow_sync
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
@@ -3804,6 +3805,7 @@ class CallExecutionDetailView(APIView):
                     "cells_by_row": {},
                     "snapshots_by_call": {},
                     "detail_mode": True,
+                    "include_audio_metrics": True,
                 },
             )
 
@@ -4515,7 +4517,22 @@ class CallExecutionDeleteView(APIView):
             # Soft delete the call execution
             call_execution.deleted = True
             call_execution.deleted_at = timezone.now()
-            call_execution.save()
+            call_execution.save(update_fields=["deleted", "deleted_at"])
+
+            envelope = call_execution.audio_metrics or {}
+            if envelope.get("state") == "pending" and envelope.get("analysis_id"):
+                try:
+                    terminate_workflow_sync(f"audio-analysis-{envelope['analysis_id']}")
+                except Exception as exc:
+                    # The tombstone above is the correctness boundary. Never
+                    # fail deletion because a child is absent or Temporal is down.
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "audio_metrics.delete_termination_failed: %s",
+                        type(exc).__name__,
+                        extra={"analysis_id": envelope["analysis_id"]},
+                    )
 
             response_serializer = CallExecutionDeleteResponseSerializer(
                 {"message": "Call execution deleted successfully"}
@@ -6645,6 +6662,7 @@ def _save_eval_snapshot(call_execution):
 
     # Create snapshot with only evaluation data
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
         eval_outputs=call_execution.eval_outputs,
@@ -6759,7 +6777,9 @@ def _rerun_call_executions(call_executions, rerun_type):
                 call_execution.call_metadata = call_execution.call_metadata or {}
                 call_execution.call_metadata["eval_started"] = False
                 call_execution.call_metadata["eval_completed"] = False
-                call_execution.save()
+                call_execution.save(
+                    update_fields=["eval_outputs", "call_metadata", "updated_at"]
+                )
 
                 _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),)
@@ -7217,7 +7237,13 @@ class CallExecutionRerunView(APIView):
                             rerun_eval_ids,
                             now=timezone.now(),
                         )
-                        call_execution.save()
+                        call_execution.save(
+                            update_fields=[
+                                "eval_outputs",
+                                "call_metadata",
+                                "updated_at",
+                            ]
+                        )
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
                         has_pending_evals = True
@@ -7463,6 +7489,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot of current state before clearing
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
             service_provider_call_id=call_execution.service_provider_call_id,
@@ -7524,6 +7551,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot with only evaluation data
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
             eval_outputs=call_execution.eval_outputs,
@@ -7580,6 +7608,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare eval-only snapshot
                     snapshots_to_create.append(
                         CallExecutionSnapshot(
+                            audio_metrics=call_execution.audio_metrics,
                             call_execution=call_execution,
                             rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
                             eval_outputs=call_execution.eval_outputs,
@@ -7622,6 +7651,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare full snapshot with all fields
                     snapshots_to_create.append(
                         CallExecutionSnapshot(
+                            audio_metrics=call_execution.audio_metrics,
                             call_execution=call_execution,
                             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
                             service_provider_call_id=call_execution.service_provider_call_id,

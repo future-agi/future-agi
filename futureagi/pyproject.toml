@@ -261,6 +261,7 @@ audio = [
     "elevenlabs",
 ]
 ml = [
+    "silero-vad==6.2.3",  # Phase B VQI speech detector
     "torch",
     "torchvision",
     "torchmetrics",

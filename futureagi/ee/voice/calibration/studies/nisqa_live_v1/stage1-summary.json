@@ -1,0 +1,168 @@
+{
+ "counts": {
+  "NISQA_TEST_LIVETALK|eligible|external_test": 121,
+  "NISQA_TEST_LIVETALK|insufficient_voice|-": 111,
+  "NISQA_TRAIN_LIVE|eligible|calibration": 185,
+  "NISQA_TRAIN_LIVE|eligible|selection": 90,
+  "NISQA_TRAIN_LIVE|eligible|test": 154,
+  "NISQA_TRAIN_LIVE|insufficient_coverage|-": 3,
+  "NISQA_TRAIN_LIVE|insufficient_ratings|-": 25,
+  "NISQA_TRAIN_LIVE|insufficient_voice|-": 563,
+  "NISQA_VAL_LIVE|eligible|test": 45,
+  "NISQA_VAL_LIVE|insufficient_coverage|-": 1,
+  "NISQA_VAL_LIVE|insufficient_ratings|-": 4,
+  "NISQA_VAL_LIVE|insufficient_voice|-": 150
+ },
+ "created_at": "2026-11-06T23:45:00Z",
+ "dataset": {
+  "record": "https://zenodo.org/records/4728081",
+  "subsets": {
+   "NISQA_TEST_LIVETALK": "de",
+   "NISQA_TRAIN_LIVE": "en",
+   "NISQA_VAL_LIVE": "en"
+  },
+  "url": "https://zenodo.org/records/4728081/files/NISQA_Corpus.zip?download=1",
+  "zip_bytes_expected": 15945499507
+ },
+ "license_evidence": {
+  "NISQA_Corpus/NISQA_TEST_LIVETALK/CC_BY_license.txt": {
+   "license_lines": [
+    "\ufeffAttribution 4.0 International",
+    "Creative Commons public licenses does not create a lawyer-client or",
+    "other relationship. Creative Commons makes its licenses and related",
+    "warranties regarding its licenses, any material licensed under their",
+    "Using Creative Commons Public Licenses",
+    "Creative Commons public licenses provide a standard set of terms and",
+    "and certain other rights specified in the public license below. The",
+    "exhaustive, and do not form part of our licenses.",
+    "Considerations for licensors: Our public licenses are",
+    "copyright and certain other rights. Our licenses are",
+    "irrevocable. Licensors should read and understand the terms",
+    "and conditions of the license they choose before applying it."
+   ],
+   "sha256": "d6239afa918961b465b07bf7411cbe34ff6685854f58553db7966f4881a0211f"
+  },
+  "NISQA_Corpus/NISQA_TEST_LIVETALK/readme.txt": {
+   "license_lines": [
+    "-- License:",
+    "This dataset is made available for research purposes under Creative Commons Attribution 4.0 International (CC BY 4.0) license."
+   ],
+   "sha256": "e68dacffae43dccd4630f1ef15e1e2304b8640c323bba2044b06751921d45584"
+  },
+  "NISQA_Corpus/NISQA_TRAIN_LIVE/readme.txt": {
+   "license_lines": [
+    "The source speech samples are taken from the Librivox audiobook clips of the \"DNS-Challenge\" [1] dataset. The Librivox audiobooks are part of the public domain (https://librivox.org/; License: https://librivox.org/pages/public-domain/). The samples from this dataset were segmented into 6-12 seconds clips.",
+    "-- License:",
+    "The dataset is provided under the original terms of the used source speech samples. Therefore, they may be used for commercial and/or non-commerical research."
+   ],
+   "sha256": "b90d3698e92483951fdd26d0592946bef787183d39652377590faec9aa653e10"
+  },
+  "NISQA_Corpus/NISQA_VAL_LIVE/readme.txt": {
+   "license_lines": [
+    "The source speech samples are taken from the Librivox audiobook clips of the \"DNS-Challenge\" [1] dataset. The Librivox audiobooks are part of the public domain (https://librivox.org/; License: https://librivox.org/pages/public-domain/). The samples from this dataset were segmented into 6-12 seconds clips.",
+    "-- License:",
+    "The dataset is provided under the original terms of the used source speech samples. Therefore, they may be used for commercial and/or non-commerical research."
+   ],
+   "sha256": "b90d3698e92483951fdd26d0592946bef787183d39652377590faec9aa653e10"
+  },
+  "NISQA_Corpus/readme.txt": {
+   "license_lines": [
+    "- NISQA_TEST_NSC *removed* (available for non-commercial research institutions):",
+    "Contains live and simulated conditions with speech samples from the NSC dataset. This datasets has been removed for license reasons.",
+    "Please see the individual readme files in each of the dataset folders for more details about the datasets and the licenses. Generally, all of the files in this corpus can be used for non-commercial research purposes and some of the datasets can be also be used for commercial purposes, please see the individual license files for more details.",
+    "If you work for a non-commercial research institution and are interested in the NISQA_TEST_NSC dataset, send an email to gabriel.mittag@gmail.com."
+   ],
+   "sha256": "0c68b07860dcf9c0d73e6969ba78f6026b94866f697fc1549d837096f12e4a54"
+  }
+ },
+ "manifest_bytes": 1614682,
+ "manifest_sha256": "7531ecf1321bc80fe59e0511a581c34ec8f39468f5cdabcc3044eec16e6ecfbd",
+ "pipeline": {
+  "constants": {
+   "detector_id": "silero-vad:6.2.3:threshold0.5",
+   "polynomial_version": "dnsmos_regular_poly_591184a",
+   "preprocessing_version": "resample_soxr_hq_16k_v1",
+   "scale_id": "normalized_mos_0_5_v1",
+   "vqi_algorithm_version": "dnsmos_ovrl_mean_v1",
+   "window_policy_version": "win9.01_hop1_minspeech3_cov80_v1"
+  },
+  "files_sha256": {
+   "decode.decode_audio": "19c6bb8155811cee1c2fd1ff346b36fba007f085d2a08679e8c6c68004a05500",
+   "pitch_snr.interval_seconds": "4ae496d6cb588e350c88f513094b33c185b855e69a52049c3de27204f825d735",
+   "pitch_snr.interval_union": "72d6eb97d71275df7dab920a4497e932a11fc70da664c98b0b50a4d52dde7cc3",
+   "stats": "c3b72b351bdb4fa97cda3d1107a4e3f7a33e21e99493f4ba119f3e127a9aee66",
+   "study._evaluate": "ec4c331230b400d72f10acb30e1f849c73f472a5f0cb6559c20bff324ce666d7",
+   "study._fit_and_select": "89d6c1799429486277edfb0740885fd037bb96ac7d831cfaa414306d2ce77e9a",
+   "study._gates": "99687f9d745a02d8b609f6cd111ec724a3e9a09dbf7197159ef3c106861bb174",
+   "study._qualify": "c838226c6de193591e59b69cd8d8c1ff4cf78d7116309d96e3cf7a220734a126",
+   "study.assign_splits": "c802b99081b1420748081d052db2d4e497933ad9f0d8056f08db3191fad74d9b",
+   "vad.SileroVad": "168691542a62498c0e3767cf37630be097499e93281644eba25528b8fefef72c",
+   "vqi._intersections": "ff8e1b6da4ef4088d6c02e08ae173c5833d9cc9e0f6e989fbd4221e7f56c55c9",
+   "vqi.analyze_vqi": "b24c371395e153795cf0b7bf0c293cbf096dceabae30dcb42e8ffaf24508ce3a",
+   "vqi.mean_adjusted_ovrl": "ae38c5e8df83e52f291d5035398a9bed0d8caa1c650dd90de7fdf923d4a2b611",
+   "vqi.prepare_vqi_windows": "f5f891f3b56292609850903c90c02400718bd87c55965908e4ac96e99eb30651",
+   "vqi.resample_for_vqi": "fd1d71a60a1cc256f7300c3598b4e074fb4ef69db55d7ad2fe5e890c0c9728f8"
+  },
+  "module_files_sha256_informational": {
+   "ee/voice/calibration/stats.py": "c3b72b351bdb4fa97cda3d1107a4e3f7a33e21e99493f4ba119f3e127a9aee66",
+   "ee/voice/calibration/vqi_study.py": "df2166e22dc04f21474ef48eb65fd9ca91d02b26d38e011d31758fd3ba39aabb",
+   "ee/voice/services/audio_analysis/calibration.py": "8fef3a753282d9760bc1aa7cdc0541f4a893965a8d611b7cb60ccb614d1376d5",
+   "ee/voice/services/audio_analysis/constants.py": "1a8db3ada398b87e9032f46c6a2491e04c41e3111bee12894244018724ce7808",
+   "ee/voice/services/audio_analysis/vad.py": "939b1c8ccfdc2e8bebe442245a53508ad4264d3af6b3bf9776ce8f53f6d6c0ed",
+   "ee/voice/services/audio_analysis/vqi.py": "e5eb0373a006f42ce2bbce69e74980fe89629c3525bfa1db980475c3937e8f29"
+  },
+  "packages": {
+   "librosa": "0.11.0",
+   "numpy": "2.3.5",
+   "onnxruntime": "1.23.2",
+   "scipy": "1.17.0",
+   "silero-vad": "6.2.3",
+   "soundfile": "0.13.1",
+   "soxr": "1.0.0",
+   "torch": "2.11.0"
+  },
+  "python": "3.13.18"
+ },
+ "protocol": {
+  "bootstrap": {
+   "n": 2000,
+   "seed": 2094,
+   "statistic": "Spearman 2.5th percentile",
+   "unit": "speaker group"
+  },
+  "calibration_share_of_rest": 0.6666666666666666,
+  "cohort_admission": "a cohort is admitted only if its own held-out data passes every gate (rmse, spearman, lb95, pair_rank_acc, n_heldout, |bias|, cohort rmse); the artifact 'gates' block reports the primary English cohort",
+  "cohorts": {
+   "de": "de/sip/provider_received_track",
+   "en": "en/sip/provider_received_track"
+  },
+  "gates": {
+   "cohort_abs_bias_max": 0.25,
+   "cohort_n_heldout_min": 50,
+   "cohort_rmse_max": 0.65,
+   "pair_rank_acc_min": 0.9,
+   "rmse_max": 0.5,
+   "spearman_lb95_min": 0.6,
+   "spearman_min": 0.7
+  },
+  "knot_candidates": [
+   4,
+   6,
+   8,
+   10,
+   12
+  ],
+  "min_votes": 5,
+  "pair_rule": {
+   "definition": "all held-out clip pairs with |MOS_i - MOS_j| >= 1.0 and non-overlapping per-clip 95% CIs (1.96*std/sqrt(votes)); accuracy = share ordered like human MOS by calibrated prediction, ties wrong",
+   "name": "material_difference_pair_concordance_v1",
+   "note": "substitute: the PRD's listener-confirmed same-source paired degradations are not available in this corpus"
+  },
+  "seed": 2094,
+  "selection_criterion": "lowest selection-split MOS RMSE over in-support clips; ties -> fewer knots",
+  "support": "calibration-split x range (first/last knot); outside -> out_of_domain, excluded from accuracy and reported as coverage loss",
+  "test_train_reader_fraction": 0.35
+ },
+ "stage": 1,
+ "study": "th2094-vqi-calibration-nisqa-live"
+}

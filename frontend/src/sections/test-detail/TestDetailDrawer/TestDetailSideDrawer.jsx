@@ -36,6 +36,7 @@ import {
   useVoiceCallDetail,
 } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import { AcousticMetricsLoadContext } from "src/components/VoiceDetailDrawerV2/acousticMetricsLabels";
 import ChatDetailDrawerV2 from "src/components/ChatDetailDrawerV2";
 import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
 import {
@@ -107,11 +108,14 @@ const TestDetailSideDrawerChild = ({
     (data?.call_type != null ||
       data?.observation_span?.[0]?.observation_type === "conversation" ||
       data?.simulation_call_type === "voice");
-  const { data: voiceDetail, isLoading: isVoiceDetailLoading } =
-    useVoiceCallDetail(traceId, {
-      enabled: urlModule === "project" && isVoiceCall && !!traceId,
-      projectId: resolvedProjectId,
-    });
+  const {
+    data: voiceDetail,
+    isLoading: isVoiceDetailLoading,
+    isError: isVoiceDetailError,
+  } = useVoiceCallDetail(traceId, {
+    enabled: urlModule === "project" && isVoiceCall && !!traceId,
+    projectId: resolvedProjectId,
+  });
 
   // Fetch full call execution detail for simulate calls. The list response
   // strips `transcript` when `detail_mode=false` (see
@@ -125,8 +129,23 @@ const TestDetailSideDrawerChild = ({
     urlOrigin === "agent-definition";
   const isChatSim = data?.simulation_call_type === AGENT_TYPES.CHAT;
   const needsDetailFetch = isSimulate && (isVoiceCall || isChatSim);
-  const { data: callExecDetail, isLoading: _isCallExecDetailLoading } =
-    useCallExecutionDetail(data?.id, needsDetailFetch && !!data?.id);
+  const {
+    data: callExecDetail,
+    isLoading: isCallExecDetailLoading,
+    isError: isCallExecDetailError,
+  } = useCallExecutionDetail(data?.id, needsDetailFetch && !!data?.id);
+  const acousticLoadState = useMemo(
+    () => ({
+      isLoading: needsDetailFetch && !callExecDetail && isCallExecDetailLoading,
+      isError: needsDetailFetch && !callExecDetail && isCallExecDetailError,
+    }),
+    [
+      needsDetailFetch,
+      callExecDetail,
+      isCallExecDetailLoading,
+      isCallExecDetailError,
+    ],
+  );
 
   // When `voiceDetail` or `callExecDetail` arrives async, the transcript
   // shape can differ from the list-response shape (e.g. the list row has
@@ -142,6 +161,9 @@ const TestDetailSideDrawerChild = ({
       origin: urlOrigin,
       project_id: resolvedProjectId,
     };
+    // Only hydrated detail can supply acoustic results, including exports.
+    // A list-row envelope is not an authorized, complete detail response.
+    delete base.audio_metrics;
     const mergeTranscripts = (a, b) => {
       if (!Array.isArray(b)) return a;
       if (!Array.isArray(a)) return b;
@@ -651,21 +673,28 @@ const TestDetailSideDrawerChild = ({
       <ShowComponent
         condition={isFetching !== "initial" && isVoiceCall && !compareReplay}
       >
-        <VoiceDetailDrawerV2
-          data={mergedData}
-          onClose={closeDetailDrawer}
-          onPrev={() => navigateRecord("prev")}
-          onNext={() => navigateRecord("next")}
-          hasPrev={(updatedRowIndex ?? 0) > 0}
-          hasNext={hasNextRecord}
-          isFetching={isFetching}
-          onAnnotate={() => setAnnotationSidebarOpen(true)}
-          onCompareBaseline={
-            urlModule === "simulate" ? setCompareReplay : undefined
-          }
-          scenarioId={scenarioId}
-          isLoading={isVoiceDetailLoading}
-        />
+        <AcousticMetricsLoadContext.Provider value={acousticLoadState}>
+          <VoiceDetailDrawerV2
+            data={mergedData}
+            onClose={closeDetailDrawer}
+            onPrev={() => navigateRecord("prev")}
+            onNext={() => navigateRecord("next")}
+            hasPrev={(updatedRowIndex ?? 0) > 0}
+            hasNext={hasNextRecord}
+            isFetching={isFetching}
+            onAnnotate={() => setAnnotationSidebarOpen(true)}
+            onCompareBaseline={
+              urlModule === "simulate" ? setCompareReplay : undefined
+            }
+            scenarioId={scenarioId}
+            isLoading={isVoiceDetailLoading}
+            isStale={
+              voiceDetail
+                ? isVoiceDetailError
+                : !!callExecDetail && isCallExecDetailError
+            }
+          />
+        </AcousticMetricsLoadContext.Provider>
       </ShowComponent>
 
       {/* Chat simulate rows render in the revamped ChatDetailDrawerV2 —

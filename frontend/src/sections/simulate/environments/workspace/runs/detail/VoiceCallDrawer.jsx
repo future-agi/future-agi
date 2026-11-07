@@ -122,7 +122,7 @@ export default function VoiceCallDrawer({
     ],
   );
 
-  if (isError) {
+  if (isError && !data) {
     return (
       <StatePane onClose={onClose}>
         <Iconify
@@ -152,6 +152,7 @@ export default function VoiceCallDrawer({
         onClose={onClose}
         scenarioId={data?.scenario_id}
         isLoading={isPending}
+        isStale={isError && !!data}
         hiddenActionIds={HIDDEN_VOICE_ACTIONS}
         // Checklist and Graph have no data behind them on an environment run yet.
         hidePathTabs

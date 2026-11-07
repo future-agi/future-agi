@@ -8,6 +8,7 @@ def clear_call_for_rerun(
     """Snapshot a call's result, then reset the row so a rerun can fill it again."""
 
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         service_provider_call_id=call_execution.service_provider_call_id,
@@ -101,6 +102,13 @@ def clear_call_for_rerun(
     call_execution.ai_interruption_rate = None
     call_execution.avg_stop_time_after_interruption_ms = None
     call_execution.conversation_metrics_data = None
+    # A rerun gets a new analysis generation so a stale job for the previous
+    # recording can never commit into it.
+    call_execution.audio_metrics = None
+    call_execution.audio_provenance = None
+    call_execution.audio_analysis_generation = (
+        call_execution.audio_analysis_generation or 0
+    ) + 1
     # The results grid resolves a call's Scenario Information cells via row_id, so
     # it always survives. Everything else (the ALK alk_batch_claimed claim, eval
     # flags) is dropped so the rerun's result is ingested like a first one; callers

@@ -24,6 +24,31 @@ const renderWithQueryClient = (ui) => {
 };
 
 describe("VoiceRightPanel", () => {
+  it.each(["simulate", "project"])("passes acoustic metrics and stale state through the %s branch", (module) => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        isStale
+        data={{
+          id: "call-audio", module, status: "completed", transcript: [],
+          audio_metrics: {
+            schema_version: 1, state: "partial",
+            metrics: {
+              estimated_snr_db: { state: "available", unit: "dB", value: 0 },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("region", { name: "Acoustic metrics · Tested agent" })).toBeInTheDocument();
+    expect(screen.getByText("0.0")).toBeInTheDocument();
+    expect(screen.getByText("Stale")).toBeInTheDocument();
+  });
+
+  it("hides acoustic metrics for an Observe response without the key", () => {
+    renderWithQueryClient(<VoiceRightPanel data={{ id: "call-1", module: "project", status: "completed", transcript: [] }} />);
+    expect(screen.queryByRole("region", { name: /Acoustic metrics/ })).not.toBeInTheDocument();
+  });
+
   it("falls back to simulation attributes when the linked span has empty attributes", async () => {
     renderWithQueryClient(
       <VoiceRightPanel

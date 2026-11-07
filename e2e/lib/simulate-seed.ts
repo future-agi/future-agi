@@ -169,29 +169,229 @@ export function resolveBackendContainer(
   return runtimes[0][0];
 }
 
+/**
+ * Copies one seed script into the selected stack's Django runtime, runs it
+ * there with `env`, and parses the JSON object it prints on its last line.
+ */
+function runSeedScript(prefix: string, script: string, env: Record<string, string>): unknown {
+  const container = resolveBackendContainer();
+  const suffix = env.SEED_SUFFIX;
+  const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, script);
+  try {
+    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
+    const stdout = execFileSync('docker', ['exec',
+      ...Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
+      container, 'sh', '-c',
+      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
+    ], { encoding: 'utf-8' });
+    const lastLine = stdout.trim().split('\n').pop() ?? '';
+    return JSON.parse(lastLine);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function seedSuffix(): string {
+  return `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+}
+
 export function seedCallExecutions(opts: {
   organizationId: string;
   workspaceId: string;
   count?: number;
 }): CallExecutionSeed {
-  const container = resolveBackendContainer();
-  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-  const dir = mkdtempSync(join(tmpdir(), 'e2e-pag5-'));
-  const scriptPath = join(dir, `seed-${suffix}.py`);
-  writeFileSync(scriptPath, SEED_SCRIPT);
-  try {
-    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
-    const stdout = execFileSync('docker', ['exec',
-      '-e', `SEED_ORG_ID=${opts.organizationId}`,
-      '-e', `SEED_WORKSPACE_ID=${opts.workspaceId}`,
-      '-e', `SEED_SUFFIX=${suffix}`,
-      '-e', `SEED_CALL_COUNT=${opts.count ?? 12}`,
-      container, 'sh', '-c',
-      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
-    ], { encoding: 'utf-8' });
-    const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as CallExecutionSeed;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return runSeedScript('e2e-pag5', SEED_SCRIPT, {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+    SEED_SUFFIX: seedSuffix(),
+    SEED_CALL_COUNT: String(opts.count ?? 12),
+  }) as CallExecutionSeed;
+}
+
+/**
+ * Seeds one completed Environments run with two voice calls for the
+ * call-detail drawer's acoustic metrics (SIM-E2E-003):
+ *
+ * - `analyzedCallId` stores `audioMetrics` verbatim in
+ *   `CallExecution.audio_metrics`, the column the analysis worker commits to;
+ * - `notAnalyzedCallId` leaves that column NULL, as on every call recorded
+ *   before the feature (the API reports it as never analyzed).
+ *
+ * Nothing is analyzed here: no recording exists, no provider is called and no
+ * Temporal workflow starts. The analysis worker needs audio extras and
+ * operator-supplied model weights this stack does not carry, so the flow
+ * proves the stored result's path (API projection, drawer, raw export), not
+ * the measurement. Every row is labelled as an e2e seed. The row chain
+ * (HostedHarnessJob environment and run, RunTest, TestExecution,
+ * HostedHarnessScenario, CallExecution) is the one the Environments run page
+ * reads (`/dashboard/simulate/environments/:envId/runs/:testId/:executionId`,
+ * frontend/src/routes/sections/dashboard.jsx). Same scoping and container
+ * selection as `seedCallExecutions`.
+ */
+export interface AcousticMetricsSeed {
+  environmentId: string;
+  runTestId: string;
+  testExecutionId: string;
+  analyzedCallId: string;
+  notAnalyzedCallId: string;
+  suffix: string;
+}
+
+const ACOUSTIC_SEED_SCRIPT = `
+import hashlib
+import json
+import os
+import uuid
+from datetime import timedelta
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from django.db import transaction
+from django.utils import timezone
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import AgentDefinition, HostedHarnessJob, RunTest, Scenarios
+from simulate.models.hosted_harness import HostedHarnessScenario
+from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
+
+LABEL = "e2e SIM-E2E-003 seed: synthetic, no recording, no provider call"
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+    audio_metrics = json.loads(os.environ["SEED_AUDIO_METRICS"])
+    now = timezone.now()
+    with transaction.atomic():
+        agent = AgentDefinition.objects.create(
+            agent_name=f"e2e-sim3-agent-{suffix}",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            inbound=True,
+            description=LABEL,
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        run_test = RunTest.objects.create(
+            name=f"e2e-sim3-run-{suffix}",
+            description=LABEL,
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        execution = TestExecution.objects.create(
+            run_test=run_test,
+            agent_definition=agent,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            started_at=now - timedelta(seconds=90),
+            completed_at=now,
+            total_scenarios=2,
+            total_calls=2,
+            completed_calls=2,
+            picked_up_by_executor=True,
+            execution_metadata={"e2e_seed": "SIM-E2E-003"},
+        )
+        job = dict(
+            organization=organization,
+            workspace=workspace,
+            request_digest="sha256:" + hashlib.sha256(suffix.encode()).hexdigest(),
+            schema_version="v1",
+            payload={"agent": {"mode": "voice"}, "metadata": {"e2e_seed": "SIM-E2E-003"}},
+            state="completed",
+            current_stage="completed",
+            seed=3,
+            scenario_count=2,
+            completed_count=2,
+            artifact_level="full",
+            max_artifact_bytes=1024 * 1024,
+            deadline_at=now,
+            terminal_at=now,
+            run_test=run_test,
+        )
+        environment = HostedHarnessJob.objects.create(
+            run_id=uuid.uuid4(), name=f"e2e-sim3-environment-{suffix}",
+            idempotency_key=f"e2e-sim3-environment-{suffix}", **job,
+        )
+        HostedHarnessJob.objects.create(
+            run_id=uuid.uuid4(), name=f"e2e-sim3-run-job-{suffix}",
+            idempotency_key=f"e2e-sim3-run-{suffix}", environment=environment, test_execution=execution, **job,
+        )
+        calls = {}
+        for number, (key, stored) in enumerate(
+            (("analyzed", audio_metrics), ("not_analyzed", None)), start=1
+        ):
+            scenario = Scenarios.objects.create(
+                name=f"e2e-sim3-{key}-{suffix}",
+                description=LABEL,
+                source=LABEL,
+                scenario_type=Scenarios.ScenarioTypes.SCRIPT,
+                organization=organization,
+                workspace=workspace,
+                agent_definition=agent,
+            )
+            run_test.scenarios.add(scenario)
+            call = CallExecution.objects.create(
+                test_execution=execution,
+                scenario=scenario,
+                simulation_call_type=CallExecution.SimulationCallType.VOICE,
+                status=CallExecution.CallStatus.COMPLETED,
+                started_at=now - timedelta(seconds=30),
+                completed_at=now,
+                ended_at=now,
+                duration_seconds=20,
+                call_metadata={"e2e_seed": "SIM-E2E-003"},
+                call_summary=LABEL,
+                ended_reason="e2e_seed_completed",
+                recording_available=False,
+                transcript_available=True,
+                message_count=1,
+                audio_metrics=stored,
+            )
+            HostedHarnessScenario.objects.create(
+                job=environment,
+                scenario_key=f"e2e-sim3-{key}",
+                scenario=scenario,
+                call_execution=call,
+                name=scenario.name,
+                instruction=LABEL,
+                number=number,
+            )
+            CallTranscript.objects.create(
+                call_execution=call,
+                speaker_role="user",
+                content=LABEL,
+                start_time_ms=0,
+                end_time_ms=20000,
+            )
+            calls[key] = call
+    print(json.dumps({
+        "environmentId": str(environment.id),
+        "runTestId": str(run_test.id),
+        "testExecutionId": str(execution.id),
+        "analyzedCallId": str(calls["analyzed"].id),
+        "notAnalyzedCallId": str(calls["not_analyzed"].id),
+        "suffix": suffix,
+    }))
+
+
+main()
+`;
+
+export function seedAcousticMetricsCalls(opts: {
+  organizationId: string;
+  workspaceId: string;
+  audioMetrics: Record<string, unknown>;
+}): AcousticMetricsSeed {
+  return runSeedScript('e2e-sim3', ACOUSTIC_SEED_SCRIPT, {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+    SEED_SUFFIX: seedSuffix(),
+    SEED_AUDIO_METRICS: JSON.stringify(opts.audioMetrics),
+  }) as AcousticMetricsSeed;
 }

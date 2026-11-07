@@ -16,6 +16,9 @@ import os
 # - Status updates
 QUEUE_S = "tasks_s"
 
+# EE acoustic analysis is isolated from live-call work.
+QUEUE_AUDIO = "tasks_audio"
+
 # Large queue: Standard operations
 # - Workflows (TestExecution, CallExecution)
 # - Call provider API calls

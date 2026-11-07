@@ -22731,7 +22731,179 @@ export const CallExecutionDetailApiSimulationCallType = {
   text: "text",
 } as const;
 
+/**
+ * Unknown schema versions return only schema_version and state=unsupported.
+ */
+export type AudioMetricsEnvelopeApiState =
+  (typeof AudioMetricsEnvelopeApiState)[keyof typeof AudioMetricsEnvelopeApiState];
+
+export const AudioMetricsEnvelopeApiState = {
+  not_requested: "not_requested",
+  pending: "pending",
+  complete: "complete",
+  partial: "partial",
+  failed: "failed",
+  unavailable: "unavailable",
+  unsupported: "unsupported",
+} as const;
+
+export interface AudioMetricsSourceApi {
+  /** @minLength 1 */
+  readonly capture_origin?: string;
+  /** @minLength 1 */
+  readonly transport?: string;
+  /** @minLength 1 */
+  readonly provider?: string;
+  /** @minLength 1 */
+  readonly target_role?: string;
+  /** @minLength 1 */
+  readonly mapping_version?: string;
+  readonly original_sample_rate_hz?: number;
+  readonly original_channel_count?: number;
+  readonly target_sample_count?: number;
+  readonly input_duration_seconds?: number;
+  /** @minLength 1 */
+  readonly preprocessing_version?: string;
+}
+
+export type AudioPitchMetricApiState =
+  (typeof AudioPitchMetricApiState)[keyof typeof AudioPitchMetricApiState];
+
+export const AudioPitchMetricApiState = {
+  available: "available",
+  pending: "pending",
+  unavailable: "unavailable",
+  failed: "failed",
+} as const;
+
+export interface AudioPitchCoverageApi {
+  readonly analyzed_seconds?: number;
+  readonly voiced_seconds?: number;
+  readonly frame_count?: number;
+  readonly voiced_frame_count?: number;
+}
+
+export interface AudioPitchMetricApi {
+  readonly value?: number;
+  /** @minLength 1 */
+  readonly unit?: string;
+  readonly state?: AudioPitchMetricApiState;
+  /** @minLength 1 */
+  readonly reason?: string;
+  /** @minLength 1 */
+  readonly algorithm_version?: string;
+  coverage?: AudioPitchCoverageApi;
+}
+
+export type AudioSNRMetricApiState =
+  (typeof AudioSNRMetricApiState)[keyof typeof AudioSNRMetricApiState];
+
+export const AudioSNRMetricApiState = {
+  available: "available",
+  pending: "pending",
+  unavailable: "unavailable",
+  failed: "failed",
+} as const;
+
+export interface AudioSNRCoverageApi {
+  readonly analyzed_seconds?: number;
+  readonly active_seconds?: number;
+  readonly inactive_seconds?: number;
+  readonly frame_count?: number;
+}
+
+export interface AudioSNRFlagsApi {
+  readonly noise_floor_floored?: boolean;
+  readonly value_capped?: boolean;
+}
+
+export interface AudioSNRMetricApi {
+  readonly value?: number;
+  /** @minLength 1 */
+  readonly unit?: string;
+  readonly state?: AudioSNRMetricApiState;
+  /** @minLength 1 */
+  readonly reason?: string;
+  /** @minLength 1 */
+  readonly algorithm_version?: string;
+  coverage?: AudioSNRCoverageApi;
+  flags?: AudioSNRFlagsApi;
+}
+
+export type AudioVQIMetricApiState =
+  (typeof AudioVQIMetricApiState)[keyof typeof AudioVQIMetricApiState];
+
+export const AudioVQIMetricApiState = {
+  available: "available",
+  pending: "pending",
+  unavailable: "unavailable",
+  failed: "failed",
+} as const;
+
+export interface AudioVQICoverageApi {
+  readonly window_count?: number;
+  readonly excluded_window_count?: number;
+  readonly detected_speech_seconds?: number;
+  readonly covered_speech_seconds?: number;
+  readonly expected_sample_count?: number;
+  readonly resampled_sample_count?: number;
+  /** @minLength 1 */
+  readonly detector_id?: string;
+  /** @minLength 1 */
+  readonly polynomial_version?: string;
+  /** @minLength 1 */
+  readonly window_policy_version?: string;
+  /** @minLength 1 */
+  readonly preprocessing_version?: string;
+  /** @minLength 1 */
+  readonly cohort?: string;
+}
+
+export interface AudioVQIMetricApi {
+  readonly value?: number;
+  /** @minLength 1 */
+  readonly unit?: string;
+  readonly state?: AudioVQIMetricApiState;
+  /** @minLength 1 */
+  readonly reason?: string;
+  /** @minLength 1 */
+  readonly algorithm_version?: string;
+  coverage?: AudioVQICoverageApi;
+  /** @minLength 1 */
+  readonly model_version?: string;
+  /** @minLength 1 */
+  readonly calibration_id?: string;
+  /** @minLength 1 */
+  readonly scale_id?: string;
+}
+
+export interface AudioMetricsValuesApi {
+  average_pitch_hz?: AudioPitchMetricApi;
+  estimated_snr_db?: AudioSNRMetricApi;
+  voice_quality_index?: AudioVQIMetricApi;
+}
+
+export interface AudioMetricsEnvelopeApi {
+  readonly schema_version?: number;
+  /** @minLength 1 */
+  readonly analysis_id?: string;
+  /** @minimum 0 */
+  readonly generation?: number;
+  /** Unknown schema versions return only schema_version and state=unsupported. */
+  readonly state?: AudioMetricsEnvelopeApiState;
+  readonly computed_at?: string;
+  readonly scheduled_at?: string;
+  readonly deadline_at?: string;
+  /** @minLength 1 */
+  readonly target_role?: string;
+  /** @minLength 1 */
+  readonly pipeline_version?: string;
+  source?: AudioMetricsSourceApi;
+  metrics?: AudioMetricsValuesApi;
+}
+
 export interface CallExecutionDetailApi {
+  audio_metrics?: AudioMetricsEnvelopeApi;
   readonly id?: string;
   /** @minLength 1 */
   readonly service_provider_call_id?: string;
@@ -25020,6 +25192,7 @@ export interface SimulateRunV3FunctionCallApi {
 }
 
 export interface CallExecutionV3DetailResponseApi {
+  audio_metrics?: AudioMetricsEnvelopeApi;
   readonly id?: string;
   /** @minLength 1 */
   readonly service_provider_call_id?: string;
@@ -35636,6 +35809,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =
