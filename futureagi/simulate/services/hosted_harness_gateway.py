@@ -849,6 +849,8 @@ def detect_source_connectors(archive: bytes) -> tuple[list[str], int]:
     return connectors, scanned
 
 
+# How much of the guest's entrypoint log a failure keeps, from its end.
+GUEST_LOG_CHARS = 8000
 _GUEST_CAUSE_LINE = re.compile(r"(?:ProcessRuntimeError|RuntimeValidationError): (.+)$")
 _GUEST_INNER_EXCEPTION = re.compile(
     r"(?:^|\\n)([A-Za-z_.]+(?:Error|Exception)): ([^\\\"\n]+)"
@@ -2459,11 +2461,22 @@ class HostedHarnessGateway:
     ) -> HostedHarnessAttempt:
 
         from simulate.services.harness_versioning import assembly as bundle_cache
+        from simulate.services.harness_versioning.validation import certify_only
 
+        validation = certify_only(job)
+        if validation and bundle_cache.assembled_bundle_ready(job):
+            # Certified meanwhile, by a run or another validation: nothing to launch.
+            return self._complete_without_sandbox(job, endpoint_base_url)
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         # A pinned run replays its assembled pair; on a cache miss it certifies it first.
         assembled, assembly_error = _prepare_assembly(job)
+        if (
+            validation
+            and assembly_error is None
+            and (assembled is None or assembled.hit)
+        ):
+            assembly_error = bundle_cache.assembly_unavailable()
         certify = assembled is not None and not assembled.hit
         authoring_archive = _authoring_archive_for(job)
         payload = dict(job.payload)
@@ -2819,26 +2832,28 @@ class HostedHarnessGateway:
                     bundle_cache.source_check_command(assembled.source_digest)
                     + bundle_command
                 )
+            run_command = (
+                "if [ ! -f /work/authoring/contract.json ]; then "
+                "python -m fi.alk.harness.hosted_authoring_entrypoint "
+                "/work/job.json --source /work/source --output /work/authoring "
+                + (
+                    "--await-harness "
+                    if harness_builds
+                    else f"--adjustments {_ADJUSTMENTS_PATH} "
+                )
+                + provider_profile_args
+                + "; fi && "
+                + ((extend_command + " && ") if extend_command else "")
+                + bundle_command
+                + " && "
+                "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                "--source /work/source --output /work/artifacts"
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
-                    command=(
-                        "if [ ! -f /work/authoring/contract.json ]; then "
-                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring "
-                        + (
-                            "--await-harness "
-                            if harness_builds
-                            else f"--adjustments {_ADJUSTMENTS_PATH} "
-                        )
-                        + provider_profile_args
-                        + "; fi && "
-                        + ((extend_command + " && ") if extend_command else "")
-                        + bundle_command
-                        + " && "
-                        "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                        "--source /work/source --output /work/artifacts"
-                    ),
+                    # A validation certifies the pair and runs nothing.
+                    command=bundle_command if validation else run_command,
                     env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
@@ -2934,6 +2949,26 @@ class HostedHarnessGateway:
             # already been marked terminal and leave the job in a poisoned state.
             attempt.job = job
             return attempt
+
+    def _complete_without_sandbox(
+        self, job: HostedHarnessJob, endpoint_base_url: str
+    ) -> HostedHarnessAttempt:
+        """Register an attempt that completed with nothing to run, and settle the job."""
+        attempt = register_attempt(
+            job.id,
+            endpoint_base_url=endpoint_base_url,
+            snapshot_name=self.client.runtime_name,
+            snapshot_digest=self.client.runtime_digest,
+        ).attempt
+        attempt.terminal_stage = "completed"
+        attempt.save(update_fields=["terminal_stage", "updated_at"])
+        attempt.job = record_cleanup(
+            attempt.id,
+            provider_ref="",
+            verified_absent=True,
+            details={"provider": self.client.name, "sandbox_created": False},
+        )
+        return attempt
 
     def _start_chat_in_sandbox(
         self,
@@ -3538,7 +3573,7 @@ class HostedHarnessGateway:
             final=command.exit_code is not None,
         )
         if capture is not None:
-            observation["logs"] = capture.entrypoint_log[-8000:]
+            observation["logs"] = capture.entrypoint_log[-GUEST_LOG_CHARS:]
             observation["process_logs"] = capture.process_logs[-16000:]
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
@@ -4289,6 +4324,9 @@ class HostedHarnessGateway:
                     status=CallExecution.CallStatus.CANCELLED,
                     completed_at=job.terminal_at,
                 )
+            from simulate.services.harness_versioning.validation import on_terminal
+
+            on_terminal(job)
             return job
 
         # Hang up the PSTN leg before any provider call. Reconnecting to or
@@ -4380,22 +4418,42 @@ class HostedHarnessGateway:
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
 
+        from simulate.services.harness_versioning.validation import (
+            CHECK_TIMED_OUT,
+            certify_only,
+            overdue,
+        )
+
         # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
         # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
-        if (
-            not attempt.provider_ref
-            and attempt.state == HostedHarnessAttempt.State.FAILED
-        ):
-            if job.state in {
-                HostedHarnessJob.State.RETRY_WAIT,
+        if overdue(job):
+            # A check past its deadline is stopped; ending it fails the pairing.
+            logger.warning("hosted pair validation past its deadline job=%s", job.id)
+            job = self.cancel(job, reason=CHECK_TIMED_OUT)
+            ended = job.state in {
+                HostedHarnessJob.State.COMPLETED,
                 HostedHarnessJob.State.FAILED,
                 HostedHarnessJob.State.CANCELED,
-            }:
-                return job
+            }
+            return job if ended else None
+        # An attempt that completed without a sandbox settled its job the same way.
+        if not attempt.provider_ref and (
+            job.state
+            in {
+                HostedHarnessJob.State.COMPLETED,
+                HostedHarnessJob.State.FAILED,
+                HostedHarnessJob.State.CANCELED,
+            }
+            or (
+                attempt.state == HostedHarnessAttempt.State.FAILED
+                and job.state == HostedHarnessJob.State.RETRY_WAIT
+            )
+        ):
+            return job
 
         try:
             observation = self.inspect(attempt)
@@ -4509,6 +4567,9 @@ class HostedHarnessGateway:
                 "updated_at",
             ]
         )
+        if exit_code == 0 and certify_only(job):
+            # A validation's guest certifies and exits; it never sends a terminal event.
+            return self._finish_certify_only(attempt)
         if exit_code in {0, 4} and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4622,10 +4683,16 @@ class HostedHarnessGateway:
                 attempt, "infrastructure"
             )
             if exit_code == 78:
-                from simulate.services.harness_versioning.assembly import mark_failed
+                from simulate.services.harness_versioning import (
+                    assembly as bundle_cache,
+                )
 
                 try:
-                    mark_failed(attempt.job, attempt.terminal_failure["message"])
+                    bundle_cache.mark_failed(
+                        attempt.job,
+                        attempt.terminal_failure,
+                        failed_actions=self._certify_failed_actions(attempt),
+                    )
                 except Exception:  # noqa: BLE001 - the cache never changes the outcome
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
@@ -4654,6 +4721,44 @@ class HostedHarnessGateway:
                 ]
             )
         return self._delete_and_record(attempt, retry_pending=retry_pending)
+
+    def _certify_failed_actions(
+        self, attempt: HostedHarnessAttempt
+    ) -> list[dict[str, str]] | None:
+        """The actions a rejected certify failed, read before its sandbox is deleted."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        if not bundle_cache.certifies_here(attempt.job):
+            return None
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+        except SandboxProviderError:
+            logger.warning(
+                "certify failed actions unread attempt=%s", attempt.id, exc_info=True
+            )
+            return None
+        return bundle_cache.certify_failed_actions(sandbox)
+
+    def _finish_certify_only(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
+        """A validation's guest exited 0: completed when its bundle was filled."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        if bundle_cache.assembled_bundle_ready(attempt.job):
+            attempt.terminal_stage = "completed"
+            attempt.terminal_failure = None
+        else:
+            attempt.terminal_stage = "failed"
+            attempt.terminal_failure = {
+                "domain": "environment",
+                "stage": "validating_environment",
+                "code": "certify_incomplete",
+                "message": "the pairing was certified but its bundle was not kept",
+            }
+        attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
+        return self._delete_and_record(attempt)
 
     def _cleanup_conversation_runtime(self, job: HostedHarnessJob) -> None:
         """Delete the control-only chat sandbox after the execution becomes terminal."""

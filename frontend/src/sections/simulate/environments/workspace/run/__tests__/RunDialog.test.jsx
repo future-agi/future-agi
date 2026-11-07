@@ -731,6 +731,22 @@ describe("RunDialog", () => {
     );
   });
 
+  it.each([
+    [
+      "pair_validating",
+      "These versions are being checked together. Run them once the check ends.",
+    ],
+    [
+      "pair_failed",
+      "These versions failed their check together. Fix them and check again.",
+    ],
+  ])("explains a %s refusal inline in our words", (code, text) => {
+    renderDialog({
+      error: { statusCode: 409, error: code, message: "server words" },
+    });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(text);
+  });
+
   it("leaves other failures to the snackbar", () => {
     renderDialog({ error: { statusCode: 500, message: "boom" } });
     expect(screen.queryByTestId("run-error")).toBeNull();
