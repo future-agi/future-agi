@@ -34,7 +34,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -69,6 +69,12 @@ from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
+)
+from tracer.serializers.project_tags import (
+    TAG_ERROR_RESPONSES,
+    TagAssignmentRequestSerializer,
+    TagAssignmentResponseSerializer,
+    TraceTagsUpdateQuerySerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
@@ -470,8 +476,25 @@ class TraceNavigationReadUnavailable(RuntimeError):
         super().__init__(code)
 
 
-class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+class TraceTagsUpdateSerializer(TagAssignmentRequestSerializer):
+    """Body of ``PATCH /tracer/trace/{id}/tags/``."""
+
+
+def _trace_tag_names(value) -> list:
+    """Trace-list tags as a list of names.
+
+    ClickHouse ``traces.tags`` is a JSON string; the grid's tags cell renders
+    only an array, so returning the raw string showed every trace untagged.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
 
 
 def _sanitize_nonfinite_floats(value):
@@ -2613,22 +2636,42 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         return eval_configs, base_query
 
-    @validated_request(request_serializer=TraceTagsUpdateSerializer)
+    @validated_request(
+        request_serializer=TraceTagsUpdateSerializer,
+        query_serializer=TraceTagsUpdateQuerySerializer,
+        responses={200: TagAssignmentResponseSerializer, **TAG_ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for a trace."""
+        """Replace a trace's tags, including a trace only ClickHouse has.
+
+        ``?project_id=`` is optional. Without it the trace is looked up in the
+        projects the caller can access. Colours are saved on the project tag;
+        the response lists the assigned names.
+        """
+        from tracer.services.project_tags import set_trace_tags
+        from tracer.views.observation_span import (
+            _tag_project_ids,
+            _tag_write_failure,
+        )
+
+        trace_id = str(kwargs.get("pk"))
         try:
-            trace_id = kwargs.get("pk")
-            trace = self.get_queryset().get(id=trace_id)
-            tags = request.validated_data["tags"]
-            trace.tags = tags
-            trace.save(update_fields=["tags", "updated_at"])
-            return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
-        except Trace.DoesNotExist:
-            return self._gm.bad_request("Trace not found")
-        except Exception as e:
-            logger.exception(f"Error updating trace tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+            result = set_trace_tags(
+                project_ids=_tag_project_ids(
+                    request, request.validated_query_data.get("project_id")
+                ),
+                trace_id=trace_id,
+                raw_tags=request.validated_data["tags"],
+            )
+        except Exception as exc:
+            failure = _tag_write_failure(
+                self._gm, exc, entity="trace", target_id=trace_id
+            )
+            if failure is None:
+                raise
+            return failure
+        return self._gm.success_response({"id": trace_id, "tags": result["tags"]})
 
     @validated_request(responses={200: TracePropertiesResponseSerializer})
     @action(detail=False, methods=["get"], pagination_class=None)
@@ -5666,7 +5709,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "model": row.get("model"),
                 "provider": row.get("provider"),
-                "tags": row.get("trace_tags") or [],
+                "tags": _trace_tag_names(row.get("trace_tags")),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
@@ -7189,7 +7232,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if str(row.get("trace_session_id", "")) == NIL_UUID
                     else row.get("trace_session_id")
                 ),
-                "tags": row.get("trace_tags") or [],
+                "tags": _trace_tag_names(row.get("trace_tags")),
                 "user_id": user_id_map.get(
                     (str(row.get("project_id") or project_id), trace_id)
                 ),

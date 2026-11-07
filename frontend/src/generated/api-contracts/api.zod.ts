@@ -67806,122 +67806,41 @@ export const TracerObservationSpanSubmitFeedbackActionTypeBody = zod.object({
 });
 
 /**
- * Update tags for an observation span.
+ * ``project_id`` is optional. Without it the span is looked up in the
+projects the caller can access. Only that span's row changes.
+ * @summary Replace one span's tags, including a span only ClickHouse has.
  */
-export const tracerObservationSpanUpdateTagsBodyParentSpanIdMax = 255;
-
-export const tracerObservationSpanUpdateTagsBodyNameMax = 2000;
-
-export const tracerObservationSpanUpdateTagsBodyModelMax = 255;
-
-export const tracerObservationSpanUpdateTagsBodyLatencyMsMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyLatencyMsMax = 2147483647;
-
-export const tracerObservationSpanUpdateTagsBodyPromptTokensMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyPromptTokensMax = 2147483647;
-
-export const tracerObservationSpanUpdateTagsBodyCompletionTokensMin =
-  -2147483648;
-export const tracerObservationSpanUpdateTagsBodyCompletionTokensMax = 2147483647;
-
-export const tracerObservationSpanUpdateTagsBodyTotalTokensMin = -2147483648;
-export const tracerObservationSpanUpdateTagsBodyTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanUpdateTagsBodyEvalIdMax = 255;
-
-export const tracerObservationSpanUpdateTagsBodyProviderMax = 255;
+export const tracerObservationSpanUpdateTagsBodySpanIdMax = 255;
 
 export const TracerObservationSpanUpdateTagsBody = zod.object({
-  project: zod.string().uuid(),
-  project_version: zod.string().uuid().optional(),
-  trace: zod.string().uuid(),
-  parent_span_id: zod
+  tags: zod
+    .array(
+      zod
+        .union([zod.string(), zod.object({}).passthrough()])
+        .describe("String or JSON object."),
+    )
+    .describe(
+      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
+    ),
+  span_id: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyParentSpanIdMax)
-    .optional(),
-  name: zod.string().min(1).max(tracerObservationSpanUpdateTagsBodyNameMax),
-  observation_type: zod.enum([
-    "tool",
-    "chain",
-    "llm",
-    "retriever",
-    "embedding",
-    "agent",
-    "reranker",
-    "unknown",
-    "guardrail",
-    "evaluator",
-    "conversation",
-  ]),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
-  input: zod.object({}).passthrough().optional(),
-  output: zod.object({}).passthrough().optional(),
-  model: zod
+    .min(1)
+    .max(tracerObservationSpanUpdateTagsBodySpanIdMax),
+  project_id: zod
     .string()
-    .max(tracerObservationSpanUpdateTagsBodyModelMax)
-    .optional(),
-  model_parameters: zod.object({}).passthrough().optional(),
-  latency_ms: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyLatencyMsMin)
-    .max(tracerObservationSpanUpdateTagsBodyLatencyMsMax)
-    .optional(),
-  org_id: zod.string().uuid().optional(),
-  org_user_id: zod.string().uuid().optional(),
-  prompt_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyPromptTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyPromptTokensMax)
-    .optional(),
-  completion_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyCompletionTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyCompletionTokensMax)
-    .optional(),
-  total_tokens: zod
-    .number()
-    .min(tracerObservationSpanUpdateTagsBodyTotalTokensMin)
-    .max(tracerObservationSpanUpdateTagsBodyTotalTokensMax)
-    .optional(),
-  response_time: zod.number().optional(),
-  eval_id: zod
-    .string()
-    .max(tracerObservationSpanUpdateTagsBodyEvalIdMax)
-    .optional(),
-  cost: zod.number().optional(),
-  status: zod.enum(["UNSET", "OK", "ERROR"]).optional(),
-  status_message: zod.string().optional(),
-  tags: zod.object({}).passthrough().optional(),
-  metadata: zod.object({}).passthrough().optional(),
-  span_events: zod.object({}).passthrough().optional(),
-  provider: zod
-    .string()
-    .max(tracerObservationSpanUpdateTagsBodyProviderMax)
-    .optional(),
-  custom_eval_config: zod.string().uuid().optional(),
-  eval_status: zod
-    .enum([
-      "NotStarted",
-      "Queued",
-      "Running",
-      "Completed",
-      "Editing",
-      "Inactive",
-      "Failed",
-      "PartialRun",
-      "ExperimentEvaluation",
-      "Uploading",
-      "PartialExtracted",
-      "Processing",
-      "Deleting",
-      "PartialCompleted",
-      "OptimizationEvaluation",
-      "Error",
-      "Cancelled",
-    ])
-    .optional(),
-  prompt_version: zod.string().uuid().optional(),
+    .uuid()
+    .optional()
+    .describe(
+      "The span's project. Optional; needed only when the span id exists in more than one project you can access.",
+    ),
+});
+
+export const TracerObservationSpanUpdateTagsResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().min(1),
+    tags: zod.array(zod.string().min(1)).describe("The names now assigned."),
+  }),
 });
 
 export const TracerObservationSpanReadParams = zod.object({
@@ -70153,6 +70072,100 @@ export const TracerProjectPartialUpdateResponse = zod.object({
 
 export const TracerProjectDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * List the project's tags: stored definitions plus every name assigned to a span or trace, including names only an SDK set.
+ */
+export const TracerProjectTagDefinitionsReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerProjectTagDefinitionsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    tags: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        color: zod.string().describe('"#RRGGBB", or "" when no colour is set.'),
+        usage_count: zod
+          .number()
+          .describe(
+            "Live spans in this project whose tags contain the name, once per span. A trace tag sits on the trace's root span, so it counts once; a name seen only on a trace row counts 0.",
+          ),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Recolour and/or rename a project tag. A rename rewrites the name in every assignment in the project and merges into an existing tag of the new name, e.g. {"name": "prod", "new_name": "production"}.
+ */
+export const TracerProjectTagDefinitionsPartialUpdateParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerProjectTagDefinitionsPartialUpdateBodyNameMax = 255;
+
+export const tracerProjectTagDefinitionsPartialUpdateBodyNewNameMax = 255;
+
+export const tracerProjectTagDefinitionsPartialUpdateBodyColorMax = 7;
+
+export const TracerProjectTagDefinitionsPartialUpdateBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerProjectTagDefinitionsPartialUpdateBodyNameMax)
+    .describe("The tag to change, exactly as listed (not trimmed)."),
+  new_name: zod
+    .string()
+    .min(1)
+    .max(tracerProjectTagDefinitionsPartialUpdateBodyNewNameMax)
+    .optional()
+    .describe(
+      "Rename. Rewrites every assignment in the project; renaming onto an existing tag merges into it.",
+    ),
+  color: zod
+    .string()
+    .max(tracerProjectTagDefinitionsPartialUpdateBodyColorMax)
+    .optional()
+    .describe(
+      'Recolour. "#RRGGBB", or "" when no colour is set. Assignments are not touched.',
+    ),
+});
+
+export const TracerProjectTagDefinitionsPartialUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    name: zod.string().min(1),
+    color: zod.string().describe('"#RRGGBB", or "" when no colour is set.'),
+  }),
+});
+
+/**
+ * Delete a project tag and remove the name from every assignment in the project, e.g. DELETE /tracer/project/{id}/tag-definitions/?name=prod.
+ */
+export const TracerProjectTagDefinitionsDeleteParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerProjectTagDefinitionsDeleteQueryNameMax = 255;
+
+export const TracerProjectTagDefinitionsDeleteQueryParams = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerProjectTagDefinitionsDeleteQueryNameMax)
+    .describe(
+      "The tag to delete, exactly as listed (not trimmed). It is also removed from every assignment.",
+    ),
+});
+
+export const TracerProjectTagDefinitionsDeleteResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    deleted: zod.boolean(),
+  }),
 });
 
 /**
@@ -75119,18 +75132,43 @@ export const TracerTraceDeleteParams = zod.object({
 });
 
 /**
- * Update tags for a trace.
+ * ``?project_id=`` is optional. Without it the trace is looked up in the
+projects the caller can access. Colours are saved on the project tag;
+the response lists the assigned names.
+ * @summary Replace a trace's tags, including a trace only ClickHouse has.
  */
 export const TracerTraceUpdateTagsParams = zod.object({
   id: zod.string(),
 });
 
+export const TracerTraceUpdateTagsQueryParams = zod.object({
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "The trace's project. Optional; needed only when the trace id exists in more than one project you can access.",
+    ),
+});
+
 export const TracerTraceUpdateTagsBody = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  tags: zod
+    .array(
+      zod
+        .union([zod.string(), zod.object({}).passthrough()])
+        .describe("String or JSON object."),
+    )
+    .describe(
+      'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
+    ),
 });
 
 export const TracerTraceUpdateTagsResponse = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().min(1),
+    tags: zod.array(zod.string().min(1)).describe("The names now assigned."),
+  }),
 });
 
 export const TracerUserAlertLogsListQueryParams = zod.object({
@@ -79362,10 +79400,28 @@ export const UsageSubscriptionTierReadResponse = zod.object({
   ),
 });
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault =
+  false;
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault =
+  false;
+
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   autoreload_enabled: zod.boolean(),
   autoreload_walletamount: zod.string(),
   autoreload_walletthreshold: zod.string(),
+  autoreload_maxcharge: zod.string().optional(),
+  autoreload_consent: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault),
+  autoreload_charge_now: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({

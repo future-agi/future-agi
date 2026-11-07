@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1126,
+  endpointCount: 1127,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -38932,15 +38932,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/update-tags/": {
       post: {
         operationId: "tracer_observation-span_update_tags",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/ObservationSpan",
+          $ref: "#/definitions/SpanTagsUpdateRequest",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/ObservationSpan",
+          200: {
+            $ref: "#/definitions/TagAssignmentResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -40088,6 +40094,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/project/{id}/tag-definitions/": {
+      get: {
+        operationId: "tracer_project_tag-definitions_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ProjectTagDefinitionListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_project_tag-definitions_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ProjectTagDefinitionUpdateRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ProjectTagDefinitionUpdateResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_project_tag-definitions_delete",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          name: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/ProjectTagDefinitionDeleteResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -42457,14 +42539,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
       patch: {
         operationId: "tracer_trace_update_tags",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/TraceTagsUpdate",
         },
-        queryParameters: {},
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/TraceTagsUpdate",
+            $ref: "#/definitions/TagAssignmentResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -54751,6 +54847,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Autoreload walletthreshold",
           type: "string",
           format: "decimal",
+        },
+        autoreload_maxcharge: {
+          title: "Autoreload maxcharge",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        autoreload_consent: {
+          title: "Autoreload consent",
+          type: "boolean",
+          default: false,
+        },
+        autoreload_charge_now: {
+          title: "Autoreload charge now",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -78430,6 +78542,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ProjectTagDefinitionDeleteResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ProjectTagDefinitionDeleteResult",
+        },
+      },
+    },
+    ProjectTagDefinitionListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ProjectTagDefinitionListResult",
+        },
+      },
+    },
+    ProjectTagDefinitionUpdateRequest: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          description: "The tag to change, exactly as listed (not trimmed).",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        new_name: {
+          title: "New name",
+          description:
+            "Rename. Rewrites every assignment in the project; renaming onto an existing tag merges into it.",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        color: {
+          title: "Color",
+          description:
+            'Recolour. "#RRGGBB", or "" when no colour is set. Assignments are not touched.',
+          type: "string",
+          maxLength: 7,
+        },
+      },
+    },
+    ProjectTagDefinitionUpdateResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ProjectTagDefinitionResult",
+        },
+      },
+    },
     ProjectUserGraphDataRequest: {
       type: "object",
       properties: {
@@ -84898,6 +85077,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SpanTagsUpdateRequest: {
+      required: ["tags", "span_id"],
+      type: "object",
+      properties: {
+        tags: {
+          description:
+            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
+          type: "array",
+          items: {
+            type: "object",
+            "x-string-or-object": true,
+            description: "String or JSON object.",
+          },
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          description:
+            "The span's project. Optional; needed only when the span id exists in more than one project you can access.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
     SpendSummaryResponse: {
       required: ["status", "result"],
       type: "object",
@@ -85474,6 +85683,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    TagAssignmentResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/TagAssignmentResult",
         },
       },
     },
@@ -87501,10 +87723,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {
         tags: {
+          description:
+            'Replaces the current tags. Each item is a name ("prod") or {"name": "prod", "color": "#22C55E"}. A colour only seeds a tag the project does not have yet (or has without a colour) and is never stored on the assignment; recolour with PATCH /tracer/project/{id}/tag-definitions/.',
           type: "array",
           items: {
-            type: "string",
-            minLength: 1,
+            type: "object",
+            "x-string-or-object": true,
+            description: "String or JSON object.",
           },
         },
       },
@@ -108208,6 +108433,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ProjectTagDefinitionDeleteResult: {
+      required: ["deleted"],
+      type: "object",
+      properties: {
+        deleted: {
+          title: "Deleted",
+          type: "boolean",
+        },
+      },
+    },
+    ProjectTagDefinitionListResult: {
+      required: ["tags"],
+      type: "object",
+      properties: {
+        tags: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ProjectTagDefinition",
+          },
+        },
+      },
+    },
+    ProjectTagDefinitionResult: {
+      required: ["name", "color"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        color: {
+          title: "Color",
+          description: '"#RRGGBB", or "" when no colour is set.',
+          type: "string",
+        },
+      },
+    },
     ProjectUserGraphDataResult: {
       required: ["session", "trace", "cost", "input_tokens", "output_tokens"],
       type: "object",
@@ -113380,6 +113643,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         data: {
           $ref: "#/definitions/SyntheticDatasetUpdateData",
+        },
+      },
+    },
+    TagAssignmentResult: {
+      required: ["id", "tags"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        tags: {
+          description: "The names now assigned.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -123776,6 +124058,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Total pages",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    ProjectTagDefinition: {
+      required: ["name", "color", "usage_count"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        color: {
+          title: "Color",
+          description: '"#RRGGBB", or "" when no colour is set.',
+          type: "string",
+        },
+        usage_count: {
+          title: "Usage count",
+          description:
+            "Live spans in this project whose tags contain the name, once per span. A trace tag sits on the trace's root span, so it counts once; a name seen only on a trace row counts 0.",
+          type: "integer",
         },
       },
     },
