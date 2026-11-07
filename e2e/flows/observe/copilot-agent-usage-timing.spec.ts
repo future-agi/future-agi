@@ -137,9 +137,9 @@ test('OBS-E2E-059: Copilot agent traces show request usage and optional timing d
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?tab=traces`, { waitUntil: 'domcontentloaded' });
     await page.locator(`.clean-data-table:visible .ag-row[row-id="${traceId}"] [col-id="trace_name"]`).click();
     const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
-    await drawer.getByText('invoke_agent', { exact: true }).click();
-    await expect(drawer.getByText('Agent', { exact: true }).first()).toBeVisible();
-    await drawer.getByText('invoke_agent', { exact: true }).click();
+    await drawer.getByText('invoke_agent', { exact: true }).first().click();
+    await expect(drawer.getByText('Type : agent', { exact: true })).toBeVisible();
+    await drawer.getByText('invoke_agent', { exact: true }).first().click();
     // formatters.js abbreviates totals >= 10000; detail API above pins the exact integer.
     await expect(drawer.getByText('88.1K observed tokens', { exact: true })).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Show 72 timing spans', exact: true })).toBeVisible();
@@ -150,6 +150,7 @@ test('OBS-E2E-059: Copilot agent traces show request usage and optional timing d
     await drawer.getByRole('button', { name: 'Show 72 timing spans', exact: true }).click();
     await expect(drawer.getByText(/^session\.timing\./)).toHaveCount(72);
     expect((await drawer.getByText(/^session\.timing\./).allTextContents()).sort()).toEqual(timingNames);
+    await testInfo.attach('timing-shown', { body: await page.screenshot(), contentType: 'image/png' });
     await drawer.getByRole('button', { name: 'Hide 72 timing spans', exact: true }).click();
     await expect(drawer.getByText(/^session\.timing\./)).toHaveCount(0);
     const detail = await actor.api.get<Detail>(`/tracer/trace/${traceId}/`, { project_id: projectId });
