@@ -239,7 +239,8 @@ class EndToEndTests(unittest.TestCase):
 
         code, found, proc = self.gate(base)
         self.assertEqual(code, 1, proc.stdout + proc.stderr)
-        self.assertEqual([(f, c) for f, _, c in found], [("futureagi/app/now_broken.py", "syntax-error")], proc.stdout)
+        # Ruff can report several diagnostics for one syntax error.
+        self.assertEqual({(f, c) for f, _, c in found}, {("futureagi/app/now_broken.py", "invalid-syntax")}, proc.stdout)
 
 
 if __name__ == "__main__":

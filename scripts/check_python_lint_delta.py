@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 BACKEND_DIR = "futureagi"
-SYNTAX_ERROR = "syntax-error"  # ruff reports syntax errors with no rule code
+SYNTAX_ERROR = "invalid-syntax"  # the code ruff 0.17 gives a syntax error; older versions gave none
 
 # Banned-pattern rules that futureagi/pyproject.toml does not select yet.
 # INP001 waits for the dedicated __init__.py PR, and ANN401 flags more than the
