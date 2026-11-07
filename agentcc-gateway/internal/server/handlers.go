@@ -64,6 +64,8 @@ type Handlers struct {
 
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
+	// catalogue owns the layers under modelDB; nil until SetCatalogue.
+	catalogue *modeldb.Catalogue
 
 	// Per-org multi-tenant support.
 	tenantStore      *tenant.Store
@@ -234,8 +236,11 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 
 // ReloadRouting rebuilds all routing components from new config and atomically swaps them.
 func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registry) error {
-	// Rebuild model database and update shared pointer.
-	if h.modelDB != nil {
+	// Rebuild model database and update shared pointer. The catalogue keeps
+	// the last fetched models; rebuilding from BundledModels would drop them.
+	if h.catalogue != nil {
+		h.catalogue.SetOverrides(ConvertModelOverrides(cfg.ModelDatabase.Overrides))
+	} else if h.modelDB != nil {
 		newDB := modeldb.New(modeldb.BundledModels, ConvertModelOverrides(cfg.ModelDatabase.Overrides))
 		h.modelDB.Store(newDB)
 	}
