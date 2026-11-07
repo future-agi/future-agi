@@ -46680,6 +46680,8 @@ export const SimulateCallExecutionsReadParams = zod.object({
   call_execution_id: zod.string(),
 });
 
+export const simulateCallExecutionsReadResponseAudioMetricsGenerationMin = 0;
+
 export const simulateCallExecutionsReadResponseDurationSecondsMin = -2147483648;
 export const simulateCallExecutionsReadResponseDurationSecondsMax = 2147483647;
 
@@ -46712,7 +46714,126 @@ export const simulateCallExecutionsReadResponseCustomerCallIdMax = 255;
 export const simulateCallExecutionsReadResponsePhoneNumberMax = 20;
 
 export const SimulateCallExecutionsReadResponse = zod.object({
-  audio_metrics: zod.string().optional(),
+  audio_metrics: zod
+    .object({
+      schema_version: zod.number().optional(),
+      analysis_id: zod.string().min(1).optional(),
+      generation: zod
+        .number()
+        .min(simulateCallExecutionsReadResponseAudioMetricsGenerationMin)
+        .optional(),
+      state: zod
+        .enum([
+          "not_requested",
+          "pending",
+          "complete",
+          "partial",
+          "failed",
+          "unavailable",
+          "unsupported",
+        ])
+        .optional()
+        .describe(
+          "Unknown schema versions return only schema_version and state=unsupported.",
+        ),
+      computed_at: zod.string().datetime({ offset: true }).optional(),
+      scheduled_at: zod.string().datetime({ offset: true }).optional(),
+      deadline_at: zod.string().datetime({ offset: true }).optional(),
+      target_role: zod.string().min(1).optional(),
+      pipeline_version: zod.string().min(1).optional(),
+      source: zod
+        .object({
+          capture_origin: zod.string().min(1).optional(),
+          transport: zod.string().min(1).optional(),
+          provider: zod.string().min(1).optional(),
+          target_role: zod.string().min(1).optional(),
+          mapping_version: zod.string().min(1).optional(),
+          original_sample_rate_hz: zod.number().optional(),
+          original_channel_count: zod.number().optional(),
+          target_sample_count: zod.number().optional(),
+          input_duration_seconds: zod.number().optional(),
+          preprocessing_version: zod.string().min(1).optional(),
+        })
+        .optional(),
+      metrics: zod
+        .object({
+          average_pitch_hz: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  analyzed_seconds: zod.number().optional(),
+                  voiced_seconds: zod.number().optional(),
+                  frame_count: zod.number().optional(),
+                  voiced_frame_count: zod.number().optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+          estimated_snr_db: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  analyzed_seconds: zod.number().optional(),
+                  active_seconds: zod.number().optional(),
+                  inactive_seconds: zod.number().optional(),
+                  frame_count: zod.number().optional(),
+                })
+                .optional(),
+              flags: zod
+                .object({
+                  noise_floor_floored: zod.boolean().optional(),
+                  value_capped: zod.boolean().optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+          voice_quality_index: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  window_count: zod.number().optional(),
+                  excluded_window_count: zod.number().optional(),
+                  detected_speech_seconds: zod.number().optional(),
+                  covered_speech_seconds: zod.number().optional(),
+                  expected_sample_count: zod.number().optional(),
+                  resampled_sample_count: zod.number().optional(),
+                  detector_id: zod.string().min(1).optional(),
+                  polynomial_version: zod.string().min(1).optional(),
+                  window_policy_version: zod.string().min(1).optional(),
+                  preprocessing_version: zod.string().min(1).optional(),
+                  cohort: zod.string().min(1).optional(),
+                })
+                .optional(),
+              model_version: zod.string().min(1).optional(),
+              calibration_id: zod.string().min(1).optional(),
+              scale_id: zod.string().min(1).optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   id: zod.string().uuid().optional(),
   service_provider_call_id: zod.string().min(1).optional(),
   session_id: zod.string().optional(),
@@ -52576,6 +52697,8 @@ export const SimulateV3CallExecutionDetailParams = zod.object({
   call_execution_id: zod.string(),
 });
 
+export const simulateV3CallExecutionDetailResponseAudioMetricsGenerationMin = 0;
+
 export const simulateV3CallExecutionDetailResponseDurationSecondsMin =
   -2147483648;
 export const simulateV3CallExecutionDetailResponseDurationSecondsMax = 2147483647;
@@ -52610,7 +52733,126 @@ export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
 export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
 
 export const SimulateV3CallExecutionDetailResponse = zod.object({
-  audio_metrics: zod.string().optional(),
+  audio_metrics: zod
+    .object({
+      schema_version: zod.number().optional(),
+      analysis_id: zod.string().min(1).optional(),
+      generation: zod
+        .number()
+        .min(simulateV3CallExecutionDetailResponseAudioMetricsGenerationMin)
+        .optional(),
+      state: zod
+        .enum([
+          "not_requested",
+          "pending",
+          "complete",
+          "partial",
+          "failed",
+          "unavailable",
+          "unsupported",
+        ])
+        .optional()
+        .describe(
+          "Unknown schema versions return only schema_version and state=unsupported.",
+        ),
+      computed_at: zod.string().datetime({ offset: true }).optional(),
+      scheduled_at: zod.string().datetime({ offset: true }).optional(),
+      deadline_at: zod.string().datetime({ offset: true }).optional(),
+      target_role: zod.string().min(1).optional(),
+      pipeline_version: zod.string().min(1).optional(),
+      source: zod
+        .object({
+          capture_origin: zod.string().min(1).optional(),
+          transport: zod.string().min(1).optional(),
+          provider: zod.string().min(1).optional(),
+          target_role: zod.string().min(1).optional(),
+          mapping_version: zod.string().min(1).optional(),
+          original_sample_rate_hz: zod.number().optional(),
+          original_channel_count: zod.number().optional(),
+          target_sample_count: zod.number().optional(),
+          input_duration_seconds: zod.number().optional(),
+          preprocessing_version: zod.string().min(1).optional(),
+        })
+        .optional(),
+      metrics: zod
+        .object({
+          average_pitch_hz: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  analyzed_seconds: zod.number().optional(),
+                  voiced_seconds: zod.number().optional(),
+                  frame_count: zod.number().optional(),
+                  voiced_frame_count: zod.number().optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+          estimated_snr_db: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  analyzed_seconds: zod.number().optional(),
+                  active_seconds: zod.number().optional(),
+                  inactive_seconds: zod.number().optional(),
+                  frame_count: zod.number().optional(),
+                })
+                .optional(),
+              flags: zod
+                .object({
+                  noise_floor_floored: zod.boolean().optional(),
+                  value_capped: zod.boolean().optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+          voice_quality_index: zod
+            .object({
+              value: zod.number().optional(),
+              unit: zod.string().min(1).optional(),
+              state: zod
+                .enum(["available", "pending", "unavailable", "failed"])
+                .optional(),
+              reason: zod.string().min(1).optional(),
+              algorithm_version: zod.string().min(1).optional(),
+              coverage: zod
+                .object({
+                  window_count: zod.number().optional(),
+                  excluded_window_count: zod.number().optional(),
+                  detected_speech_seconds: zod.number().optional(),
+                  covered_speech_seconds: zod.number().optional(),
+                  expected_sample_count: zod.number().optional(),
+                  resampled_sample_count: zod.number().optional(),
+                  detector_id: zod.string().min(1).optional(),
+                  polynomial_version: zod.string().min(1).optional(),
+                  window_policy_version: zod.string().min(1).optional(),
+                  preprocessing_version: zod.string().min(1).optional(),
+                  cohort: zod.string().min(1).optional(),
+                })
+                .optional(),
+              model_version: zod.string().min(1).optional(),
+              calibration_id: zod.string().min(1).optional(),
+              scale_id: zod.string().min(1).optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   id: zod.string().uuid().optional(),
   service_provider_call_id: zod.string().min(1).optional(),
   session_id: zod.string().optional(),
@@ -79364,10 +79606,28 @@ export const UsageSubscriptionTierReadResponse = zod.object({
   ),
 });
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault =
+  false;
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault =
+  false;
+
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   autoreload_enabled: zod.boolean(),
   autoreload_walletamount: zod.string(),
   autoreload_walletthreshold: zod.string(),
+  autoreload_maxcharge: zod.string().optional(),
+  autoreload_consent: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault),
+  autoreload_charge_now: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({

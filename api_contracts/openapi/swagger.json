@@ -81283,7 +81283,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "",
+                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
                 "parameters": [
                     {
                         "name": "data",
@@ -147163,6 +147163,483 @@
                 }
             }
         },
+        "AudioMetricsSource": {
+            "type": "object",
+            "properties": {
+                "capture_origin": {
+                    "title": "Capture origin",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "transport": {
+                    "title": "Transport",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "target_role": {
+                    "title": "Target role",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "mapping_version": {
+                    "title": "Mapping version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "original_sample_rate_hz": {
+                    "title": "Original sample rate hz",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "original_channel_count": {
+                    "title": "Original channel count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "target_sample_count": {
+                    "title": "Target sample count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "input_duration_seconds": {
+                    "title": "Input duration seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "preprocessing_version": {
+                    "title": "Preprocessing version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AudioPitchCoverage": {
+            "type": "object",
+            "properties": {
+                "analyzed_seconds": {
+                    "title": "Analyzed seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "voiced_seconds": {
+                    "title": "Voiced seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "frame_count": {
+                    "title": "Frame count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "voiced_frame_count": {
+                    "title": "Voiced frame count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AudioPitchMetric": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "available",
+                        "pending",
+                        "unavailable",
+                        "failed"
+                    ],
+                    "readOnly": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "algorithm_version": {
+                    "title": "Algorithm version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "coverage": {
+                    "$ref": "#/definitions/AudioPitchCoverage"
+                }
+            }
+        },
+        "AudioSNRCoverage": {
+            "type": "object",
+            "properties": {
+                "analyzed_seconds": {
+                    "title": "Analyzed seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "active_seconds": {
+                    "title": "Active seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "inactive_seconds": {
+                    "title": "Inactive seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "frame_count": {
+                    "title": "Frame count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AudioSNRFlags": {
+            "type": "object",
+            "properties": {
+                "noise_floor_floored": {
+                    "title": "Noise floor floored",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "value_capped": {
+                    "title": "Value capped",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AudioSNRMetric": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "available",
+                        "pending",
+                        "unavailable",
+                        "failed"
+                    ],
+                    "readOnly": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "algorithm_version": {
+                    "title": "Algorithm version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "coverage": {
+                    "$ref": "#/definitions/AudioSNRCoverage"
+                },
+                "flags": {
+                    "$ref": "#/definitions/AudioSNRFlags"
+                }
+            }
+        },
+        "AudioVQICoverage": {
+            "type": "object",
+            "properties": {
+                "window_count": {
+                    "title": "Window count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "excluded_window_count": {
+                    "title": "Excluded window count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "detected_speech_seconds": {
+                    "title": "Detected speech seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "covered_speech_seconds": {
+                    "title": "Covered speech seconds",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "expected_sample_count": {
+                    "title": "Expected sample count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "resampled_sample_count": {
+                    "title": "Resampled sample count",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "detector_id": {
+                    "title": "Detector id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "polynomial_version": {
+                    "title": "Polynomial version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "window_policy_version": {
+                    "title": "Window policy version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "preprocessing_version": {
+                    "title": "Preprocessing version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cohort": {
+                    "title": "Cohort",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AudioVQIMetric": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "available",
+                        "pending",
+                        "unavailable",
+                        "failed"
+                    ],
+                    "readOnly": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "algorithm_version": {
+                    "title": "Algorithm version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "coverage": {
+                    "$ref": "#/definitions/AudioVQICoverage"
+                },
+                "model_version": {
+                    "title": "Model version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "calibration_id": {
+                    "title": "Calibration id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "scale_id": {
+                    "title": "Scale id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "AudioMetricsValues": {
+            "type": "object",
+            "properties": {
+                "average_pitch_hz": {
+                    "$ref": "#/definitions/AudioPitchMetric"
+                },
+                "estimated_snr_db": {
+                    "$ref": "#/definitions/AudioSNRMetric"
+                },
+                "voice_quality_index": {
+                    "$ref": "#/definitions/AudioVQIMetric"
+                }
+            }
+        },
+        "AudioMetricsEnvelope": {
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "analysis_id": {
+                    "title": "Analysis id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "generation": {
+                    "title": "Generation",
+                    "type": "integer",
+                    "readOnly": true,
+                    "minimum": 0
+                },
+                "state": {
+                    "title": "State",
+                    "description": "Unknown schema versions return only schema_version and state=unsupported.",
+                    "type": "string",
+                    "enum": [
+                        "not_requested",
+                        "pending",
+                        "complete",
+                        "partial",
+                        "failed",
+                        "unavailable",
+                        "unsupported"
+                    ],
+                    "readOnly": true
+                },
+                "computed_at": {
+                    "title": "Computed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "scheduled_at": {
+                    "title": "Scheduled at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "target_role": {
+                    "title": "Target role",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "pipeline_version": {
+                    "title": "Pipeline version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source": {
+                    "$ref": "#/definitions/AudioMetricsSource"
+                },
+                "metrics": {
+                    "$ref": "#/definitions/AudioMetricsValues"
+                }
+            }
+        },
         "CallExecutionEvalMetric": {
             "type": "object",
             "properties": {
@@ -147263,9 +147740,7 @@
             "type": "object",
             "properties": {
                 "audio_metrics": {
-                    "title": "Audio metrics",
-                    "type": "string",
-                    "readOnly": true
+                    "$ref": "#/definitions/AudioMetricsEnvelope"
                 },
                 "id": {
                     "title": "Id",
@@ -153163,9 +153638,7 @@
             "type": "object",
             "properties": {
                 "audio_metrics": {
-                    "title": "Audio metrics",
-                    "type": "string",
-                    "readOnly": true
+                    "$ref": "#/definitions/AudioMetricsEnvelope"
                 },
                 "id": {
                     "title": "Id",
@@ -179142,6 +179615,22 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
+                },
+                "autoreload_maxcharge": {
+                    "title": "Autoreload maxcharge",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "autoreload_consent": {
+                    "title": "Autoreload consent",
+                    "type": "boolean",
+                    "default": false
+                },
+                "autoreload_charge_now": {
+                    "title": "Autoreload charge now",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
