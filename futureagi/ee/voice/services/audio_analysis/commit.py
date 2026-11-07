@@ -5,27 +5,52 @@ from django.db import transaction
 from .errors import StaleAnalysisError
 
 
+def lock_audio_analysis_call(call_id: str):
+    """Lock RunTest -> TestExecution -> CallExecution in the caller's transaction.
+
+    A joined FOR UPDATE does not guarantee acquisition order. Discover the parent
+    ids without locks, then recheck the relationships and tombstones under all
+    three locks so a concurrent reparent/delete cannot authorize a stale write.
+    NO KEY UPDATE still excludes soft deletion but permits child FK checks.
+    """
+    from simulate.models.run_test import RunTest
+    from simulate.models.test_execution import CallExecution, TestExecution
+
+    try:
+        execution_id, run_id = (
+            CallExecution.objects.filter(id=call_id)
+            .values_list("test_execution_id", "test_execution__run_test_id")
+            .get()
+        )
+        run = RunTest.objects.select_for_update(of=("self",), no_key=True).get(
+            id=run_id
+        )
+        execution = TestExecution.objects.select_for_update(
+            of=("self",), no_key=True
+        ).get(id=execution_id)
+        call = CallExecution.objects.select_for_update(of=("self",), no_key=True).get(
+            id=call_id
+        )
+    except (
+        RunTest.DoesNotExist,
+        TestExecution.DoesNotExist,
+        CallExecution.DoesNotExist,
+    ):
+        raise StaleAnalysisError("tombstone") from None
+    if run.deleted or execution.deleted or call.deleted:
+        raise StaleAnalysisError("tombstone")
+    if execution.run_test_id != run.id or call.test_execution_id != execution.id:
+        raise StaleAnalysisError("stale_identity")
+    execution.run_test = run
+    call.test_execution = execution
+    return call
+
+
 def commit_envelope(
     call_id: str, generation: int, analysis_id: str, envelope: dict
 ) -> None:
-    from simulate.models.test_execution import CallExecution
-
     with transaction.atomic():
-        try:
-            call = (
-                CallExecution.objects.select_related("test_execution__run_test")
-                .select_for_update(
-                    of=("self", "test_execution", "test_execution__run_test")
-                )
-                .get(
-                    id=call_id,
-                    deleted=False,
-                    test_execution__deleted=False,
-                    test_execution__run_test__deleted=False,
-                )
-            )
-        except CallExecution.DoesNotExist:
-            raise StaleAnalysisError("tombstone") from None
+        call = lock_audio_analysis_call(call_id)
         if call.audio_analysis_generation != generation:
             raise StaleAnalysisError("stale_generation")
         stored = call.audio_metrics or {}

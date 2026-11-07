@@ -97,31 +97,23 @@ def _schedule_audio_analysis(
     from django.conf import settings
     from django.db import transaction
 
+    from ee.voice.services.audio_analysis.commit import lock_audio_analysis_call
     from ee.voice.services.audio_analysis.constants import (
         PIPELINE_VERSION,
         audio_metrics_enabled_for_org,
     )
     from ee.voice.services.audio_analysis.envelope import empty_envelope
-    from ee.voice.services.audio_analysis.errors import AudioProvenanceError
-    from simulate.models.test_execution import CallExecution
+    from ee.voice.services.audio_analysis.errors import (
+        AudioProvenanceError,
+        StaleAnalysisError,
+    )
 
     if not settings.VOICE_AUDIO_METRICS_ENABLED:
         return ScheduleAudioAnalysisOutput(False, skip_reason="flag_off")
     with transaction.atomic():
-        call = (
-            CallExecution.objects.select_for_update(
-                of=("self", "test_execution", "test_execution__run_test")
-            )
-            .select_related("test_execution__run_test")
-            .filter(
-                id=input.call_id,
-                deleted=False,
-                test_execution__deleted=False,
-                test_execution__run_test__deleted=False,
-            )
-            .first()
-        )
-        if call is None:
+        try:
+            call = lock_audio_analysis_call(input.call_id)
+        except StaleAnalysisError:
             return ScheduleAudioAnalysisOutput(False, skip_reason="missing_call")
         generation = call.audio_analysis_generation
 
@@ -259,10 +251,10 @@ def _load_current(input, *, for_update=False):
         test_execution__run_test__deleted=False,
     )
     if for_update:
-        # Ancestor locks serialize the final check with their soft deletion.
-        query = query.select_for_update(
-            of=("self", "test_execution", "test_execution__run_test")
-        )
+        from ee.voice.services.audio_analysis.commit import lock_audio_analysis_call
+
+        # Lock ancestors before the call, then reload its versions and identity.
+        lock_audio_analysis_call(input.call_id)
     call = query.first()
     if call is None:
         raise StaleAnalysisError("tombstone")
