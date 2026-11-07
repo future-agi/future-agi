@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 BACKEND_DIR = "futureagi"
+SYNTAX_ERROR = "syntax-error"  # ruff reports syntax errors with no rule code
 
 # Banned-pattern rules that futureagi/pyproject.toml does not select yet.
 # INP001 waits for the dedicated __init__.py PR, and ANN401 flags more than the
@@ -83,6 +84,7 @@ HINTS = {
     "F405": "Import names explicitly. A name from a star import is a probable NameError.",
     "F821": "Undefined name: a probable runtime NameError.",
     "FORMAT": "Run `ruff format` on the file (the husky pre-commit hook does this on commit).",
+    SYNTAX_ERROR: "The file does not parse.",
 }
 
 
@@ -163,13 +165,42 @@ def added_lines(repo: Path, base: str, path: str) -> set[int]:
     return lines
 
 
+def normalize(line: str) -> str:
+    """A line's code without its trailing comment and with whitespace collapsed.
+
+    Adding or editing a comment on an old line must not make its finding new.
+    A `#` inside a string literal on the same line is kept.
+    """
+    quote = ""
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if line.startswith(quote, i):
+                i += len(quote)
+                quote = ""
+                continue
+        elif ch == "#":
+            line = line[:i]
+            break
+        elif ch in "'\"":
+            quote = ch * 3 if line.startswith(ch * 3, i) else ch
+            i += len(quote)
+            continue
+        i += 1
+    return " ".join(line.split())
+
+
 def source_line(tree: Path, path: str, line: int) -> str:
-    """The stripped text of one line, or an empty string if it is out of range."""
+    """The normalized text of one line, or an empty string if it is out of range."""
     try:
         text = (tree / path).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    return text[line - 1].strip() if 0 < line <= len(text) else ""
+    return normalize(text[line - 1]) if 0 < line <= len(text) else ""
 
 
 def ruff_check(ruff: str, tree: Path, paths: list[str], select: tuple[str, ...] | None) -> list[Violation]:
@@ -192,7 +223,7 @@ def ruff_check(ruff: str, tree: Path, paths: list[str], select: tuple[str, ...] 
         violations.append(
             Violation(
                 path=path,
-                code=f.get("code") or "syntax-error",
+                code=f.get("code") or SYNTAX_ERROR,
                 line=line,
                 column=f["location"]["column"],
                 message=f["message"],
@@ -245,6 +276,18 @@ def new_violations(
     return sorted(result, key=lambda v: (v.path, v.line, v.code))
 
 
+def dedupe(violations: list[Violation]) -> list[Violation]:
+    """Drop a finding that both lint passes reported for the same place and rule."""
+    seen: set[tuple[str, str, int, int, str]] = set()
+    result = []
+    for v in violations:
+        key = (v.path, v.code, v.line, v.column, v.message)
+        if key not in seen:
+            seen.add(key)
+            result.append(v)
+    return result
+
+
 def escape_data(s: str) -> str:
     return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
@@ -276,10 +319,15 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
         base_tree = Path(tmp) / "base"
         run(["git", "worktree", "add", "--detach", "--quiet", str(base_tree), base], repo)
         try:
-            head = ruff_check(ruff, repo, head_paths, None) + ruff_check(ruff, repo, app_head, BANNED_RULES)
-            old = ruff_check(ruff, base_tree, base_paths, None) + ruff_check(ruff, base_tree, app_base, BANNED_RULES)
-            head_dirty = ruff_unformatted(ruff, repo, head_paths)
-            base_dirty = ruff_unformatted(ruff, base_tree, base_paths)
+            head = dedupe(ruff_check(ruff, repo, head_paths, None) + ruff_check(ruff, repo, app_head, BANNED_RULES))
+            old = dedupe(ruff_check(ruff, base_tree, base_paths, None) + ruff_check(ruff, base_tree, app_base, BANNED_RULES))
+            # The formatter cannot parse a file with a syntax error (ruff exits 2). Leave such
+            # files out of the format pass: the lint pass already reports a new syntax error,
+            # and a file that did not parse at the base counts as unformatted there.
+            head_broken = {v.path for v in head if v.code == SYNTAX_ERROR}
+            base_broken = {v.path for v in old if v.code == SYNTAX_ERROR}
+            head_dirty = ruff_unformatted(ruff, repo, [p for p in head_paths if p not in head_broken])
+            base_dirty = base_broken | ruff_unformatted(ruff, base_tree, [p for p in base_paths if p not in base_broken])
         finally:
             run(["git", "worktree", "remove", "--force", str(base_tree)], repo, ok_codes=(0, 128))
 

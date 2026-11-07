@@ -9,6 +9,8 @@ name: Python lint
 
 on:
   pull_request:
+    # edited: a stacked PR moved to another base branch gets a new baseline.
+    types: [opened, synchronize, reopened, edited]
     paths:
       - "futureagi/**/*.py"
       - "futureagi/pyproject.toml"

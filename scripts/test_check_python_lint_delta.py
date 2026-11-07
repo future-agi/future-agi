@@ -73,6 +73,19 @@ class PureFunctionTests(unittest.TestCase):
         found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {})
         self.assertEqual([x.code for x in found], ["BLE001"])
 
+    def test_normalize_drops_the_comment_but_not_a_hash_in_a_string(self):
+        self.assertEqual(gate.normalize("    except Exception:  # existing fallback"), "except Exception:")
+        self.assertEqual(gate.normalize('x = "a # b"  # c'), 'x = "a # b"')
+        self.assertEqual(gate.normalize('q = "\\"#"  # c'), 'q = "\\"#"')
+        self.assertEqual(gate.normalize('z = """#"""'), 'z = """#"""')
+        self.assertEqual(gate.normalize("a  =   1"), "a = 1")
+
+    def test_a_finding_reported_by_both_passes_counts_once(self):
+        a = v("futureagi/a.py", "T201", 2, "print(x)")
+        self.assertEqual(gate.dedupe([a, a]), [a])
+        b = v("futureagi/a.py", "T201", 3, "print(x)")
+        self.assertEqual(gate.dedupe([a, b]), [a, b])
+
     def test_annotation_escapes_and_carries_the_replacement(self):
         line = gate.annotation(v("futureagi/a,b.py", "S608", 3, "x"))
         self.assertTrue(line.startswith("::error file=futureagi/a%2Cb.py,line=3,col=1,title=ruff S608 (new in this change)::"))
@@ -170,7 +183,7 @@ class EndToEndTests(unittest.TestCase):
             text=True,
             env={**os.environ, "GITHUB_STEP_SUMMARY": ""},
         )
-        found = re.findall(r"^::error file=([^,]+),line=(\d+),col=\d+,title=ruff ([A-Z0-9]+)", proc.stdout, re.MULTILINE)
+        found = re.findall(r"^::error file=([^,]+),line=(\d+),col=\d+,title=ruff ([A-Za-z0-9-]+)", proc.stdout, re.MULTILINE)
         return proc.returncode, [(f, int(n), c) for f, n, c in found], proc
 
     def test_fails_on_new_violations_only(self):
@@ -206,11 +219,27 @@ class EndToEndTests(unittest.TestCase):
         self.write("futureagi/pyproject.toml", CONFIG)
         self.write("futureagi/app/mod.py", BASE_MOD)
         base = self.commit()
-        self.write("futureagi/app/mod.py", "# A comment that changes nothing.\n" + BASE_MOD)
+        # A new comment line above, and a comment added to the old except line.
+        head = "# A comment that changes nothing.\n" + BASE_MOD.replace(
+            "except Exception:", "except Exception:  # existing fallback"
+        )
+        self.write("futureagi/app/mod.py", head)
         self.commit()
 
         code, found, proc = self.gate(base)
         self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_a_syntax_error_is_reported_and_does_not_stop_the_check(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/was_broken.py", "def (:\n")
+        base = self.commit()
+        self.write("futureagi/app/was_broken.py", "x = 1\n")  # fixed: nothing new
+        self.write("futureagi/app/now_broken.py", "def (:\n")  # new syntax error
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual(code, 1, proc.stdout + proc.stderr)
+        self.assertEqual([(f, c) for f, _, c in found], [("futureagi/app/now_broken.py", "syntax-error")], proc.stdout)
 
 
 if __name__ == "__main__":
