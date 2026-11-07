@@ -24,3 +24,18 @@ func TestVideoMetricsRegisteredAndLabelAllowlist(t *testing.T) {
 		t.Fatal(r.Render())
 	}
 }
+
+// Service and model labels come only from the pinned capability registry, so
+// a second service is labelled while caller-chosen values still collapse.
+func TestVideoMetricsLabelsPerService(t *testing.T) {
+	r := NewRegistry()
+	r.VideoEvent("video_jobs_total", map[string]string{"service": "openrouter", "model": "bytedance/seedance-1-5-pro", "status": "queued"})
+	r.VideoEvent("video_jobs_total", map[string]string{"service": "openrouter", "model": "dreamina-seedance-2-5-260628", "status": "queued"})
+	r.VideoEvent("video_jobs_total", map[string]string{"service": "byteplus", "model": "bytedance/seedance-1-5-pro", "status": "queued"})
+	text := r.Render()
+	for _, want := range []string{`model="bytedance/seedance-1-5-pro",service="openrouter"`, `model="unknown",service="openrouter"`, `model="unknown",service="byteplus"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %s in\n%s", want, text)
+		}
+	}
+}

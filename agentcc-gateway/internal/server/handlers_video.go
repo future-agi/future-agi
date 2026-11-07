@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"strconv"
@@ -92,10 +93,13 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, &models.APIError{Status: 413, Type: models.ErrTypeInvalidRequest, Code: "request_too_large", Message: "Request body exceeds maximum size"})
 		return
 	}
-	req, e := capability.Decode(body)
+	req, wire, e := decodeVideoCreate(r.Header.Get("Content-Type"), body)
 	if e != nil {
 		videoError(w, e)
 		return
+	}
+	if wire != "" {
+		rc.Metadata["video_wire"] = wire
 	}
 	if h.tenantStore != nil {
 		org := h.tenantStore.Get(rc.Metadata["org_id"])
@@ -174,6 +178,31 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	videoJSON(w, status, job.ToSubmitResponse())
 }
+
+// decodeVideoCreate keeps the native JSON contract unchanged and adds the
+// OpenAI Videos API shape: multipart/form-data (what the official SDKs send)
+// or JSON carrying seconds, size or input_reference.
+func decodeVideoCreate(contentType string, body []byte) (capability.Request, string, error) {
+	mt, _, _ := mime.ParseMediaType(contentType)
+	switch {
+	case mt == "multipart/form-data":
+		c, err := capability.DecodeOpenAIMultipart(body, contentType)
+		if err != nil {
+			return capability.Request{}, "", err
+		}
+		req, err := c.Request()
+		return req, capability.WireOpenAI, err
+	case capability.IsOpenAIJSON(body):
+		c, err := capability.DecodeOpenAIJSON(body)
+		if err != nil {
+			return capability.Request{}, "", err
+		}
+		req, err := c.Request()
+		return req, capability.WireOpenAI, err
+	}
+	req, err := capability.Decode(body)
+	return req, "", err
+}
 func (h *Handlers) videoReadContext(w http.ResponseWriter, r *http.Request) *models.RequestContext {
 	if !h.videoReady(w) {
 		return nil
@@ -206,7 +235,7 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Release()
 	q := r.URL.Query()
-	f := video.VideoListFilters{Limit: 20, Order: "desc", Status: q.Get("status"), Model: q.Get("model")}
+	f := video.VideoListFilters{Limit: 20, Order: "desc", Status: q.Get("status"), Model: q.Get("model"), After: q.Get("after")}
 	var err error
 	for _, field := range []string{"limit", "offset"} {
 		if q.Has(field) {
@@ -225,7 +254,7 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 	if q.Has("order") {
 		f.Order = q.Get("order")
 	}
-	if err != nil || q.Has("order") && f.Order == "" {
+	if err != nil || q.Has("order") && f.Order == "" || f.After != "" && f.Offset != 0 {
 		models.WriteError(w, models.ErrBadRequest("invalid_filter", "Invalid video list filter"))
 		return
 	}
@@ -238,7 +267,12 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 	for _, j := range jobs {
 		rows = append(rows, j.ToStatusResponse())
 	}
-	videoJSON(w, 200, map[string]any{"object": "list", "data": rows, "total": total, "limit": f.Limit, "offset": f.Offset, "has_more": f.Offset+len(rows) < total})
+	// first_id/last_id make the list usable as an OpenAI cursor page.
+	var first, last any
+	if len(jobs) > 0 {
+		first, last = jobs[0].ID, jobs[len(jobs)-1].ID
+	}
+	videoJSON(w, 200, map[string]any{"object": "list", "data": rows, "total": total, "limit": f.Limit, "offset": f.Offset, "has_more": f.Offset+len(rows) < total, "first_id": first, "last_id": last})
 }
 func (h *Handlers) CancelVideo(w http.ResponseWriter, r *http.Request) {
 	rc := h.videoReadContext(w, r)
@@ -268,7 +302,11 @@ func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 		videoError(w, e)
 		return
 	}
-	videoJSON(w, 200, map[string]any{"id": j.ID, "object": "video", "deleted": true, "deletion_scope": "local_only", "upstream_may_continue": j.UpstreamMayContinue, "accounting_retained": true})
+	object := "video"
+	if j.Wire == capability.WireOpenAI {
+		object = "video.deleted"
+	}
+	videoJSON(w, 200, map[string]any{"id": j.ID, "object": object, "deleted": true, "deletion_scope": "local_only", "upstream_may_continue": j.UpstreamMayContinue, "accounting_retained": true})
 }
 func (h *Handlers) GetVideoContent(w http.ResponseWriter, r *http.Request) {
 	rc := h.videoReadContext(w, r)
@@ -283,6 +321,12 @@ func (h *Handlers) GetVideoContent(w http.ResponseWriter, r *http.Request) {
 	}
 	if e != nil || index < 0 {
 		models.WriteError(w, models.ErrBadRequest("invalid_artifact_index", "Invalid artifact index"))
+		return
+	}
+	// OpenAI clients send variant=video; thumbnails and spritesheets are not
+	// produced by any supported provider.
+	if v := r.URL.Query().Get("variant"); r.URL.Query().Has("variant") && v != "video" {
+		models.WriteError(w, models.ErrBadRequest("unsupported_variant", "Only the video variant is available"))
 		return
 	}
 	id := r.URL.Query().Get("video_id")

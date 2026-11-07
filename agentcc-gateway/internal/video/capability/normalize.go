@@ -44,9 +44,15 @@ func (r *Registry) Normalize(req Request, region string) (Resolved, error) {
 	m := resolved.Capability
 	if req.DurationSeconds == 0 {
 		req.DurationSeconds = 5
+		if m.DefaultDuration > 0 {
+			req.DurationSeconds = float64(m.DefaultDuration)
+		}
 	}
 	if req.Resolution == "" {
 		req.Resolution = "720p"
+		if m.DefaultResolution != "" {
+			req.Resolution = m.DefaultResolution
+		}
 	}
 	if req.AspectRatio == "" {
 		req.AspectRatio = "16:9"
@@ -55,7 +61,8 @@ func (r *Registry) Normalize(req Request, region string) (Resolved, error) {
 			req.AspectRatio = spec.AspectRatios[0]
 		}
 	}
-	if req.FPS == 0 {
+	// Models without a documented frame-rate control keep fps unset.
+	if req.FPS == 0 && len(m.FPS) > 0 {
 		req.FPS = m.FPS[0]
 	}
 	if req.N == 0 {

@@ -35,6 +35,9 @@ func (r Rate) Price(quantity float64) (int64, error) {
 	if r.Revision == "" || r.USDPerMillion <= 0 || math.IsNaN(r.USDPerMillion) || math.IsInf(r.USDPerMillion, 0) {
 		return 0, ErrUnpriced
 	}
+	if r.Unit == video.USD {
+		return USDMicros(quantity)
+	}
 	cost := quantity * r.USDPerMillion
 	if quantity < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) || cost >= math.MaxInt64 {
 		return 0, fmt.Errorf("invalid video usage quantity")
@@ -46,6 +49,8 @@ type EstimateResult struct {
 	video.UsageLine
 	Micros int64  `json:"micros"`
 	Basis  string `json:"basis"`
+	// Rate prices settlement lines of the same unit and revision.
+	Rate Rate `json:"-"`
 }
 type Options struct {
 	// Operator-asserted minimum: the referenced provider pricing sheet was not

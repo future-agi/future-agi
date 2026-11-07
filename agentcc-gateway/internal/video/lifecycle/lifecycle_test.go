@@ -42,6 +42,10 @@ type fixture struct {
 
 func setup(t *testing.T, script videotest.Script) *fixture {
 	t.Helper()
+	return setupProvider(t, script, "byteplus", config.VideoProviderConfig{Enabled: true, Models: []string{modelID}, Region: "ap-southeast-1", AccountRef: "test-account", TariffRevision: capability.BytePlusRevision, Limits: config.VideoProviderLimits{SubmitRPM: 1000, PollQPS: 1000, MaxActiveTasks: 100}, Deadlines: config.VideoProviderDeadlines{Submit: time.Second, Read: time.Second, Run: time.Hour, Reconcile: time.Second}, Poll: config.VideoProviderPoll{BaseInterval: time.Second}})
+}
+func setupProvider(t *testing.T, script videotest.Script, service string, pc config.VideoProviderConfig) *fixture {
+	t.Helper()
 	addr := os.Getenv("TEST_REDIS_ADDR")
 	if addr == "" {
 		t.Skip("TEST_REDIS_ADDR unset")
@@ -64,7 +68,7 @@ func setup(t *testing.T, script videotest.Script) *fixture {
 	cfg.Enabled = true
 	cfg.Submit.SyncWait = 0
 	cfg.Limits.OrgMaxActiveJobs = 100
-	cfg.Providers = map[string]config.VideoProviderConfig{"byteplus": {Enabled: true, Models: []string{modelID}, Region: "ap-southeast-1", AccountRef: "test-account", TariffRevision: capability.BytePlusRevision, Limits: config.VideoProviderLimits{SubmitRPM: 1000, PollQPS: 1000, MaxActiveTasks: 100}, Deadlines: config.VideoProviderDeadlines{Submit: time.Second, Read: time.Second, Run: time.Hour, Reconcile: time.Second}, Poll: config.VideoProviderPoll{BaseInterval: time.Second}}}
+	cfg.Providers = map[string]config.VideoProviderConfig{service: pc}
 	if script.Capabilities.Service == "" {
 		script.Capabilities = capability.BytePlus()
 	}

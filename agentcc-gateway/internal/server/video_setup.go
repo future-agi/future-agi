@@ -11,6 +11,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/otel"
 	provider "github.com/futureagi/agentcc-gateway/internal/providers/video"
 	"github.com/futureagi/agentcc-gateway/internal/providers/video/byteplus"
+	"github.com/futureagi/agentcc-gateway/internal/providers/video/openrouter"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/secrets"
 	"github.com/futureagi/agentcc-gateway/internal/video"
@@ -61,10 +62,16 @@ func (s *Server) configureVideo(client *redisstate.Client) error {
 		if !p.Enabled && p.APIKey == "" && p.CredentialRef == "" {
 			continue
 		}
-		if name != "byteplus" {
+		var a provider.Adapter
+		var e error
+		switch name {
+		case "byteplus":
+			a, e = byteplus.New(byteplus.Config{Provider: p, CorrelationSecret: cfg.CorrelationSecret, FetchTimeout: cfg.Copy.Deadline, MaxDownloadBytes: cfg.Artifacts.MaxBytes, ListLimiter: svc.ListLimit})
+		case "openrouter":
+			a, e = openrouter.New(openrouter.Config{Provider: p, CorrelationSecret: cfg.CorrelationSecret, FetchTimeout: cfg.Copy.Deadline, MaxDownloadBytes: cfg.Artifacts.MaxBytes})
+		default:
 			return fmt.Errorf("video adapter unavailable")
 		}
-		a, e := byteplus.New(byteplus.Config{Provider: p, CorrelationSecret: cfg.CorrelationSecret, FetchTimeout: cfg.Copy.Deadline, MaxDownloadBytes: cfg.Artifacts.MaxBytes, ListLimiter: svc.ListLimit})
 		if e != nil {
 			return fmt.Errorf("video adapter configuration invalid")
 		}

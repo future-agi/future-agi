@@ -11,7 +11,7 @@ const BytePlusRevision = "byteplus-2026-10-02"
 // BytePlus contains only the seven IDs pinned in contract section 2. Unknown
 // output ACL and billability remain unknown until an authorized smoke verifies them.
 func BytePlus() video.Capabilities {
-	c := video.Capabilities{Service: "byteplus", Revision: BytePlusRevision, Regions: []string{"ap-southeast-1"}, SubmitIdempotency: video.IdempotencyNone, CorrelationLookup: video.LookupHeuristic, CancelSupport: video.CancelQueuedOnly, OutputURLExpiry: 24 * time.Hour, OutputACL: video.ACLUnknown, BillsOnFailure: video.BillingUnknown, Webhook: video.WebhookUnauthenticated, PollMinInterval: 5 * time.Second}
+	c := video.Capabilities{Service: "byteplus", Revision: BytePlusRevision, Route: video.RouteNative, Regions: []string{"ap-southeast-1"}, SubmitIdempotency: video.IdempotencyNone, CorrelationLookup: video.LookupHeuristic, CancelSupport: video.CancelQueuedOnly, OutputURLExpiry: 24 * time.Hour, OutputACL: video.ACLUnknown, BillsOnFailure: video.BillingUnknown, Webhook: video.WebhookUnauthenticated, PollMinInterval: 5 * time.Second}
 	for _, row := range []struct {
 		id                string
 		min, max          int

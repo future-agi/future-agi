@@ -34,6 +34,8 @@ type VideoListFilters struct {
 	Status, Model string
 	Limit, Offset int
 	Order         string
+	// After is an OpenAI-style cursor: results start after this video id.
+	After string
 }
 type Store interface {
 	Create(*VideoJob) error
@@ -239,6 +241,19 @@ func filterJobs(all []*VideoJob, org string, f VideoListFilters) ([]*VideoJob, i
 		return b.CreatedAt.Before(a.CreatedAt) || a.CreatedAt.Equal(b.CreatedAt) && b.ID < a.ID
 	})
 	n := len(out)
+	if f.After != "" {
+		start := -1
+		for i, j := range out {
+			if j.ID == f.After {
+				start = i + 1
+			}
+		}
+		if start < 0 {
+			return []*VideoJob{}, n, nil
+		}
+		out = out[start:]
+		n = len(out)
+	}
 	if f.Offset >= n {
 		return []*VideoJob{}, n, nil
 	}

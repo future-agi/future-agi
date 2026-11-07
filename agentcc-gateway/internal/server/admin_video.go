@@ -9,6 +9,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/audit"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	video "github.com/futureagi/agentcc-gateway/internal/providers/video"
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
 )
 
@@ -16,7 +17,15 @@ func (s *Server) adminVideoCapabilities(w http.ResponseWriter, r *http.Request) 
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
-	caps, _ := capability.NewRegistry().Service("byteplus")
+	registry := capability.NewRegistry()
+	records := []any{}
+	for _, service := range registry.Services() {
+		caps, _ := registry.Service(service)
+		records = append(records, s.adminVideoCapabilityRecord(caps))
+	}
+	videoJSON(w, 200, map[string]any{"object": "list", "data": records})
+}
+func (s *Server) adminVideoCapabilityRecord(caps video.Capabilities) map[string]any {
 	modelsOut := make([]map[string]any, 0, len(caps.Models))
 	for _, m := range caps.Models {
 		ops := map[string]any{}
@@ -39,11 +48,10 @@ func (s *Server) adminVideoCapabilities(w http.ResponseWriter, r *http.Request) 
 		if m.Tariff != nil {
 			tariff = map[string]any{"unit": m.Tariff.Unit, "revision": m.Tariff.Revision}
 		}
-		modelsOut = append(modelsOut, map[string]any{"model_id": m.ModelID, "operations": ops, "durations": map[string]any{"min": m.Durations.Min, "max": m.Durations.Max, "enum": m.Durations.Enum}, "auto_duration": auto, "resolutions": m.Resolutions, "aspect_ratios": m.AspectRatios, "fps": m.FPS, "max_outputs": m.MaxOutputs, "native_multi_output": m.NativeMultiOutput, "audio": map[string]any{"generated": m.Audio.Generated, "input_refs": m.Audio.InputRefs, "audio_only": m.Audio.AudioOnly}, "inputs": inputs, "prompt_limit": map[string]any{"unit": m.PromptLimit.Unit, "max": m.PromptLimit.Max}, "provider_options": options, "tariff": tariff, "access": m.Access})
+		modelsOut = append(modelsOut, map[string]any{"model_id": m.ModelID, "operations": ops, "durations": map[string]any{"min": m.Durations.Min, "max": m.Durations.Max, "enum": m.Durations.Enum, "default": m.DefaultDuration}, "default_resolution": m.DefaultResolution, "auto_duration": auto, "resolutions": m.Resolutions, "aspect_ratios": m.AspectRatios, "fps": m.FPS, "max_outputs": m.MaxOutputs, "native_multi_output": m.NativeMultiOutput, "audio": map[string]any{"generated": m.Audio.Generated, "input_refs": m.Audio.InputRefs, "audio_only": m.Audio.AudioOnly}, "inputs": inputs, "prompt_limit": map[string]any{"unit": m.PromptLimit.Unit, "max": m.PromptLimit.Max}, "provider_options": options, "tariff": tariff, "access": m.Access})
 	}
 	sort.Slice(modelsOut, func(i, j int) bool { return modelsOut[i]["model_id"].(string) < modelsOut[j]["model_id"].(string) })
-	record := map[string]any{"service": caps.Service, "revision": caps.Revision, "regions": caps.Regions, "models": modelsOut, "configured": s.cfg.Video.Providers["byteplus"].Enabled, "submit_idempotency": caps.SubmitIdempotency, "correlation_lookup": caps.CorrelationLookup, "cancel_support": caps.CancelSupport, "output_acl": caps.OutputACL, "output_url_expiry_seconds": caps.OutputURLExpiry.Seconds(), "output_url_refresh": caps.OutputURLRefresh, "bills_on_failure": caps.BillsOnFailure, "webhook": caps.Webhook, "poll_min_interval_seconds": caps.PollMinInterval.Seconds()}
-	videoJSON(w, 200, map[string]any{"object": "list", "data": []any{record}})
+	return map[string]any{"service": caps.Service, "route": caps.Route, "revision": caps.Revision, "regions": caps.Regions, "models": modelsOut, "configured": s.cfg.Video.Providers[caps.Service].Enabled, "submit_idempotency": caps.SubmitIdempotency, "correlation_lookup": caps.CorrelationLookup, "cancel_support": caps.CancelSupport, "output_acl": caps.OutputACL, "output_url_expiry_seconds": caps.OutputURLExpiry.Seconds(), "output_url_refresh": caps.OutputURLRefresh, "bills_on_failure": caps.BillsOnFailure, "webhook": caps.Webhook, "poll_min_interval_seconds": caps.PollMinInterval.Seconds()}
 }
 func adminVideoBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))

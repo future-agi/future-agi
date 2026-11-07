@@ -248,7 +248,7 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 		return fail(err)
 	}
 	estimate, err := tariff.Estimate(resolved, tariff.Options{MinTokensWithVideoInput: pc.MinTokensWithVideoInput})
-	priced := err == nil && pc.TariffRevision == tariff.Revision
+	priced := err == nil && pc.TariffRevision != "" && pc.TariffRevision == tariff.RevisionFor(service)
 	if !priced && !pc.AllowUnpricedModels {
 		return fail(api(503, "tariff_missing"))
 	}
@@ -269,6 +269,11 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 	j := &video.VideoJob{ID: id, OrgID: org, KeyID: rc.Metadata["auth_key_id"], KeyType: rc.Metadata["key_type"], Creator: rc.Metadata["auth_key_owner"], Model: req.Model, Service: service, ModelID: resolved.ModelID, Region: resolved.Region, AccountRef: pc.AccountRef, CapabilityRevision: resolved.CapabilityRevision, RequestCanonical: canonical, Fingerprint: fp, Ingress: ingress, EndUserHash: endHash, CreatedAt: now, ExpiresAt: expires, SubmitBy: now.Add(s.cfg.Submit.Deadline), RetrySafe: true, CancelState: "none", ReconcileState: video.ReconcileNone, ClientMetadata: r.Metadata, TraceID: rc.TraceID}
 	j.StateChangedAt = now
 	j.Status = video.StatusSubmitting
+	j.Duration = r.DurationSeconds
+	j.Size = capability.SizeFor(r.Resolution, r.AspectRatio)
+	if rc.Metadata["video_wire"] == capability.WireOpenAI {
+		j.Wire = capability.WireOpenAI
+	}
 	defer s.span("video.submit", j)()
 	if priced {
 		j.EstimateUnit = estimate.Unit
@@ -276,15 +281,10 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 		j.EstimateUSD = estimate.USD
 		j.ReservedMicros = estimate.Micros
 		j.TariffRevision = estimate.TariffRevision
-		hasVideo := false
-		for _, in := range resolved.Request.Inputs {
-			hasVideo = hasVideo || in.Role == provider.ReferenceVideo
+		if estimate.Rate.USDPerMillion <= 0 || estimate.Rate.Unit != estimate.Unit {
+			return fail(api(503, "tariff_missing"))
 		}
-		rate, e := tariff.BytePlusRate(resolved.ModelID, r.Resolution, hasVideo, r.Audio != nil && *r.Audio)
-		if e != nil {
-			return fail(e)
-		}
-		j.RateUSDPerMillion = rate.USDPerMillion
+		j.RateUSDPerMillion = estimate.Rate.USDPerMillion
 	} else {
 		j.SettlementState = video.SettlementUnsettled
 	}

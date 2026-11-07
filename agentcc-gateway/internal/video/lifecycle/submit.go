@@ -112,7 +112,9 @@ func (s *Service) submit(ctx context.Context, j *video.VideoJob, l video.Lease) 
 }
 func (s *Service) submitError(ctx context.Context, j *video.VideoJob, l video.Lease, err error) error {
 	var up *provider.UpstreamError
-	if errors.As(err, &up) && up.Status >= 400 && up.Status < 500 && up.Status != 408 && up.Status != 429 {
+	// 408, 429 and 499 (caller closed) are observed after the provider read the
+	// body, so they never prove a rejection.
+	if errors.As(err, &up) && up.Status >= 400 && up.Status < 500 && up.Status != 408 && up.Status != 429 && up.Status != 499 {
 		code := "submit_rejected"
 		if up.Status == 401 || up.Status == 403 {
 			code = "provider_access_denied"

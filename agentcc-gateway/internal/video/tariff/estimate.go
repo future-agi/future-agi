@@ -13,7 +13,27 @@ import (
 // Estimate consumes a validated, normalized request plus ingress-verified media
 // metadata. Auto duration and adaptive dimensions use the largest bounded case.
 func Estimate(res capability.Resolved, opts Options) (*EstimateResult, error) {
-	if res.Service != "byteplus" || res.CapabilityRevision != Revision {
+	switch res.Service {
+	case "byteplus":
+		return estimateBytePlus(res, opts)
+	case "openrouter":
+		return estimateOpenRouter(res)
+	}
+	return nil, ErrUnpriced
+}
+
+// RevisionFor names the only tariff revision a configured service may pin.
+func RevisionFor(service string) string {
+	switch service {
+	case "byteplus":
+		return Revision
+	case "openrouter":
+		return OpenRouterRevision
+	}
+	return ""
+}
+func estimateBytePlus(res capability.Resolved, opts Options) (*EstimateResult, error) {
+	if res.CapabilityRevision != Revision {
 		return nil, ErrUnpriced
 	}
 	req := res.Request
@@ -77,7 +97,7 @@ func Estimate(res capability.Resolved, opts Options) (*EstimateResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &EstimateResult{UsageLine: video.UsageLine{Unit: VideoTokens, Quantity: tokens, Source: video.UsageEstimate, TariffRevision: Revision, Currency: "USD", USD: float64(micros) / 1e6}, Micros: micros, Basis: "upper_bound"}, nil
+	return &EstimateResult{UsageLine: video.UsageLine{Unit: VideoTokens, Quantity: tokens, Source: video.UsageEstimate, TariffRevision: Revision, Currency: "USD", USD: float64(micros) / 1e6}, Micros: micros, Basis: "upper_bound", Rate: rate}, nil
 }
 func dimensions(resolution, ratio string) (float64, float64, error) {
 	short := map[string]float64{"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}[resolution]

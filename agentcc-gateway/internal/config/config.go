@@ -1772,7 +1772,7 @@ func (c *Config) validateVideo() error {
 		if p.Poll.BaseInterval < caps.PollMinInterval {
 			return fmt.Errorf("%spoll.base_interval below provider minimum", prefix)
 		}
-		if p.TariffRevision == "" && !p.AllowUnpricedModels || p.TariffRevision != "" && p.TariffRevision != tariff.Revision {
+		if p.TariffRevision == "" && !p.AllowUnpricedModels || p.TariffRevision != "" && p.TariffRevision != tariff.RevisionFor(name) {
 			return fmt.Errorf("%stariff_revision must be known or allow_unpriced_models enabled", prefix)
 		}
 		if (caps.OutputACL == video.ACLUnknown || caps.OutputACL == video.ACLPublicDefault || caps.OutputACL == "") && !p.AcknowledgePublicOutput {
@@ -1787,8 +1787,16 @@ func (c *Config) validateVideo() error {
 		default:
 			return fmt.Errorf("%ssafety_identifier_mode must be none or org_key_hmac", prefix)
 		}
-		if p.ExecutionExpiresAfter < 3600 || p.ExecutionExpiresAfter > 259200 || time.Duration(p.ExecutionExpiresAfter)*time.Second < p.Deadlines.Run {
+		// execution_expires_after is a BytePlus task parameter; other services
+		// have no equivalent and must leave it unset.
+		if name == "byteplus" && (p.ExecutionExpiresAfter < 3600 || p.ExecutionExpiresAfter > 259200 || time.Duration(p.ExecutionExpiresAfter)*time.Second < p.Deadlines.Run) {
 			return fmt.Errorf("%sexecution_expires_after must be in [3600,259200] and cover deadlines.run", prefix)
+		}
+		if name != "byteplus" && p.ExecutionExpiresAfter != 0 {
+			return fmt.Errorf("%sexecution_expires_after is only supported for byteplus", prefix)
+		}
+		if name != "byteplus" && p.MinTokensWithVideoInput != 0 {
+			return fmt.Errorf("%smin_tokens_with_video_input is only supported for byteplus", prefix)
 		}
 		if p.MinTokensWithVideoInput < 0 {
 			return fmt.Errorf("%smin_tokens_with_video_input cannot be negative", prefix)

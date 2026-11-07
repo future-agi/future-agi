@@ -190,3 +190,42 @@ func TestVideoExample(t *testing.T) {
 		t.Fatal(c.Video)
 	}
 }
+
+func validOpenRouter() VideoProviderConfig {
+	return VideoProviderConfig{Enabled: true, APIKey: "test-key", BaseURL: "https://openrouter.ai/api/v1", Region: "global", AccountRef: "openrouter-test", Models: []string{"bytedance/seedance-1-5-pro", "runway/gen-4.5"}, Limits: VideoProviderLimits{SubmitRPM: 10, PollQPS: 2, MaxActiveTasks: 4}, Deadlines: VideoProviderDeadlines{Connect: 10 * time.Second, Read: 30 * time.Second, Submit: 30 * time.Second, Run: 30 * time.Minute, Reconcile: time.Minute}, Poll: VideoProviderPoll{BaseInterval: 10 * time.Second}, TariffRevision: "openrouter-2026-11-06", SafetyIdentifierMode: "none"}
+}
+
+// OpenRouter needs no public-output acknowledgement (content is fetched only
+// through the authenticated endpoint) and pins its own tariff revision.
+func TestVideoValidationOpenRouter(t *testing.T) {
+	c := validVideo()
+	c.Video.Providers["openrouter"] = validOpenRouter()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*VideoProviderConfig)
+		field  string
+	}{
+		{"byteplus tariff", func(p *VideoProviderConfig) { p.TariffRevision = "byteplus-2026-10-02" }, "tariff_revision"},
+		{"region", func(p *VideoProviderConfig) { p.Region = "ap-southeast-1" }, "region"},
+		{"model", func(p *VideoProviderConfig) { p.Models = []string{"openai/sora-2"} }, "models"},
+		{"bare model", func(p *VideoProviderConfig) { p.Models = []string{"seedance-1-5-pro"} }, "models"},
+		{"execution expiry", func(p *VideoProviderConfig) { p.ExecutionExpiresAfter = 7200 }, "execution_expires_after"},
+		{"video tokens", func(p *VideoProviderConfig) { p.MinTokensWithVideoInput = 1 }, "min_tokens_with_video_input"},
+		{"base url", func(p *VideoProviderConfig) { p.BaseURL = "http://openrouter.ai/api/v1" }, "base_url"},
+		{"key", func(p *VideoProviderConfig) { p.APIKey = "${OPENROUTER_API_KEY}" }, "credentials"},
+		{"poll", func(p *VideoProviderConfig) { p.Poll.BaseInterval = time.Second }, "poll.base_interval"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := validVideo()
+			p := validOpenRouter()
+			tc.change(&p)
+			c.Video.Providers["openrouter"] = p
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+}

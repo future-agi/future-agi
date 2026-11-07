@@ -11,7 +11,17 @@ import (
 type Registry struct{ services map[string]video.Capabilities }
 
 func NewRegistry() *Registry {
-	return &Registry{services: map[string]video.Capabilities{"byteplus": BytePlus()}}
+	return &Registry{services: map[string]video.Capabilities{"byteplus": BytePlus(), "openrouter": OpenRouter()}}
+}
+
+// Services lists every registered service, sorted, including unconfigured ones.
+func (r *Registry) Services() []string {
+	out := make([]string, 0, len(r.services))
+	for name := range r.services {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 func (r *Registry) Service(service string) (video.Capabilities, bool) {
 	c, ok := r.services[service]

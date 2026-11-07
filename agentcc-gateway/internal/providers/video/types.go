@@ -101,9 +101,19 @@ const (
 	AccessRetired    AccessState = "retired"
 )
 
+// RouteKind distinguishes a provider's own API from an aggregator that routes
+// to the model vendor. Aggregator evidence is never native-provider proof.
+type RouteKind string
+
+const (
+	RouteNative     RouteKind = "native"
+	RouteAggregator RouteKind = "aggregator"
+)
+
 type Capabilities struct {
 	Service           string
 	Revision          string
+	Route             RouteKind
 	Regions           []string
 	Models            []ModelCapability
 	SubmitIdempotency IdempotencyKind
@@ -117,9 +127,13 @@ type Capabilities struct {
 	PollMinInterval   time.Duration
 }
 type ModelCapability struct {
-	ModelID           string
-	Operations        map[Operation]OperationSpec
-	Durations         IntRange
+	ModelID    string
+	Operations map[Operation]OperationSpec
+	Durations  IntRange
+	// DefaultDuration and DefaultResolution apply when the request omits them.
+	// Zero values keep the historical 5s/720p defaults.
+	DefaultDuration   int
+	DefaultResolution string
 	AutoDuration      *AutoDurationSpec
 	Resolutions       []string
 	AspectRatios      []string
@@ -244,6 +258,8 @@ const (
 	Credits          Unit = "credits"
 	MultimodalTokens Unit = "multimodal_tokens"
 	StorageBytes     Unit = "storage_bytes"
+	// USD is a provider-reported charge already expressed in US dollars.
+	USD Unit = "usd"
 )
 
 type UsageSource string

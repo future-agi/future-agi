@@ -47,6 +47,10 @@ type videoHTTPFixture struct {
 
 func newVideoHTTP(t *testing.T, modify ...func(*config.VideoConfig)) *videoHTTPFixture {
 	t.Helper()
+	return newVideoHTTPScript(t, videotest.Script{Capabilities: capability.BytePlus(), Submit: videotest.JSONReply(provider.SubmitResult{ProviderJobID: "fake-id", Normalized: provider.StateQueued})}, modify...)
+}
+func newVideoHTTPScript(t *testing.T, script videotest.Script, modify ...func(*config.VideoConfig)) *videoHTTPFixture {
+	t.Helper()
 	addr := os.Getenv("TEST_REDIS_ADDR")
 	if addr == "" {
 		t.Skip("TEST_REDIS_ADDR unset")
@@ -79,7 +83,7 @@ func newVideoHTTP(t *testing.T, modify ...func(*config.VideoConfig)) *videoHTTPF
 	vc.Submit.SyncWait = 0
 	vc.Artifacts.Disk.Root = t.TempDir()
 	vc.Providers["byteplus"] = config.VideoProviderConfig{Enabled: true, Models: []string{strings.TrimPrefix(videoTestModel, "byteplus/")}, Region: "ap-southeast-1", AccountRef: "fake", TariffRevision: capability.BytePlusRevision, Limits: config.VideoProviderLimits{SubmitRPM: 100, PollQPS: 100, MaxActiveTasks: 100}, Deadlines: config.VideoProviderDeadlines{Submit: time.Second, Read: time.Second, Run: time.Hour, Reconcile: time.Second}, Poll: config.VideoProviderPoll{BaseInterval: time.Second}}
-	f := videotest.NewFakeProvider(videotest.Script{Capabilities: capability.BytePlus(), Submit: videotest.JSONReply(provider.SubmitResult{ProviderJobID: "fake-id", Normalized: provider.StateQueued})})
+	f := videotest.NewFakeProvider(script)
 	adapters := provider.NewRegistry()
 	adapters.Register(f.Adapter())
 	budget := redisstate.NewBudgetStore(c, prefix+"budget:")

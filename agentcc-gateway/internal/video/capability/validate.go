@@ -64,7 +64,7 @@ func validateResolved(res Resolved) error {
 	if !contains(ratios, r.AspectRatio) {
 		return invalid("unsupported_combination", "aspect_ratio", "unsupported ratio for operation")
 	}
-	if !contains(m.FPS, r.FPS) {
+	if len(m.FPS) == 0 && r.FPS != 0 || len(m.FPS) > 0 && !contains(m.FPS, r.FPS) {
 		return invalid("invalid_parameter", "fps", "unsupported fps")
 	}
 	if r.N < 1 || r.N > m.MaxOutputs || (r.N != 1 && !m.NativeMultiOutput) {

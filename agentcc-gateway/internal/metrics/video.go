@@ -57,11 +57,15 @@ func videoLabels(d videoDefinition, labels map[string]string) map[string]string 
 		valid := false
 		switch name {
 		case "service":
-			valid = value == "byteplus"
+			valid = slices.Contains(capability.NewRegistry().Services(), value)
 		case "model":
-			valid = slices.Contains(capability.NewRegistry().Models("byteplus"), strings.TrimPrefix(value, "byteplus/"))
+			// Only pinned capability IDs become label values, so callers cannot
+			// create unbounded series through the model field.
+			service := labels["service"]
+			id := strings.TrimPrefix(value, service+"/")
+			valid = service != "" && slices.Contains(capability.NewRegistry().Models(service), id)
 			if valid {
-				value = strings.TrimPrefix(value, "byteplus/")
+				value = id
 			}
 		case "state", "status":
 			valid = slices.Contains([]string{"submitting", "submission_unknown", "queued", "running", "completed", "failed", "cancelled"}, value)

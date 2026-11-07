@@ -198,7 +198,7 @@ func (s *Service) observe(ctx context.Context, j *video.VideoJob, l video.Lease,
 }
 func safeProviderCode(code string) string {
 	switch code {
-	case "content_policy_violation", "moderation_blocked", "provider_timeout", "provider_access_denied", "submit_rejected":
+	case "content_policy_violation", "moderation_blocked", "provider_timeout", "provider_access_denied", "submit_rejected", "provider_expired":
 		return code
 	default:
 		return "provider_failed"

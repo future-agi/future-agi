@@ -2,8 +2,10 @@ package video
 
 import (
 	"encoding/json"
-	provider "github.com/futureagi/agentcc-gateway/internal/providers/video"
+	"strconv"
 	"time"
+
+	provider "github.com/futureagi/agentcc-gateway/internal/providers/video"
 )
 
 // VideoJob represents a video generation job.
@@ -27,6 +29,8 @@ type VideoJob struct {
 	ProgressReported   bool                  `json:"-" store:"progress_reported"`
 	CancelScope        string                `json:"-" store:"cancel_scope"`
 	TraceParentID      string                `json:"-" store:"trace_parent_id"`
+	// Wire is "openai" for jobs created through the OpenAI Videos API shape.
+	Wire string `json:"-" store:"wire"`
 
 	KeyID                string              `json:"-" store:"key_id"`
 	Creator              string              `json:"-" store:"creator"`
@@ -183,7 +187,60 @@ func (j *VideoJob) ToStatusResponse() map[string]interface{} {
 	if j.SettlementState == SettlementSettled || j.SettlementState == SettlementReleased {
 		resp["cost"] = map[string]any{"usd": float64(j.SettledMicros) / 1e6, "source": "reconciled", "tariff_revision": j.TariffRevision, "currency": "USD"}
 	}
+	// Additive fields shared with the OpenAI Videos API object.
+	resp["seconds"] = nil
+	if j.Duration > 0 {
+		resp["seconds"] = strconv.FormatFloat(j.Duration, 'f', -1, 64)
+	}
+	resp["size"] = nil
+	if j.Size != "" {
+		resp["size"] = j.Size
+	}
+	resp["completed_at"] = nil
+	if j.CompletedAt != nil {
+		resp["completed_at"] = j.CompletedAt.Unix()
+	}
+	if j.Wire == WireOpenAI {
+		openAIOverlay(j, resp)
+	}
 	return resp
+}
+
+// WireOpenAI mirrors capability.WireOpenAI without importing capability.
+const WireOpenAI = "openai"
+
+// openAIOverlay presents OpenAI's status enum and error object while keeping
+// the gateway's durable status in gateway_status. Extra fields are ignored by
+// OpenAI SDK models, so no gateway safety information is removed.
+func openAIOverlay(j *VideoJob, resp map[string]any) {
+	resp["gateway_status"] = j.Status
+	status := "queued"
+	switch j.Status {
+	case StatusRunning:
+		status = "in_progress"
+	case StatusCompleted, StatusFailed:
+		status = j.Status
+	case StatusCancelled:
+		status = StatusFailed
+	}
+	resp["status"] = status
+	progress := 0
+	if j.ProgressReported {
+		progress = j.Progress
+	}
+	if j.Status == StatusCompleted {
+		progress = 100
+	}
+	resp["progress"] = progress
+	resp["remixed_from_video_id"] = nil
+	switch {
+	case j.Error != nil:
+		resp["error"] = map[string]any{"code": j.Error.Code, "message": j.Error.Message}
+	case j.Status == StatusCancelled:
+		resp["error"] = map[string]any{"code": "cancelled", "message": "video generation was cancelled"}
+	default:
+		resp["error"] = nil
+	}
 }
 
 // Artifact is internal persistence data. Public responses omit BlobKey.
