@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { configure } from "@testing-library/react";
-import { screen, fireEvent, waitFor } from "src/utils/test-utils";
+import { screen, fireEvent, waitFor, within } from "src/utils/test-utils";
 
 // ScenariosStep is a heavy render (toolbar + coverage + table + filter panel);
 // under full-suite parallel load its filtered-count `findByText` can exceed the
@@ -18,6 +18,10 @@ import {
   SERVER_ROWS,
   envStateFor,
   renderWithClient,
+  openDisplay,
+  closeDisplay,
+  pickView,
+  pickGroupBy,
 } from "./scenariosTestUtils";
 
 const { mockSnack } = vi.hoisted(() => ({
@@ -75,9 +79,41 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep", () => {
-  it("renders the scenario count from envState", () => {
+  it("opens on its content, with no heading repeating the tab or its count", () => {
     renderStep();
-    expect(screen.getByText(`(${SERVER_ROWS.length})`)).toBeInTheDocument();
+    expect(screen.queryByText(/Each scenario is one task/)).toBeNull();
+    expect(screen.queryByText(`(${SERVER_ROWS.length})`)).toBeNull();
+  });
+
+  it("puts Add scenarios in the list toolbar", () => {
+    renderStep();
+    const toolbar = screen.getByRole("toolbar", { name: "Scenarios" });
+    expect(within(toolbar).getByRole("button", { name: "Add scenarios" })).toBeInTheDocument();
+  });
+
+  it("puts Coverage in the list toolbar instead of a card above it", async () => {
+    renderStep();
+    const toolbar = screen.getByRole("toolbar", { name: "Scenarios" });
+    expect(await within(toolbar).findByRole("button", { name: /^Coverage/ })).toBeInTheDocument();
+    expect(screen.queryByText(/click to expand/)).toBeNull();
+  });
+
+  it("folds view, grouping and row height into one Display panel", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    expect(screen.queryByRole("tab", { name: "List" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Group by/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Row height" })).toBeNull();
+
+    const panel = openDisplay();
+    expect(within(panel).getByRole("tab", { name: "Table" })).toHaveAttribute("aria-selected", "true");
+    expect(within(panel).getByRole("tab", { name: "Short" })).toHaveAttribute("aria-selected", "true");
+    // Grouping is one dropdown, so more server axes never lengthen the panel.
+    expect(within(panel).getByRole("combobox", { name: "Group by" })).toBeInTheDocument();
+    expect(within(panel).queryByRole("option")).toBeNull();
+    fireEvent.click(within(panel).getByRole("tab", { name: "Large" }));
+    expect(within(panel).getByRole("tab", { name: "Large" })).toHaveAttribute("aria-selected", "true");
+    closeDisplay();
   });
 
   it("narrows the list on server search, shows N of M, and clears", async () => {
@@ -88,7 +124,9 @@ describe("ScenariosStep", () => {
 
     const expected = queryScenarioFixture({ limit: 25, search: "injection" }).count;
     expect(expected).toBeGreaterThan(0);
-    expect(await screen.findByText(`${expected} of ${SERVER_ROWS.length}`)).toBeInTheDocument();
+    const readout = await screen.findByText(`${expected} of ${SERVER_ROWS.length}`);
+    // The count sits with the results, not in the toolbar row.
+    expect(screen.getByRole("toolbar", { name: "Scenarios" })).not.toContainElement(readout);
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByText(`${expected} of ${SERVER_ROWS.length}`)).not.toBeInTheDocument();
@@ -161,7 +199,7 @@ describe("ScenariosStep", () => {
     expect(await screen.findByRole("table")).toBeInTheDocument();
     const aName = SERVER_ROWS[0].name;
 
-    fireEvent.click(screen.getByRole("tab", { name: "List" }));
+    pickView("List");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getAllByText(aName).length).toBeGreaterThan(0);
   });
@@ -284,7 +322,7 @@ describe("ScenariosStep — locked template", () => {
   it("disables the List-view per-row edit and delete while locked", async () => {
     renderLocked(true);
     await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("tab", { name: "List" }));
+    pickView("List");
     expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeDisabled();
     expect(
       screen.getAllByRole("button", { name: "Remove from this environment" })[0],
@@ -294,8 +332,9 @@ describe("ScenariosStep — locked template", () => {
   it("keeps group-by and hide-group available while locked — they're view state, not mutations", async () => {
     renderLocked(true);
     await screen.findByRole("table");
-    expect(screen.getByRole("button", { name: /^Group by/ })).toBeEnabled();
     expect(screen.getAllByRole("button", { name: "Hide this group" })[0]).toBeEnabled();
+    const panel = openDisplay();
+    expect(within(panel).getByRole("combobox", { name: "Group by" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("leaves the row controls enabled and checkboxes present when not locked", async () => {
@@ -309,6 +348,18 @@ describe("ScenariosStep — locked template", () => {
 });
 
 describe("ScenariosStep — group-by axis", () => {
+  it("names the No grouping choice in the Group by control once it's picked", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    pickGroupBy("No grouping");
+
+    const panel = openDisplay();
+    await waitFor(() =>
+      expect(within(panel).getByRole("combobox", { name: "Group by" })).toHaveTextContent("No grouping"),
+    );
+    closeDisplay();
+  });
+
   it("regroups on a new axis (from the server groupings) and clears any hidden groups", async () => {
     renderStep();
     await screen.findByRole("table");
@@ -316,11 +367,14 @@ describe("ScenariosStep — group-by axis", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
     expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
 
-    // Switch the axis to Accent through the popover.
-    fireEvent.click(screen.getByRole("button", { name: /^Group by/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Accent" }));
+    // Switch the axis to Accent through the Display panel.
+    pickGroupBy("Accent");
 
-    expect(await screen.findByRole("button", { name: /Group by · Accent/ })).toBeInTheDocument();
+    const panel = openDisplay();
+    await waitFor(() =>
+      expect(within(panel).getByRole("combobox", { name: "Group by" })).toHaveTextContent("Accent"),
+    );
+    closeDisplay();
     // Switching the axis dropped the hidden set — the counter is gone.
     expect(screen.queryByText(/group hidden/)).not.toBeInTheDocument();
   });
@@ -364,7 +418,7 @@ describe("ScenariosStep — hide group", () => {
     renderStep();
     await screen.findByRole("table");
     const n = groupCount();
-    fireEvent.click(screen.getByRole("tab", { name: "List" }));
+    pickView("List");
     expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);

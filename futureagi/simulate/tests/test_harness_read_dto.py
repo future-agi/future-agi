@@ -536,23 +536,24 @@ def test_scenario_modality_uses_authored_contract_for_legacy_guest_payload():
 
 
 @pytest.mark.django_db
-def test_provision_rejects_wrong_count(organization):
+def test_provision_on_a_build_takes_the_count_it_built(organization):
     job, _ = create_hosted_job(
         organization, _v1_payload(scenario_count=2), idempotency_key="card-bad"
     )
     cap = register_attempt(job.id, endpoint_base_url="https://p.example.com")
-    with pytest.raises(HostedHarnessError) as exc:
-        provision_scenarios(
-            cap.attempt,
-            {
-                "operation": "provision",
-                "name": "test",
-                "personas": [
-                    {"scenario_key": "a", "name": "A"},
-                ],
-            },
-        )
-    assert exc.value.code == "scenario_count_mismatch"
+    provision_scenarios(
+        cap.attempt,
+        {
+            "operation": "provision",
+            "name": "test",
+            "personas": [
+                {"scenario_key": "a", "name": "A"},
+            ],
+        },
+    )
+    job.refresh_from_db()
+    assert job.scenario_count == 1
+    assert job.payload["scenario_count"] == 1
 
 
 @pytest.mark.django_db

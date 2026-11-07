@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import OriginChip from "../../components/OriginChip";
 import { ENV_SHAPE } from "./overview.constants";
 import {
@@ -21,7 +22,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 // are minmax(0, 1fr), so a long value ellipsis-clips inside its cell rather than
 // pushing the chip or the arrow.
 const MAP_GRID = "minmax(0, 1fr) min-content 44px minmax(0, 1fr)";
-const MAP_PX = 3;
+const MAP_PX = 1.5;
 
 // A two-column ledger: what was read from source, and what it became in the
 // sandbox. Read-only — the read/write classification is a verb-heuristic guess,
@@ -40,13 +41,13 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
   return (
     <Box
       sx={{
-        mb: 3, borderRadius: 2, overflow: "hidden",
-        border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+        mb: 3, borderRadius: "8px", overflow: "hidden",
+        border: "1px solid", borderColor: "divider",
       }}
     >
-      <Box sx={{ px: MAP_PX, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{MAP_COPY.title}</Typography>
-        <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, maxWidth: 720 }}>
+      <Box sx={{ px: MAP_PX, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>{MAP_COPY.title}</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", maxWidth: 720 }}>
           {MAP_COPY.subtitle}
         </Typography>
       </Box>
@@ -54,9 +55,8 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
       <Box
         sx={{
           display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
-          alignItems: "center", px: MAP_PX, py: 1.25,
+          alignItems: "center", px: MAP_PX, height: 32,
           borderBottom: "1px solid", borderColor: "divider",
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
         }}
       >
         <ColHead>{MAP_COPY.readHead}</ColHead>
@@ -71,10 +71,10 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
         right={MAP_COPY.toolsRight(toolRows.length)}
         first
       >
-        {toolRows.map((r, i) => (
+        {toolRows.map((r) => (
           <MapRow
             key={r.key}
-            index={i}
+           
             name={r.name}
             origin={r.origin}
             target={r.target}
@@ -89,8 +89,8 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
         hint={MAP_COPY.groups.rules.hint}
         right={MAP_COPY.rulesRight(ruleRows.length)}
       >
-        {ruleRows.map((r, i) => (
-          <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono />
+        {ruleRows.map((r) => (
+          <MapRow key={r.key} name={r.name} origin={r.origin} target={r.target} />
         ))}
       </MapGroup>
 
@@ -102,8 +102,8 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
         {storeRows.length === 0 ? (
           <EmptyRow>{MAP_COPY.storesEmpty}</EmptyRow>
         ) : (
-          storeRows.map((r, i) => (
-            <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono />
+          storeRows.map((r) => (
+            <MapRow key={r.key} name={r.name} origin={r.origin} target={r.target} mono />
           ))
         )}
       </MapGroup>
@@ -121,7 +121,7 @@ SourceToSandboxMap.propTypes = {
 // A muted full-width row for a group the backend returned empty.
 function EmptyRow({ children }) {
   return (
-    <Box sx={{ px: MAP_PX, py: 1.25 }}>
+    <Box sx={{ px: MAP_PX, py: 1 }}>
       <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
         {children}
       </Typography>
@@ -133,27 +133,14 @@ EmptyRow.propTypes = { children: PropTypes.node };
 // A small "you confirmed" pill for a tool row whose read/write effect was
 // overridden by a human on the Contract tab — the map reflects that decision.
 function ConfirmedChip() {
-  return (
-    <Box
-      component="span"
-      sx={{
-        px: 0.625, py: 0.125, borderRadius: 0.75, flexShrink: 0,
-        typography: "s3", fontWeight: "fontWeightSemiBold",
-        color: "success.dark",
-        bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.16 : 0.1),
-      }}
-    >
-      {MAP_COPY.confirmed}
-    </Box>
-  );
+  return <StatusBadge status="confirmed" role="success" label={MAP_COPY.confirmed} size="sm" dot={false} />;
 }
 
 function ColHead({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: "fontWeightBold",
-        textTransform: "uppercase", letterSpacing: 0.6, color: "text.subtitle",
+        typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
       }}
     >
       {children}
@@ -168,19 +155,19 @@ function MapGroup({ label, hint, right, toAnswer, children, first }) {
       <Box
         sx={{
           display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 2,
-          alignItems: "baseline", px: MAP_PX, pt: first ? 2 : 2.25, pb: 1,
+          alignItems: "baseline", px: MAP_PX, pt: first ? 1.5 : 2, pb: 1,
           borderTop: first ? "none" : "1px solid", borderColor: "divider",
         }}
       >
         <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>{label}</Typography>
+          <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>{label}</Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
         </Stack>
-        <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", color: toAnswer ? "primary.main" : "text.subtitle" }}>
+        <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", color: toAnswer ? "status.warning.fg" : "text.subtitle" }}>
           {right}
         </Typography>
       </Box>
-      <Box sx={{ pb: 1 }}>{children}</Box>
+      <Box>{children}</Box>
     </Box>
   );
 }
@@ -189,25 +176,30 @@ MapGroup.propTypes = {
   toAnswer: PropTypes.number, children: PropTypes.node, first: PropTypes.bool,
 };
 
-function MapRow({ index, name, origin, target, mono, highlight, derived, trailing, below }) {
-  const rowBg = (t) => {
-    if (highlight) return alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.06 : 0.03);
-    if (index % 2 === 1) return alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.025 : 0.015);
-    return "transparent";
-  };
+function MapRow({ name, origin, target, mono, highlight, derived, trailing, below }) {
   return (
-    <Box sx={{ position: "relative", bgcolor: rowBg }}>
+    <Box
+      sx={{
+        position: "relative",
+        bgcolor: highlight ? "action.hover" : "transparent",
+        borderTop: "1px solid",
+        borderColor: "divider",
+      }}
+    >
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2.5,
-          alignItems: "center", minHeight: highlight ? 44 : 40, pl: MAP_PX, pr: MAP_PX,
+          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
+          alignItems: "center",
+          minHeight: highlight ? ROW_HEIGHT.twoLine : ROW_HEIGHT.default,
+          pl: MAP_PX, pr: MAP_PX,
         }}
       >
         {name ? (
           <Typography
             noWrap
             sx={{
-              typography: "s2", fontWeight: "fontWeightSemiBold",
+              typography: "s1",
+              fontWeight: mono ? "fontWeightRegular" : "fontWeightMedium",
               fontFamily: mono ? MONO : undefined,
               color: derived ? "text.subtitle" : "text.primary",
             }}
@@ -234,7 +226,7 @@ function MapRow({ index, name, origin, target, mono, highlight, derived, trailin
             <Typography
               noWrap
               sx={{
-                typography: "s2",
+                typography: "s1",
                 color: derived ? "text.subtitle" : "text.primary",
                 fontStyle: derived ? "italic" : "normal",
                 minWidth: 0,
@@ -248,12 +240,12 @@ function MapRow({ index, name, origin, target, mono, highlight, derived, trailin
         </Stack>
       </Box>
 
-      {below && <Box sx={{ pl: MAP_PX, pr: MAP_PX, pb: 2, pt: 0.25 }}>{below}</Box>}
+      {below && <Box sx={{ pl: MAP_PX, pr: MAP_PX, pb: 1.5, pt: 0.25 }}>{below}</Box>}
     </Box>
   );
 }
 MapRow.propTypes = {
-  index: PropTypes.number, name: PropTypes.node, origin: PropTypes.string,
+  name: PropTypes.node, origin: PropTypes.string,
   target: PropTypes.node, mono: PropTypes.bool, highlight: PropTypes.bool,
   derived: PropTypes.bool, trailing: PropTypes.node, below: PropTypes.node,
 };

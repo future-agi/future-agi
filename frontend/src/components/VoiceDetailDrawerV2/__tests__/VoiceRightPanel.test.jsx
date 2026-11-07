@@ -183,6 +183,32 @@ describe("VoiceRightPanel", () => {
       expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
     });
 
+    it("keeps the eval list and Falcon when the call also carries a rollup", async () => {
+      const withRollup = {
+        ...failingEval,
+        eval_rollup: {
+          scope: "trace",
+          evals: [
+            {
+              eval_config_id: "eval-1",
+              eval_name: "Concise replies",
+              aggregate: { pass: 0, fail: 1 },
+              spans: [{ span_id: "root", span_name: "call", value: "Failed" }],
+            },
+          ],
+        },
+      };
+      renderWithQueryClient(<VoiceRightPanel data={withRollup} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(screen.getByPlaceholderText("Search evals...")).toBeInTheDocument();
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+      expect(
+        screen.getByRole("button", { name: /per-span breakdown/i }),
+      ).toBeInTheDocument();
+    });
+
     it("hides when the host has no Falcon flow wired", async () => {
       renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
       await userEvent.click(screen.getByRole("tab", { name: "Evals" }));

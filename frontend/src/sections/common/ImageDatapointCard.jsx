@@ -27,7 +27,7 @@ const ImageDatapointCard = ({ value, column }) => {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <SvgColor
             src={`/assets/icons/action_buttons/ic_image.svg`}
-            sx={{ width: 20, height: 20, color: "text.secondary" }}
+            sx={{ width: 16, height: 16, color: "text.secondary" }}
           />
           <Typography
             variant="s1"

@@ -35,6 +35,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/otel"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
@@ -70,6 +71,20 @@ type Server struct {
 	ready            atomic.Bool
 }
 
+// PriceTableName is the name the price table keys a provider's models under,
+// as the provider that served an org's request states it: the org's own
+// instance when the org has one, else the config.yaml provider with that ID.
+func (s *Server) PriceTableName(orgID, providerID string) string {
+	var p providers.Provider
+	if orgID != "" && s.OrgProviderCache != nil {
+		p = s.OrgProviderCache.Get(orgID, providerID)
+	}
+	if p == nil && s.registry != nil {
+		p, _ = s.registry.GetProvider(providerID)
+	}
+	return providers.PriceTableName(p)
+}
+
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
 // key revocation. Call after New() and before Start().
 func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
@@ -90,6 +105,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 	if cfg != nil && keyStore == nil {
 		keyStore = auth.NewKeyStore(cfg.Auth)
+	}
+	// Load settles this, but a Config built in code need not have been through
+	// it, and a server without a ceiling is one no request is bounded by.
+	if cfg != nil && cfg.Server.MaxRequestTimeout <= 0 {
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
 	}
 	authKeyStore := keyStore
 	if !authEnabled {
@@ -213,7 +233,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
@@ -230,6 +250,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Video routes stay unconfigured when disabled (pin N2).
 	if cfg.Video.Enabled {
 		s.videoInitErr = s.configureVideo(redisClient)
+	}
+	// Shared through Redis when there is one, so the pod that sees a run
+	// finish can charge it whichever pod started it.
+	if redisClient != nil {
+		handlers.runCharges = &redisRunCharges{client: redisClient}
+	} else {
+		handlers.runCharges = newMemoryRunCharges()
 	}
 
 	// Set up async inference support.
@@ -300,6 +327,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			"max_concurrent", cfg.Routing.Fastest.MaxConcurrent,
 		)
 	}
+
+	// Decision calls by internal callers take only a base_url from config.yaml.
+	handlers.decisionBaseURLs = providers.DecisionDialectBaseURLs(cfg.Providers)
 
 	// Provider locking.
 	handlers.providerLockResolver = routing.NewProviderLockResolver(cfg.Routing.ProviderLock)
@@ -392,6 +422,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	// Structured decisions, on the customer's own provider key only.
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
+	router.Handle("POST", "/v1/decisions", handlers.Decisions)
+	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
@@ -480,6 +514,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+
+	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
+	for _, ep := range speech.Endpoints() {
+		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+	}
 
 	// Video Generation API.
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
@@ -892,7 +931,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
+	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
 	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
@@ -1315,6 +1354,12 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				CachedInputPerToken: co.Pricing.CachedInputPerToken,
 				BatchInputPerToken:  co.Pricing.BatchInputPerToken,
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
+				InputPerSecond:      co.Pricing.InputPerSecond,
+				InputPerCharacter:   co.Pricing.InputPerCharacter,
+				InputPerQuery:       co.Pricing.InputPerQuery,
+				PerPage:             co.Pricing.PerPage,
+				OutputPerImage:      co.Pricing.OutputPerImage,
+				OutputPerSecond:     co.Pricing.OutputPerSecond,
 			}
 		}
 		if co.Capabilities != nil {

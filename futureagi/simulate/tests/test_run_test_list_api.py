@@ -1539,6 +1539,7 @@ class TestRunTestDetailView:
         assert items[str(harness_filled.id)]["editable"] is False
         assert items[str(harness_filled.id)]["regradable"] is True
         assert items[str(not_a_dict.id)]["editable"] is False
+        assert items[str(not_a_dict.id)]["mapping"] == ["text"]
 
         # Same field on the compatibility list.
         assert {i["id"]: i["editable"] for i in body["evals_detail"]} == {

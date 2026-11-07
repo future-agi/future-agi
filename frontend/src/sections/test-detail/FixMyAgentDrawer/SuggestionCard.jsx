@@ -43,7 +43,7 @@ const SuggestionCard = ({
             borderColor: isSelected
               ? theme.palette.primary.main
               : theme.palette.divider,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             width: "100%",
             cursor: "pointer",
           }}
@@ -59,13 +59,11 @@ const SuggestionCard = ({
                   label="High Priority"
                   size="small"
                   sx={{
-                    borderRadius: 0.5,
-                    backgroundColor: theme.palette.red.o10,
-                    color: theme.palette.red[700],
-                    fontWeight: "fontWeightMedium",
+                    backgroundColor: theme.palette.status.danger.bg,
+                    color: theme.palette.status.danger.fg,
                     ":hover": {
-                      backgroundColor: theme.palette.red.o10,
-                      color: theme.palette.red[700],
+                      backgroundColor: theme.palette.status.danger.bg,
+                      color: theme.palette.status.danger.fg,
                     },
                   }}
                 />
@@ -109,7 +107,7 @@ const SuggestionCard = ({
                   backgroundColor: isSelected
                     ? theme.palette.action.hover
                     : theme.palette.background.neutral,
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   display: "flex",
                   alignItems: "center",
                   padding: 0.5,

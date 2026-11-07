@@ -14,7 +14,7 @@ const FloatingLabel = styled("label")(({ theme, error }) => ({
   position: "absolute",
   left: theme.spacing(1.75),
   top: -8,
-  fontSize: "11px",
+  fontSize: "12px",
   fontWeight: theme.typography.fontWeightMedium,
   color: error ? theme.palette.error.main : theme.palette.text.disabled,
   padding: `0 ${theme.spacing(1)}`,
