@@ -141,7 +141,9 @@ class _RelayResponse:
 
 @pytest.mark.integration
 @pytest.mark.django_db
-@override_settings(CLOUD_DEPLOYMENT="", WEBSOCKET_ENDPOINT="http://backend/call-websocket/")
+@override_settings(
+    CLOUD_DEPLOYMENT="", WEBSOCKET_ENDPOINT="http://backend/call-websocket/"
+)
 @pytest.mark.parametrize(
     ("message", "send_to_uuid", "uuid"),
     [
@@ -204,4 +206,6 @@ def test_relay_accepts_what_call_websocket_sends(
         )
 
     assert result.get("status") is True, result
-    assert delivered == [("org" if not send_to_uuid else uuid, organization.id, message)]
+    assert delivered == [
+        ("org" if not send_to_uuid else uuid, organization.id, message)
+    ]
