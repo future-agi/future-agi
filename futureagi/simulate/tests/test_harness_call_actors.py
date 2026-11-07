@@ -654,6 +654,10 @@ def test_a_member_stored_before_the_new_fields_reads_unchanged_against_the_same_
         "limits": {},
         "history": [],
     }
+    # The stored member carries none of the empty ones.
+    assert not {"pre_run", "faults", "starts_with", "limits", "history"} & set(
+        _member_content(now)
+    )
     assert _member_content(now) == _member_content(old)
     assert suite_diff([old], [now])["changed"] == {}
     assert suite_diff(
