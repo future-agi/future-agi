@@ -30,6 +30,25 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-002 — node editor actions are named and remain guarded for viewers
+
+**Goal:** Identify node deletion and editor close actions by hover or keyboard without allowing a viewer to delete the saved draft.  
+**Spec:** `flows/agents/node-editor-accessibility.spec.ts:14`  
+**Tags:** —
+
+**User steps:**
+
+1. seed one uniquely named draft and prompt node through the public API
+2. hover the canvas delete action, then reveal it using Tab with the pointer away
+3. open node settings, inspect the Close tooltip and activate close with the keyboard
+4. inspect the same draft as a viewer and attempt Delete and Backspace without deletion controls
+5. confirm owner deletion from the drawer of the existing draft
+
+**Backend state verified:**
+
+- the graph detail retains the exact seeded node after owner inspection and viewer keyboard deletion attempts
+- confirmed owner deletion addresses the saved version and leaves its node set empty
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
