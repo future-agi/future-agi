@@ -427,6 +427,84 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("forwards actor filters to the server", () => {
+    renderTable({
+      initialFilters: { callActor: ["friend"], callActor_not: ["none"] },
+    });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { actor: ["friend"], actor_not: ["none"] },
+      }),
+    );
+  });
+
+  it("says how many calls each actor was planned for and how many it never reached", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [
+          { value: "none", count: 3, label: "Simulated user only" },
+          {
+            value: "friend",
+            count: 4,
+            label: "Rowan",
+            delivered: 2,
+            dropped: 1,
+            not_triggered: 1,
+          },
+          {
+            value: "kid",
+            count: 2,
+            label: "Sam",
+            delivered: 2,
+            dropped: 0,
+            not_triggered: 0,
+          },
+        ],
+      },
+    }));
+    renderTable();
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(await screen.findByRole("option", { name: "Actor" }));
+    await user.click(screen.getByText(/Select values/));
+    expect(
+      await screen.findByText("Rowan (4; 1 dropped, 1 not triggered)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sam (2)")).toBeInTheDocument();
+    expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
+  });
+
+  it("keeps the Actor filter on offer while the next results load", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+    }));
+    const { rerender } = renderTable();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      tasks: [],
+      groups: [],
+      facets: {},
+      isLoading: true,
+    }));
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    expect(
+      await screen.findByRole("option", { name: "Actor" }),
+    ).toBeInTheDocument();
+  });
+
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
     const onQueryChange = vi.fn();
     const { rerender } = renderTable({ onQueryChange });

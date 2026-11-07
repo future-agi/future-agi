@@ -167,7 +167,9 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     completed_at = serializers.CharField(read_only=True, allow_null=True)
     outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_errored = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_no_score = serializers.IntegerField(read_only=True, allow_null=True)
     environment_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     suite_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
     # ``agent_version`` is the version's name; this is the run's agent pin.

@@ -33882,7 +33882,9 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         }),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
+        outcome_errored: zod.number(),
         outcome_skipped: zod.number(),
+        outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -37755,6 +37757,8 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp =
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp =
   new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax = 255;
+
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -37807,8 +37811,15 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
           "system",
           "tool_calls",
           "tool_call_result",
+          "actor",
           "unknown",
         ]),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax,
+          )
+          .optional(),
         content: zod.string(),
         start_time_ms: zod
           .number()
@@ -38420,7 +38431,9 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         }),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
+        outcome_errored: zod.number(),
         outcome_skipped: zod.number(),
+        outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -38502,6 +38515,28 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         check: zod.string(),
       }),
     ),
+    call_actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+        channel: zod.string().min(1),
+        persona: zod.object({
+          name: zod.string().optional(),
+          gender: zod.string().optional(),
+          age_group: zod.string().optional(),
+          occupation: zod.string().optional(),
+          location: zod.string().optional(),
+          personality: zod.string().optional(),
+          communication_style: zod.string().optional(),
+          initial_message: zod.string().optional(),
+          languages: zod.array(zod.string().min(1)).optional(),
+          accent: zod.string().optional(),
+        }),
+        loudness_ratio: zod.number().optional(),
+        scenarios_count: zod.number(),
+      }),
+    ),
     end_conditions: zod.object({
       max_turns: zod.number(),
       max_duration_seconds: zod.number(),
@@ -38559,6 +38594,21 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
+        }),
+      ),
+      actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          instruction: zod.string(),
+          trigger: zod.object({
+            kind: zod.string().min(1).optional(),
+            turn: zod.number().optional(),
+            tool: zod.string().optional(),
+            on_call: zod.number().optional(),
+            words: zod.array(zod.string().min(1)).optional(),
+            p: zod.number().optional(),
+          }),
+          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -38711,6 +38761,28 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         check: zod.string(),
       }),
     ),
+    call_actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+        channel: zod.string().min(1),
+        persona: zod.object({
+          name: zod.string().optional(),
+          gender: zod.string().optional(),
+          age_group: zod.string().optional(),
+          occupation: zod.string().optional(),
+          location: zod.string().optional(),
+          personality: zod.string().optional(),
+          communication_style: zod.string().optional(),
+          initial_message: zod.string().optional(),
+          languages: zod.array(zod.string().min(1)).optional(),
+          accent: zod.string().optional(),
+        }),
+        loudness_ratio: zod.number().optional(),
+        scenarios_count: zod.number(),
+      }),
+    ),
     end_conditions: zod.object({
       max_turns: zod.number(),
       max_duration_seconds: zod.number(),
@@ -38768,6 +38840,21 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
+        }),
+      ),
+      actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          instruction: zod.string(),
+          trigger: zod.object({
+            kind: zod.string().min(1).optional(),
+            turn: zod.number().optional(),
+            tool: zod.string().optional(),
+            on_call: zod.number().optional(),
+            words: zod.array(zod.string().min(1)).optional(),
+            p: zod.number().optional(),
+          }),
+          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -38846,6 +38933,263 @@ reference the same credentials.
  */
 export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model.
+ */
+export const SimulateApiHarnessEnvironmentsActorLimitsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsActorLimitsBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsActorLimitsBody = zod.object({
+  limits: zod
+    .record(zod.string(), zod.string())
+    .describe(
+      "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+    ),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsActorLimitsBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
+});
+
+/**
+ * The environment's cast as the next run would use it: the draft's when there is one.
+ */
+export const SimulateApiHarnessEnvironmentsActorsParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
+});
+
+/**
+ * Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.
+ */
+export const SimulateApiHarnessEnvironmentsCreateActorParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
+  actor: zod.record(zod.string(), zod.unknown()),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
+});
+
+/**
+ * What one actor sees and may do, optionally in one scenario, and what it never sees.
+ */
+export const SimulateApiHarnessEnvironmentsActorViewParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax = 255;
+
+export const SimulateApiHarnessEnvironmentsActorViewQueryParams = zod.object({
+  scenario_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorViewResponse = zod.object({
+  actor_id: zod.string().min(1),
+  permitted_actions: zod.array(zod.string().min(1)),
+  sees: zod.array(
+    zod.object({
+      input: zod.string().min(1),
+      value: zod.object({}).passthrough(),
+      source: zod.enum(["actor", "scenario", "caller"]),
+    }),
+  ),
+  never_sees: zod.object({
+    scenario_fields: zod.array(zod.string().min(1)),
+    files: zod.array(zod.string().min(1)),
+    other_actors: zod.array(zod.string().min(1)),
+  }),
+  played_from_view: zod.boolean(),
+  unused_reason: zod.string().min(1),
+});
+
+/**
+ * Replace one actor in the draft; its id never changes.
+ */
+export const SimulateApiHarnessEnvironmentsReplaceActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
+  actor: zod.record(zod.string(), zod.unknown()),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
+});
+
+/**
+ * Take one actor out of the draft; refused while a scenario includes it.
+ */
+export const SimulateApiHarnessEnvironmentsDeleteActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDeleteActorQueryParams = zod.object({
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
 });
 
 /**
@@ -39100,7 +39444,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -39205,7 +39549,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -39310,7 +39654,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     }),
   ),
@@ -39827,6 +40171,28 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           check: zod.string(),
         }),
       ),
+      call_actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().min(1),
+          role: zod.string(),
+          channel: zod.string().min(1),
+          persona: zod.object({
+            name: zod.string().optional(),
+            gender: zod.string().optional(),
+            age_group: zod.string().optional(),
+            occupation: zod.string().optional(),
+            location: zod.string().optional(),
+            personality: zod.string().optional(),
+            communication_style: zod.string().optional(),
+            initial_message: zod.string().optional(),
+            languages: zod.array(zod.string().min(1)).optional(),
+            accent: zod.string().optional(),
+          }),
+          loudness_ratio: zod.number().optional(),
+          scenarios_count: zod.number(),
+        }),
+      ),
       end_conditions: zod.object({
         max_turns: zod.number(),
         max_duration_seconds: zod.number(),
@@ -39884,6 +40250,23 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             what: zod.string().optional(),
             kind: zod.enum(["checkpoint", "judge"]).optional(),
             claim: zod.string().optional(),
+          }),
+        ),
+        actors: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            instruction: zod.string(),
+            trigger: zod.object({
+              kind: zod.string().min(1).optional(),
+              turn: zod.number().optional(),
+              tool: zod.string().optional(),
+              on_call: zod.number().optional(),
+              words: zod.array(zod.string().min(1)).optional(),
+              p: zod.number().optional(),
+            }),
+            actions: zod
+              .array(zod.record(zod.string(), zod.string()))
+              .optional(),
           }),
         ),
         persona: zod.record(zod.string(), zod.string()),
@@ -40145,6 +40528,52 @@ harness reported itself comes back the next time the harness grades it.
 export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
   id: zod.string(),
   eval_config_id: zod.string(),
+});
+
+/**
+ * Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
+it, for picking per actor.
+ */
+export const SimulateApiHarnessEnvironmentsUploadFileParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsUploadFileBody = zod.object({
+  file: zod.instanceof(File),
+  kind: zod
+    .string()
+    .describe(
+      "What the file is for: `knowledge`, a document an actor may be given to read.",
+    ),
+  expected_revision: zod.number().optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
+  reserved_ids: zod.array(zod.string().min(1)),
+  knowledge_sources: zod.object({
+    files: zod.array(zod.string().min(1)),
+    records: zod.array(
+      zod.object({
+        store: zod.string(),
+        collection: zod.string().min(1),
+      }),
+    ),
+  }),
+  limits: zod.record(zod.string(), zod.unknown()).optional(),
+  actor_models: zod.array(zod.string().min(1)).optional(),
 });
 
 /**
@@ -43503,6 +43932,8 @@ export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureMessageMax = 2000;
 
+export const simulateApiHarnessAttemptsResultsBodyReasonMax = 500;
+
 export const simulateApiHarnessAttemptsResultsBodyDigestRegExp = new RegExp(
   "^sha256:[0-9a-f]{64}$",
 );
@@ -43535,6 +43966,9 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       held: zod.boolean(),
       reason: zod.string().optional(),
       judged: zod.boolean(),
+      verdict: zod
+        .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .optional(),
     }),
   ),
   evaluations: zod.object({}).passthrough(),
@@ -43685,6 +44119,11 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       .min(1)
       .max(simulateApiHarnessAttemptsResultsBodyFailureMessageMax),
   }),
+  reason: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAttemptsResultsBodyReasonMax)
+    .optional(),
   digest: zod
     .string()
     .min(1)
@@ -47435,6 +47874,10 @@ export const SimulateCallExecutionsTranscriptsListParams = zod.object({
   call_execution_id: zod.string(),
 });
 
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax = 255;
+
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemActorIdMax = 255;
+
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -47458,10 +47901,23 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             "system",
             "tool_calls",
             "tool_call_result",
+            "actor",
             "unknown",
           ])
           .optional()
           .describe("Role of the speaker (user or assistant)"),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax,
+          )
+          .optional(),
+        actor_id: zod
+          .string()
+          .max(
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemActorIdMax,
+          )
+          .optional(),
         content: zod.string().min(1).describe("Transcript content"),
         start_time_ms: zod
           .number()
@@ -50491,7 +50947,9 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         completed_at: zod.string().min(1).optional(),
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
+        outcome_errored: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        outcome_no_score: zod.number().optional(),
         environment_version: zod
           .object({
             id: zod.string().uuid().optional(),
@@ -52496,6 +52954,10 @@ export const SimulateTestExecutionsTranscriptsListParams = zod.object({
   test_execution_id: zod.string(),
 });
 
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax = 255;
+
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemActorIdMax = 255;
+
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -52523,10 +52985,23 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   "system",
                   "tool_calls",
                   "tool_call_result",
+                  "actor",
                   "unknown",
                 ])
                 .optional()
                 .describe("Role of the speaker (user or assistant)"),
+              speaker_name: zod
+                .string()
+                .max(
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax,
+                )
+                .optional(),
+              actor_id: zod
+                .string()
+                .max(
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemActorIdMax,
+                )
+                .optional(),
               content: zod.string().min(1).describe("Transcript content"),
               start_time_ms: zod
                 .number()
@@ -52818,6 +53293,16 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     zod.object({
       name: zod.string().min(1),
       passed: zod.boolean().nullable(),
+      result: zod
+        .enum(["not_applicable", "inconclusive", "unmeasured"])
+        .optional(),
+      reason: zod.string().optional(),
+      evidence: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "What the check was decided from: world_state, tool_calls, transcript, recording.",
+        ),
     }),
   ),
   outcome: zod.enum([
@@ -52826,6 +53311,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "passed",
     "failed",
     "inconclusive",
+    "no_score",
     "error",
   ]),
   cost_breakdown_cents: zod.object({
@@ -52862,8 +53348,149 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       output: zod.object({}).passthrough().optional(),
       duration_ms: zod.number().optional(),
       start_time_ms: zod.number().optional(),
+      ok: zod.boolean().optional(),
+      error: zod.string().optional(),
+      refused: zod.boolean().optional(),
+      at: zod.number().optional(),
+      action_id: zod.string().min(1).optional(),
+      outcome: zod.string().min(1).optional(),
+      actor_id: zod.string().min(1).optional(),
+      actor_name: zod.string().min(1).optional(),
+      actor_role: zod.string().optional(),
+      refusal_code: zod.string().min(1).optional(),
+      parent_event_id: zod.string().min(1).optional(),
+      on_behalf_of: zod.string().min(1).optional(),
     }),
   ),
+  call_actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .optional()
+        .describe("The actor's id in the environment."),
+      name: zod.string().optional().describe("The name the transcript shows."),
+      role: zod.string().optional().describe("Who they are to the caller."),
+      channel: zod
+        .string()
+        .optional()
+        .describe("The channel id they joined the call on."),
+      delivery: zod
+        .enum(["delivered", "dropped", "not_triggered", "not_drawn"])
+        .optional()
+        .describe(
+          "How far they got in the call; absent on a call stored without a summary.",
+        ),
+    }),
+  ),
+  trial_state: zod.object({
+    state_changes: zod
+      .array(
+        zod.object({
+          who: zod.string().min(1),
+          name: zod.string().min(1),
+          attempted: zod.number(),
+          committed: zod.number(),
+          refused: zod.number(),
+          faulted: zod.number(),
+          duplicate: zod.number(),
+          committed_actions: zod.array(zod.string().min(1)),
+          no_change: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when this participant committed nothing: a result shown as 'no change', never left out.",
+            ),
+        }),
+      )
+      .optional(),
+    decisions: zod
+      .array(
+        zod.object({
+          actor: zod.string().min(1),
+          play: zod.enum([
+            "mocked",
+            "live",
+            "history",
+            "waiting",
+            "timeout",
+            "problem",
+          ]),
+          action: zod.string().min(1).optional(),
+          arguments: zod
+            .record(zod.string(), zod.string())
+            .optional()
+            .describe(
+              "What it sent: for a pre-run message (`history`), the message itself.",
+            ),
+          channel: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe("`voice` when decided on the call by a speaking actor."),
+          problem: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+            ),
+          why: zod.string().optional(),
+          status: zod.number().optional(),
+          timeout_seconds: zod.number().optional(),
+          fallback: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
+            ),
+          outcome: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+            ),
+        }),
+      )
+      .optional(),
+    approvals: zod
+      .array(
+        zod.object({
+          request: zod.record(zod.string(), zod.string()),
+          decision: zod.record(zod.string(), zod.string()),
+          before_decision: zod.array(
+            zod.object({
+              action: zod.string().min(1),
+              outcome: zod.string().min(1),
+            }),
+          ),
+          after_decision: zod.array(
+            zod.object({
+              action: zod.string().min(1),
+              outcome: zod.string().min(1),
+            }),
+          ),
+          acted_before_decision: zod.boolean(),
+        }),
+      )
+      .optional(),
+    usage: zod
+      .array(
+        zod.object({
+          actor: zod.string().min(1),
+          model: zod.string(),
+          tokens_in: zod.number(),
+          tokens_out: zod.number(),
+          cost_usd: zod.number(),
+        }),
+      )
+      .optional(),
+    limits: zod
+      .record(zod.string(), zod.string())
+      .optional()
+      .describe("The actor limits this trial ran with; null is no limit."),
+  }),
   scoring_status: zod.enum([
     "not_applicable",
     "pending",
@@ -53096,6 +53723,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
     ),
     run_health: zod.object({
@@ -53131,6 +53759,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
     }),
     measured: zod.number(),
     pass_rate: zod.number(),
@@ -53188,6 +53817,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -53269,6 +53899,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
         scenario: zod.string().min(1),
         scenario_key: zod.string().min(1),
         runs: zod.number(),
@@ -53287,6 +53918,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
       turn_count: zod.number(),
     }),
   ),
@@ -53391,6 +54023,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -53449,6 +54082,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -53507,6 +54141,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -53694,6 +54329,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -53756,6 +54392,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
     }),
     measured: zod.number(),
     pass_rate: zod.number(),
@@ -53845,6 +54482,16 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         zod.object({
           name: zod.string().min(1),
           passed: zod.boolean().nullable(),
+          result: zod
+            .enum(["not_applicable", "inconclusive", "unmeasured"])
+            .optional(),
+          reason: zod.string().optional(),
+          evidence: zod
+            .array(zod.string().min(1))
+            .optional()
+            .describe(
+              "What the check was decided from: world_state, tool_calls, transcript, recording.",
+            ),
         }),
       ),
       harness_outcome_status: zod.string().min(1),
@@ -53856,8 +54503,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "passed",
         "failed",
         "inconclusive",
+        "no_score",
         "error",
       ]),
+      outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
       provider: zod.string().min(1),
@@ -53931,6 +54580,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
       measured: zod.number(),
       pass_rate: zod.number(),
@@ -54013,6 +54663,30 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         count: zod.number(),
       }),
     ),
+    call_actor: zod
+      .array(
+        zod.object({
+          value: zod.string().min(1),
+          count: zod.number(),
+          label: zod.string().min(1),
+          delivered: zod
+            .number()
+            .describe(
+              "Calls where at least one of the actor's lines reached the agent.",
+            ),
+          dropped: zod
+            .number()
+            .describe(
+              "Calls where the actor was triggered but none of its lines reached the agent.",
+            ),
+          not_triggered: zod
+            .number()
+            .describe(
+              "Calls the actor was planned for but never triggered in.",
+            ),
+        }),
+      )
+      .optional(),
     status: zod.array(
       zod.object({
         value: zod.string().min(1),
@@ -54027,6 +54701,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     failed: zod.number(),
     error: zod.number(),
     inconclusive: zod.number(),
+    no_score: zod.number(),
   }),
   evaluation_columns: zod.array(
     zod.object({
@@ -54114,6 +54789,7 @@ export const SimulateV3TestExecutionReliabilityResponse = zod.object({
       failed: zod.number(),
       error: zod.number(),
       inconclusive: zod.number(),
+      no_score: zod.number(),
       scenario: zod.string().min(1),
       scenario_key: zod.string().min(1),
       runs: zod.number(),
@@ -79362,10 +80038,28 @@ export const UsageSubscriptionTierReadResponse = zod.object({
   ),
 });
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault =
+  false;
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault =
+  false;
+
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   autoreload_enabled: zod.boolean(),
   autoreload_walletamount: zod.string(),
   autoreload_walletthreshold: zod.string(),
+  autoreload_maxcharge: zod.string().optional(),
+  autoreload_consent: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault),
+  autoreload_charge_now: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({

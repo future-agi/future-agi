@@ -67,6 +67,7 @@ from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
@@ -251,9 +252,20 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
 
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal of a receipt and whether it held, None when nothing decided it. A
-    conversation the agent itself broke fails every goal it left undecided."""
+    conversation the agent itself broke fails every goal it left undecided. A not
+    applicable or inconclusive sub-goal is neither held nor broken, so it is left out.
+    """
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
-    judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
+    results = {
+        str(one["name"]): sub_goal_result(dict(one))
+        for one in checks
+        if one.get("name")
+    }
+    judged = {
+        name: SUB_GOAL_PASSED.get(result)
+        for name, result in results.items()
+        if result is None or result in SUB_GOAL_PASSED
+    }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
     return {

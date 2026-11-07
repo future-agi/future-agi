@@ -29,12 +29,18 @@ from simulate.services.harness_scenarios import (
     call_row_metadata,
     pinned_scenarios,
 )
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    WORLD_ACTIONS_KEY,
+    sub_goal_result,
+)
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     NATIVE_FAILED,
     NATIVE_PASSED,
@@ -58,6 +64,7 @@ OUTCOME_LABELS = {
     "passed": "Passed",
     "failed": "Failed",
     "inconclusive": "Inconclusive",
+    "no_score": "No score",
     "error": "Error",
 }
 
@@ -209,6 +216,9 @@ def call_outcome(
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # Platform evals arrive after the receipt; one that passed scores the call.
+    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
+        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
     if harness_outcome in HARNESS_INCONCLUSIVE:
@@ -230,17 +240,21 @@ def _provider(call: CallExecution) -> str | None:
 
 
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """Return provider-recorded function calls without exposing provider internals."""
+    """Return provider-recorded function calls without exposing provider internals.
+
+    A hosted call's world actors' actions follow the agent's calls; each carries its `actor_id`.
+    """
     provider_data = call.provider_call_data
-    if not isinstance(provider_data, dict):
-        return []
     calls: list[dict[str, Any]] = []
-    for payload in provider_data.values():
+    for payload in (provider_data if isinstance(provider_data, dict) else {}).values():
         if not isinstance(payload, dict) or not isinstance(
             payload.get("tool_calls"), list
         ):
             continue
         calls.extend(item for item in payload["tool_calls"] if isinstance(item, dict))
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    actions = metadata.get(WORLD_ACTIONS_KEY)
+    calls.extend(one for one in actions or [] if isinstance(one, dict))
     return calls
 
 
@@ -676,13 +690,17 @@ def build_call_rows(
             name = item.get("name") if isinstance(item, dict) else item
             if not name:
                 continue
-            held = item.get("held") if isinstance(item, dict) else None
-            sub_goal_results.append(
-                {
-                    "name": str(name),
-                    "passed": held if isinstance(held, bool) else None,
-                }
-            )
+            result = sub_goal_result(item) if isinstance(item, dict) else None
+            entry = {
+                "name": str(name),
+                "passed": SUB_GOAL_PASSED.get(result),
+            }
+            if result in ("not_applicable", "inconclusive", "unmeasured"):
+                entry.update(result=result, reason=str(item.get("reason") or ""))
+            if isinstance(item, dict) and isinstance(item.get("evidence"), list):
+                # What it was decided from: world_state, tool_calls, transcript, recording.
+                entry["evidence"] = [str(one) for one in item["evidence"]]
+            sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")
@@ -749,6 +767,8 @@ def build_call_rows(
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
+                # Why it was skipped, when the harness gave a reason.
+                "outcome_reason": receipt.get("reason"),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,

@@ -52,6 +52,8 @@ def clear_call_for_rerun(
         transcripts=list(
             call_execution.transcripts.values(
                 "speaker_role",
+                "speaker_name",
+                "actor_id",
                 "content",
                 "start_time_ms",
                 "end_time_ms",

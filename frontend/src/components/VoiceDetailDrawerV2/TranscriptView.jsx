@@ -15,15 +15,32 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
-import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
-import { DEFAULT_ROLE_LABELS } from "./constants";
+import {
+  computeTotals,
+  enrichTurns,
+  formatClock,
+  isOtherRole,
+  otherParties,
+  otherPartyLabel,
+} from "./transcriptUtils";
+import {
+  DEFAULT_ROLE_LABELS,
+  OTHER_PARTY_SERIES,
+  WORLD_ACTOR_SERIES,
+} from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
+import OtherPartyName from "./OtherPartyName";
+import CallParticipants from "./CallParticipants";
+import WorldActorAction from "./WorldActorAction";
 import { statusColors } from "src/utils/runStatus";
+import { seriesColor } from "src/theme/data-colors";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -76,6 +93,9 @@ const useSpeakerColors = () => {
       user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
+      actor: seriesColor(theme, OTHER_PARTY_SERIES),
+      world_actor: seriesColor(theme, WORLD_ACTOR_SERIES),
+      others: seriesColor(theme, OTHER_PARTY_SERIES),
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -230,9 +250,11 @@ const SpeakerTimelineStrip = ({
         const left = (t.start / dur) * 100;
         const width = Math.max(0.4, ((t.end - t.start) / dur) * 100);
         return (
-          <Tooltip
+          <CustomTooltip
             key={t.id}
-            title={`${t.role} · ${formatClock(t.start)}`}
+            show
+            size="small"
+            title={`${isOtherRole(t.role) ? otherPartyLabel(t) : t.role} · ${formatClock(t.start)}`}
             arrow
             placement="top"
           >
@@ -250,7 +272,7 @@ const SpeakerTimelineStrip = ({
                 "&:hover": { opacity: 1 },
               }}
             />
-          </Tooltip>
+          </CustomTooltip>
         );
       })}
       {/* Playhead */}
@@ -319,7 +341,9 @@ const TurnRow = React.forwardRef(
               ? "action.hover"
               : isFunctionCall
                 ? "background.neutral"
-                : "transparent",
+                : isOtherRole(turn.role)
+                  ? alpha(color, 0.08)
+                  : "transparent",
           transition: "background-color 80ms",
           "&:hover": {
             bgcolor: isPlaying ? "status.discovery.bg" : "action.hover",
@@ -360,6 +384,10 @@ const TurnRow = React.forwardRef(
             >
               {formatClock(turn.start)}
             </Typography>
+          )}
+
+          {isOtherRole(turn.role) && (
+            <OtherPartyName party={turn} color={color} />
           )}
 
           {showTemporalMetadata &&
@@ -457,6 +485,12 @@ const TurnRow = React.forwardRef(
               calls={turn.toolCalls}
               renderText={(text) => highlightMatches(text, query)}
             />
+          ) : turn.role === "world_actor" ? (
+            <WorldActorAction
+              text={turn.content}
+              query={query}
+              renderText={(text) => highlightMatches(text, query)}
+            />
           ) : query ? (
             <Typography
               sx={{ fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
@@ -547,6 +581,7 @@ const FILTERS = [
 
 const TranscriptView = ({
   transcript,
+  customerName,
   onAnnotate,
   embedded = false,
   // Header-row customization hooks used by the chat drawer to repurpose
@@ -593,17 +628,25 @@ const TranscriptView = ({
   );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
+  const others = useMemo(() => otherParties(turns), [turns]);
+  // A call with no one else on it keeps the original three filters.
+  const filters = others.length
+    ? [...FILTERS, { id: "others", label: DEFAULT_ROLE_LABELS.others }]
+    : FILTERS;
+  // The view stays mounted across calls, and the next call may have no others.
+  const activeFilter = filter === "others" && !others.length ? "all" : filter;
 
   const filteredTurns = useMemo(() => {
     const q = query.trim().toLowerCase();
     return turns.filter((t) => {
-      if (filter === "assistant" && t.role !== "assistant") return false;
-      if (filter === "user" && t.role !== "user") return false;
+      if (activeFilter === "assistant" && t.role !== "assistant") return false;
+      if (activeFilter === "user" && t.role !== "user") return false;
+      if (activeFilter === "others" && !isOtherRole(t.role)) return false;
       if (t.role === "system") return false;
       if (q && !t.content.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [turns, query, filter]);
+  }, [turns, query, activeFilter]);
 
   // Which turn is currently playing based on currentTime?
   //
@@ -803,6 +846,7 @@ const TranscriptView = ({
           Chat drawer hides the timeline strip (no audio-backed speaker
           timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
+        <CallParticipants others={others} customerName={customerName} />
         <TalkRatioBar
           totals={totals}
           colors={colors}
@@ -831,6 +875,7 @@ const TranscriptView = ({
         <Box
           sx={{
             flex: 1,
+            minWidth: 0,
             display: "flex",
             alignItems: "center",
             gap: 0.5,
@@ -854,6 +899,7 @@ const TranscriptView = ({
             onChange={(e) => setQuery(e.target.value)}
             sx={{
               flex: 1,
+              minWidth: 0,
               border: "none",
               outline: "none",
               bgcolor: "transparent",
@@ -878,9 +924,11 @@ const TranscriptView = ({
           )}
         </Box>
 
+        {/* The search gives way when the row is tight, so no filter gets clipped. */}
         <Box
           sx={{
             display: "inline-flex",
+            flexShrink: 0,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
@@ -888,7 +936,7 @@ const TranscriptView = ({
             bgcolor: "background.paper",
           }}
         >
-          {FILTERS.map((f) => (
+          {filters.map((f) => (
             <ButtonBase
               key={f.id}
               onClick={() => setFilter(f.id)}
@@ -896,12 +944,14 @@ const TranscriptView = ({
                 px: 1,
                 py: 0.4,
                 fontSize: 12,
-                fontWeight: filter === f.id ? 600 : 400,
-                color: filter === f.id ? "text.primary" : "text.secondary",
-                bgcolor: filter === f.id ? "background.neutral" : "transparent",
+                fontWeight: activeFilter === f.id ? 600 : 400,
+                color:
+                  activeFilter === f.id ? "text.primary" : "text.secondary",
+                bgcolor:
+                  activeFilter === f.id ? "background.neutral" : "transparent",
                 "&:hover": { bgcolor: "action.hover" },
                 borderRight:
-                  f.id !== FILTERS[FILTERS.length - 1].id
+                  f.id !== filters[filters.length - 1].id
                     ? "1px solid"
                     : "none",
                 borderColor: "divider",
@@ -1021,6 +1071,7 @@ const TranscriptView = ({
 };
 
 TranscriptView.propTypes = {
+  customerName: PropTypes.string,
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
   hideTimelineStrip: PropTypes.bool,

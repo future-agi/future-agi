@@ -467,7 +467,7 @@ def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
             ],
             "evaluations": [],
         }
-    ) == {"expected": 2, "executed": 1, "failed": 1, "complete": False}
+    ) == {"expected": 2, "executed": 1, "failed": 1, "unmeasured": 0, "complete": False}
 
 
 def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
@@ -1044,6 +1044,7 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "expected": 1,
         "executed": 1,
         "failed": 0,
+        "unmeasured": 0,
         "complete": True,
     }
 

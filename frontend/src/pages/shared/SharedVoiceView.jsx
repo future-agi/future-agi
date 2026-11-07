@@ -174,7 +174,10 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
               flexDirection: "column",
             }}
           >
-            <TranscriptView transcript={data.transcript} />
+            <TranscriptView
+              transcript={data.transcript}
+              customerName={data.persona}
+            />
           </Box>
         ) : (
           <Alert severity="info">

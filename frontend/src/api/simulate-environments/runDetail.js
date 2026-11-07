@@ -49,7 +49,7 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
  * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/total`.
+ *                                  present, else derived `passed/measured`.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -112,12 +112,14 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
+  // Passed over passed plus failed, as everywhere else; errored and skipped calls are out.
+  const measured = row?.hasOutcomes ? passed + failed : total;
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
   const passRate =
     row?.hasOutcomes || typeof perfRate !== "number"
-      ? total
-        ? Math.round((passed / total) * 100)
+      ? measured
+        ? Math.round((passed / measured) * 100)
         : 0
       : Math.round(perfRate);
 
@@ -156,7 +158,7 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: row?.hasOutcomes ? passed + failed : total,
+    measured,
     unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
@@ -290,7 +292,7 @@ export function useRunDetail(
  * @property {string} scenario     Scenario / task name.
  * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"|"no_score"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
@@ -403,25 +405,57 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+// How the world took a world actor's action, from its sealed outcome.
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+  duplicate: "Duplicate",
+};
+// A world actor's action as one record, or null for the agent's own call. The serializer keeps every field optional:
+// a row logged before the world kept outcomes has only `refused`, and one kept without a name is shown by its id.
+const worldAction = (call) =>
+  call.actor_id && call.actor_id !== "agent"
+    ? {
+        name: call.actor_name || call.actor_id,
+        role: call.actor_role,
+        outcome:
+          ACTOR_OUTCOMES[call.outcome] ||
+          (call.refused ? ACTOR_OUTCOMES.refused : ""),
+      }
+    : null;
+
+/**
+ * Each recorded call as a transcript row; a world actor's action reads as theirs.
+ * @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls
+ */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    // A world actor's action is theirs, not one of the agent's tool calls.
+    const actor = worldAction(call);
+    const heading = actor
+      ? [actor.outcome, name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor?.name,
+      actor_role: actor?.role,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }
@@ -429,9 +463,20 @@ export function functionCallTranscriptRows(calls = []) {
 /** One stable timeline shared by the chat and voice drawers. */
 export function callTranscript(raw) {
   const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
+  // An actor's role and how they were heard come from the call, joined by their id;
+  // a turn stored before ids were kept falls back to their name.
+  const callActors = Array.isArray(raw?.call_actors) ? raw.call_actors : [];
+  const byId = new Map(callActors.map((one) => [one.id, one]));
+  const byName = new Map(callActors.map((one) => [one.name, one]));
+  const callActorOf = (turn) =>
+    turn.actor_id ? byId.get(turn.actor_id) : byName.get(turn.speaker_name);
   return [
     ...transcript.map((turn) => ({
       ...turn,
+      ...(turn.speaker_role === "actor" && {
+        actor_role: callActorOf(turn)?.role,
+        channel: callActorOf(turn)?.channel,
+      }),
       start_time_seconds: relativeTime(turn),
       end_time_seconds: relativeTime(turn, true),
     })),
@@ -573,6 +618,10 @@ export function mapCallDetail(raw) {
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
+    speakerName: t.speaker_name || "",
+    actorId: t.actor_id || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
@@ -609,6 +658,9 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
+    // What changed in the world per participant, and what each actor chose; absent without actors or faults.
+    trial_state: raw.trial_state ?? null,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,

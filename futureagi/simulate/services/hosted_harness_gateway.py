@@ -464,6 +464,7 @@ def _platform_simulator_material() -> dict[str, str]:
         "HARNESS_CALLER_BARGE_IN_RATE",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        "HARNESS_ACTORS",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
         # The guest waits this long for the build; unset, it falls back to its own default.
@@ -2154,6 +2155,18 @@ def _persist_bundle_stage_outputs(
                     data=catalogue,
                 )
             )
+    if "call_actors" not in existing:
+        listing = speaking_actors(_load_bundle_file(manifest, "actors.json", job))
+        if isinstance(listing, dict) and listing.get("call_actors"):
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Actors",
+                    summary=call_actors_summary(listing),
+                    kind="call_actors",
+                    data=listing,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -2775,6 +2788,7 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VOICEMAIL_SCENARIOS",
+                    "HARNESS_ACTORS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
                 }
@@ -3017,6 +3031,7 @@ class HostedHarnessGateway:
                 "ALK_HARNESS_WORKERS_AT_ONCE",
                 "ALK_SIMULATOR_FUNDING",
                 "ALK_VOICEMAIL_SCENARIOS",
+                "HARNESS_ACTORS",
                 "AGENTCC_BASE_URL",
                 "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",
@@ -3409,6 +3424,7 @@ class HostedHarnessGateway:
                 in {
                     "ALK_HARNESS",
                     "ALK_HARNESS_MODEL",
+                    "HARNESS_ACTORS",
                     "AGENTCC_BASE_URL",
                     "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
@@ -3847,6 +3863,7 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
+        call_actors = speaking_actors(_json("/work/authoring/actors.json"))
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
@@ -3932,6 +3949,7 @@ class HostedHarnessGateway:
             sub_goals=sub_goals,
             build_output=build_output,
             coverage=coverage,
+            call_actors=call_actors,
         )
         activities = _activity_events()
         if activities:
@@ -5308,6 +5326,26 @@ def _record_harness_spend(
     job.updated_at = locked.updated_at
 
 
+def speaking_actors(actors_file: Any) -> dict[str, Any] | None:
+    """The environment's actors that speak in the conversation (those with a channel), from its one `actors.json`,
+    in the shape the actor list stage output keeps."""
+    if not isinstance(actors_file, dict):
+        return None
+    return {
+        "call_actors": [
+            one
+            for one in actors_file.get("actors") or []
+            if isinstance(one, dict) and one.get("channel")
+        ]
+    }
+
+
+def call_actors_summary(listing: dict[str, Any]) -> str:
+    """The stage output's one-line summary of the environment's actor list."""
+    count = len(listing.get("call_actors") or [])
+    return f"{count} actor" + ("" if count == 1 else "s")
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -5319,6 +5357,7 @@ def authoring_stage_outputs(
     repair_history: Any = None,
     action_certification: Any = None,
     coverage: Any = None,
+    call_actors: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -5369,6 +5408,17 @@ def authoring_stage_outputs(
                 "title": "Sub-goal catalogue",
                 "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
                 "data": _secret_safe(sub_goals),
+            }
+        )
+    # Sent even when emptied, so a list read on an earlier poll does not outlive it.
+    if isinstance(call_actors, dict):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "call_actors",
+                "title": "Actors",
+                "summary": call_actors_summary(call_actors),
+                "data": _secret_safe(call_actors),
             }
         )
     stores = _seeded_stores(build_output)
@@ -5472,6 +5522,7 @@ def authoring_stage_outputs_from_archive(
         "environment.json",
         "scenarios.json",
         "sub_goals.json",
+        "actors.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -5522,6 +5573,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
+        call_actors=speaking_actors(documents.get("actors.json")),
     )
 
 
