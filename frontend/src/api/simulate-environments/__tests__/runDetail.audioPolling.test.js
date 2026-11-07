@@ -226,11 +226,27 @@ describe.each([
       unmount();
     });
 
-    it.each(["2026-10-03T11:59:59Z", "2026-10-03T12:00:00Z", "invalid-date"])(
-      "does not poll past or at an invalid deadline: %s",
+    it.each(["2026-10-03T11:59:54Z", "2026-10-03T11:59:55Z", "invalid-date"])(
+      "does not poll outside the deadline grace or with an invalid deadline: %s",
       async (deadline) => {
         const { query, unmount } = await setup(pending(deadline));
         expect(query.options.refetchInterval(query)).toBe(false);
+        await act(() => vi.advanceTimersByTimeAsync(15000));
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        unmount();
+      },
+    );
+
+    it.each(["2026-10-03T11:59:56Z", "2026-10-03T12:00:00Z"])(
+      "allows only one final refresh inside the deadline grace: %s",
+      async (deadline) => {
+        const { query, unmount } = await setup(pending(deadline));
+        expect(query.options.refetchInterval(query)).toBe(5000);
+        await act(() => vi.advanceTimersByTimeAsync(5000));
+        expect(axios.get).toHaveBeenCalledTimes(2);
+        expect(query.options.refetchInterval(query)).toBe(false);
+        await act(() => vi.advanceTimersByTimeAsync(15000));
+        expect(axios.get).toHaveBeenCalledTimes(2);
         unmount();
       },
     );
@@ -320,25 +336,45 @@ describe.each([
       unmount();
     });
 
-    it("stops when the deadline passes during an outstanding refresh", async () => {
-      const data = pending("2026-10-03T12:00:06Z");
-      const { query, unmount } = await setup(data);
-      let finish;
-      axios.get.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-      await act(() => vi.advanceTimersByTimeAsync(5000));
-      expect(axios.get).toHaveBeenCalledTimes(2);
-      await act(() => vi.advanceTimersByTimeAsync(2000));
-      await act(async () => finish({ data }));
-      expect(query.options.refetchInterval(query)).toBe(false);
-      await act(() => vi.advanceTimersByTimeAsync(15000));
-      expect(axios.get).toHaveBeenCalledTimes(2);
-      unmount();
-    });
+    it.each(["pending", "failed", "error"])(
+      "refreshes once after a pending response crosses the deadline, then stops (%s)",
+      async (outcome) => {
+        const data = pending("2026-10-03T12:00:06Z");
+        const { query, result, unmount } = await setup(data);
+        let finish;
+        axios.get.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        );
+        await act(() => vi.advanceTimersByTimeAsync(5000));
+        expect(axios.get).toHaveBeenCalledTimes(2);
+        // The server serialized pending before expiry; delivery crosses it.
+        await act(() => vi.advanceTimersByTimeAsync(2000));
+        await act(async () => finish({ data }));
+        expect(query.options.refetchInterval(query)).toBe(5000);
+        const finalData = {
+          ...data,
+          audio_metrics: { ...data.audio_metrics, state: outcome },
+        };
+        if (outcome === "error") {
+          axios.get.mockRejectedValue(new Error("Network unavailable"));
+        } else {
+          axios.get.mockResolvedValue({ data: finalData });
+        }
+        await act(() => vi.advanceTimersByTimeAsync(5001));
+        expect(axios.get).toHaveBeenCalledTimes(3);
+        expect(result.current.data).toEqual(
+          outcome === "error" ? data : finalData,
+        );
+        expect(result.current.isError).toBe(outcome === "error");
+        expect(query.options.refetchInterval(query)).toBe(false);
+        await act(() => vi.advanceTimersByTimeAsync(15000));
+        expect(axios.get).toHaveBeenCalledTimes(3);
+        unmount();
+      },
+    );
 
     if (_name === "v3") {
       it("preserves scoring precedence during the scheduling gap", async () => {

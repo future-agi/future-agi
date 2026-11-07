@@ -3,6 +3,7 @@ export function isCallDetailAccessError(error) {
 }
 
 const ANALYSIS_SCHEDULING_WINDOW_MS = 2 * 60 * 1000;
+const ANALYSIS_DEADLINE_GRACE_MS = 5000;
 
 function isAwaitingAudioScheduling(data) {
   if (data?.status !== "completed" || data.is_snapshot) return false;
@@ -41,9 +42,13 @@ export function callDetailRefetchInterval(data, error) {
     );
   if (isLocalizing) return 3000;
   const audio = data?.audio_metrics;
+  // A response serialized before expiry can arrive just after it. Allow one
+  // final refresh for the server's timeout projection. This grace is no longer
+  // than the polling interval, so even another pending response stops polling.
   if (
     audio?.state === "pending" &&
-    (!audio.deadline_at || Date.parse(audio.deadline_at) > Date.now())
+    (!audio.deadline_at ||
+      Date.parse(audio.deadline_at) + ANALYSIS_DEADLINE_GRACE_MS > Date.now())
   ) {
     return 5000;
   }
