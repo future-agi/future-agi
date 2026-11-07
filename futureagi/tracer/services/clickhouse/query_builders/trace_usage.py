@@ -89,8 +89,10 @@ def is_repeated_usage_summary(
     )
 
 
-def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
-    """Coverage flags and a GenAI-summary bit from the same physical winner.
+def usage_coverage_sql(
+    *, attrs: str, prefix: str = "", include_summary: bool = False
+) -> str:
+    """Stable coverage flags, optionally with a GenAI-summary witness bit.
 
     Explicit nonadditive summaries contribute neither usage nor uncertainty.
     Unknown tokenless TOOL/CHAIN activity is not a billable request. Unmarked
@@ -101,13 +103,15 @@ def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
         f"{prefix}{column} > 0"
         for column in ("total_tokens", "prompt_tokens", "completion_tokens")
     )
-    return (
+    flags = (
         f"tuple({attrs}['fi.usage.contribution'] = 'none', "
         f"{attrs}['fi.cost.kind'] = 'unknown' AND "
         f"({billable} OR {prefix}observation_type = 'llm' "
-        f"OR {attrs}['fi.usage.scope'] = 'turn'), "
-        f"{attrs}['gen_ai.operation.name'] = 'invoke_agent')"
+        f"OR {attrs}['fi.usage.scope'] = 'turn'))"
     )
+    if include_summary:
+        return f"tupleConcat({flags}, tuple({attrs}['gen_ai.operation.name'] = 'invoke_agent'))"
+    return flags
 
 
 class CaptureCoverage(TypedDict):
@@ -155,6 +159,7 @@ def usage_aggregate_sql(
     coverage: str | None = None,
     source_summary: str | None = None,
     known_cost_fact: str | None = None,
+    materialized: bool = False,
 ) -> str:
     """Aggregate light, latest-live span rows of ONE (project, trace) group.
 
@@ -208,6 +213,28 @@ def usage_aggregate_sql(
                 [groupArray(tuple({values}))]
             ) AS trace_usage_metrics
         """
+    if materialized:
+        capture = (
+            ", arrayExists(s -> s.10, usage_spans), "
+            "arrayCount(s -> s.4 = 'llm', billable_usage_spans)"
+            if source_summary is not None else ""
+        )
+        return f"""
+            arrayMap(usage_spans ->
+                arrayMap(repeated_usage_ids ->
+                    arrayMap(billable_usage_spans ->
+                        arrayMap(cost_unknown -> tuple(cost_unknown,
+                            if(cost_unknown, CAST(NULL, 'Nullable(Float64)'),
+                                arraySum(s -> s.5, billable_usage_spans)),
+                            arraySum(s -> s.6, billable_usage_spans),
+                            arraySum(s -> s.7, billable_usage_spans),
+                            arraySum(s -> s.8, billable_usage_spans) {capture}),
+                            [arrayExists(s -> tupleElement(s.9, 2), billable_usage_spans)])[1],
+                        [arrayFilter(s -> NOT tupleElement(s.9, 1)
+                            AND NOT (s.4 != 'llm' AND has(repeated_usage_ids, s.1)), usage_spans)])[1],
+                    [{repeated_ids}])[1],
+                [groupArray(tuple({values}))]) AS trace_usage_metrics
+        """
     projections = [
         f"groupArray(tuple({values})) AS usage_spans",
         f"{repeated_ids} AS repeated_usage_ids",
@@ -230,7 +257,7 @@ def usage_aggregate_sql(
     return ",\n".join(projections)
 
 
-def repeated_usage_ids_sql() -> str:
+def repeated_usage_ids_sql(*, child_condition: str = "1") -> str:
     """Proof over usage_spans: (id, parent, name, kind, cost, total, in, out, flags).
 
     Only GenAI candidates compute transitive reachability. arrayFold terminates
@@ -246,30 +273,52 @@ def repeated_usage_ids_sql() -> str:
     )
     # tupleConcat accepts old two-flag internal callers without fabricating an
     # operation witness. New readers project the third bit at the source.
-    candidates = (
-        f"arrayFilter(s -> s.4 != 'llm' AND (s.3 = '{SUMMARY_NAME}' "
-        "OR tupleElement(tupleConcat(s.9, tuple(0)), 3)), usage_spans)"
+    pydantic_candidates = (
+        f"arrayFilter(s -> s.4 != 'llm' AND s.3 = '{SUMMARY_NAME}', usage_spans)"
     )
-    descendants = """
-        arrayFilter(c -> c.4 = 'llm' AND c.1 != s.1 AND has(reachable_ids, c.1), usage_spans)
+    genai_candidates = (
+        f"arrayFilter(s -> s.4 != 'llm' AND s.3 != '{SUMMARY_NAME}' "
+        "AND tupleElement(tupleConcat(s.9, tuple(0)), 3), usage_spans)"
+    )
+    descendants = f"""
+        arrayFilter(c -> c.4 = 'llm' AND c.1 != s.1 AND ({child_condition})
+            AND has(reachable_ids, c.2), usage_spans)
     """
-    reachable = """
-        arrayFold((state, hop) ->
-            arrayMap(next_ids -> tuple(arrayConcat(state.1, next_ids), next_ids),
+    # Traverse only spans that themselves parent another row. A wide agent
+    # with N leaf LLMs needs one ancestry step, not N scans of N leaf IDs.
+    branches = """
+        arrayMap(parent_ids -> arrayFilter(c -> has(parent_ids, c.1), usage_spans),
+            [arrayDistinct(arrayMap(c -> c.2, usage_spans))])[1]
+    """
+    reachable = f"""
+        arrayMap(usage_branches -> arrayFold((state, hop) ->
+            arrayMap(next_ids -> tuple(
+                if(empty(next_ids), state.1,
+                    arrayConcat(if(empty(next_ids), [], state.1), next_ids)), next_ids),
                 [arrayMap(c -> c.1, arrayFilter(c -> has(state.2, c.2)
                     AND NOT has(state.1, c.1),
-                    if(empty(state.2), [], usage_spans)))])[1],
-            range(length(usage_spans)), tuple([s.1], [s.1])).1
+                    if(empty(state.2), [], usage_branches)))])[1],
+            range(length(usage_branches)), tuple([s.1], [s.1])).1,
+            [{branches}])[1]
     """
-    return f"""
+
+    immediate = f"arrayFilter(c -> c.2 = s.1 AND ({child_condition}), usage_spans)"
+    legacy_comparison = comparisons.replace("proof_children", immediate)
+    legacy = (
+        "arrayMap(s -> s.1, arrayFilter(s -> "
+        f"arrayExists(c -> c.2 = s.1 AND ({child_condition}), usage_spans) "
+        f"AND {legacy_comparison}, {pydantic_candidates}))"
+    )
+    # Pydantic keeps its original lightweight proof; only GenAI candidates
+    # enter the lexically bound descendant/collision proof.
+    genai = f"""
         arrayMap(summary_proofs ->
             arrayMap(proof -> proof.1, arrayFilter(proof -> proof.2
                 AND arrayCount(p -> p.1 = proof.1 AND p.2, summary_proofs)
                     = arrayCount(c -> c.1 = proof.1 AND c.4 != 'llm', usage_spans), summary_proofs)),
             [arrayMap(s -> tuple(s.1,
                 arrayMap(proof_children -> notEmpty(proof_children) AND {comparisons},
-                    [if(s.3 = '{SUMMARY_NAME}',
-                        arrayFilter(c -> c.2 = s.1, usage_spans),
-                        arrayMap(reachable_ids -> {descendants}, [{reachable}])[1])])[1]
-            ), {candidates})])[1]
+                    [arrayMap(reachable_ids -> {descendants}, [{reachable}])[1]])[1]),
+                {genai_candidates})])[1]
     """
+    return f"arrayConcat({legacy}, {genai})"

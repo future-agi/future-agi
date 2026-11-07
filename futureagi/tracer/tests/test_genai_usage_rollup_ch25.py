@@ -30,18 +30,23 @@ COLUMNS = (
 
 def source_rows(shape):
     parent = ("agent", "", "agent-run", "agent", 0.25, 193, 190, 3, 1)
-    if shape == "pydantic":
-        parent = (*parent[:2], "pydantic_ai.agent.run", *parent[3:-1], 0)
+    if shape.startswith("pydantic"):
+        parent = (
+            *parent[:2],
+            "pydantic_ai.agent.run",
+            *parent[3:-1],
+            int(shape == "pydantic-genai-nested"),
+        )
     if shape == "unequal":
         parent = (*parent[:5], 194, *parent[6:])
     rows = [parent]
     if shape != "parent-only":
-        if shape == "nested":
+        if shape in ("nested", "pydantic-genai-nested"):
             rows.append(("loop", "agent", "event_loop", "chain", 0.0, 0, 0, 0, 0))
         rows.append(
             (
                 "chat",
-                "loop" if shape == "nested" else "agent",
+                "loop" if shape in ("nested", "pydantic-genai-nested") else "agent",
                 "request",
                 "llm",
                 0.25,
@@ -76,6 +81,7 @@ def source_rows(shape):
         ("direct", 193, 0.25),
         ("nested", 193, 0.25),
         ("pydantic", 193, 0.25),
+        ("pydantic-genai-nested", 386, 0.5),
         ("parent-only", 193, 0.25),
         ("unequal", 387, 0.5),
     ],
@@ -101,3 +107,24 @@ def test_genai_summary_shared_readers(ch, shape, tokens, cost, reader):
             params,
         )
         assert result == [{"cost": cost, "tokens": tokens}]
+
+
+@pytest.mark.parametrize("width", [1, 1000])
+def test_wide_agent_summary_does_not_expand_leaf_frontiers(ch, width):
+    source = """(
+        SELECT 'agent' AS id, '' AS parent_span_id, 'invoke_agent' AS name,
+            'agent' AS observation_type, toFloat64(%(width)s) * 0.25 AS cost,
+            toInt64(%(width)s) * 193 AS total_tokens,
+            toInt64(%(width)s) * 190 AS prompt_tokens,
+            toInt64(%(width)s) * 3 AS completion_tokens,
+            tuple(0, 0, 1) AS coverage
+        UNION ALL
+        SELECT concat('call-', toString(number)), 'agent', 'chat', 'llm',
+            toFloat64(0.25), toInt64(193), toInt64(190), toInt64(3), tuple(0, 0, 0)
+        FROM numbers(%(width)s)
+    )"""
+    query = usage_aggregate_sql(coverage="coverage")
+    assert ch.execute(
+        f"SELECT usage_cost AS cost, usage_total_tokens AS tokens FROM (SELECT {query} FROM {source})",
+        {"width": width},
+    ) == [{"cost": width * 0.25, "tokens": width * 193}]

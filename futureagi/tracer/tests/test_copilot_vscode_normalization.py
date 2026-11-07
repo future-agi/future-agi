@@ -6,6 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from google.protobuf.json_format import MessageToDict, Parse
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+)
 
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.normalization import normalize_attributes
@@ -19,7 +23,11 @@ def test_real_vscode_capture_retains_spans_and_counts_requests_once():
         .joinpath("vscode-copilot-1.0.100-1.json")
         .read_text()
     )
-    parsed = _parse_otel_request(payload)
+    # Match OTLPTraceView's protobuf JSON -> snake-case processing boundary.
+    request = Parse(json.dumps(payload), ExportTraceServiceRequest())
+    parsed = _parse_otel_request(
+        MessageToDict(request, preserving_proto_field_name=True)
+    )
     normalize_span_attributes(parsed)
     project = SimpleNamespace(id="project")
     with patch("tracer.utils.otel.calculate_cost_from_tokens", return_value=0):
