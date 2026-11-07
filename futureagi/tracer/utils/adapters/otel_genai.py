@@ -12,6 +12,7 @@ Detection: any gen_ai.* attribute present AND no traceloop.* attribute.
 (Spans with traceloop.* go through the OpenLLMetry adapter instead.)
 """
 
+import json
 import re
 from typing import Any
 
@@ -25,6 +26,7 @@ from tracer.utils.adapters.base import (
     register_adapter,
     set_io_value,
 )
+from tracer.utils.content_attributes import has_native_content
 from tracer.utils.otel import SpanAttributes
 from tracer.utils.semantic_conventions import AttributeRegistry
 
@@ -93,6 +95,42 @@ def _extract_indexed_messages(
     return result
 
 
+def _content_parts(value: Any) -> list[Any]:
+    """Alias GenAI text parts for the chat renderer; retain non-text parts intact."""
+    parts = parse_json_attr(value)
+    if not isinstance(parts, list):
+        return []
+    return [
+        {**{k: v for k, v in part.items() if k != "content"}, "text": part["content"]}
+        if isinstance(part, dict) and part.get("type") == "text" and "content" in part
+        else part
+        for part in parts
+    ]
+
+
+def _extract_messages(
+    attributes: dict[str, Any], key: str, legacy_prefix: re.Pattern
+) -> list[dict[str, Any]]:
+    # Presence, not truthiness: an explicitly empty/redacted modern attribute
+    # must not resurrect stale indexed content.
+    if key not in attributes:
+        return _extract_indexed_messages(attributes, legacy_prefix)
+    messages = parse_json_attr(attributes[key])
+    if not isinstance(messages, list):
+        return []
+    result = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if "parts" in message:
+            message = {
+                **{k: v for k, v in message.items() if k != "parts"},
+                "content": _content_parts(message["parts"]),
+            }
+        result.append(message)
+    return result
+
+
 class OtelGenAIAdapter(BaseTraceAdapter):
     @property
     def source_name(self) -> str:
@@ -132,9 +170,33 @@ class OtelGenAIAdapter(BaseTraceAdapter):
         )
         total_tokens = attributes.get("gen_ai.usage.total_tokens")
 
-        # Extract indexed messages (if present)
-        input_messages = _extract_indexed_messages(attributes, _PROMPT_RE)
-        output_messages = _extract_indexed_messages(attributes, _COMPLETION_RE)
+        has_input = any(
+            key in attributes for key in ("input.value", "fi.llm.input", "raw.input")
+        )
+        has_output = any(
+            key in attributes for key in ("output.value", "fi.llm.output", "raw.output")
+        )
+        # Ordinary indexed GenAI spans retain their legacy placeholder fallback.
+        # Strict alias presence applies only when modern native content is present.
+        native_content = has_native_content(attributes)
+        input_messages = (
+            []
+            if has_input and native_content
+            else _extract_messages(attributes, "gen_ai.input.messages", _PROMPT_RE)
+        )
+        output_messages = (
+            []
+            if has_output and native_content
+            else _extract_messages(attributes, "gen_ai.output.messages", _COMPLETION_RE)
+        )
+        native_input = attributes.get("gen_ai.input.messages")
+        if not has_input and (
+            "gen_ai.input.messages" not in attributes
+            or isinstance(parse_json_attr(native_input), list)
+        ):
+            instructions = _content_parts(attributes.get("gen_ai.system_instructions"))
+            if instructions:
+                input_messages.insert(0, {"role": "system", "content": instructions})
 
         # --- Determine span kind ---
         span_kind = next(
@@ -174,6 +236,28 @@ class OtelGenAIAdapter(BaseTraceAdapter):
                 output_messages[0] if len(output_messages) == 1 else output_messages
             )
             set_io_value(attributes, "output", obs_output)
+
+        if span_kind == "TOOL":
+            for key, present, value in (
+                ("input", has_input, attributes.get("gen_ai.tool.call.arguments")),
+                (
+                    "output",
+                    has_output,
+                    attributes.get(
+                        "gen_ai.tool.call.result",
+                        attributes.get("anthropic.tool_result.content"),
+                    ),
+                ),
+            ):
+                if (
+                    not present
+                    and f"gen_ai.{key}.messages" not in attributes
+                    and value is not None
+                ):
+                    # Keep JSON scalars (notably false and zero) decodable too.
+                    if isinstance(value, bool | int | float):
+                        value = json.dumps(value)
+                    set_io_value(attributes, key, value)
 
         # --- Add legacy llm.* aliases for downstream compat ---
         if is_llm:

@@ -77,7 +77,8 @@ func Normalize(attrs pcommon.Map, profile *Profile) {
 			attrs.PutStr("fi.span.kind", strings.ToUpper(kind))
 			attrs.PutStr("fi.source.operation", op)
 		}
-		if session := String(attrs, profile.SessionFallback); String(attrs, "session.id") == "" && len(session) > 0 && len(session) <= 4096 {
+		_, hasSession := attrs.Get("session.id")
+		if session := String(attrs, profile.SessionFallback); !hasSession && len(session) > 0 && len(session) <= 4096 {
 			attrs.PutStr("session.id", session)
 		}
 		contribution, hasContribution := attrs.Get("fi.usage.contribution")

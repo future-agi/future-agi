@@ -5,6 +5,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
+import { normalizeNativeGenAIMessage } from "src/components/traceDetailDrawer/DrawerRightRenderer/nativeGenAIMessages";
 
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
@@ -43,12 +44,14 @@ export function isOpenAIMessages(input) {
   if (
     Array.isArray(data) &&
     data.length > 0 &&
+    data[0] !== null &&
     typeof data[0] === "object" &&
     "role" in data[0]
   )
     return true;
   // Gemini/Vertex format: {contents: [{role, parts}], model: "..."}
   if (
+    data !== null &&
     typeof data === "object" &&
     !Array.isArray(data) &&
     data.contents &&
@@ -75,6 +78,7 @@ function parseMessages(input) {
   }
   // Gemini format: {contents: [{role, parts}], model: "..."}
   if (
+    data !== null &&
     typeof data === "object" &&
     data.contents &&
     Array.isArray(data.contents)
@@ -84,39 +88,96 @@ function parseMessages(input) {
   return [];
 }
 
+const isRecord = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const isOptionalString = (value) => value == null || typeof value === "string";
+
+function hasValidMessageMetadata(message) {
+  if (!isRecord(message)) return false;
+  if (
+    ![message.name, message.tool_call_id, message.toolCallId].every(
+      isOptionalString,
+    )
+  )
+    return false;
+  return [message.tool_calls, message.toolCalls].every(
+    (calls) =>
+      calls == null ||
+      (Array.isArray(calls) &&
+        calls.every(
+          (call) =>
+            isRecord(call) &&
+            [call.id, call.name, call.type].every(isOptionalString) &&
+            (call.function == null ||
+              (isRecord(call.function) &&
+                isOptionalString(call.function.name))),
+        )),
+  );
+}
+
+function isSupportedMessage(message) {
+  return (
+    hasValidMessageMetadata(message) &&
+    typeof message.role === "string" &&
+    Object.hasOwn(ROLE_STYLES, message.role.toLowerCase()) &&
+    (message.content == null ||
+      typeof message.content === "string" ||
+      Array.isArray(message.content)) &&
+    (message.parts == null || Array.isArray(message.parts)) &&
+    ("content" in message ||
+      Array.isArray(message.parts) ||
+      Array.isArray(message.tool_calls) ||
+      Array.isArray(message.toolCalls))
+  );
+}
+
+const rawJsonMessage = (value) => ({
+  role: "assistant",
+  content: [`\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``],
+});
+
 /** Normalize a message to {role, content} format (handles Gemini parts) */
-function normalizeMessage(msg) {
+function normalizeMessage(message) {
+  // Attribute/input paths can bypass output detection. Never forward malformed
+  // names, tool ids or tool calls to React children on those paths either.
+  if (isRecord(message) && !hasValidMessageMetadata(message))
+    return rawJsonMessage(message);
+  const msg =
+    Array.isArray(message?.parts) && message.parts.some((p) => p?.type)
+      ? normalizeNativeGenAIMessage(message)
+      : message;
   if (!msg || typeof msg !== "object")
     return { role: "unknown", content: [String(msg)] };
-  const role = msg.role || "unknown";
+  const role = typeof msg.role === "string" && msg.role ? msg.role : "unknown";
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
     if (typeof msg.content === "string")
-      return { role, content: [msg.content] };
+      return { ...msg, role, content: [msg.content] };
     if (Array.isArray(msg.content)) {
       return {
+        ...msg,
         role,
         content: msg.content.map((c) =>
           typeof c === "string" ? c : c?.text || JSON.stringify(c),
         ),
       };
     }
-    return { role, content: [JSON.stringify(msg.content)] };
+    return { ...msg, role, content: [JSON.stringify(msg.content)] };
   }
   // Gemini format: {role, parts: [{text: "..."}]}
   if (msg.parts && Array.isArray(msg.parts)) {
     const texts = msg.parts.map((p) => {
       if (typeof p === "string") return p;
-      if (p?.text) return p.text;
+      if (typeof p?.text === "string") return p.text;
       if (p?.functionCall)
         return `**Tool call:** \`${p.functionCall.name}\`\n\`\`\`json\n${JSON.stringify(p.functionCall.args, null, 2)}\n\`\`\``;
       if (p?.function_call)
         return `**Tool call:** \`${p.function_call.name}\`\n\`\`\`json\n${JSON.stringify(p.function_call.args, null, 2)}\n\`\`\``;
       return JSON.stringify(p);
     });
-    return { role, content: texts };
+    return { ...msg, role, content: texts };
   }
-  return { role, content: [JSON.stringify(msg)] };
+  return { ...msg, role, content: [JSON.stringify(msg)] };
 }
 
 // ── Single Message Card ──
@@ -261,53 +322,62 @@ const ChatMessageView = ({
   // Prefer attribute-extracted messages (from span_attributes like llm.inputMessages)
   // Fall back to parsing raw input as OpenAI messages format
   const messages = useMemo(() => {
-    if (attrInputMessages?.length > 0) return attrInputMessages;
-    return parseMessages(input);
+    if (attrInputMessages?.length > 0)
+      return attrInputMessages.map(normalizeMessage);
+    const parsed = parseMessages(input);
+    if (parsed.length > 0) return parsed;
+    // Native output can select chat preview even when the input is a scalar.
+    if (input != null && input !== "" && !Array.isArray(input)) {
+      return [
+        {
+          role: "user",
+          content: [typeof input === "string" ? input : JSON.stringify(input)],
+        },
+      ];
+    }
+    return [];
   }, [input, attrInputMessages]);
 
-  // Parse output — prefer attribute-extracted, fall back to raw output
-  const outputMessage = useMemo(() => {
-    if (attrOutputMessages?.length > 0) {
-      return normalizeMessage(attrOutputMessages[0]);
-    }
-    if (!output) return null;
+  // Native GenAI output is an array, including multiple messages/tool responses.
+  const outputMessages = useMemo(() => {
+    const attributeMessages =
+      attrOutputMessages?.length > 0
+        ? attrOutputMessages.map(normalizeMessage)
+        : [];
+    if (!output) return attributeMessages;
     let data = output;
     if (typeof data === "string") {
       try {
         data = JSON.parse(data);
       } catch {
-        return { role: "assistant", content: [output] };
+        return attributeMessages.length > 0
+          ? attributeMessages
+          : [{ role: "assistant", content: [output] }];
       }
     }
-    // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
-    if (typeof data === "object" && data.content && data.content.role) {
-      return normalizeMessage(data.content);
-    }
-    // OpenAI: {role, content}
-    if (typeof data === "object" && data.role) return normalizeMessage(data);
+    // Validate the original array before using attribute messages: native parts
+    // may already have been normalized by getLlmData from this same column.
     if (
-      typeof data === "object" &&
-      data.content &&
-      typeof data.content === "string"
-    ) {
-      return { role: "assistant", content: [data.content] };
+      Array.isArray(data) &&
+      !(data.length > 0 && data.every(isSupportedMessage))
+    )
+      return [rawJsonMessage(data)];
+    if (attributeMessages.length > 0) return attributeMessages;
+    if (data === null || typeof data !== "object") return [];
+    if (Array.isArray(data)) return data.map(normalizeMessage);
+    // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
+    if (data.content?.role) return [normalizeMessage(data.content)];
+    if (data.role) return [normalizeMessage(data)];
+    if (typeof data.content === "string") {
+      return [{ role: "assistant", content: [data.content] }];
     }
-    return null;
+    return [];
   }, [output, attrOutputMessages]);
 
-  const allMessages = useMemo(() => {
-    const msgs = [...messages];
-    // Add output as last assistant message if not already present
-    if (
-      outputMessage &&
-      !msgs.some(
-        (m) => m.role === "assistant" && m.content === outputMessage.content,
-      )
-    ) {
-      msgs.push(outputMessage);
-    }
-    return msgs;
-  }, [messages, outputMessage]);
+  const allMessages = useMemo(
+    () => [...messages, ...outputMessages],
+    [messages, outputMessages],
+  );
 
   const COLLAPSE_THRESHOLD = 4;
   const shouldCollapse = allMessages.length > COLLAPSE_THRESHOLD && !showAll;

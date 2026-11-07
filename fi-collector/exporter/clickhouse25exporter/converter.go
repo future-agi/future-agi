@@ -36,7 +36,7 @@ import (
 // futureagi/tracer/utils/trace_ingestion.py `_parse_otel_request` reads it).
 // Django reads these literal keys directly — NOT via AttributeRegistry
 // aliasing (that path only covers span_kind/model/provider/tokens) — so the
-// collector must read these exact literals and nothing else.
+// collector reads these literals after version-qualified normalization.
 const (
 	attrUserID       = "user.id"
 	attrUserIDType   = "user.id.type"
@@ -455,13 +455,9 @@ func spanToRow(
 		observationType = openRouterUntypedSpanType
 	}
 
-	// Inputs/outputs: the first non-empty content key in inputContentKeys /
-	// outputContentKeys. OpenInference `input.value` / `output.value` still
-	// win; the GenAI keys after them fill spans that only carry those
-	// (OpenRouter Broadcast, plain OTel GenAI). The source attribute stays
-	// where adapter.Split put it; this only fills the hot column.
-	input := contentValue(attrsStr, overflow, inputContentKeys)
-	output := contentValue(attrsStr, overflow, outputContentKeys)
+	// Fill hot content columns without modifying source attributes. Explicit
+	// aliases (including empty/redacted values) win over native GenAI content.
+	input, output := spanContent(span.Attributes(), observationType)
 
 	// CH-derived dimensions (P3b step2): stamp the DETERMINISTIC end_user_id /
 	// trace_session_id so collector-written spans unify with the read-side
@@ -628,7 +624,7 @@ func newSpanIdentity(attrs pcommon.Map, projectID, orgID, projectType string) sp
 
 	// ── session half (independent gate; no project_type requirement) ────────
 	if pid, ok := canonicalUUID(projectID); ok {
-		if v, ok := attrs.Get(attrSessionID); ok {
+		if v, present := attrs.Get(attrSessionID); present {
 			name := v.AsString()
 			id.hasSession = true
 			id.sessionID = detid.TraceSessionID(pid, name).String()
@@ -847,72 +843,6 @@ func stringFromMap(m map[string]string, key string) string {
 		return v
 	}
 	return ""
-}
-
-// inputContentKeys / outputContentKeys list, in precedence order, the
-// attributes a span's prompt / completion content can arrive under. The first
-// one with a non-empty value fills the CH `input` / `output` column.
-//
-//   - input.value / output.value: OpenInference and traceAI. Always first, so
-//     spans that set it are stored exactly as before.
-//   - span.input / span.output: OpenRouter Broadcast's generation span.
-//   - gen_ai.prompt / gen_ai.completion: the older OTel GenAI content keys,
-//     which OpenRouter Broadcast also sets.
-//   - gen_ai.input.messages / gen_ai.output.messages: current OTel GenAI, a
-//     JSON string of the messages.
-//
-// Only these exact keys are read. Indexed keys such as gen_ai.prompt.0.content
-// (OpenLLMetry) and gen_ai.input.messages.0.message.role (traceAI's flattened
-// messages) don't match.
-var (
-	inputContentKeys = []string{
-		"input.value",
-		"span.input",
-		"gen_ai.prompt",
-		"gen_ai.input.messages",
-	}
-	outputContentKeys = []string{
-		"output.value",
-		"span.output",
-		"gen_ai.completion",
-		"gen_ai.output.messages",
-	}
-)
-
-// contentValue returns the first non-empty value among keys. A key can be in
-// either tier, depending on adapter.Split: input.value / output.value always
-// go to overflow, and the GenAI keys go to attrs_string when they arrive as
-// strings and to overflow when they arrive as maps or arrays (which are
-// JSON-encoded here).
-func contentValue(attrsStr map[string]string, overflow map[string]any, keys []string) string {
-	for _, k := range keys {
-		if s, ok := attrsStr[k]; ok && s != "" {
-			return s
-		}
-		if s := overflowAsString(overflow, k); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-// overflowAsString lifts the value at `key` from the overflow map and
-// returns its string form. Plain strings pass through; nested objects get
-// JSON-encoded so the hot column still holds something useful. Missing
-// key → empty string (CH `input` is `String DEFAULT ”`).
-func overflowAsString(overflow map[string]any, key string) string {
-	v, ok := overflow[key]
-	if !ok || v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }
 
 // statusString maps OTel StatusCode → CH `status` LowCardinality strings.

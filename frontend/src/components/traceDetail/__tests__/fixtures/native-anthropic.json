@@ -1,0 +1,80 @@
+[
+  {
+    "sdkVersion": "12.56.0",
+    "input": [
+      {
+        "role": "system",
+        "parts": [
+          {
+            "type": "text",
+            "content": "SYSTEM_SENTINEL"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "type": "text",
+            "content": "PROMPT_SENTINEL"
+          }
+        ]
+      }
+    ],
+    "output": [
+      {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "text",
+            "content": "RESPONSE_SENTINEL"
+          }
+        ]
+      }
+    ],
+    "attributes": {
+      "gen_ai.input.messages": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"PROMPT_SENTINEL\"}]}]",
+      "gen_ai.output.messages": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"RESPONSE_SENTINEL\"}]}]",
+      "gen_ai.system_instructions": "[{\"type\":\"text\",\"content\":\"SYSTEM_SENTINEL\"}]"
+    }
+  },
+  {
+    "sdkVersion": "13.3.0",
+    "input": [
+      {
+        "role": "system",
+        "parts": [
+          {
+            "type": "text",
+            "content": "SYSTEM_SENTINEL"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "type": "text",
+            "content": "PROMPT_SENTINEL"
+          }
+        ]
+      }
+    ],
+    "output": [
+      {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "text",
+            "content": "RESPONSE_SENTINEL"
+          }
+        ]
+      }
+    ],
+    "attributes": {
+      "gen_ai.input.messages": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"PROMPT_SENTINEL\"}]}]",
+      "gen_ai.output.messages": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"RESPONSE_SENTINEL\"}]}]",
+      "gen_ai.system_instructions": "[{\"type\":\"text\",\"content\":\"SYSTEM_SENTINEL\"}]"
+    }
+  }
+]

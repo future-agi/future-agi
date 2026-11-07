@@ -13,6 +13,7 @@ import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
 import { useNavigate } from "react-router";
 import { isJson } from "../getSpanData";
+import { normalizeNativeGenAIMessage } from "../nativeGenAIMessages";
 
 function CustomTabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -235,16 +236,20 @@ const LLMSpan = ({
                       {Array.isArray(tabData[key]) ? (
                         <Stack spacing={2}>
                           {" "}
-                          {tabData[key]?.map(({ role, content }) => (
-                            <CustomDataPointCard
-                              key={role}
-                              value={{ cellValue: content }}
-                              label={
-                                role?.charAt(0).toUpperCase() + role?.slice(1)
-                              }
-                              allowCopy
-                            />
-                          ))}
+                          {tabData[key]?.map((message, messageIndex) => {
+                            const { role, content } =
+                              normalizeNativeGenAIMessage(message) || {};
+                            return (
+                              <CustomDataPointCard
+                                key={messageIndex}
+                                value={{ cellValue: content }}
+                                label={
+                                  role?.charAt(0).toUpperCase() + role?.slice(1)
+                                }
+                                allowCopy
+                              />
+                            );
+                          })}
                         </Stack>
                       ) : (
                         <CustomJsonViewer
