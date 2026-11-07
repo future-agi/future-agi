@@ -5027,6 +5027,11 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
     return resolved
 
 
+# Connect-only targets the harness inspects before authoring; must match ALK's
+# PROVIDER_MANAGED_CONNECTORS, whose builder waits for the provider profile cache.
+_CONNECT_ONLY_INSPECTED_CONNECTORS = frozenset({"vapi", "retell", "retell_chat"})
+
+
 def _provider_import_authoring_material(
     job: HostedHarnessJob, payload: dict[str, Any]
 ) -> tuple[dict[str, str], str]:
@@ -5034,8 +5039,10 @@ def _provider_import_authoring_material(
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "")
-    inspect_connect_only_chat = mode == "connect_only" and connector == "retell_chat"
-    if mode != "provider_import" and not inspect_connect_only_chat:
+    inspect_connect_only = (
+        mode == "connect_only" and connector in _CONNECT_ONLY_INSPECTED_CONNECTORS
+    )
+    if mode != "provider_import" and not inspect_connect_only:
         return {}, connector
     secret_name = {
         "vapi": "VAPI_API_KEY",
