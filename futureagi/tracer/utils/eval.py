@@ -522,8 +522,7 @@ def build_session_context(session) -> dict | None:
     try:
         from tracer.models.trace import Trace
         from tracer.services.clickhouse.query_builders.trace_usage import (
-            SUMMARY_NAME,
-            is_repeated_usage_summary,
+            repeated_usage_summary_ids,
         )
         from tracer.services.clickhouse.v2 import get_reader
 
@@ -591,19 +590,15 @@ def build_session_context(session) -> dict | None:
                     project_id=(str(project_id) if project_id is not None else None),
                 )
 
-        # Reuse the trace usage rule on the rows already needed for context.
-        # Index children only for candidate Pydantic wrappers, by trace AND span
-        # identity: no extra read, raw-attribute copy, or per-span tree scan.
-        summary_children = {
-            (s.trace_id, s.id): []
-            for s in _ch_spans
-            if s.name == SUMMARY_NAME and s.observation_type != "llm"
+        # Scope the proof to each trace, including descendant LLMs under
+        # tokenless event-loop spans. Reuse the already-selected live rows.
+        usage_by_trace: dict = {}
+        for s in _ch_spans:
+            usage_by_trace.setdefault(s.trace_id, []).append(vars(s))
+        repeated_by_trace = {
+            trace_id: repeated_usage_summary_ids(rows)
+            for trace_id, rows in usage_by_trace.items()
         }
-        if summary_children:
-            for s in _ch_spans:
-                children = summary_children.get((s.trace_id, s.parent_span_id))
-                if children is not None:
-                    children.append(vars(s))
 
         _start_time = None
         _end_time = None
@@ -624,9 +619,8 @@ def build_session_context(session) -> dict | None:
                 _error_count += 1
             attrs = s.attrs_string
             additive = attrs.get("fi.usage.contribution") != "none" and not (
-                is_repeated_usage_summary(
-                    vars(s), summary_children.get((s.trace_id, s.id), [])
-                )
+                s.observation_type != "llm"
+                and s.id in repeated_by_trace.get(s.trace_id, set())
             )
             # Same billable predicate as usage_coverage_sql; None alone does not
             # invent unknown pricing for unmarked legacy or tokenless activity.

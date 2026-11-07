@@ -310,6 +310,36 @@ def test_repeated_pydantic_parent_is_excluded_not_equal_valued_siblings(monkeypa
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("parent_only", [False, True])
+def test_genai_context_proves_descendants_within_each_trace(monkeypatch, parent_only):
+    spans = [
+        _span(
+            id="parent",
+            observation_type="agent",
+            cost=1.25,
+            attrs_string={"gen_ai.operation.name": "invoke_agent"},
+        ),
+        _span(
+            id="loop",
+            parent_span_id="parent",
+            observation_type="chain",
+            total_tokens=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost=0,
+        ),
+        # Matching IDs in another trace must not prove this summary.
+        _span(trace_id="trace-2", parent_span_id="loop", cost=1.25),
+    ]
+    if not parent_only:
+        spans.append(_span(parent_span_id="loop", cost=1.25))
+    context = _context(monkeypatch, spans)
+    assert context["total_tokens"] == 240
+    assert context["total_cost"] == 2.5
+    _assert_coverage(context, "complete", 2.5, 2, 0)
+
+
+@pytest.mark.unit
 def test_context_page_limits_do_not_limit_cost_coverage(monkeypatch):
     spans = [_span(trace_id=f"trace-{i}", cost=1.25) for i in range(100)]
     spans.extend(_span(trace_id="trace-100", attrs_string=UNKNOWN) for _ in range(51))

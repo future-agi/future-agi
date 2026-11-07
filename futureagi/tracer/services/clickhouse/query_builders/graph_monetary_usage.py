@@ -3,6 +3,7 @@
 from tracer.services.clickhouse.query_builders.trace_usage import (
     SUMMARY_NAME,
     USAGE_COLUMNS,
+    repeated_usage_ids_sql,
 )
 
 
@@ -47,6 +48,10 @@ def graph_monetary_rows_sql(
         f"AND {span('observation_type')} != 'llm' "
         f"AND graph_child_count > 0 AND {comparisons}"
     )
+    repeated = (
+        f"({repeated}) OR ({span('observation_type')} != 'llm' "
+        f"AND has(genai_repeated_ids, {span('id')}))"
+    )
     flags = span("graph_cost_flags")
     projections = []
     for column in columns:
@@ -55,7 +60,8 @@ def graph_monetary_rows_sql(
             value = f"if(graph_repeated_summary OR NOT ({flags}.1 OR {flags}.2), 0, {value})"
         elif column == "graph_cost_flags":
             value = (
-                f"if(graph_repeated_summary, tuple(toUInt8(0), toUInt8(0)), {value})"
+                f"tuple(if(graph_repeated_summary, toUInt8(0), {value}.1), "
+                f"if(graph_repeated_summary, toUInt8(0), {value}.2))"
             )
         projections.append(f"{value} AS {column}")
     projection = ",\n                ".join(projections)
@@ -70,6 +76,10 @@ def graph_monetary_rows_sql(
     )
     # CH25 does not export an ARRAY JOIN alias through SELECT *; the proof
     # projection must name its payload so the outer scalar projection can read it.
+    genai_proof = repeated_usage_ids_sql()
+    # Keep Pydantic's two-event reduction intact. The separate light proof is
+    # trace-scoped and retains intermediate ancestry even outside a graph's
+    # contributing request window; only selected LLMs carry proof usage.
     return f"""
         SELECT
             project_id,
@@ -97,6 +107,24 @@ def graph_monetary_rows_sql(
                 ) AS graph_usage_events
                 GROUP BY project_id, trace_id, graph_target.1
             ) AS graph_usage_by_parent
+            LEFT JOIN (
+                SELECT project_id, trace_id, {genai_proof} AS genai_repeated_ids
+                FROM (
+                    SELECT project_id, trace_id,
+                        groupArray(tuple(id, parent_span_id, '',
+                            if(({child_condition}) OR observation_type != 'llm', observation_type, 'excluded'),
+                            ifNull(cost, 0), ifNull(total_tokens, 0),
+                            ifNull(prompt_tokens, 0), ifNull(completion_tokens, 0),
+                            tuple(0, 0, tupleElement(tupleConcat(graph_cost_flags, tuple(0)), 3)))) AS usage_spans
+                    FROM {source}
+                    WHERE (project_id, trace_id) IN (
+                        SELECT project_id, trace_id FROM {source}
+                        WHERE tupleElement(tupleConcat(graph_cost_flags, tuple(0)), 3)
+                            AND observation_type != 'llm'
+                    )
+                    GROUP BY project_id, trace_id
+                ) AS genai_usage_population
+            ) AS genai_usage_proof USING (project_id, trace_id)
             ARRAY JOIN graph_own_spans AS graph_own_span
         ) AS graph_usage_proof
     """

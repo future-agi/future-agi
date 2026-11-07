@@ -69,7 +69,8 @@ def graph_cost_flags_sql(*, prefix: str = "") -> str:
     return (
         f"tuple(toUInt8(NOT tupleElement({coverage}, 1) AND "
         f"NOT tupleElement({coverage}, 2) AND ({eligible})), "
-        f"toUInt8(NOT tupleElement({coverage}, 1) AND tupleElement({coverage}, 2)))"
+        f"toUInt8(NOT tupleElement({coverage}, 1) AND tupleElement({coverage}, 2)), "
+        f"toUInt8({attrs}['gen_ai.operation.name'] = 'invoke_agent'))"
     )
 
 

@@ -6,7 +6,14 @@ import React, {
   useRef,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -22,6 +29,7 @@ import {
 // ---------------------------------------------------------------------------
 import { getTypeConfig } from "./spanTypeConfig";
 import { getOwnEvalScores } from "./evalScores";
+import { timingSpanIds, withoutTimingSpans } from "./timingSpans";
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -689,6 +697,12 @@ const TraceTreeV2 = ({
   onRefresh,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTimingSpans, setShowTimingSpans] = useState(false);
+  const timingIds = useMemo(() => timingSpanIds(spans || []), [spans]);
+  const visibleSpans = useMemo(
+    () => (showTimingSpans ? spans : withoutTimingSpans(spans || [])),
+    [spans, showTimingSpans],
+  );
   const [showMetricsLocal, setShowMetricsLocal] = useState(true);
   // Use prop if provided, otherwise use local state
   const showMetrics =
@@ -712,8 +726,14 @@ const TraceTreeV2 = ({
     if (spans) {
       setExpandedSet(collectAllIds(spans));
       setSearchQuery("");
+      setShowTimingSpans(false);
     }
   }, [spansKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Direct navigation to a timing span must reveal it, not strand selection.
+  useEffect(() => {
+    if (timingIds.has(selectedSpanId)) setShowTimingSpans(true);
+  }, [selectedSpanId, timingIds, spansKey]);
 
   const handleCollapseAll = useCallback(() => setExpandedSet(new Set()), []);
   const handleExpandAll = useCallback(
@@ -758,13 +778,31 @@ const TraceTreeV2 = ({
         showMetrics={showMetrics}
         onToggleMetrics={handleToggleMetrics}
       />
+      {timingIds.size > 0 && (
+        <Button
+          size="small"
+          color="inherit"
+          aria-pressed={showTimingSpans}
+          onClick={() => setShowTimingSpans((show) => !show)}
+          startIcon={<Iconify icon="solar:clock-circle-linear" width={14} />}
+          sx={{
+            alignSelf: "flex-start",
+            mx: 1,
+            my: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          {showTimingSpans ? "Hide" : "Show"} {timingIds.size} timing{" "}
+          {timingIds.size === 1 ? "span" : "spans"}
+        </Button>
+      )}
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        {spans.map((entry, idx) => (
+        {visibleSpans.map((entry, idx) => (
           <TreeNodeRow
             key={getSpan(entry).id || idx}
             entry={entry}
             depth={0}
-            isLast={idx === spans.length - 1}
+            isLast={idx === visibleSpans.length - 1}
             selectedSpanId={selectedSpanId}
             onSelect={onSelectSpan}
             expandedSet={expandedSet}

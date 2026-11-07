@@ -1,11 +1,8 @@
-"""Usage accounting for the known Pydantic agent-summary shape.
+"""Conservative usage accounting for Pydantic and OTel GenAI summaries.
 
-Pydantic instrumentation can export an agent run's usage on each wrapping run
-as well as the real LLM call. Suppress a wrapper only when its complete usage
-vector equals its immediate children's vector. This is deliberately NOT
-value-based deduplication of calls, nor a blanket exclusion of non-LLM spans:
-parent-only usage, different/missing child usage and independent LLMs survive.
-Unknown summary conventions remain additive rather than guessing attribution.
+Pydantic retains its immediate-child rule. An invoke_agent wrapper is suppressed
+only when its complete vector equals its descendant LLM vector. Parent-only,
+unequal vectors, unrelated work and independent LLM calls remain additive.
 """
 
 from __future__ import annotations
@@ -18,11 +15,65 @@ USAGE_COLUMNS = ("cost", "total_tokens", "prompt_tokens", "completion_tokens")
 SUMMARY_NAME = "pydantic_ai.agent.run"
 
 
+def is_usage_summary_candidate(span: Mapping[str, Any]) -> bool:
+    attrs = span.get("span_attributes") or span.get("attrs_string") or {}
+    return span.get("observation_type") != "llm" and (
+        span.get("name") == SUMMARY_NAME
+        or attrs.get("gen_ai.operation.name") == "invoke_agent"
+    )
+
+
+def repeated_usage_summary_ids(spans: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Resolve ONE trace's summaries, including LLMs beneath event-loop spans.
+
+    Callers select latest-live rows and fence project/trace membership first.
+    A visited set bounds malformed cycles. No producer/name guessing or sibling
+    value deduplication; only candidates walk their own reachable subtree.
+    """
+    by_parent: dict[str, list[Mapping[str, Any]]] = {}
+    for span in spans:
+        by_parent.setdefault(span.get("parent_span_id") or "", []).append(span)
+    repeated = set()
+    additive_ids = set()
+    for span in spans:
+        span_id = span.get("id")
+        if not is_usage_summary_candidate(span):
+            if span.get("observation_type") != "llm":
+                additive_ids.add(span_id)
+            continue
+        children = by_parent.get(span_id, [])
+        if span.get("name") != SUMMARY_NAME:
+            pending = [span_id]
+            visited = set()
+            children = []
+            while pending:
+                parent_id = pending.pop()
+                if parent_id in visited:
+                    continue
+                visited.add(parent_id)
+                for child in by_parent.get(parent_id, []):
+                    child_id = child.get("id")
+                    if child_id == span_id:
+                        continue
+                    # Keep every selected physical LLM row; only ancestry
+                    # expansion is deduplicated, never independent usage.
+                    if child.get("observation_type") == "llm":
+                        children.append(child)
+                    pending.append(child_id)
+        if is_repeated_usage_summary(span, children):
+            repeated.add(span_id)
+        else:
+            additive_ids.add(span_id)
+    # A logical id can have multiple physical rows. An unequal/non-summary
+    # sibling must not lose its usage merely because one version proved equal.
+    return repeated - additive_ids
+
+
 def is_repeated_usage_summary(
     span: Mapping[str, Any], children: Sequence[Mapping[str, Any]]
 ) -> bool:
     if (
-        span.get("name") != SUMMARY_NAME
+        not is_usage_summary_candidate(span)
         or span.get("observation_type") == "llm"
         or not children
     ):
@@ -39,7 +90,7 @@ def is_repeated_usage_summary(
 
 
 def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
-    """Two light flags from the same physical winner as its usage vector.
+    """Coverage flags and a GenAI-summary bit from the same physical winner.
 
     Explicit nonadditive summaries contribute neither usage nor uncertainty.
     Unknown tokenless TOOL/CHAIN activity is not a billable request. Unmarked
@@ -54,7 +105,8 @@ def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
         f"tuple({attrs}['fi.usage.contribution'] = 'none', "
         f"{attrs}['fi.cost.kind'] = 'unknown' AND "
         f"({billable} OR {prefix}observation_type = 'llm' "
-        f"OR {attrs}['fi.usage.scope'] = 'turn'))"
+        f"OR {attrs}['fi.usage.scope'] = 'turn'), "
+        f"{attrs}['gen_ai.operation.name'] = 'invoke_agent')"
     )
 
 
@@ -113,7 +165,7 @@ def usage_aggregate_sql(
     scoping belong to the caller. No content/attribute payload is retained. The
     array is shared by the four reducers in CH. Optional source_summary adds
     one scalar witness and an observed LLM count; it does not alter the existing
-    two-flag coverage tuple, numeric reducers or callers that omit it.
+    coverage flags, numeric reducers or callers that omit it.
     known_cost_fact selects a singleton array of user money/count/token metrics
     instead; callers must unpack it with ARRAY JOIN after trace grouping.
     """
@@ -128,24 +180,7 @@ def usage_aggregate_sql(
                 "User metrics and capture coverage are separate projections"
             )
         values += f", {known_cost_fact}"
-    # Fixed layout: identity, parent, name, kind, cost, total, prompt, completion,
-    # (nonadditive, unknown billable cost). Siblings are never deduplicated.
-    same_children = " AND ".join(
-        (
-            f"abs(s.{index} - arraySum(c -> c.{index}, arrayFilter(c -> c.2 = s.1, usage_spans))) "
-            f"<= greatest(abs(s.{index}) * 1e-9, 1e-18)"
-            if column == "cost"
-            else f"s.{index} = arraySum(c -> c.{index}, arrayFilter(c -> c.2 = s.1, usage_spans))"
-        )
-        for index, column in enumerate(USAGE_COLUMNS, 5)
-    )
-    # Filter to known wrappers BEFORE inspecting children. Relying on an AND
-    # inside a reducer would make every ordinary LLM span scan every other span
-    # when ClickHouse's short-circuit evaluation is disabled (quadratic fan-out).
-    candidates = (
-        f"arrayFilter(s -> s.3 = '{SUMMARY_NAME}' AND s.4 != 'llm', usage_spans)"
-    )
-    repeated = f"arrayExists(c -> c.2 = s.1, usage_spans) AND {same_children}"
+    repeated_ids = repeated_usage_ids_sql()
     if known_cost_fact is not None:
         # Bind each intermediate array lexically, rather than SELECT aliases
         # that the analyzer recursively substitutes into every reducer. Return
@@ -160,23 +195,23 @@ def usage_aggregate_sql(
                         arraySum(s -> if(tupleElement(s.9, 2), 0, s.5), billable_usage_spans),
                         arraySum(s -> toInt64(s.10
                             AND NOT tupleElement(s.9, 1) AND NOT tupleElement(s.9, 2)
-                            AND NOT (s.3 = '{SUMMARY_NAME}' AND s.4 != 'llm'
+                            AND NOT (s.4 != 'llm'
                                 AND has(repeated_usage_ids, s.1))), usage_spans),
                         arrayCount(s -> tupleElement(s.9, 2), billable_usage_spans),
                         arraySum(s -> s.6, billable_usage_spans),
                         arraySum(s -> s.7, billable_usage_spans),
                         arraySum(s -> s.8, billable_usage_spans)
                     ), [arrayFilter(s -> NOT tupleElement(s.9, 1)
-                        AND NOT has(repeated_usage_ids, s.1), usage_spans)])[1],
-                    [arrayMap(s -> s.1, arrayFilter(s -> {repeated}, {candidates}))]
+                        AND NOT (s.4 != 'llm' AND has(repeated_usage_ids, s.1)), usage_spans)])[1],
+                    [{repeated_ids}]
                 )[1],
                 [groupArray(tuple({values}))]
             ) AS trace_usage_metrics
         """
     projections = [
         f"groupArray(tuple({values})) AS usage_spans",
-        f"arrayMap(s -> s.1, arrayFilter(s -> {repeated}, {candidates})) AS repeated_usage_ids",
-        "arrayFilter(s -> NOT tupleElement(s.9, 1) AND NOT has(repeated_usage_ids, s.1), usage_spans) AS billable_usage_spans",
+        f"{repeated_ids} AS repeated_usage_ids",
+        "arrayFilter(s -> NOT tupleElement(s.9, 1) AND NOT (s.4 != 'llm' AND has(repeated_usage_ids, s.1)), usage_spans) AS billable_usage_spans",
         "arrayExists(s -> tupleElement(s.9, 2), billable_usage_spans) AS usage_cost_unknown",
         "if(usage_cost_unknown, CAST(NULL, 'Nullable(Float64)'), "
         "arraySum(s -> s.5, billable_usage_spans)) AS usage_cost",
@@ -193,3 +228,48 @@ def usage_aggregate_sql(
             ]
         )
     return ",\n".join(projections)
+
+
+def repeated_usage_ids_sql() -> str:
+    """Proof over usage_spans: (id, parent, name, kind, cost, total, in, out, flags).
+
+    Only GenAI candidates compute transitive reachability. arrayFold terminates
+    logically when the frontier is empty; at most N hops covers an N-row tree.
+    IDs already visited never re-enter, so cycles terminate too. Pydantic keeps
+    its existing immediate-child proof. No raw attribute maps enter the arrays.
+    """
+    comparisons = " AND ".join(
+        f"abs(s.{i} - arraySum(c -> c.{i}, proof_children)) <= greatest(abs(s.{i}) * 1e-9, 1e-18)"
+        if column == "cost"
+        else f"s.{i} = arraySum(c -> c.{i}, proof_children)"
+        for i, column in enumerate(USAGE_COLUMNS, 5)
+    )
+    # tupleConcat accepts old two-flag internal callers without fabricating an
+    # operation witness. New readers project the third bit at the source.
+    candidates = (
+        f"arrayFilter(s -> s.4 != 'llm' AND (s.3 = '{SUMMARY_NAME}' "
+        "OR tupleElement(tupleConcat(s.9, tuple(0)), 3)), usage_spans)"
+    )
+    descendants = """
+        arrayFilter(c -> c.4 = 'llm' AND c.1 != s.1 AND has(reachable_ids, c.1), usage_spans)
+    """
+    reachable = """
+        arrayFold((state, hop) ->
+            arrayMap(next_ids -> tuple(arrayConcat(state.1, next_ids), next_ids),
+                [arrayMap(c -> c.1, arrayFilter(c -> has(state.2, c.2)
+                    AND NOT has(state.1, c.1),
+                    if(empty(state.2), [], usage_spans)))])[1],
+            range(length(usage_spans)), tuple([s.1], [s.1])).1
+    """
+    return f"""
+        arrayMap(summary_proofs ->
+            arrayMap(proof -> proof.1, arrayFilter(proof -> proof.2
+                AND arrayCount(p -> p.1 = proof.1 AND p.2, summary_proofs)
+                    = arrayCount(c -> c.1 = proof.1 AND c.4 != 'llm', usage_spans), summary_proofs)),
+            [arrayMap(s -> tuple(s.1,
+                arrayMap(proof_children -> notEmpty(proof_children) AND {comparisons},
+                    [if(s.3 = '{SUMMARY_NAME}',
+                        arrayFilter(c -> c.2 = s.1, usage_spans),
+                        arrayMap(reachable_ids -> {descendants}, [{reachable}])[1])])[1]
+            ), {candidates})])[1]
+    """
