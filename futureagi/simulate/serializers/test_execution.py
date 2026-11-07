@@ -178,6 +178,7 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
 
     audio_metrics = serializers.SerializerMethodField()
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_audio_metrics(self, obj):
         if not _audio_metrics_visible(self.context):
             return None
@@ -351,6 +352,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     audio_metrics = serializers.SerializerMethodField()
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_audio_metrics(self, obj):
         if not _audio_metrics_visible(self.context):
             return None

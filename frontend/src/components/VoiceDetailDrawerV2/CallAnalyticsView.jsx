@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useContext, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -15,6 +15,10 @@ import { seriesColor } from "src/theme/data-colors";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 import { fmtWpm } from "./formatters";
 import AcousticMetricsSection from "./AcousticMetricsSection";
+import {
+  AcousticMetricsLoadContext,
+  isAcousticMetricsVisible,
+} from "./acousticMetricsLabels";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -685,13 +689,18 @@ const CallAnalyticsView = ({
   const hasApiMetrics =
     apiMetrics && Object.values(apiMetrics).some((v) => v != null);
 
+  const audioLoadState = useContext(AcousticMetricsLoadContext);
+  const hasAcousticMetrics =
+    isAcousticMetricsVisible(audioMetrics) ||
+    (audioMetrics === undefined &&
+      (audioLoadState?.isLoading || audioLoadState?.isError));
   const hasAny =
     (transcript && transcript.length > 0) ||
     latencies ||
     costBreakdown ||
     analysisSummary ||
     hasApiMetrics ||
-    audioMetrics !== undefined;
+    hasAcousticMetrics;
 
   if (!hasAny) {
     return (
@@ -717,7 +726,7 @@ const CallAnalyticsView = ({
         <KpiStrip metrics={metrics} apiMetrics={apiMetrics} />
       )}
 
-      {audioMetrics !== undefined && (
+      {hasAcousticMetrics && (
         <AcousticMetricsSection data={audioMetrics} isStale={isStale} />
       )}
 

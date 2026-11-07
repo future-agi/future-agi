@@ -167,6 +167,76 @@ describe.each([
       expect(query.getObserversCount()).toBe(0);
     });
 
+    it.each([{ response: { status: 500 } }, new Error("Network unavailable")])(
+      "retains stale data after a transient error and recovers on the next poll (%j)",
+      async (error) => {
+        const data = pending();
+        const { query, result, unmount } = await setup(data);
+        axios.get.mockRejectedValueOnce(error);
+        await act(() => result.current.refetch());
+        await act(() => vi.advanceTimersByTimeAsync(1));
+        expect(result.current.isError).toBe(true);
+        expect(result.current.data).toEqual(data);
+        expect(query.options.refetchInterval(query)).toBe(5000);
+        const complete = { ...data, audio_metrics: { state: "complete" } };
+        axios.get.mockResolvedValue({ data: complete });
+        await act(() => vi.advanceTimersByTimeAsync(5001));
+        expect(result.current.data).toEqual(complete);
+        expect(result.current.isError).toBe(false);
+        expect(query.options.refetchInterval(query)).toBe(false);
+        unmount();
+      },
+    );
+
+    it("does not promise continued polling after a failed terminal refresh", async () => {
+      const data = { audio_metrics: { state: "complete" } };
+      const { query, result, unmount } = await setup(data);
+      axios.get.mockRejectedValue(new Error("Network unavailable"));
+      await act(() => result.current.refetch());
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(result.current.isError).toBe(true);
+      expect(result.current.data).toEqual(data);
+      expect(query.options.refetchInterval(query)).toBe(false);
+      await act(() => vi.advanceTimersByTimeAsync(15000));
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      unmount();
+    });
+
+    it("stops when the deadline passes during an outstanding refresh", async () => {
+      const data = pending("2026-10-03T12:00:06Z");
+      const { query, unmount } = await setup(data);
+      let finish;
+      axios.get.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      await act(async () => finish({ data }));
+      expect(query.options.refetchInterval(query)).toBe(false);
+      await act(() => vi.advanceTimersByTimeAsync(15000));
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      unmount();
+    });
+
+    if (_name === "v3") {
+      it("preserves scoring precedence over audio polling and stops on access loss", async () => {
+        const { query, result, unmount } = await setup({
+          ...pending(),
+          evaluations: [{ status: "pending" }],
+        });
+        expect(query.options.refetchInterval(query)).toBe(3000);
+        axios.get.mockRejectedValue({ statusCode: 403 });
+        await act(() => result.current.refetch());
+        await act(() => vi.advanceTimersByTimeAsync(1));
+        expect(query.options.refetchInterval(query)).toBe(false);
+        unmount();
+      });
+    }
+
     it.each([401, 403, 404])(
       "stops refetches and retries on access loss (%s), retaining cached values",
       async (statusCode) => {

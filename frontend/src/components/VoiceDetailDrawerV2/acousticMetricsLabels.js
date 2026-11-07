@@ -1,3 +1,54 @@
+import { createContext } from "react";
+
+// Detail transport state is separate from the API's analysis envelope. Legacy
+// drawers keep playback mounted while the acoustic area loads or fails.
+export const AcousticMetricsLoadContext = createContext(null);
+
+export const ACOUSTIC_METRICS = [
+  ["average_pitch_hz", "Average pitch (Hz)"],
+  ["estimated_snr_db", "Estimated SNR (dB)"],
+  ["voice_quality_index", "Voice quality index (0–5)"],
+];
+
+export function isAcousticMetricsVisible(data) {
+  if (data === undefined) return false;
+  if (data?.schema_version != null && data.schema_version !== 1) return true;
+  if (data?.state === "unsupported") return true;
+  return !ACOUSTIC_METRICS.every(([key]) => {
+    const entry = data?.metrics?.[key];
+    return entry?.state === "unavailable" && entry.reason === "not_enabled";
+  });
+}
+
+const CAPTURE_LABELS = {
+  provider_received_track: "Received over the call",
+  provider_source_track: "Agent source audio",
+  provider_recording: "Provider recording",
+  bridge_received: "Received over the call",
+  livekit_egress: "Room recording",
+  unknown: "Unknown origin",
+};
+const TRANSPORT_LABELS = {
+  sip: "Phone (SIP)",
+  web_bridge: "Web call",
+  livekit_room: "LiveKit room",
+  phone: "Phone",
+};
+
+export function captureOriginLabel(value) {
+  if (value == null) return "—";
+  return Object.hasOwn(CAPTURE_LABELS, value)
+    ? CAPTURE_LABELS[value]
+    : "Unknown origin";
+}
+
+export function transportLabel(value) {
+  if (value == null) return "—";
+  return Object.hasOwn(TRANSPORT_LABELS, value)
+    ? TRANSPORT_LABELS[value]
+    : "Unknown transport";
+}
+
 // Committed copy of the public reason enums in ENGINEERING-DESIGN 5.4.
 export const UNAVAILABLE_REASONS = [
   "not_analyzed",
@@ -33,32 +84,32 @@ export const FAILED_REASONS = [
 ];
 
 export const REASON_LABELS = {
-  not_analyzed: "not analyzed",
-  not_applicable: "not applicable",
-  not_enabled: "not enabled",
-  no_recording: "no recording",
-  unknown_agent_track: "unknown tested-agent track",
-  mixed_speakers: "mixed speakers",
-  unsupported_format: "unsupported format",
-  unsupported_sample_rate: "unsupported sample rate",
-  limit_exceeded: "limit exceeded",
-  empty_audio: "empty audio",
-  no_voice: "no voice",
-  insufficient_audio: "insufficient audio",
-  insufficient_voice: "insufficient voice",
-  insufficient_coverage: "insufficient coverage",
-  no_voiced_frames: "no voiced frames",
-  no_noise_floor: "no noise floor",
-  out_of_domain: "out of domain",
-  not_validated: "not validated",
-  model_unavailable: "model unavailable",
+  not_analyzed: "Not analyzed",
+  not_applicable: "Not applicable to this call",
+  not_enabled: "Not enabled",
+  no_recording: "No recording",
+  unknown_agent_track: "Tested-agent track could not be identified",
+  mixed_speakers: "Multiple speakers in the agent track",
+  unsupported_format: "Unsupported audio format",
+  unsupported_sample_rate: "Unsupported sample rate",
+  limit_exceeded: "Recording exceeds analysis limits",
+  empty_audio: "Empty recording",
+  no_voice: "No speech detected",
+  insufficient_audio: "Not enough audio",
+  insufficient_voice: "Not enough speech",
+  insufficient_coverage: "Not enough speech covered",
+  no_voiced_frames: "No voiced frames detected",
+  no_noise_floor: "No separable noise floor",
+  out_of_domain: "Outside the calibrated range or call type",
+  not_validated: "Calibration not validated",
+  model_unavailable: "Quality model unavailable",
   other_unavailable: "Unavailable",
-  invalid_audio: "invalid audio",
-  nonfinite_output: "non-finite output",
-  storage_unavailable: "storage unavailable",
-  provider_access_denied: "provider access denied",
-  timeout: "analysis timed out",
-  analysis_error: "analysis error",
+  invalid_audio: "Audio could not be decoded",
+  nonfinite_output: "Analysis produced an invalid result",
+  storage_unavailable: "Recording could not be retrieved",
+  provider_access_denied: "Recording access denied",
+  timeout: "Analysis timed out",
+  analysis_error: "Audio analysis error",
   other_failed: "Analysis failed",
 };
 

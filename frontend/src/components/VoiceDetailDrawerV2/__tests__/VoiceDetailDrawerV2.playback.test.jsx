@@ -14,6 +14,7 @@ const { query, players, createPlayer } = vi.hoisted(() => ({
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
   ...(await importOriginal()),
   useCallExecutionV3Detail: () => query.current,
+  useCallTraces: () => ({ traces: [], projectId: null, isError: false }),
 }));
 vi.mock("src/api/project/saved-views", () => ({
   useGetSavedViews: () => ({ data: { custom_views: [] } }),
@@ -161,6 +162,10 @@ describe("Voice detail refresh preservation (R09 / AC10)", () => {
     query.current = { ...query.current, isError: true };
     rerender(ui());
     expect(screen.getByText("Stale")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Couldn't refresh audio metrics. Showing the last result.",
+    );
+    expect(screen.queryByText(/Retrying/)).not.toBeInTheDocument();
     expect(screen.getByText("0.0")).toBeInTheDocument();
     expect(createPlayer).toHaveBeenCalledTimes(1);
     expect(players[0].destroy).not.toHaveBeenCalled();
