@@ -102,7 +102,7 @@ export const demoAdapter = async (config) => ({
 /* Before the app mounts: a demo session, and fetch() to the API answered the same way. */
 export const installDemoMode = (axiosInstance, axiosPackage, hostApi) => {
   /* The demo opens on Environments, where every flow starts. */
-  if (location.pathname === "/" || location.pathname === "/dashboard" || location.pathname === "/dashboard/") history.replaceState(null, "", "/dashboard/simulate/environments");
+  if (!/^\/dashboard\/./.test(location.pathname) || /^\/dashboard\/falcon-ai/.test(location.pathname)) history.replaceState(null, "", "/dashboard/simulate/environments");
   localStorage.setItem("accessToken", "demo-token");
   localStorage.setItem("refreshToken", "demo-token");
   axiosInstance.defaults.adapter = demoAdapter;
