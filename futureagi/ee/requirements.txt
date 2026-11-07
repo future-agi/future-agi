@@ -968,6 +968,7 @@ packaging==24.2
     #   opentelemetry-instrumentation-pika
     #   optuna
     #   pooch
+    #   silero-vad
     #   spacy
     #   thinc
     #   torchmetrics
@@ -1329,6 +1330,8 @@ setuptools==80.9.0
     #   torch
 shellingham==1.5.4
     # via typer
+silero-vad==6.2.3
+    # via core-backend
 simple-websocket==1.1.0
     # via python-engineio
 six==1.17.0
@@ -1433,6 +1436,7 @@ toml==0.10.2
 torch==2.11.0
     # via
     #   core-backend
+    #   silero-vad
     #   torch-fidelity
     #   torchmetrics
     #   torchvision
