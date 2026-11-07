@@ -63,4 +63,23 @@ SOFTWARE.
 
 ## VQI calibration data
 
-TODO: filled by the calibration study commit
+The VQI calibration study (`ee/voice/calibration/`) uses human quality ratings
+from the NISQA Corpus: G. Mittag, B. Naderi, A. Chehadi and S. Möller,
+"NISQA: A Deep CNN-Self-Attention Model for Multidimensional Speech Quality
+Prediction with Crowdsourced Datasets", Interspeech 2021;
+https://github.com/gabrielmittag/NISQA, Zenodo record 4728081.
+
+Only these subsets are read, and no corpus audio is redistributed; the
+repository keeps derived statistics (a calibration mapping and its
+validation report) only:
+
+- NISQA_TRAIN_LIVE and NISQA_VAL_LIVE: source speech from LibriVox
+  (public domain). Subset readme: "The dataset is provided under the original
+  terms of the used source speech samples. Therefore, they may be used for
+  commercial and/or non-commerical research."
+- NISQA_TEST_LIVETALK: Creative Commons Attribution 4.0 International
+  (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/ ; used unmodified
+  for held-out evaluation only.
+
+The remaining NISQA subsets (TRAIN_SIM, VAL_SIM, TEST_FOR, TEST_NSC,
+TEST_P501) carry non-commercial or custom terms and are not used.
