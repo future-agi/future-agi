@@ -62,10 +62,16 @@ import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
 import { initTwitter } from "./utils/twitterAds";
 import { applyTranslationDomGuard } from "./utils/translationDomGuard";
+import axiosInstance from "./utils/axios";
+import axiosPackage from "axios";
+import { DEMO_MODE, installDemoMode } from "./demo/demoMode";
 
 applyTranslationDomGuard();
 
 const IS_PRODUCTION = CURRENT_ENVIRONMENT === "production";
+
+/* The hosted prototype: a demo session, every API request answered locally. */
+if (DEMO_MODE) installDemoMode(axiosInstance, axiosPackage, HOST_API);
 const DEFAULT_TRACES_SAMPLE_RATE = IS_PRODUCTION ? 0.1 : 1.0;
 const tracesSampleRateEnv = import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
 const configuredTracesSampleRate = Number(
