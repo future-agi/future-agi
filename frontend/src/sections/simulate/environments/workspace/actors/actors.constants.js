@@ -11,6 +11,8 @@ export const ACTORS_COPY = {
       caller_takes_back_after_turns: "Caller takes back after agent turns",
       actor_seconds_per_call: "Seconds of actors per call",
       max_messages: "Most messages in a conversation before the run",
+      live_turns_per_actor: "Most turns each actor takes during a run",
+      live_turns_per_trial: "Most turns all actors take together in a run",
     },
     defaults: {
       max_active: "Default: 2 on a phone line, none in a chat",
@@ -18,6 +20,8 @@ export const ACTORS_COPY = {
         "Default: 4 on a phone line, none in a chat",
       actor_seconds_per_call: "Default: 60 on a phone line, none in a chat",
       max_messages: "Default: 20",
+      live_turns_per_actor: "Default: 10",
+      live_turns_per_trial: "Default: 20",
     },
     none: "none",
     badNumber: "A number above 0, or none",

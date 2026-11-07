@@ -315,6 +315,8 @@ LIMIT_FIELDS = {
     "caller_takes_back_after_turns": int,
     "actor_seconds_per_call": float,
     "max_messages": int,
+    "live_turns_per_actor": int,
+    "live_turns_per_trial": int,
     "model": str,
 }
 

@@ -19,6 +19,8 @@ const NUMBERS = [
   "caller_takes_back_after_turns",
   "actor_seconds_per_call",
   "max_messages",
+  "live_turns_per_actor",
+  "live_turns_per_trial",
 ];
 
 // What the form shows for a limit: its number, "" for the channel's default, "none" for no limit.

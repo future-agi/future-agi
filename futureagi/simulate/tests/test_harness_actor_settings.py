@@ -38,6 +38,8 @@ def test_limits_are_settings_kept_beside_the_cast_and_none_is_no_limit(
             "limits": {
                 "max_active": 3,
                 "actor_seconds_per_call": None,
+                "live_turns_per_actor": 6,
+                "live_turns_per_trial": 12,
                 "model": "gemini-3.7-flash",
             },
             "expected_revision": 1,
@@ -49,6 +51,8 @@ def test_limits_are_settings_kept_beside_the_cast_and_none_is_no_limit(
     assert body["limits"] == {
         "max_active": 3,
         "actor_seconds_per_call": None,
+        "live_turns_per_actor": 6,
+        "live_turns_per_trial": 12,
         "model": "gemini-3.7-flash",
     }
     assert body["actor_models"][0] == "gemini-3.8-flash"
