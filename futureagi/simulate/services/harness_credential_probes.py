@@ -19,6 +19,10 @@ import requests
 import structlog
 from google.protobuf import json_format
 
+from agentcc.services.url_safety import (
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
 from tfc.utils.lazy_extras import load_extra
 
 logger = structlog.get_logger(__name__)
@@ -27,6 +31,13 @@ PROBE_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_POLL_SECONDS = 1
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+# The variables an SDK reads to reach the provider through a compatible gateway, first wins.
+OPENAI_BASE_ALIASES = ("OPENAI_BASE_URL", "OPENAI_API_BASE")
+ANTHROPIC_BASE_ALIASES = ("ANTHROPIC_BASE_URL",)
+
+
+class BaseUrlRefused(ValueError):
+    """A configured base URL the probe will not call; the message names its variable."""
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,7 @@ class ProviderProbe:
     build: Callable[[Mapping[str, str]], ProbeRequest]
     # Statuses that mean "the key is wrong" rather than "the request is wrong".
     rejected_statuses: frozenset[int] = frozenset({401, 403})
+    base_aliases: tuple[str, ...] = ()
 
     def applies(self, values: Mapping[str, str]) -> bool:
         return all(str(values.get(alias) or "").strip() for alias in self.aliases)
@@ -72,20 +84,75 @@ class ProbeResult:
         return result
 
 
-def _bearer(url: str, alias: str, **extra_headers: str):
+def configured_base(
+    values: Mapping[str, str], names: tuple[str, ...]
+) -> tuple[str, str]:
+    """The first base variable the agent sets, and its value without a trailing slash."""
+    for name in names:
+        base = str(values.get(name) or "").strip().rstrip("/")
+        if base:
+            return name, base
+    return "", ""
+
+
+def _at_base(default_base: str, path: str, base_aliases: tuple[str, ...]):
+    """The probe URL, under the agent's own base when it sets one.
+
+    A configured base often already ends in ``/v1``, so the version is not added twice.
+    """
+
+    def url(values: Mapping[str, str]) -> str:
+        name, base = configured_base(values, base_aliases)
+        if not name:
+            return default_base + path
+        try:
+            parsed = urlparse(base)
+            parsed.port  # noqa: B018 - raises on a malformed port
+        except ValueError:
+            parsed = None
+        if (
+            parsed is None
+            or parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+        ):
+            raise BaseUrlRefused(f"{name} is not an http(s) URL")
+        try:
+            ensure_public_http_url(
+                base, name, allow_private=private_provider_urls_allowed()
+            )
+        except ValueError:
+            raise BaseUrlRefused(
+                f"{name} does not resolve to an address this check may call"
+            ) from None
+        if base.endswith("/v1") and path.startswith("/v1/"):
+            return base + path[len("/v1") :]
+        return base + path
+
+    return url
+
+
+def _url(
+    url: str | Callable[[Mapping[str, str]], str], values: Mapping[str, str]
+) -> str:
+    return url(values) if callable(url) else url
+
+
+def _bearer(url, alias: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest(
             "GET",
-            url,
+            _url(url, values),
             {"Authorization": f"Bearer {values[alias].strip()}", **extra_headers},
         )
 
     return build
 
 
-def _header(url: str, alias: str, header: str, **extra_headers: str):
+def _header(url, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
-        return ProbeRequest("GET", url, {header: values[alias].strip(), **extra_headers})
+        return ProbeRequest(
+            "GET", _url(url, values), {header: values[alias].strip(), **extra_headers}
+        )
 
     return build
 
@@ -121,7 +188,9 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
         "LiveKit", ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"), _livekit
     ),
     "vapi": ProviderProbe(
-        "Vapi", ("VAPI_API_KEY",), _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY")
+        "Vapi",
+        ("VAPI_API_KEY",),
+        _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY"),
     ),
     "retell": ProviderProbe(
         "Retell",
@@ -131,17 +200,26 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "openai": ProviderProbe(
         "OpenAI",
         ("OPENAI_API_KEY",),
-        _bearer("https://api.openai.com/v1/models", "OPENAI_API_KEY"),
+        _bearer(
+            _at_base("https://api.openai.com/v1", "/models", OPENAI_BASE_ALIASES),
+            "OPENAI_API_KEY",
+        ),
+        base_aliases=OPENAI_BASE_ALIASES,
     ),
     "anthropic": ProviderProbe(
         "Anthropic",
         ("ANTHROPIC_API_KEY",),
         _header(
-            "https://api.anthropic.com/v1/models?limit=1",
+            _at_base(
+                "https://api.anthropic.com",
+                "/v1/models?limit=1",
+                ANTHROPIC_BASE_ALIASES,
+            ),
             "ANTHROPIC_API_KEY",
             "x-api-key",
             **{"anthropic-version": "2023-06-01"},
         ),
+        base_aliases=ANTHROPIC_BASE_ALIASES,
     ),
     "gemini": ProviderProbe(
         "Gemini",
@@ -175,7 +253,9 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "elevenlabs": ProviderProbe(
         "ElevenLabs",
         ("ELEVENLABS_API_KEY",),
-        _header("https://api.elevenlabs.io/v1/user", "ELEVENLABS_API_KEY", "xi-api-key"),
+        _header(
+            "https://api.elevenlabs.io/v1/user", "ELEVENLABS_API_KEY", "xi-api-key"
+        ),
     ),
 }
 
@@ -184,6 +264,8 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     """Exercise one provider's credentials. Callers pass only providers that ``applies``."""
     spec = PROVIDER_PROBES[provider]
     named = " + ".join(spec.aliases)
+    base_name, _ = configured_base(values, spec.base_aliases)
+    at = f" at {base_name}" if base_name else ""
     try:
         request = spec.build(values)
         response = requests.request(
@@ -192,30 +274,54 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,
+            # A redirect off a configured base would skip its address check.
+            allow_redirects=not base_name,
+        )
+    except BaseUrlRefused as exc:
+        return ProbeResult(
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} check could not run: {exc}",
         )
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
-            f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} is unreachable{at} ({type(exc).__name__}); "
+            f"check {base_name or named}",
         )
-    except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
+    # A malformed URL/secret must not 500 preflight.
+    except Exception as exc:  # noqa: BLE001
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
         )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
-            f"{spec.label} rejected {named} (HTTP {response.status_code})",
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label}{at} rejected {named} (HTTP {response.status_code})",
         )
-    if response.status_code >= 400:
+    if response.status_code >= (300 if base_name else 400):
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
-            f"{spec.label} returned HTTP {response.status_code} for {named}",
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label}{at} returned HTTP {response.status_code} for {named}",
         )
     return ProbeResult(
-        provider, spec.label, spec.aliases, True, f"{spec.label} accepted {named}"
+        provider, spec.label, spec.aliases, True, f"{spec.label}{at} accepted {named}"
     )
 
 
