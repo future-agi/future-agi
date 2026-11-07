@@ -814,9 +814,8 @@ class TestAddToNewDatasetAPI:
             )
 
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-        assert (
-            "supports only 2 dataset"
-            in (websocket.call_args.kwargs["message"]["alert_description"])
+        assert "supports only 2 dataset" in (
+            websocket.call_args.kwargs["message"]["alert_description"]
         )
         mock_task.delay.assert_not_called()
 
