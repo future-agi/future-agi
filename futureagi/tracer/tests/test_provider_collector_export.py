@@ -386,3 +386,57 @@ def test_export_stamps_error_status_for_failed_call(monkeypatch):
     # Failed call must carry ERROR status (collector copies status_code -> spans.status).
     assert captured["spans"][0].get("status_code") == "ERROR"
 
+
+@pytest.mark.unit
+def test_export_names_vapi_the_provider_of_a_call_on_an_openai_model(monkeypatch):
+    # fi-collector fills spans.provider from the first of gen_ai.provider.name,
+    # llm.system and gen_ai.system (providerKeys in pkg/adapter/adapter.go). A
+    # Vapi call's root must not carry the assistant's LLM provider above
+    # gen_ai.system, or the Voice list and chart simulator toggle misses it.
+    from tracer.utils import vapi
+
+    captured = {}
+
+    def _fake_emit(spans, **kwargs):
+        captured["spans"] = spans
+        return len(spans)
+
+    import tracer.services.collector_ingest as ci
+
+    monkeypatch.setattr(ci, "emit_spans_to_collector", _fake_emit)
+    monkeypatch.setattr(vapi, "metrics_calculator", None)
+    log = {
+        "id": "c3",
+        "costs": [
+            {
+                "type": "model",
+                "model": {"provider": "openai", "model": "gpt-4o"},
+                "promptTokens": 10,
+                "completionTokens": 5,
+            }
+        ],
+    }
+    span = SimpleNamespace(
+        project=SimpleNamespace(
+            id=SimpleNamespace(hex="0" * 32),
+            name="pull-vapi",
+            trace_type="observe",
+            organization_id="org-1",
+            workspace_id=None,
+        ),
+        trace=SimpleNamespace(id=SimpleNamespace(hex="f" * 32)),
+        name="Vapi Call Log",
+        input=None,
+        output=None,
+        start_time=None,
+        end_time=None,
+        span_attributes=vapi._extract_eval_attributes(log, include_call_logs=False),
+    )
+
+    op._export_provider_call_to_collector(span, "vapi", "c3")
+
+    attributes = captured["spans"][0]["attributes"]
+    assert attributes["gen_ai.request.model"] == "gpt-4o"
+    assert attributes["gen_ai.system"] == "vapi"
+    assert "gen_ai.provider.name" not in attributes
+    assert "llm.system" not in attributes

@@ -5,6 +5,8 @@ They deliberately use legacy span column tokens; the CH25 compiler rewrites
 those tokens once at its schema boundary.
 """
 
+from tracer.models.observability_provider import VOICE_CALL_PROVIDERS
+
 
 def voice_conversation_root_expression(expression: str) -> str:
     """Restrict one public voice value to its rendered conversation root."""
@@ -70,19 +72,36 @@ _RAW_RETELL_COST_CENTS = _raw_log_number(("call_cost", "combined_cost"))
 _RAW_VAPI_COST_DOLLARS = _raw_log_number(("cost",))
 _RAW_ELEVEN_LABS_COST_CENTS = _raw_log_number(("metadata", "cost"))
 _RAW_PRICE_DOLLARS = _raw_log_number(("price",))
-_VOICE_PROVIDER = "lowerUTF8(toString(provider))"
-_VOICE_GEN_AI_SYSTEM = (
-    "lowerUTF8(toString(if(mapContains(span_attr_str, 'gen_ai.system'), "
-    "span_attr_str['gen_ai.system'], '')))"
+# ProviderChoices values are fixed identifiers, so plain quoting is safe.
+_VOICE_CALL_PROVIDERS_SQL = ", ".join(
+    f"'{provider.value}'" for provider in VOICE_CALL_PROVIDERS
 )
-_VOICE_RESOLVED_PROVIDER = (
-    "multiIf("
-    f"{_VOICE_PROVIDER} IN ('vapi', 'retell', 'eleven_labs', 'bland', 'twilio'), "
-    f"{_VOICE_PROVIDER}, "
-    f"{_VOICE_GEN_AI_SYSTEM} IN "
-    "('vapi', 'retell', 'eleven_labs', 'bland', 'twilio'), "
-    f"{_VOICE_GEN_AI_SYSTEM}, 'vapi')"
-)
+
+
+def voice_provider_expression(provider: str, span_attr_str: str) -> str:
+    """The voice provider of a call root, from its provider and string map.
+
+    The ``provider`` column can hold the assistant's LLM provider (the
+    collector ranks ``gen_ai.provider.name`` above ``gen_ai.system``), so a
+    label that names no voice provider falls back to ``gen_ai.system``, then
+    to Vapi. ``ObservabilityService.resolve_voice_provider`` is the Python
+    side of this rule.
+    """
+
+    voice_provider = f"lowerUTF8(toString({provider}))"
+    gen_ai_system = (
+        f"lowerUTF8(toString(if(mapContains({span_attr_str}, 'gen_ai.system'), "
+        f"{span_attr_str}['gen_ai.system'], '')))"
+    )
+    return (
+        "multiIf("
+        f"{voice_provider} IN ({_VOICE_CALL_PROVIDERS_SQL}), {voice_provider}, "
+        f"{gen_ai_system} IN ({_VOICE_CALL_PROVIDERS_SQL}), {gen_ai_system}, "
+        "'vapi')"
+    )
+
+
+_VOICE_RESOLVED_PROVIDER = voice_provider_expression("provider", "span_attr_str")
 
 _VOICE_STORED_STATUS = (
     "if(mapContains(span_attr_str, 'call.status'), "
@@ -229,4 +248,5 @@ __all__ = [
     "VOICE_NORMALIZED_ROOT_SYSTEM_METRIC_EXPRS",
     "VOICE_NORMALIZED_SYSTEM_METRIC_EXPRS",
     "voice_conversation_root_expression",
+    "voice_provider_expression",
 ]
