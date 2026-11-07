@@ -498,9 +498,12 @@ def stage2(args):
     for c in clips:
         by_subset.setdefault(c["subset"], []).append(c)
     t0 = time.time()
+    demo_ids = {c["id"] for c in [c for c in clips if c["split"] == "test"][:3]}
+    demo_ids |= {c["id"] for c in [c for c in clips if c["split"] == "external_test"][:1]}
+    demo_bytes = {}
     for subset, items in by_subset.items():
         audio = zr.fetch_subset(subset)
-        for c in items:
+        for n, c in enumerate(items, 1):
             data = audio[c["file"]]
             if _sha256(data) != c["bytes_sha256"]:
                 raise SystemExit(f"clip bytes changed: {c['id']}")
@@ -509,6 +512,12 @@ def stage2(args):
                 raise SystemExit(f"stage-1 qualification not reproduced for {c['id']}")
             y16, admitted = prepared
             c["x"] = mean_adjusted_ovrl(session, y16, admitted)
+            if c["id"] in demo_ids:
+                demo_bytes[c["id"]] = data
+            if n % 100 == 0:
+                print(f"stage2 {subset}: {n}/{len(items)} scored, {time.time() - t0:.0f}s", flush=True)
+        del audio
+        (out / "x_partial.json").write_text(json.dumps({c["id"]: c.get("x") for c in clips}))
         print(f"stage2 {subset}: {len(items)} clips scored, {time.time() - t0:.0f}s", flush=True)
     split = lambda name: [c for c in clips if c["split"] == name]  # noqa: E731
     cal, sel, test, ext = split("calibration"), split("selection"), split("test"), split("external_test")
@@ -588,10 +597,10 @@ def stage2(args):
                 return session, args.model_sha256
 
         demo = []
-        for c in (test[:3] + ext[:1]):
-            from ee.voice.services.audio_analysis.decode import decode_audio
+        from ee.voice.services.audio_analysis.decode import decode_audio
 
-            decoded = decode_audio(zr.fetch_subset(c["subset"])[c["file"]])
+        for c in (test[:3] + ext[:1]):
+            decoded = decode_audio(demo_bytes[c["id"]])
             entry = analyze_vqi(
                 decoded.waveform, decoded.sample_rate_hz, detector=detector,
                 registry=_Pinned, calibration=cal_obj, language=c["language"], transport=TRANSPORT, capture_origin=CAPTURE_ORIGIN,
