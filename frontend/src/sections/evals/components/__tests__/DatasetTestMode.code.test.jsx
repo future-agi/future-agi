@@ -72,6 +72,8 @@ describe("Code dataset playground model override", () => {
         />,
       );
       await screen.findByTitle("Example input");
+      // The variable is mapped to its column by an effect after the row renders; run only once it is.
+      await waitFor(() => expect(ref.current.isReady).toBe(true));
       await act(async () => {
         ref.current.runTest();
       });
