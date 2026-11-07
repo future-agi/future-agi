@@ -21,6 +21,15 @@ const createKeyMapping = (modelParams) => {
   return keyMapping;
 };
 
+// Template format a prompt version was saved with ("mustache" | "jinja"), or
+// null for versions saved before the format existed.
+export const getVersionTemplateFormat = (version) => {
+  const snapshot = Array.isArray(version?.prompt_config_snapshot)
+    ? version.prompt_config_snapshot[0]
+    : version?.prompt_config_snapshot;
+  return snapshot?.configuration?.template_format || null;
+};
+
 // Escape/unescape dots in model keys to prevent RHF from interpreting them as nested paths
 export const escapeModelKey = (key) => key?.replace(/\./g, "__DOT__") ?? key;
 export const unescapeModelKey = (key) => key?.replace(/__DOT__/g, ".") ?? key;
@@ -268,6 +277,7 @@ export const getDefaultPromptConfigByModelType = (experimentType) => {
     modelParams: {},
     configuration: {
       toolChoice: "auto",
+      template_format: "mustache",
       tools: [],
     },
   };
