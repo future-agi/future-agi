@@ -223,7 +223,7 @@ describe("executionToRun", () => {
     });
   });
 
-  it("uses scenario verdicts rather than successful transport calls", () => {
+  it("uses the graded outcomes and pass rate rather than successful transport calls", () => {
     const run = executionToRun({
       id: "ex-outcomes",
       status: "Completed",
@@ -233,15 +233,60 @@ describe("executionToRun", () => {
       outcome_passed: 3,
       outcome_failed: 2,
       outcome_skipped: 1,
+      pass_rate: 60,
+      measured: 5,
     });
 
     expect(run).toMatchObject({
       total: 6,
       passed: 3,
-      failed: 3,
+      failed: 2,
       skipped: 1,
       pending: 0,
+      passRate: 60,
+      measured: 5,
       status: "failed",
+    });
+  });
+
+  const graded = (fields) =>
+    executionToRun({
+      id: "ex-graded",
+      status: "Completed",
+      total_calls: 3,
+      outcome_passed: 3,
+      outcome_failed: 0,
+      outcome_skipped: 0,
+      pass_rate: 100,
+      measured: 3,
+      ...fields,
+    });
+
+  it("passes a completed run only when every call passed", () => {
+    expect(graded({}).status).toBe("passed");
+  });
+
+  it("does not pass a completed run with an inconclusive call", () => {
+    const run = graded({ outcome_passed: 2, outcome_skipped: 1, measured: 2 });
+    expect(run).toMatchObject({ skipped: 1, passRate: 100, status: "failed" });
+  });
+
+  it("does not pass a completed run with calls still ungraded", () => {
+    const run = graded({ outcome_passed: 2, measured: 2 });
+    expect(run).toMatchObject({
+      failed: 0,
+      skipped: 0,
+      pending: 1,
+      status: "failed",
+    });
+  });
+
+  it("leaves the pass rate null when the server sends none", () => {
+    expect(
+      executionToRun({ id: "ex-plain", status: "Completed", total_calls: 2 }),
+    ).toMatchObject({
+      passRate: null,
+      measured: null,
     });
   });
 });

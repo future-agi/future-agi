@@ -93460,6 +93460,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_passed",
         "outcome_failed",
         "outcome_skipped",
+        "pass_rate",
+        "measured",
         "started_at",
         "completed_at",
       ],
@@ -93512,6 +93514,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
           type: "integer",
           "x-nullable": true,
         },
@@ -111224,6 +111236,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
           type: "integer",
           readOnly: true,
           "x-nullable": true,

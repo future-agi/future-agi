@@ -30,15 +30,37 @@ const { STATUS_META } = await import("../../runs.constants");
 
 const RUNS = [
   {
-    id: "ex2", executionId: "ex2", ordinal: 2, label: "Run 2", status: "passed",
-    startedAt: "2026-01-13T16:40:00.000Z", finishedAt: "2026-01-13T16:42:10.000Z",
-    total: 20, passed: 15, failed: 5, agentVersion: "v2", durationS: 11.9,
+    id: "ex2",
+    executionId: "ex2",
+    ordinal: 2,
+    label: "Run 2",
+    status: "passed",
+    startedAt: "2026-01-13T16:40:00.000Z",
+    finishedAt: "2026-01-13T16:42:10.000Z",
+    total: 20,
+    passed: 15,
+    failed: 5,
+    passRate: 75,
+    measured: 20,
+    agentVersion: "v2",
+    durationS: 11.9,
     scores: { task_success: 58, policy_adherence: 39 },
   },
   {
-    id: "ex1", executionId: "ex1", ordinal: 1, label: "Run 1", status: "failed",
-    startedAt: "2026-01-12T11:05:00.000Z", finishedAt: "2026-01-12T11:07:30.000Z",
-    total: 20, passed: 10, failed: 10, agentVersion: "v1", durationS: 13.2,
+    id: "ex1",
+    executionId: "ex1",
+    ordinal: 1,
+    label: "Run 1",
+    status: "failed",
+    startedAt: "2026-01-12T11:05:00.000Z",
+    finishedAt: "2026-01-12T11:07:30.000Z",
+    total: 20,
+    passed: 10,
+    failed: 10,
+    passRate: 50,
+    measured: 20,
+    agentVersion: "v1",
+    durationS: 13.2,
     scores: { task_success: 49, policy_adherence: 28 },
   },
 ];
@@ -110,10 +132,16 @@ describe("RunsSummary", () => {
     expect(screen.getByText("across 1 scenario")).toBeInTheDocument();
   });
 
-  it("shows a real pass rate per run", () => {
+  it("shows the server's graded pass rate per run", () => {
     renderSummary();
     expect(screen.getByText("75%")).toBeInTheDocument(); // Run 2: 15/20
     expect(screen.getByText("50%")).toBeInTheDocument(); // Run 1: 10/20
+  });
+
+  it("shows a dash, not 0%, for a run with no measured call", () => {
+    renderSummary({}, [{ ...RUNS[0], passRate: null, measured: 0 }]);
+    expect(screen.queryByText("0%")).toBeNull();
+    expect(screen.queryByText("75%")).toBeNull();
   });
 
   it("renders the derived eval columns from the runs' score keys", () => {

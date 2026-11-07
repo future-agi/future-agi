@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
-from django.db.models import Func, JSONField, QuerySet
+from django.db.models import Count, Func, JSONField, QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.services.harness_scenarios import level_label
@@ -33,14 +33,20 @@ from simulate.services.run_results_v3_queries import (
     ORDERING_FIELDS,
     OUTCOMES,
     UNGROUPED,
+    _aggregate_expressions,
     _configured_eval_verdict,
     _eval_score,
     _group_keys,
     _summary_from_values,
     apply_run_call_query,
+    run_calls_queryset,
 )
 from simulate.services.run_results_v3_scan import scan_call_values
-from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_results_v3_scoring import (
+    LiveEvals,
+    live_eval_specs,
+    live_eval_specs_by_run_test,
+)
 from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
 
 logger = logging.getLogger(__name__)
@@ -68,6 +74,7 @@ METRIC_FIELDS = {
 SQL_ORDERED_FIELDS = frozenset(ORDERING_FIELDS) - {"started_at"}
 SUBSET_PARAMS = ("search", "filters", "group_by", "group_key", "ordering")
 STATUS_FILTERS = ("status", "status_not")
+CONFIG_KEY_FIELDS = ("id", "updated_at", "config", "eval_template__updated_at")
 # CSAT and other per-call metrics can still land after the run completes
 # without moving anything in the cache key, so a cached pass stays short-lived.
 CACHE_TIMEOUT = 5 * 60
@@ -116,20 +123,28 @@ def _cache_key(
     execution: TestExecution,
     subset: dict[str, Any],
     columns: list[dict[str, str]],
+    *,
+    configs: list[tuple[Any, ...]] | None = None,
+    calls: int | None = None,
+    shape: str = "calls:v2",
 ) -> str | None:
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         return None
     version = execution.completed_at or execution.updated_at
-    # The live configs by content, not by their latest updated_at: a removal
-    # drops one from the set, a template edit moves its own stamp, and a
-    # save(update_fields=[...]) that skips updated_at still changes the config.
-    configs = list(
-        SimulateEvalConfig.objects.filter(run_test=execution.run_test, deleted=False)
-        .order_by("id")
-        .values_list("id", "updated_at", "config", "eval_template__updated_at")
-    )
-    # A call leaves a finished run only by deletion, which moves nothing else here.
-    calls = CallExecution.objects.filter(test_execution=execution).count()
+    if configs is None:
+        # The live configs by content, not by their latest updated_at: a removal
+        # drops one from the set, a template edit moves its own stamp, and a
+        # save(update_fields=[...]) that skips updated_at still changes the config.
+        configs = list(
+            SimulateEvalConfig.objects.filter(
+                run_test=execution.run_test, deleted=False
+            )
+            .order_by("id")
+            .values_list(*CONFIG_KEY_FIELDS)
+        )
+    if calls is None:
+        # A call leaves a finished run only by deletion, which moves nothing else here.
+        calls = CallExecution.objects.filter(test_execution=execution).count()
     fingerprint = hashlib.sha1(
         json.dumps(
             {
@@ -142,8 +157,8 @@ def _cache_key(
             default=str,
         ).encode()
     ).hexdigest()
-    # v2 names the shape of a cached row; an entry written in another shape must miss.
-    return f"simulate:v3:calls:v2:{execution.id}:{version.timestamp()}:{fingerprint}"
+    # The shape names what is cached; an entry written in another shape must miss.
+    return f"simulate:v3:{shape}:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(
@@ -219,6 +234,94 @@ def _aggregate_values(
 
 def summarize_call_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return _summary_from_values(_aggregate_values(rows, []))
+
+
+def run_outcome_summaries(
+    executions: list[TestExecution],
+) -> dict[Any, dict[str, Any]]:
+    """Each run's graded summary, counted as the v3 calls page counts it.
+
+    A completed run's summary is cached under the page's own invalidation inputs.
+    """
+    completed = [
+        execution
+        for execution in executions
+        if execution.status == TestExecution.ExecutionStatus.COMPLETED
+    ]
+    keys: dict[Any, str | None] = {}
+    if completed:
+        configs: dict[Any, list[tuple[Any, ...]]] = {}
+        for run_test_id, *config in (
+            SimulateEvalConfig.objects.filter(
+                run_test_id__in={execution.run_test_id for execution in completed},
+                deleted=False,
+            )
+            .order_by("id")
+            .values_list("run_test_id", *CONFIG_KEY_FIELDS)
+        ):
+            configs.setdefault(run_test_id, []).append(tuple(config))
+        calls = dict(
+            CallExecution.objects.filter(
+                test_execution_id__in=[execution.id for execution in completed]
+            )
+            .order_by()
+            .values("test_execution_id")
+            .annotate(count=Count("id"))
+            .values_list("test_execution_id", "count")
+        )
+        keys = {
+            execution.id: _cache_key(
+                execution,
+                {},
+                [],
+                configs=configs.get(execution.run_test_id, []),
+                calls=calls.get(execution.id, 0),
+                shape="run-summary:v1",
+            )
+            for execution in completed
+        }
+    cache_keys = [key for key in keys.values() if key]
+    cached = cache.get_many(cache_keys) if cache_keys else {}
+    summaries = {
+        execution_id: cached[key]
+        for execution_id, key in keys.items()
+        if key is not None and key in cached
+    }
+    missed: dict[Any, list[TestExecution]] = {}
+    for execution in executions:
+        if execution.id not in summaries:
+            missed.setdefault(execution.run_test_id, []).append(execution)
+    if missed:
+        rows = (
+            run_calls_queryset(
+                next(iter(missed.values()))[0],
+                [execution.id for group in missed.values() for execution in group],
+                live_evals_by_run_test=live_eval_specs_by_run_test(missed),
+            )
+            .order_by()
+            .values("test_execution_id")
+            .annotate(**_aggregate_expressions(include_percentiles=False))
+        )
+        for row in rows:
+            summaries[row["test_execution_id"]] = _summary_from_values(row)
+    empty = _summary_from_values({})
+    fresh = {
+        key: summaries.get(execution.id, empty)
+        for group in missed.values()
+        for execution in group
+        if (key := keys.get(execution.id))
+    }
+    if fresh:
+        try:
+            cache.set_many(fresh, timeout=CACHE_TIMEOUT)
+        except Exception:
+            # The summaries are already read; a refused write must not fail the list.
+            logger.warning(
+                "Could not cache the summaries of %s runs", len(fresh), exc_info=True
+            )
+    return {
+        execution.id: summaries.get(execution.id, empty) for execution in executions
+    }
 
 
 def _in_group(group_by: str, value: Any, key: str) -> bool:

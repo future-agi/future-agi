@@ -727,14 +727,8 @@ class _NativeHarnessVerdict(Func):
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
 
 
-def run_calls_queryset(
-    execution: TestExecution,
-    execution_ids: list[Any] | None = None,
-    *,
-    live_evals: LiveEvals | None = None,
-) -> QuerySet[CallExecution]:
-    if live_evals is None:
-        live_evals = live_eval_specs(execution.run_test_id)
+def _eval_verdict_qs(live_evals: LiveEvals) -> tuple[Q, Q, Q]:
+    """A call's failed, passed and errored eval verdicts under ``live_evals``."""
     live_evals.warn_invalid_thresholds()
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
@@ -751,6 +745,31 @@ def run_calls_queryset(
     failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
     passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
     errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
+    return failed_eval, passed_eval, errored_eval
+
+
+def run_calls_queryset(
+    execution: TestExecution,
+    execution_ids: list[Any] | None = None,
+    *,
+    live_evals: LiveEvals | None = None,
+    live_evals_by_run_test: dict[Any, LiveEvals] | None = None,
+) -> QuerySet[CallExecution]:
+    if live_evals_by_run_test is None:
+        if live_evals is None:
+            live_evals = live_eval_specs(execution.run_test_id)
+        failed_eval, passed_eval, errored_eval = _eval_verdict_qs(live_evals)
+    else:
+        # Runs of several run tests: each call is graded by its own run test's evals.
+        failed_eval = Q(pk__in=[])
+        passed_eval = Q(pk__in=[])
+        errored_eval = Q(pk__in=[])
+        for run_test_id, evals in live_evals_by_run_test.items():
+            own = Q(test_execution__run_test_id=run_test_id)
+            failed_q, passed_q, errored_q = _eval_verdict_qs(evals)
+            failed_eval |= own & failed_q
+            passed_eval |= own & passed_q
+            errored_eval |= own & errored_q
 
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while

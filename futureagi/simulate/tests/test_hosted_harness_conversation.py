@@ -1828,3 +1828,47 @@ def test_a_person_cannot_mark_their_message_as_sent_by_the_platform(
     message = job.conversation.messages.get(client_request_id="spoof")
     assert "from_platform" not in message.payload
     assert message.payload["note"] == "kept"
+
+
+@pytest.mark.django_db
+def test_chat_runs_carry_the_graded_pass_rate_next_to_the_harness_counters(
+    organization, workspace
+):
+    from simulate.services.hosted_harness_conversation import (
+        conversation_overview,
+        conversation_runs,
+    )
+    from simulate.tests.test_agent_overview_api import (
+        _agent,
+        _environment,
+        _execution,
+        _job,
+        _receipts,
+    )
+
+    environment = _environment(_agent(organization, workspace, "Northwind"), 1)
+    execution = _execution(environment.run_test, 10)
+    run = _job(
+        environment.run_test, minutes=10, environment=environment, execution=execution
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+        completed_count=2, failed_count=1
+    )
+    _receipts(run, "passed", "passed", "failed")
+    unstarted = _job(environment.run_test, minutes=20, environment=environment)
+    conversation, _command, _ = enqueue_message(
+        environment, content="How did the last run go?", client_request_id="graded"
+    )
+
+    rows = conversation_runs(conversation)["runs"]
+
+    assert [row["run_id"] for row in rows] == [str(unstarted.id), str(run.id)]
+    # completed/failed stay the harness counters; the rate is graded.
+    assert (rows[1]["completed"], rows[1]["failed"]) == (2, 1)
+    assert (rows[1]["pass_rate"], rows[1]["measured"]) == (66.67, 3)
+    assert (rows[0]["pass_rate"], rows[0]["measured"]) == (None, None)
+    assert conversation_overview(conversation)["recent_runs"] == rows
+    detail = conversation_runs(conversation, run_id=str(run.id))
+    assert "pass_rate" not in detail
+    statuses = [call["status"] for call in detail["calls"]]
+    assert statuses == ["passed", "passed", "failed"]
