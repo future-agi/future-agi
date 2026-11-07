@@ -918,6 +918,67 @@ Distributed's `backend` read them too.
     text = "Provider of the simulator side of a voice call. Calls to LiveKit agents always use LiveKit."
 
   [[part.section]]
+  heading = "Call audio metrics (Enterprise Edition)"
+  body = '''
+Optional, local acoustic analysis of a provenance-proven tested-agent track.
+These settings require the EE voice package and an audio worker. Supply them
+in the environment of the processes named below; restart those processes
+(or Standalone's `app` when they run together) after changing them.
+See the [audio metrics operator guide](repo:futureagi/ee/voice/AUDIO_METRICS_OPERATOR.md)
+for dependency installation, immutable model and calibration pins, controlled
+rollout and failure reasons. Installing a model is not validation of numeric
+Voice Quality Index results; never deploy test-fixture calibration values.
+'''
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Rollout and rollback switch, read by the API, scheduler (`QUEUE_S`) and audio workers. Set consistently and restart all three process types after changes. Only `true`, `1` or `yes` (case-insensitive) enable it; other values disable it. Off means no new analysis and no acoustic-metrics field in authorized detail responses. Existing stored results are retained. Requires the organization's voice-simulation entitlement even when enabled."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_ORG_ALLOWLIST"]
+    default = "empty: all entitled organizations when enabled"
+    setups = ["S", "D", "H"]
+    text = "Comma-separated organization IDs, with whitespace and empty entries stripped. Read by the API, scheduler and audio workers; restart all three after changes. A nonempty list denies organizations not listed; a wrong ID excludes the intended organization. Empty does not bypass entitlement checks, and entitlement-check failures deny access. Begin rollout with explicit approved IDs."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_DNSMOS_MODEL_PATH"]
+    default = "empty (`None`)"
+    setups = ["S", "D", "H"]
+    text = "Local read-only path to the supported regular DNSMOS `sig_bak_ovr.onnx` model. Mount identically on the scheduler and audio workers, and restart both after changes. No automatic download or alternate-model fallback. A missing, unreadable or invalid model leaves VQI unavailable (`model_unavailable`); pitch and estimated SNR can still run. The operator guide specifies the approved file and digest."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_DNSMOS_MODEL_SHA256"]
+    default = "empty (`None`)"
+    setups = ["S", "D", "H"]
+    text = "Exact-byte SHA-256 pin for the supported DNSMOS model, read by the scheduler and audio workers. Set identically and restart both after changes. A missing or mismatched digest leaves VQI unavailable (`model_unavailable`). Changing the digest does not admit a different model family; use only the operator guide's approved model."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_CALIBRATION_PATH"]
+    default = "empty (`None`)"
+    setups = ["S", "D", "H"]
+    text = "Local read-only path to the separately approved VQI calibration JSON, mounted identically on the scheduler and audio workers. Restart both after changes. Missing, unreadable or rejected calibration leaves VQI unavailable (`not_validated`), not a substitute numeric score. Installing a calibration does not backfill or upgrade previously terminalized results."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_CALIBRATION_SHA256"]
+    default = "empty (`None`)"
+    setups = ["S", "D", "H"]
+    text = "Published exact-byte SHA-256 of the approved calibration JSON. Read by the scheduler and audio workers; set identically and restart both after changes. A missing or mismatched digest, incompatible version or failed study gate leaves VQI unavailable (`not_validated`). A valid artifact still admits only its validated cohorts and score support."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "Activity concurrency cap per audio worker, including an embedded audio queue. Restart audio workers after changes. Empty or non-integer values fall back to 2; zero and negative integers are clamped to 1, not unlimited and not disabled. Higher values increase CPU and memory demand; lower values increase queue wait. This cap is per worker, not a distributed per-organization limit."
+
+    [[part.section.row]]
+    keys = ["VOICE_AUDIO_TMP_DIR"]
+    default = "Python's `tempfile.gettempdir()` (normally `/tmp` on Linux)"
+    setups = ["S", "D", "H"]
+    text = "Audio-worker startup cleanup root; restart audio workers after changes. The v1 decoder itself creates no temporary files. Cleanup removes `audio-analysis-*` files or directories older than 24 hours and skips symlinks. Use a dedicated writable temporary location: a missing directory is not cleaned, and filesystem errors can leave orphaned files with `audio_metrics.temp_cleanup_failed` warnings. An explicitly empty value resolves to the working directory, so do not set it empty."
+
+  [[part.section]]
   heading = "Deployment telemetry"
   body = '''
 Deployment telemetry is **on** by default, so Future AGI knows how many

@@ -16,11 +16,11 @@ from simulate.serializers.test_execution import (
     CallExecutionDetailSerializer,
     CallExecutionSnapshotSerializer,
 )
+from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.views.run_results_v3 import (
     CallExecutionV3DetailView,
     build_call_execution_detail,
 )
-from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.views.run_test import (
     CallExecutionDetailView,
     CallExecutionRerunView,
@@ -226,7 +226,9 @@ def test_out_of_scope_404(view, scope, audio_call, user, workspace):
     if scope == "organization":
         org = Organization.objects.create(name="Other")
     else:
-        workspace = Workspace.objects.create(name="Other", organization=org, created_by=user)
+        workspace = Workspace.objects.create(
+            name="Other", organization=org, created_by=user
+        )
     response = request_detail(view, audio_call, user, workspace, org=org)
     assert response.status_code == 404
     assert "audio_metrics" not in json.dumps(response.data)
@@ -365,3 +367,86 @@ def test_offline_shared_link_default_is_closed(unsaved_audio_call, monkeypatch):
         )
     )
     assert captured["include"] is False
+
+
+@pytest.mark.parametrize(
+    "serializer_class", [CallExecutionDetailSerializer, CallExecutionSnapshotSerializer]
+)
+def test_audio_metrics_schema_has_typed_read_only_envelope(serializer_class):
+    from drf_yasg import openapi
+    from drf_yasg.inspectors import SwaggerAutoSchema
+    from rest_framework import serializers
+    from rest_framework.views import APIView
+
+    from ee.voice.services.audio_analysis.envelope import COVERAGE_FIELDS, SOURCE_FIELDS
+
+    annotation = serializer_class.get_audio_metrics._swagger_serializer
+    assert isinstance(annotation, serializers.Serializer)
+    assert annotation.read_only
+    assert set(annotation.fields) == set(empty_envelope())
+    assert set(annotation.fields["source"].fields) == SOURCE_FIELDS
+    for name, coverage_keys in COVERAGE_FIELDS.items():
+        metric = annotation.fields["metrics"].fields[name]
+        assert set(metric.fields) == set(empty_envelope()["metrics"][name])
+        assert set(metric.fields["coverage"].fields) == coverage_keys
+
+    def assert_read_only(serializer):
+        for field in serializer.fields.values():
+            assert field.read_only
+            if isinstance(field, serializers.Serializer):
+                assert_read_only(field)
+
+    assert_read_only(annotation)
+    components = openapi.ReferenceResolver(openapi.SCHEMA_DEFINITIONS, force_init=True)
+    inspector = SwaggerAutoSchema(
+        view=APIView(),
+        path="/",
+        method="GET",
+        components=components,
+        request=None,
+        overrides={},
+    )
+
+    def resolve(schema):
+        return openapi.resolve_ref(schema, components)
+
+    parent = resolve(inspector.serializer_to_schema(serializer_class()))
+    envelope = resolve(parent["properties"]["audio_metrics"])
+    assert "unsupported" in envelope["properties"]["state"]["enum"]
+    assert envelope["properties"]["schema_version"]["type"] == "integer"
+    values = resolve(envelope["properties"]["metrics"])["properties"]
+    for name in COVERAGE_FIELDS:
+        metric = resolve(values[name])["properties"]
+        assert metric["value"]["type"] == "number"
+        assert metric["value"]["x-nullable"] is True
+        coverage = resolve(metric["coverage"])
+        assert coverage["type"] == "object"
+        assert set(coverage["properties"]) == COVERAGE_FIELDS[name]
+    flags = resolve(resolve(values["estimated_snr_db"])["properties"]["flags"])
+    assert set(flags["properties"]) == {"noise_floor_floored", "value_capped"}
+    assert all(field["type"] == "boolean" for field in flags["properties"].values())
+
+
+@pytest.mark.parametrize(
+    "raw", [None, phase_a(), {"schema_version": 99, "private": "secret"}]
+)
+@pytest.mark.parametrize(
+    "serializer_class", [CallExecutionDetailSerializer, CallExecutionSnapshotSerializer]
+)
+def test_audio_metrics_schema_annotation_does_not_transform_output(
+    unsaved_audio_call, serializer_class, raw
+):
+    from ee.voice.services.audio_analysis.envelope import sanitize_for_api
+
+    call = unsaved_audio_call
+    call.audio_metrics = copy.deepcopy(raw)
+    obj = (
+        CallExecutionSnapshot(call_execution=call, audio_metrics=call.audio_metrics)
+        if serializer_class is CallExecutionSnapshotSerializer
+        else call
+    )
+    result = serializer_class(
+        context={"include_audio_metrics": True}
+    ).get_audio_metrics(obj)
+    assert json.dumps(result) == json.dumps(sanitize_for_api(raw))
+    assert call.audio_metrics == raw

@@ -6777,7 +6777,9 @@ def _rerun_call_executions(call_executions, rerun_type):
                 call_execution.call_metadata = call_execution.call_metadata or {}
                 call_execution.call_metadata["eval_started"] = False
                 call_execution.call_metadata["eval_completed"] = False
-                call_execution.save()
+                call_execution.save(
+                    update_fields=["eval_outputs", "call_metadata", "updated_at"]
+                )
 
                 _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),)
@@ -7235,7 +7237,13 @@ class CallExecutionRerunView(APIView):
                             rerun_eval_ids,
                             now=timezone.now(),
                         )
-                        call_execution.save()
+                        call_execution.save(
+                            update_fields=[
+                                "eval_outputs",
+                                "call_metadata",
+                                "updated_at",
+                            ]
+                        )
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
                         has_pending_evals = True
@@ -7600,6 +7608,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare eval-only snapshot
                     snapshots_to_create.append(
                         CallExecutionSnapshot(
+                            audio_metrics=call_execution.audio_metrics,
                             call_execution=call_execution,
                             rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
                             eval_outputs=call_execution.eval_outputs,
@@ -7642,6 +7651,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare full snapshot with all fields
                     snapshots_to_create.append(
                         CallExecutionSnapshot(
+                            audio_metrics=call_execution.audio_metrics,
                             call_execution=call_execution,
                             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
                             service_provider_call_id=call_execution.service_provider_call_id,

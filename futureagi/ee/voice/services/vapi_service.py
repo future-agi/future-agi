@@ -2507,7 +2507,8 @@ class VapiService(VoiceServiceBlueprint):
                         event_id=str(
                             uuid.uuid5(
                                 uuid.NAMESPACE_URL,
-                                f"futureagi:simulate-recording:{call_execution_id}:{url_type}",
+                                f"futureagi:simulate-recording:{call_execution_id}:"
+                                f"{getattr(call, 'audio_analysis_generation', 0)}:{url_type}",
                             )
                         ),
                         org_id=organization_id,

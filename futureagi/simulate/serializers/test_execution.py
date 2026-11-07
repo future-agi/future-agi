@@ -173,12 +173,136 @@ def _audio_metrics_projection(call, raw, generation):
     return sanitize_for_api(raw, generation)
 
 
+class AudioMetricsSourceSerializer(serializers.Serializer):
+    """Public recording summary; deliberately excludes private provenance."""
+
+    capture_origin = serializers.CharField(read_only=True, allow_null=True)
+    transport = serializers.CharField(read_only=True, allow_null=True)
+    provider = serializers.CharField(read_only=True, allow_null=True)
+    target_role = serializers.CharField(read_only=True, allow_null=True)
+    mapping_version = serializers.CharField(read_only=True, allow_null=True)
+    original_sample_rate_hz = serializers.IntegerField(read_only=True, allow_null=True)
+    original_channel_count = serializers.IntegerField(read_only=True, allow_null=True)
+    target_sample_count = serializers.IntegerField(read_only=True, allow_null=True)
+    input_duration_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    preprocessing_version = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AudioPitchCoverageSerializer(serializers.Serializer):
+    """Coverage of the tested agent's pitch measurement."""
+
+    analyzed_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    voiced_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    frame_count = serializers.IntegerField(read_only=True, allow_null=True)
+    voiced_frame_count = serializers.IntegerField(read_only=True, allow_null=True)
+
+
+class AudioSNRCoverageSerializer(serializers.Serializer):
+    """Active and inactive audio used for the estimated SNR."""
+
+    analyzed_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    active_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    inactive_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    frame_count = serializers.IntegerField(read_only=True, allow_null=True)
+
+
+class AudioVQICoverageSerializer(serializers.Serializer):
+    """Window, speech and preprocessing evidence for the voice quality index."""
+
+    window_count = serializers.IntegerField(read_only=True, allow_null=True)
+    excluded_window_count = serializers.IntegerField(read_only=True, allow_null=True)
+    detected_speech_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    covered_speech_seconds = serializers.FloatField(read_only=True, allow_null=True)
+    expected_sample_count = serializers.IntegerField(read_only=True, allow_null=True)
+    resampled_sample_count = serializers.IntegerField(read_only=True, allow_null=True)
+    detector_id = serializers.CharField(read_only=True, allow_null=True)
+    polynomial_version = serializers.CharField(read_only=True, allow_null=True)
+    window_policy_version = serializers.CharField(read_only=True, allow_null=True)
+    preprocessing_version = serializers.CharField(read_only=True, allow_null=True)
+    cohort = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AudioSNRFlagsSerializer(serializers.Serializer):
+    """Numerical guardrails applied by the estimated-SNR algorithm."""
+
+    noise_floor_floored = serializers.BooleanField(read_only=True)
+    value_capped = serializers.BooleanField(read_only=True)
+
+
+class AudioMetricEntrySerializer(serializers.Serializer):
+    """Common metric fields; a missing measurement is null, never a sentinel."""
+
+    value = serializers.FloatField(read_only=True, allow_null=True)
+    unit = serializers.CharField(read_only=True)
+    state = serializers.ChoiceField(
+        choices=["available", "pending", "unavailable", "failed"], read_only=True
+    )
+    reason = serializers.CharField(read_only=True, allow_null=True)
+    algorithm_version = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AudioPitchMetricSerializer(AudioMetricEntrySerializer):
+    coverage = AudioPitchCoverageSerializer(read_only=True, allow_null=True)
+
+
+class AudioSNRMetricSerializer(AudioMetricEntrySerializer):
+    coverage = AudioSNRCoverageSerializer(read_only=True, allow_null=True)
+    flags = AudioSNRFlagsSerializer(read_only=True, allow_null=True)
+
+
+class AudioVQIMetricSerializer(AudioMetricEntrySerializer):
+    coverage = AudioVQICoverageSerializer(read_only=True, allow_null=True)
+    model_version = serializers.CharField(read_only=True, allow_null=True)
+    calibration_id = serializers.CharField(read_only=True, allow_null=True)
+    scale_id = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AudioMetricsValuesSerializer(serializers.Serializer):
+    average_pitch_hz = AudioPitchMetricSerializer(read_only=True)
+    estimated_snr_db = AudioSNRMetricSerializer(read_only=True)
+    voice_quality_index = AudioVQIMetricSerializer(read_only=True)
+
+
+class AudioMetricsEnvelopeSerializer(serializers.Serializer):
+    """Schema only: runtime responses still use the sanitized dictionary.
+
+    An unknown schema version returns only schema_version and state=unsupported;
+    the other fields are absent. No EE code is imported to describe this schema.
+    """
+
+    schema_version = serializers.IntegerField(read_only=True, allow_null=True)
+    analysis_id = serializers.CharField(read_only=True, allow_null=True)
+    generation = serializers.IntegerField(read_only=True, min_value=0)
+    state = serializers.ChoiceField(
+        choices=[
+            "not_requested",
+            "pending",
+            "complete",
+            "partial",
+            "failed",
+            "unavailable",
+            "unsupported",
+        ],
+        read_only=True,
+        help_text="Unknown schema versions return only schema_version and state=unsupported.",
+    )
+    computed_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    scheduled_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    deadline_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    target_role = serializers.CharField(read_only=True)
+    pipeline_version = serializers.CharField(read_only=True, allow_null=True)
+    source = AudioMetricsSourceSerializer(read_only=True, allow_null=True)
+    metrics = AudioMetricsValuesSerializer(read_only=True)
+
+
 class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
     """Serializer for CallExecutionSnapshot model"""
 
     audio_metrics = serializers.SerializerMethodField()
 
-    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
+    @swagger_serializer_method(
+        serializer_or_field=AudioMetricsEnvelopeSerializer(read_only=True)
+    )
     def get_audio_metrics(self, obj):
         if not _audio_metrics_visible(self.context):
             return None
@@ -352,7 +476,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     audio_metrics = serializers.SerializerMethodField()
 
-    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
+    @swagger_serializer_method(
+        serializer_or_field=AudioMetricsEnvelopeSerializer(read_only=True)
+    )
     def get_audio_metrics(self, obj):
         if not _audio_metrics_visible(self.context):
             return None
