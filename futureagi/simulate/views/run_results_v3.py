@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from itertools import islice
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from django.db.models import QuerySet
@@ -31,6 +31,7 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -49,6 +50,7 @@ from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
     build_run_analytics,
     build_run_reliability,
+    call_actor_delivery,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
@@ -63,6 +65,7 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
+from simulate.types import CallActorDelivery
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -123,6 +126,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
+            "actor",
+            "actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -140,6 +145,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -201,6 +210,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -314,6 +324,15 @@ class CostBreakdownSerializer(serializers.Serializer):
 class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(
+        choices=["not_applicable", "inconclusive", "unmeasured"], required=False
+    )
+    reason = serializers.CharField(required=False, allow_blank=True)
+    evidence = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -331,6 +350,7 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -362,9 +382,26 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LabelledFacetValueSerializer(FacetValueSerializer):
+    label = serializers.CharField()
+
+
+class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
+    delivered = serializers.IntegerField(
+        help_text="Calls where at least one of the actor's lines reached the agent."
+    )
+    dropped = serializers.IntegerField(
+        help_text="Calls where the actor was triggered but none of its lines reached the agent."
+    )
+    not_triggered = serializers.IntegerField(
+        help_text="Calls the actor was planned for but never triggered in."
+    )
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
+    call_actor = CallActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -567,9 +604,138 @@ class FunctionCallSerializer(serializers.Serializer):
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
     start_time_ms = serializers.IntegerField(required=False)
+    ok = serializers.BooleanField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True)
+    refused = serializers.BooleanField(required=False)
+    # Epoch seconds the world logged it.
+    at = serializers.FloatField(required=False)
+    # The world's action log: its id, and how the world took it (committed, refused, faulted or duplicate).
+    action_id = serializers.CharField(required=False, allow_null=True)
+    outcome = serializers.CharField(required=False, allow_null=True)
+    # Set on a world actor's action; the agent's own calls carry none.
+    actor_id = serializers.CharField(required=False)
+    actor_name = serializers.CharField(required=False)
+    actor_role = serializers.CharField(required=False, allow_blank=True)
+    refusal_code = serializers.CharField(required=False, allow_null=True)
+    parent_event_id = serializers.CharField(required=False, allow_null=True)
+    on_behalf_of = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
+
+
+class CallCallActorSerializer(serializers.Serializer):
+    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
+
+    id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The actor's id in the environment.",
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, help_text="The name the transcript shows."
+    )
+    role = serializers.CharField(
+        required=False, allow_blank=True, help_text="Who they are to the caller."
+    )
+    channel = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The channel id they joined the call on.",
+    )
+    delivery = serializers.ChoiceField(
+        choices=list(get_args(CallActorDelivery)),
+        required=False,
+        help_text="How far they got in the call; absent on a call stored without a summary.",
+    )
+
+
+class TrialStateChangeSerializer(serializers.Serializer):
+    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
+
+    who = serializers.CharField()
+    name = serializers.CharField()
+    attempted = serializers.IntegerField()
+    committed = serializers.IntegerField()
+    refused = serializers.IntegerField()
+    faulted = serializers.IntegerField()
+    duplicate = serializers.IntegerField()
+    committed_actions = serializers.ListField(child=serializers.CharField())
+    no_change = serializers.BooleanField(
+        required=False,
+        help_text="True when this participant committed nothing: a result shown as 'no change', never left out.",
+    )
+
+
+class ActorDecisionSerializer(serializers.Serializer):
+    """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history);
+    or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout)."""
+
+    actor = serializers.CharField()
+    play = serializers.ChoiceField(
+        choices=("mocked", "live", "history", "waiting", "timeout", "problem")
+    )
+    action = serializers.CharField(required=False, allow_null=True)
+    arguments = serializers.DictField(
+        required=False,
+        help_text="What it sent: for a pre-run message (`history`), the message itself.",
+    )
+    channel = serializers.CharField(
+        required=False,
+        help_text="`voice` when decided on the call by a speaking actor.",
+    )
+    problem = serializers.CharField(
+        required=False,
+        help_text="For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+    )
+    why = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    status = serializers.IntegerField(required=False, allow_null=True)
+    timeout_seconds = serializers.FloatField(required=False)
+    fallback = serializers.CharField(
+        required=False,
+        help_text="silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
+    )
+    outcome = serializers.CharField(
+        required=False,
+        help_text=(
+            "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: "
+            "what the world made of it (committed, refused, faulted, duplicate)."
+        ),
+    )
+
+
+class ApprovalWriteSerializer(serializers.Serializer):
+    action = serializers.CharField(allow_null=True)
+    outcome = serializers.CharField(allow_null=True)
+
+
+class ApprovalLineSerializer(serializers.Serializer):
+    """One approval, read from the action log: the agent's request, the decision, and the agent's writes around it."""
+
+    request = serializers.DictField()
+    decision = serializers.DictField()
+    before_decision = ApprovalWriteSerializer(many=True)
+    after_decision = ApprovalWriteSerializer(many=True)
+    acted_before_decision = serializers.BooleanField()
+
+
+class ActorUsageSerializer(serializers.Serializer):
+    actor = serializers.CharField()
+    model = serializers.CharField(allow_blank=True)
+    tokens_in = serializers.IntegerField()
+    tokens_out = serializers.IntegerField()
+    cost_usd = serializers.FloatField()
+
+
+class TrialStateSerializer(serializers.Serializer):
+    state_changes = TrialStateChangeSerializer(many=True, required=False)
+    decisions = ActorDecisionSerializer(many=True, required=False)
+    approvals = ApprovalLineSerializer(many=True, required=False)
+    usage = ActorUsageSerializer(many=True, required=False)
+    limits = serializers.DictField(
+        required=False,
+        help_text="The actor limits this trial ran with; null is no limit.",
+    )
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
@@ -585,6 +751,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    call_actors = CallCallActorSerializer(many=True)
+    trial_state = TrialStateSerializer(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -604,6 +772,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "call_actors",
+            "trial_state",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -794,7 +964,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v4:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
@@ -830,6 +1000,34 @@ class RunCallsV3View(APIView):
             "evaluation_columns": columns,
         }
         return Response(response)
+
+
+def _call_call_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's actors is, how they were heard and how far they got."""
+    record = metadata.get("harness_call_actors") if isinstance(metadata, dict) else None
+    resolved = record.get("resolved") if isinstance(record, dict) else None
+    summary = record.get("summary") if isinstance(record, dict) else None
+    deliveries = {
+        one["actor"]: call_actor_delivery(one)
+        for one in summary or []
+        if isinstance(one, dict) and isinstance(one.get("actor"), str)
+    }
+    return [
+        {
+            **{
+                key: one[key]
+                for key in ("id", "name", "role", "channel")
+                if isinstance(one.get(key), str)
+            },
+            **(
+                {"delivery": deliveries[one["id"]]}
+                if one.get("id") in deliveries
+                else {}
+            ),
+        }
+        for one in resolved or []
+        if isinstance(one, dict)
+    ]
 
 
 def build_call_execution_detail(
@@ -877,6 +1075,11 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "call_actors": _call_call_actors(call.call_metadata),
+            # Attempted, refused and committed per participant, and what each actor chose: kept apart.
+            "trial_state": (call.call_metadata or {}).get(TRIAL_STATE_KEY)
+            if isinstance(call.call_metadata, dict)
+            else None,
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

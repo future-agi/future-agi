@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.types import CallCallActors
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -904,7 +905,7 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
-    metadata["harness_outcome_status"] = body["status"]
+    metadata["harness_outcome_status"] = receipt_outcome_status(body)
     coverage = _receipt_evaluation_coverage(body)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:
@@ -915,10 +916,15 @@ def _apply_receipt_to_call(
         failure = body.get("failure") or {}
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
-            f"({coverage['executed']}/{coverage['expected']} executed). "
+            f"({coverage['executed']}/{coverage['expected']} executed"
             + (
-                "The trial ended with "
-                f"{failure.get('code') or failure.get('message')}."
+                f", {coverage['unmeasured']} not measured"
+                if coverage.get("unmeasured")
+                else ""
+            )
+            + "). "
+            + (
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
                 if failure
                 else "This is a grading failure, not an agent failure."
             )
@@ -1006,7 +1012,7 @@ def _apply_receipt_to_call(
         )
         base_time = None
         if transcript is not None:
-            base_time = _ingest_hosted_transcript(call, transcript)
+            base_time = _ingest_hosted_transcript(call, transcript, metadata)
             call.transcript_available = True
             update_fields.append("transcript_available")
         if tool_trace is not None:
@@ -1189,22 +1195,63 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     return CallExecution.CallStatus.FAILED
 
 
+def receipt_outcome_status(body: dict[str, Any]) -> str:
+    """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
+    sub-goal not applicable, inconclusive, or a mix of the two, and no evaluation decided. An execution
+    error stays an error.
+    """
+    results = {
+        sub_goal_result(one)
+        for one in body.get("sub_goals") or []
+        if isinstance(one, dict)
+    }
+    decided = any(
+        isinstance(one, dict)
+        and isinstance(one.get("passed"), bool)
+        and not one.get("grading_error")
+        for one in body.get("evaluations") or []
+    )
+    if (
+        body["status"] == "passed"
+        and results & {"not_applicable", "inconclusive"}
+        and not results & {"pass", "fail"}
+        and not decided
+    ):
+        return "no_score"
+    return body["status"]
+
+
+# A sub-goal's pass or fail as `passed`; any other result has no pass or fail.
+SUB_GOAL_PASSED = {"pass": True, "fail": False}
+
+
+def sub_goal_result(goal: dict[str, Any]) -> str | None:
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
+    if goal.get("verdict"):
+        return str(goal["verdict"])
+    if not isinstance(goal.get("held"), bool):
+        return None
+    return "pass" if goal["held"] else "fail"
+
+
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert hosted receipt checks to the platform's existing eval-output shape."""
     results: list[dict[str, Any]] = []
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
+        result = sub_goal_result(goal)
         # Nothing decided this sub-goal, which is not the same as deciding against it.
         # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
-        if goal.get("held") is None:
+        if result is None:
             continue
         results.append(
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": bool(goal["held"]),
+                "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
+                **({"result": result} if result not in ("pass", "fail") else {}),
             }
         )
     for evaluation in body.get("evaluations") or []:
@@ -1220,15 +1267,26 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
         item for item in body.get("evaluations") or [] if isinstance(item, dict)
     ]
     expected = len(sub_goals) + len(evaluations)
-    executed = sum(item.get("held") is not None for item in sub_goals) + sum(
-        not bool(item.get("grading_error")) for item in evaluations
-    )
+    # An unmeasured sub-goal stays among those requested and is never counted as evaluated, passed or failed.
+    unmeasured = sum(sub_goal_result(item) == "unmeasured" for item in sub_goals)
+    executed = sum(
+        sub_goal_result(item) not in (None, "unmeasured") for item in sub_goals
+    ) + sum(not bool(item.get("grading_error")) for item in evaluations)
     return {
         "expected": expected,
         "executed": executed,
-        "failed": max(0, expected - executed),
-        "complete": executed == expected,
+        "failed": max(0, expected - executed - unmeasured),
+        "unmeasured": unmeasured,
+        "complete": executed + unmeasured == expected,
     }
+
+
+def _rebased(value: dict[str, Any], base_time: float | None) -> dict[str, Any]:
+    """A row with an epoch `at` placed on the transcript's clock as `start_time_ms`."""
+    at = value.get("at")
+    if base_time is not None and isinstance(at, (int, float)) and at > 0:
+        value["start_time_ms"] = int(round((at - base_time) * 1000))
+    return value
 
 
 def _read_hosted_tool_trace(
@@ -1254,10 +1312,7 @@ def _read_hosted_tool_trace(
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
-                at = value.get("at")
-                if base_time is not None and isinstance(at, (int, float)) and at > 0:
-                    value["start_time_ms"] = int(round((at - base_time) * 1000))
-                calls.append(value)
+                calls.append(_rebased(value, base_time))
         return calls
     finally:
         if response is not None:
@@ -1304,8 +1359,36 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
+# Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
+WORLD_ACTIONS_KEY = "harness_world_actions"
+# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
+TRIAL_STATE_KEY = "harness_trial_state"
+
+
+def _call_actor_record(raw: object) -> CallCallActors | None:
+    """The transcript's actor record, keeping only the entries of its three lists."""
+    if not isinstance(raw, dict):
+        return None
+    record: CallCallActors = {}
+    for key in ("resolved", "summary", "events"):
+        if isinstance(raw.get(key), list):
+            record[key] = [one for one in raw[key] if isinstance(one, dict)]
+    return record or None
+
+
+def _placed_world_actions(
+    metadata: dict[str, Any] | None, base_time: float | None
+) -> float | None:
+    """The world actors' actions put on the transcript's clock; returns that clock's base."""
+    for action in (metadata or {}).get(WORLD_ACTIONS_KEY) or []:
+        _rebased(action, base_time)
+    return base_time
+
+
 def _ingest_hosted_transcript(
-    call: CallExecution, artifact: HostedHarnessArtifact
+    call: CallExecution,
+    artifact: HostedHarnessArtifact,
+    metadata: dict[str, Any] | None = None,
 ) -> float | None:
     """Materialize the sealed transcript artifact into the normal call transcript model.
 
@@ -1325,6 +1408,35 @@ def _ingest_hosted_transcript(
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
+        # Who else was in the call, who took part and when; a rerun without them clears it.
+        if metadata is not None:
+            record = _call_actor_record(
+                payload.get("call_actors") if isinstance(payload, dict) else None
+            )
+            if record:
+                metadata["harness_call_actors"] = record
+            else:
+                metadata.pop("harness_call_actors", None)
+            # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
+            world = payload.get("world_actors") if isinstance(payload, dict) else None
+            actions = world.get("actions") if isinstance(world, dict) else None
+            actions = [one for one in actions or [] if isinstance(one, dict)]
+            if actions:
+                metadata[WORLD_ACTIONS_KEY] = actions
+            else:
+                metadata.pop(WORLD_ACTIONS_KEY, None)
+            trial = {
+                key: [one for one in world.get(key) or [] if isinstance(one, dict)]
+                for key in ("state_changes", "decisions", "approvals", "usage")
+                if isinstance(world, dict) and isinstance(world.get(key), list)
+            }
+            # The limits the trial ran with, so the record says which applied.
+            if isinstance(world, dict) and isinstance(world.get("limits"), dict):
+                trial["limits"] = world["limits"]
+            if any(trial.values()):
+                metadata[TRIAL_STATE_KEY] = trial
+            else:
+                metadata.pop(TRIAL_STATE_KEY, None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
@@ -1391,7 +1503,7 @@ def _ingest_hosted_transcript(
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return base_time
+            return _placed_world_actions(metadata, base_time)
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
@@ -1466,6 +1578,16 @@ def _ingest_hosted_transcript(
                     CallTranscript(
                         call_execution=call,
                         speaker_role=role if role in valid_roles else "unknown",
+                        speaker_name=(
+                            str(message.get("name") or "")[:255]
+                            if role == CallTranscript.SpeakerRole.ACTOR
+                            else ""
+                        ),
+                        actor_id=(
+                            str(message.get("actor") or "")[:255] or None
+                            if role == CallTranscript.SpeakerRole.ACTOR
+                            else None
+                        ),
                         content=str(content),
                         start_time_ms=start_ms,
                         end_time_ms=end_ms,
@@ -1482,7 +1604,7 @@ def _ingest_hosted_transcript(
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)
-        return base_time
+        return _placed_world_actions(metadata, base_time)
     finally:
         if response is not None:
             response.close()

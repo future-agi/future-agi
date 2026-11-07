@@ -18,6 +18,7 @@ from simulate.models import (
     HarnessSuiteVersion,
 )
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_reliability_v3 import wilson
 from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
 
@@ -86,15 +87,17 @@ def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
 
     A sub-goal nothing decided (``held`` null) leaves the whole trial undecided,
     even beside a failed one: counting those as failed while dropping the ones
-    beside held checks would only ever drop would-be passes. A receipt without
-    sub-goals falls back to its own status.
+    beside held checks would only ever drop would-be passes. A not applicable or
+    inconclusive sub-goal is neither, so it is left out, and a trial with only
+    those is undecided. A receipt without sub-goals falls back to its own status.
     """
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
     if checks:
-        held = [one.get("held") for one in checks]
-        if any(value is None for value in held):
+        results = [sub_goal_result(dict(one)) for one in checks]
+        if any(result is None for result in results):
             return None
-        return all(value is True for value in held)
+        held = [SUB_GOAL_PASSED[one] for one in results if one in SUB_GOAL_PASSED]
+        return all(held) if held else None
     status = str(harness_status or "").lower()
     if status in HARNESS_PASSED:
         return True
