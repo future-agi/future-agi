@@ -16948,7 +16948,9 @@ export interface HarnessRunSummaryApi {
   agent_version: AgentVersionRefApi;
   outcome_passed: number;
   outcome_failed: number;
+  outcome_errored: number;
   outcome_skipped: number;
+  outcome_no_score: number;
   started_at: string;
   completed_at: string;
 }
@@ -18736,6 +18738,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -18745,6 +18748,8 @@ export type ALKSimulateTranscriptSegmentApiToolCalls = {
 
 export interface ALKSimulateTranscriptSegmentApi {
   speaker_role: ALKSimulateTranscriptSegmentApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   content: string;
   /** @minimum 0 */
   start_time_ms?: number;
@@ -19098,6 +19103,32 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
+export interface HarnessEnvironmentCallActorPersonaApi {
+  name?: string;
+  gender?: string;
+  age_group?: string;
+  occupation?: string;
+  location?: string;
+  personality?: string;
+  communication_style?: string;
+  initial_message?: string;
+  languages?: string[];
+  accent?: string;
+}
+
+export interface HarnessEnvironmentCallActorApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  role: string;
+  /** @minLength 1 */
+  channel: string;
+  persona: HarnessEnvironmentCallActorPersonaApi;
+  loudness_ratio?: number;
+  scenarios_count: number;
+}
+
 export type HarnessEnvironmentEndConditionsApiClock =
   (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
 
@@ -19175,6 +19206,7 @@ export interface HarnessEnvironmentContractApi {
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  call_actors: HarnessEnvironmentCallActorApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -19224,6 +19256,28 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
+export interface HarnessEnvironmentCallActorTriggerApi {
+  /** @minLength 1 */
+  kind?: string;
+  turn?: number;
+  tool?: string;
+  on_call?: number;
+  words?: string[];
+  p?: number;
+}
+
+export type HarnessEnvironmentScenarioCallActorApiActionsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentScenarioCallActorApi {
+  /** @minLength 1 */
+  id: string;
+  instruction: string;
+  trigger: HarnessEnvironmentCallActorTriggerApi;
+  actions?: HarnessEnvironmentScenarioCallActorApiActionsItem[];
+}
+
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
 
 export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
@@ -19243,6 +19297,7 @@ export interface HarnessEnvironmentScenarioApi {
   fixture: HarnessEnvironmentScenarioApiFixture;
   steps: number;
   sub_goals: HarnessEnvironmentSubGoalApi[];
+  actors: HarnessEnvironmentScenarioCallActorApi[];
   persona: HarnessEnvironmentScenarioApiPersona;
   /** @minLength 1 */
   situation: string;
@@ -19386,6 +19441,111 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+/**
+ * The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.
+ */
+export type HarnessActorLimitsWriteApiLimits = { [key: string]: string };
+
+export interface HarnessActorLimitsWriteApi {
+  /** The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default. */
+  limits: HarnessActorLimitsWriteApiLimits;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
+export type HarnessActorListApiActorsItem = { [key: string]: unknown };
+
+export type HarnessActorListApiSource =
+  (typeof HarnessActorListApiSource)[keyof typeof HarnessActorListApiSource];
+
+export const HarnessActorListApiSource = {
+  draft: "draft",
+  saved: "saved",
+} as const;
+
+export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
+
+export type HarnessActorListApiChannels = { [key: string]: string };
+
+export type HarnessActorListApiLoudness = { [key: string]: unknown };
+
+export type HarnessActorListApiLimits = { [key: string]: unknown };
+
+export interface HarnessWorldActionApi {
+  /** @minLength 1 */
+  action: string;
+  tool: string;
+  description: string;
+}
+
+export interface HarnessActorRecordSourceApi {
+  store: string;
+  /** @minLength 1 */
+  collection: string;
+}
+
+export interface HarnessActorKnowledgeSourcesApi {
+  files: string[];
+  records: HarnessActorRecordSourceApi[];
+}
+
+export interface HarnessActorListApi {
+  actors: HarnessActorListApiActorsItem[];
+  source: HarnessActorListApiSource;
+  revision: number;
+  record_schemas: HarnessActorListApiRecordSchemas;
+  actions: HarnessWorldActionApi[];
+  channels: HarnessActorListApiChannels;
+  loudness: HarnessActorListApiLoudness;
+  reserved_ids: string[];
+  knowledge_sources: HarnessActorKnowledgeSourcesApi;
+  limits?: HarnessActorListApiLimits;
+  actor_models?: string[];
+}
+
+export type HarnessActorWriteApiActor = { [key: string]: unknown };
+
+export interface HarnessActorWriteApi {
+  actor: HarnessActorWriteApiActor;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
+export type HarnessActorSeenApiSource =
+  (typeof HarnessActorSeenApiSource)[keyof typeof HarnessActorSeenApiSource];
+
+export const HarnessActorSeenApiSource = {
+  actor: "actor",
+  scenario: "scenario",
+  caller: "caller",
+} as const;
+
+export type HarnessActorSeenApiValue = { [key: string]: unknown };
+
+export interface HarnessActorSeenApi {
+  /** @minLength 1 */
+  input: string;
+  value: HarnessActorSeenApiValue;
+  source: HarnessActorSeenApiSource;
+}
+
+export interface HarnessActorNeverSeesApi {
+  scenario_fields: string[];
+  files: string[];
+  other_actors: string[];
+}
+
+export interface HarnessActorViewApi {
+  /** @minLength 1 */
+  actor_id: string;
+  permitted_actions: string[];
+  sees: HarnessActorSeenApi[];
+  never_sees: HarnessActorNeverSeesApi;
+  played_from_view: boolean;
+  /** @minLength 1 */
+  unused_reason: string;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -19502,7 +19662,7 @@ export type HarnessDraftItemApiSource = { [key: string]: unknown };
 export type HarnessDraftItemApiPreflightReport = { [key: string]: unknown };
 
 /**
- * Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.
+ * Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.
  */
 export type HarnessDraftItemApiChanges = { [key: string]: number };
 
@@ -19564,7 +19724,7 @@ export interface HarnessDraftItemApi {
    * @minLength 1
    */
   default_label: string | null;
-  /** Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment. */
+  /** Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment. */
   changes: HarnessDraftItemApiChanges;
 }
 
@@ -21090,6 +21250,16 @@ export const HarnessResultReceiptApiStatus = {
 
 export type HarnessResultReceiptApiEvaluations = { [key: string]: unknown };
 
+export type HarnessSubGoalApiVerdict =
+  (typeof HarnessSubGoalApiVerdict)[keyof typeof HarnessSubGoalApiVerdict];
+
+export const HarnessSubGoalApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+} as const;
+
 export interface HarnessSubGoalApi {
   /**
    * @minLength 1
@@ -21099,6 +21269,7 @@ export interface HarnessSubGoalApi {
   held: boolean;
   reason?: string;
   judged: boolean;
+  verdict?: HarnessSubGoalApiVerdict;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -21233,6 +21404,11 @@ export interface HarnessResultReceiptApi {
   evaluations: HarnessResultReceiptApiEvaluations;
   call: HarnessCallApi;
   failure: HarnessFailureApi;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  reason?: string;
   /**
    * @minLength 1
    * @pattern ^sha256:[0-9a-f]{64}$
@@ -23111,6 +23287,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  actor: "actor",
   unknown: "unknown",
 } as const;
 
@@ -23118,6 +23295,10 @@ export interface CallTranscriptApi {
   readonly id?: string;
   /** Role of the speaker (user or assistant) */
   speaker_role?: CallTranscriptApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
+  /** @maxLength 255 */
+  actor_id?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -23766,7 +23947,9 @@ export interface TestExecutionItemResponseApi {
   readonly completed_at?: string;
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
+  readonly outcome_errored?: number;
   readonly outcome_skipped?: number;
+  readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
@@ -24921,6 +25104,7 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
   error: "error",
 } as const;
 
@@ -24957,10 +25141,23 @@ export interface PersonaDetailsApi {
   traits: string[];
 }
 
+export type SubGoalResultApiResult =
+  (typeof SubGoalResultApiResult)[keyof typeof SubGoalResultApiResult];
+
+export const SubGoalResultApiResult = {
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+  unmeasured: "unmeasured",
+} as const;
+
 export interface SubGoalResultApi {
   /** @minLength 1 */
   name: string;
   passed: boolean | null;
+  result?: SubGoalResultApiResult;
+  reason?: string;
+  /** What the check was decided from: world_state, tool_calls, transcript, recording. */
+  evidence?: string[];
 }
 
 export interface CostBreakdownApi {
@@ -25017,6 +25214,158 @@ export interface SimulateRunV3FunctionCallApi {
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
   start_time_ms?: number;
+  ok?: boolean;
+  error?: string;
+  refused?: boolean;
+  at?: number;
+  /** @minLength 1 */
+  action_id?: string;
+  /** @minLength 1 */
+  outcome?: string;
+  /** @minLength 1 */
+  actor_id?: string;
+  /** @minLength 1 */
+  actor_name?: string;
+  actor_role?: string;
+  /** @minLength 1 */
+  refusal_code?: string;
+  /** @minLength 1 */
+  parent_event_id?: string;
+  /** @minLength 1 */
+  on_behalf_of?: string;
+}
+
+/**
+ * How far they got in the call; absent on a call stored without a summary.
+ */
+export type CallCallActorApiDelivery =
+  (typeof CallCallActorApiDelivery)[keyof typeof CallCallActorApiDelivery];
+
+export const CallCallActorApiDelivery = {
+  delivered: "delivered",
+  dropped: "dropped",
+  not_triggered: "not_triggered",
+  not_drawn: "not_drawn",
+} as const;
+
+export interface CallCallActorApi {
+  /** The actor's id in the environment. */
+  id?: string;
+  /** The name the transcript shows. */
+  name?: string;
+  /** Who they are to the caller. */
+  role?: string;
+  /** The channel id they joined the call on. */
+  channel?: string;
+  /** How far they got in the call; absent on a call stored without a summary. */
+  delivery?: CallCallActorApiDelivery;
+}
+
+export interface TrialStateChangeApi {
+  /** @minLength 1 */
+  who: string;
+  /** @minLength 1 */
+  name: string;
+  attempted: number;
+  committed: number;
+  refused: number;
+  faulted: number;
+  duplicate: number;
+  committed_actions: string[];
+  /** True when this participant committed nothing: a result shown as 'no change', never left out. */
+  no_change?: boolean;
+}
+
+export type ActorDecisionApiPlay =
+  (typeof ActorDecisionApiPlay)[keyof typeof ActorDecisionApiPlay];
+
+export const ActorDecisionApiPlay = {
+  mocked: "mocked",
+  live: "live",
+  history: "history",
+  waiting: "waiting",
+  timeout: "timeout",
+  problem: "problem",
+} as const;
+
+/**
+ * What it sent: for a pre-run message (`history`), the message itself.
+ */
+export type ActorDecisionApiArguments = { [key: string]: string };
+
+export interface ActorDecisionApi {
+  /** @minLength 1 */
+  actor: string;
+  play: ActorDecisionApiPlay;
+  /** @minLength 1 */
+  action?: string;
+  /** What it sent: for a pre-run message (`history`), the message itself. */
+  arguments?: ActorDecisionApiArguments;
+  /**
+   * `voice` when decided on the call by a speaking actor.
+   * @minLength 1
+   */
+  channel?: string;
+  /**
+   * For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.
+   * @minLength 1
+   */
+  problem?: string;
+  why?: string;
+  status?: number;
+  timeout_seconds?: number;
+  /**
+   * silent, decline, one of the actor's own actions, or the id of the actor who answers instead
+   * @minLength 1
+   */
+  fallback?: string;
+  /**
+   * For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).
+   * @minLength 1
+   */
+  outcome?: string;
+}
+
+export interface ApprovalWriteApi {
+  /** @minLength 1 */
+  action: string;
+  /** @minLength 1 */
+  outcome: string;
+}
+
+export type ApprovalLineApiRequest = { [key: string]: string };
+
+export type ApprovalLineApiDecision = { [key: string]: string };
+
+export interface ApprovalLineApi {
+  request: ApprovalLineApiRequest;
+  decision: ApprovalLineApiDecision;
+  before_decision: ApprovalWriteApi[];
+  after_decision: ApprovalWriteApi[];
+  acted_before_decision: boolean;
+}
+
+export interface ActorUsageApi {
+  /** @minLength 1 */
+  actor: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+/**
+ * The actor limits this trial ran with; null is no limit.
+ */
+export type TrialStateApiLimits = { [key: string]: string };
+
+export interface TrialStateApi {
+  state_changes?: TrialStateChangeApi[];
+  decisions?: ActorDecisionApi[];
+  approvals?: ApprovalLineApi[];
+  usage?: ActorUsageApi[];
+  /** The actor limits this trial ran with; null is no limit. */
+  limits?: TrialStateApiLimits;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -25168,6 +25517,8 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  call_actors: CallCallActorApi[];
+  trial_state: TrialStateApi;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
@@ -25372,6 +25723,7 @@ export interface RunDashboardRiskApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
 }
 
 export interface RunDashboardHealthApi {
@@ -25432,6 +25784,7 @@ export interface OutcomeCountsApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
 }
 
 export interface MetricStatsApi {
@@ -25509,6 +25862,7 @@ export interface ReliabilityRowApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
   /** @minLength 1 */
   scenario: string;
   /** @minLength 1 */
@@ -25548,6 +25902,7 @@ export interface TurnDistributionApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
   turn_count: number;
 }
 
@@ -25737,6 +26092,7 @@ export const RunCallApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
   error: "error",
 } as const;
 
@@ -25786,6 +26142,8 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  outcome_reason?: string;
   /** @minLength 1 */
   execution_status: string;
   /** @minLength 1 */
@@ -25850,9 +26208,24 @@ export interface FacetValueApi {
   count: number;
 }
 
+export interface CallActorFacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+  /** @minLength 1 */
+  label: string;
+  /** Calls where at least one of the actor's lines reached the agent. */
+  delivered: number;
+  /** Calls where the actor was triggered but none of its lines reached the agent. */
+  dropped: number;
+  /** Calls the actor was planned for but never triggered in. */
+  not_triggered: number;
+}
+
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
+  call_actor?: CallActorFacetValueApi[];
   status: FacetValueApi[];
 }
 
@@ -35636,6 +36009,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =
@@ -38982,12 +39358,34 @@ export type SimulateApiHarnessEnvironmentsListParams = {
   agent_definition_id?: string;
 };
 
+export type SimulateApiHarnessEnvironmentsActorViewParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsDeleteActorParams = {
+  /**
+   * @minimum 0
+   */
+  expected_revision?: number;
+};
+
 export type SimulateApiHarnessEnvironmentsCompareParams = {
   execution_id: string;
   /**
    * The run to compare against; the previous completed run if absent.
    */
   against_execution_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsUploadFileBody = {
+  file: Blob;
+  /** What the file is for: `knowledge`, a document an actor may be given to read. */
+  kind: string;
+  expected_revision?: number;
 };
 
 export type SimulateApiHarnessEnvironmentsNudgesParams = {

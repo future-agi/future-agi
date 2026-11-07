@@ -142,6 +142,42 @@ describe("OpenAPI runtime contract", () => {
     );
   });
 
+  it("accepts an actor record of any fields on add and edit", () => {
+    const base =
+      "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actors/";
+    const manager = {
+      id: "manager",
+      name: "Priya Raman",
+      role: "store manager",
+      permitted_actions: ["refunds.approve"],
+      constraints: { may_agree: ["Refunds up to $500"], private: [] },
+      activation: {
+        trigger: { kind: "on_tool", tool: "refunds.request_approval" },
+        fallback: "silent",
+      },
+      loudness_ratio: null,
+    };
+    const colleague = {
+      id: "colleague",
+      name: "Jordan",
+      channel: "audio_mix",
+      loudness_ratio: 0.5,
+    };
+    for (const [url, method, actor] of [
+      [base, "post", manager],
+      [`${base}manager/`, "put", manager],
+      [base, "post", colleague],
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url,
+          method,
+          data: { actor, expected_revision: 0 },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
   it("accepts provider-ID harness requests without a source upload", () => {
     const payload = {
       schema_version: "futureagi.harness-job.v1",

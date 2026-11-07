@@ -597,6 +597,10 @@ import type {
   GroupingOutboxRequestApi,
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
+  HarnessActorLimitsWriteApi,
+  HarnessActorListApi,
+  HarnessActorViewApi,
+  HarnessActorWriteApi,
   HarnessAgentCredentialsResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
@@ -1214,10 +1218,13 @@ import type {
   SimulateApiCallExecutionsListParams,
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
+  SimulateApiHarnessEnvironmentsActorViewParams,
   SimulateApiHarnessEnvironmentsCompareParams,
+  SimulateApiHarnessEnvironmentsDeleteActorParams,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
@@ -59923,6 +59930,321 @@ export const simulateApiHarnessEnvironmentsDelete = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsActorLimitsResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponseSuccess =
+  simulateApiHarnessEnvironmentsActorLimitsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsActorLimitsResponseError =
+  simulateApiHarnessEnvironmentsActorLimitsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsActorLimitsResponse =
+  | simulateApiHarnessEnvironmentsActorLimitsResponseSuccess
+  | simulateApiHarnessEnvironmentsActorLimitsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsActorLimitsUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/actor-limits/`;
+};
+
+/**
+ * Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model.
+ */
+export const simulateApiHarnessEnvironmentsActorLimits = async (
+  id: string,
+  harnessActorLimitsWriteApi: HarnessActorLimitsWriteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsActorLimitsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsActorLimitsResponse>(
+    getSimulateApiHarnessEnvironmentsActorLimitsUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorLimitsWriteApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsActorsResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsActorsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsActorsResponseSuccess =
+  simulateApiHarnessEnvironmentsActorsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsActorsResponseError =
+  simulateApiHarnessEnvironmentsActorsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsActorsResponse =
+  | simulateApiHarnessEnvironmentsActorsResponseSuccess
+  | simulateApiHarnessEnvironmentsActorsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsActorsUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/actors/`;
+};
+
+/**
+ * The environment's cast as the next run would use it: the draft's when there is one.
+ */
+export const simulateApiHarnessEnvironmentsActors = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsActorsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsActorsResponse>(
+    getSimulateApiHarnessEnvironmentsActorsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCreateActorResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCreateActorResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCreateActorResponseSuccess =
+  simulateApiHarnessEnvironmentsCreateActorResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsCreateActorResponseError =
+  simulateApiHarnessEnvironmentsCreateActorResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsCreateActorResponse =
+  | simulateApiHarnessEnvironmentsCreateActorResponseSuccess
+  | simulateApiHarnessEnvironmentsCreateActorResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCreateActorUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/actors/`;
+};
+
+/**
+ * Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.
+ */
+export const simulateApiHarnessEnvironmentsCreateActor = async (
+  id: string,
+  harnessActorWriteApi: HarnessActorWriteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCreateActorResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCreateActorResponse>(
+    getSimulateApiHarnessEnvironmentsCreateActorUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorWriteApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsActorViewResponse200 = {
+  data: HarnessActorViewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsActorViewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsActorViewResponseSuccess =
+  simulateApiHarnessEnvironmentsActorViewResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsActorViewResponseError =
+  simulateApiHarnessEnvironmentsActorViewResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsActorViewResponse =
+  | simulateApiHarnessEnvironmentsActorViewResponseSuccess
+  | simulateApiHarnessEnvironmentsActorViewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsActorViewUrl = (
+  id: string,
+  actorId: string,
+  params?: SimulateApiHarnessEnvironmentsActorViewParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/actors/${actorId}/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/actors/${actorId}/`;
+};
+
+/**
+ * What one actor sees and may do, optionally in one scenario, and what it never sees.
+ */
+export const simulateApiHarnessEnvironmentsActorView = async (
+  id: string,
+  actorId: string,
+  params?: SimulateApiHarnessEnvironmentsActorViewParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsActorViewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsActorViewResponse>(
+    getSimulateApiHarnessEnvironmentsActorViewUrl(id, actorId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsReplaceActorResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsReplaceActorResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsReplaceActorResponseSuccess =
+  simulateApiHarnessEnvironmentsReplaceActorResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsReplaceActorResponseError =
+  simulateApiHarnessEnvironmentsReplaceActorResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsReplaceActorResponse =
+  | simulateApiHarnessEnvironmentsReplaceActorResponseSuccess
+  | simulateApiHarnessEnvironmentsReplaceActorResponseError;
+
+export const getSimulateApiHarnessEnvironmentsReplaceActorUrl = (
+  id: string,
+  actorId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/actors/${actorId}/`;
+};
+
+/**
+ * Replace one actor in the draft; its id never changes.
+ */
+export const simulateApiHarnessEnvironmentsReplaceActor = async (
+  id: string,
+  actorId: string,
+  harnessActorWriteApi: HarnessActorWriteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsReplaceActorResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsReplaceActorResponse>(
+    getSimulateApiHarnessEnvironmentsReplaceActorUrl(id, actorId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorWriteApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDeleteActorResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteActorResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteActorResponseSuccess =
+  simulateApiHarnessEnvironmentsDeleteActorResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDeleteActorResponseError =
+  simulateApiHarnessEnvironmentsDeleteActorResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDeleteActorResponse =
+  | simulateApiHarnessEnvironmentsDeleteActorResponseSuccess
+  | simulateApiHarnessEnvironmentsDeleteActorResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDeleteActorUrl = (
+  id: string,
+  actorId: string,
+  params?: SimulateApiHarnessEnvironmentsDeleteActorParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/actors/${actorId}/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/actors/${actorId}/`;
+};
+
+/**
+ * Take one actor out of the draft; refused while a scenario includes it.
+ */
+export const simulateApiHarnessEnvironmentsDeleteActor = async (
+  id: string,
+  actorId: string,
+  params?: SimulateApiHarnessEnvironmentsDeleteActorParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDeleteActorResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDeleteActorResponse>(
+    getSimulateApiHarnessEnvironmentsDeleteActorUrl(id, actorId, params),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsCompareResponse200 = {
   data: HarnessCompareApi;
   status: 200;
@@ -60381,6 +60703,69 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsUploadFileResponseSuccess =
+  simulateApiHarnessEnvironmentsUploadFileResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsUploadFileResponseError =
+  simulateApiHarnessEnvironmentsUploadFileResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsUploadFileResponse =
+  | simulateApiHarnessEnvironmentsUploadFileResponseSuccess
+  | simulateApiHarnessEnvironmentsUploadFileResponseError;
+
+export const getSimulateApiHarnessEnvironmentsUploadFileUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/files/`;
+};
+
+/**
+ * Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
+it, for picking per actor.
+ */
+export const simulateApiHarnessEnvironmentsUploadFile = async (
+  id: string,
+  simulateApiHarnessEnvironmentsUploadFileBody?: SimulateApiHarnessEnvironmentsUploadFileBody,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsUploadFileResponse> => {
+  const formData = new FormData();
+  if (simulateApiHarnessEnvironmentsUploadFileBody?.file !== undefined) {
+    formData.append(`file`, simulateApiHarnessEnvironmentsUploadFileBody.file);
+  }
+  if (simulateApiHarnessEnvironmentsUploadFileBody?.kind !== undefined) {
+    formData.append(`kind`, simulateApiHarnessEnvironmentsUploadFileBody.kind);
+  }
+  if (
+    simulateApiHarnessEnvironmentsUploadFileBody?.expected_revision !==
+    undefined
+  ) {
+    formData.append(
+      `expected_revision`,
+      simulateApiHarnessEnvironmentsUploadFileBody.expected_revision.toString(),
+    );
+  }
+
+  return apiMutator<simulateApiHarnessEnvironmentsUploadFileResponse>(
+    getSimulateApiHarnessEnvironmentsUploadFileUrl(id),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
     },
   );
 };
@@ -92121,6 +92506,12 @@ export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
   return `/usage/update-auto-reload-settings/`;
 };
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
 export const usageUpdateAutoReloadSettingsCreate = async (
   autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi,
   options?: RequestInit,
