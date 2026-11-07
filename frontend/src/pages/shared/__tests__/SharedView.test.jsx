@@ -63,8 +63,8 @@ vi.mock("src/components/VoiceDetailDrawerV2/VoiceAudioBridge", () => ({
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2/TranscriptView", () => ({
-  default: ({ transcript }) => (
-    <div data-testid="voice-transcript">
+  default: ({ transcript, customerName }) => (
+    <div data-testid="voice-transcript" data-customer={customerName}>
       {transcript.map((turn) => turn.content).join("|")}
     </div>
   ),
@@ -207,6 +207,7 @@ describe("SharedView simulation call rendering", () => {
         id: "call-execution-1234567890",
         simulation_call_type: "voice",
         scenario: "Refund request",
+        persona: "Maya",
         status: "completed",
         duration: 42,
         recordings: { stereo: "https://audio.example/stereo.wav" },
@@ -241,6 +242,10 @@ describe("SharedView simulation call rendering", () => {
     );
     expect(screen.getByTestId("voice-transcript")).toHaveTextContent(
       "Hello, how can I help?|I want a refund.",
+    );
+    expect(screen.getByTestId("voice-transcript")).toHaveAttribute(
+      "data-customer",
+      "Maya",
     );
     expect(screen.queryByText(/Viewing shared/)).not.toBeInTheDocument();
   });

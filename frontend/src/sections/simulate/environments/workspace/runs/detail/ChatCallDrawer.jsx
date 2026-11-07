@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Chip, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
+import {
+  Box,
+  Chip,
+  CircularProgress,
+  Stack,
+  Typography,
+  IconButton,
+  Tooltip,
+  Tab,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
@@ -12,9 +21,12 @@ import {
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
+import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
+import TrialChangesPanel from "./TrialChangesPanel";
+import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -26,11 +38,7 @@ const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
 // the Evals tab row share this exact chip.
 function RemovedChip() {
   return (
-    <Chip
-      data-testid="removed-eval-marker"
-      size="small"
-      label="Removed"
-    />
+    <Chip data-testid="removed-eval-marker" size="small" label="Removed" />
   );
 }
 
@@ -91,7 +99,8 @@ export default function ChatCallDrawer({
     if (shareOpen || traceOpen) return undefined;
     const onKeyDown = (e) => {
       const tag = e.target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable)
+        return;
       if (e.key === "ArrowDown" && hasNext) {
         e.preventDefault();
         onNext?.();
@@ -108,6 +117,8 @@ export default function ChatCallDrawer({
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
+  const showChanges =
+    artifact === "world_changes" && Boolean(callDetail?.trial_state);
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -141,11 +152,16 @@ export default function ChatCallDrawer({
         : undefined,
     explanation: result.reason,
   }));
-  const durationMs = callDetail?.durationS != null ? callDetail.durationS * 1000 : task.durationMs;
+  const durationMs =
+    callDetail?.durationS != null
+      ? callDetail.durationS * 1000
+      : task.durationMs;
   const turnCount = stats.turnCount ?? task.turns;
   const tokens = callDetail?.tokens ?? task.tokens;
   const talkRatio =
-    stats.aiPct != null && stats.userPct != null ? `${stats.aiPct}/${stats.userPct}` : "-";
+    stats.aiPct != null && stats.userPct != null
+      ? `${stats.aiPct}/${stats.userPct}`
+      : "-";
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -153,7 +169,13 @@ export default function ChatCallDrawer({
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           Conversation ID :{" "}
@@ -162,40 +184,105 @@ export default function ChatCallDrawer({
           </Box>
         </Typography>
         <Tooltip arrow title="Copy conversation id">
-          <IconButton size="small" onClick={() => navigator.clipboard?.writeText(task.id)}>
-            <Iconify icon="solar:copy-linear" width={14} sx={{ color: "text.subtitle" }} />
+          <IconButton
+            size="small"
+            onClick={() => navigator.clipboard?.writeText(task.id)}
+          >
+            <Iconify
+              icon="solar:copy-linear"
+              width={14}
+              sx={{ color: "text.subtitle" }}
+            />
           </IconButton>
         </Tooltip>
         <Stack direction="row" spacing={0.5}>
-          <NavArrow icon="solar:alt-arrow-up-linear" label="Previous conversation (↑)" onClick={onPrev} disabled={!hasPrev} />
-          <NavArrow icon="solar:alt-arrow-down-linear" label="Next conversation (↓)" onClick={onNext} disabled={!hasNext} />
+          <NavArrow
+            icon="solar:alt-arrow-up-linear"
+            label="Previous conversation (↑)"
+            onClick={onPrev}
+            disabled={!hasPrev}
+          />
+          <NavArrow
+            icon="solar:alt-arrow-down-linear"
+            label="Next conversation (↓)"
+            onClick={onNext}
+            disabled={!hasNext}
+          />
         </Stack>
         <Box flex={1} />
         <Tooltip arrow title="Share call">
-          <IconButton size="small" aria-label="Share call" onClick={() => setShareOpen(true)}>
-            <Iconify icon="basil:share-outline" width={16} sx={{ color: "text.subtitle" }} />
+          <IconButton
+            size="small"
+            aria-label="Share call"
+            onClick={() => setShareOpen(true)}
+          >
+            <Iconify
+              icon="basil:share-outline"
+              width={16}
+              sx={{ color: "text.subtitle" }}
+            />
           </IconButton>
         </Tooltip>
         <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="solar:close-linear" width={16} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:close-linear"
+            width={16}
+            sx={{ color: "text.subtitle" }}
+          />
         </IconButton>
       </Stack>
 
-      <Stack direction={{ xs: "column", md: "row" }} sx={{ flex: 1, minHeight: 0 }}>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        sx={{ flex: 1, minHeight: 0 }}
+      >
         {/* left: the artifact */}
-        <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
+        <Stack
+          sx={{
+            flex: 1.15,
+            minWidth: 0,
+            borderRight: { md: "1px solid" },
+            borderColor: { md: "divider" },
+          }}
+        >
           <CustomTabs
-            value={showTraces ? "traces" : "transcript"}
+            value={
+              showTraces
+                ? "traces"
+                : showChanges
+                  ? "world_changes"
+                  : "transcript"
+            }
             onChange={(_, value) => setArtifact(value)}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
+            {callDetail?.trial_state && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
-          <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {showTraces ? (
-              <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+          <Box
+            {...ownsArrowKeys}
+            sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
+          >
+            {showChanges ? (
+              <TrialChangesPanel trialState={callDetail.trial_state} />
+            ) : showTraces ? (
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: "100%",
+                }}
+              >
                 <CallTracesPanel
                   traces={callTraces.traces}
                   projectId={callTraces.projectId}
@@ -209,7 +296,10 @@ export default function ChatCallDrawer({
                 <CircularProgress size={20} />
               </Stack>
             ) : (
-              <ChatTranscriptPane turns={turns} />
+              <ChatTranscriptPane
+                turns={turns}
+                customerName={callDetail?.persona}
+              />
             )}
           </Box>
         </Stack>
@@ -219,10 +309,13 @@ export default function ChatCallDrawer({
           <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
               <Meta label="Type" value="Chat" />
-              <Meta label="Status" value={task.status === "passed" ? "completed" : task.status} />
+              <Meta label="Status" value={runOutcome(task.status).label} />
               <Meta label="Duration" value={secs(durationMs)} />
               <Meta label="Turns" value={turnCount ?? "-"} />
-              <Meta label="Provider" value={callDetail?.provider || task.provider || "-"} />
+              <Meta
+                label="Provider"
+                value={callDetail?.provider || task.provider || "-"}
+              />
             </Stack>
           </Box>
 
@@ -238,17 +331,42 @@ export default function ChatCallDrawer({
               spacing={1}
             >
               {failed.map((r) => (
-                <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "status.danger.solid", flexShrink: 0, mt: "1px" }} />
+                <Stack
+                  key={r.id}
+                  direction="row"
+                  spacing={1.25}
+                  alignItems="flex-start"
+                >
+                  <Iconify
+                    icon="solar:close-circle-bold"
+                    width={15}
+                    sx={{
+                      color: "status.danger.solid",
+                      flexShrink: 0,
+                      mt: "1px",
+                    }}
+                  />
                   <Box minWidth={0}>
-                    <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={0.75}
+                      minWidth={0}
+                    >
                       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                        {r.name} failed{r.score != null ? ` (${Math.round(r.score * 100)})` : ""}
+                        {r.name} failed
+                        {r.score != null
+                          ? ` (${Math.round(r.score * 100)})`
+                          : ""}
                       </Typography>
                       {r.removed && <RemovedChip />}
                     </Stack>
                     {r.reason && (
-                      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{r.reason}</Typography>
+                      <Typography
+                        sx={{ typography: "s2", color: "text.secondary" }}
+                      >
+                        {r.reason}
+                      </Typography>
                     )}
                   </Box>
                 </Stack>
@@ -261,7 +379,11 @@ export default function ChatCallDrawer({
             onChange={(_, v) => setSide(v)}
             variant="scrollable"
             scrollButtons={false}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
           >
             <Tab value="analytics" label="Chat analytics" />
             <Tab value="evals" label={`Evals (${evalResults.length})`} />
@@ -269,13 +391,24 @@ export default function ChatCallDrawer({
             <Tab value="attributes" label="Attributes" />
           </CustomTabs>
 
-          <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
+          <Box
+            {...ownsArrowKeys}
+            sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
+          >
             {side === "analytics" && (
-              <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                }}
+              >
                 <Cell label="Duration" value={secs(durationMs)} />
                 <Cell label="Turns" value={turnCount ?? "-"} />
                 <Cell label="Words" value={num(stats.words)} />
-                <Cell label="Latency" value={stats.latencyMs != null ? `${stats.latencyMs}ms` : "-"} />
+                <Cell
+                  label="Latency"
+                  value={stats.latencyMs != null ? `${stats.latencyMs}ms` : "-"}
+                />
                 <Cell label="Talk ratio" value={talkRatio} />
                 <Cell label="Tool calls" value={num(stats.toolCalls)} />
                 <Cell label="Tokens" value={num(tokens)} />
@@ -304,7 +437,11 @@ export default function ChatCallDrawer({
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {JSON.stringify(turns.map((s) => ({ role: s.role, content: s.text })), null, 2)}
+                {JSON.stringify(
+                  turns.map((s) => ({ role: s.role, content: s.text })),
+                  null,
+                  2,
+                )}
               </Box>
             )}
 
@@ -312,7 +449,7 @@ export default function ChatCallDrawer({
               <Stack>
                 <Attr label="scenario" value={task.scenario} />
                 <Attr label="persona" value={task.persona} />
-                <Attr label="status" value={task.status} />
+                <Attr label="status" value={runOutcome(task.status).label} />
               </Stack>
             )}
           </Box>

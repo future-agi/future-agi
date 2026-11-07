@@ -2,6 +2,8 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
+import { OTHER_PARTY_FALLBACK, ACTOR_CHANNEL_LABELS } from "./constants";
+
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
   const s = Math.max(0, Math.floor(seconds));
@@ -17,6 +19,31 @@ export const normalizeRole = (role) => {
   if (r === "system") return "system";
   if (r === "tool" || r === "function") return "tool";
   return r || "unknown";
+};
+
+// Roles of anyone on the call other than the agent and the customer.
+const OTHER_ROLES = new Set(["actor", "world_actor"]);
+export const isOtherRole = (role) => OTHER_ROLES.has(role);
+
+// `Name · role`; a call stored before roles were kept shows just the name.
+export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
+  [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
+
+// How an actor was heard, in the actor editor's own words; none for an unknown channel.
+export const channelLabel = (channel) => ACTOR_CHANNEL_LABELS[channel] || "";
+
+// One person on the call: an actor by their id, or by name on a turn stored before ids were kept.
+export const otherPartyKey = (turn) =>
+  `${turn.role}:${turn.actorId || turn.speakerName}`;
+
+// Everyone other than the agent and the customer, once each, in the order they first appear.
+export const otherParties = (turns = []) => {
+  const seen = new Map();
+  for (const turn of turns) {
+    const key = otherPartyKey(turn);
+    if (isOtherRole(turn.role) && !seen.has(key)) seen.set(key, turn);
+  }
+  return [...seen.values()];
 };
 
 export const getContent = (item) => {
@@ -114,6 +141,10 @@ export const enrichTurns = (
       id: item.id ?? `turn-${i}`,
       role,
       rawRole: item.speaker_role || item.role,
+      speakerName: item.speaker_name || "",
+      actorId: item.actor_id || "",
+      actorRole: item.actor_role || "",
+      channel: item.channel || "",
       content: getContent(item),
       toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
@@ -207,14 +238,15 @@ export const enrichTurns = (
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap between consecutive spoken turns. A tool call
-  // sits inline at the moment it ran, often mid-turn; it is not speech, so it
-  // neither interrupts nor splits the gap between the turns around it.
+  // Step 7: silence + overlap between consecutive spoken turns. A tool call or
+  // a world actor's action sits inline at the moment it ran, often mid-turn; it
+  // is not speech, so it neither interrupts nor splits the gap between the
+  // turns around it.
   let prev = null;
   for (const cur of sorted) {
     cur.silenceBefore = null;
     cur.overlapsPrev = false;
-    if (cur.role === "tool") continue;
+    if (cur.role === "tool" || cur.role === "world_actor") continue;
     if (prev && prev.end != null && cur.start != null) {
       const gap = cur.start - prev.end;
       if (gap < -0.1) {
@@ -234,7 +266,8 @@ export const computeTotals = (turns) => {
   let total = 0;
   for (const t of turns) {
     if (t.duration == null) continue;
-    byRole[t.role] = (byRole[t.role] || 0) + t.duration;
+    const key = isOtherRole(t.role) ? "others" : t.role;
+    byRole[key] = (byRole[key] || 0) + t.duration;
     total += t.duration;
   }
   return { byRole, total };

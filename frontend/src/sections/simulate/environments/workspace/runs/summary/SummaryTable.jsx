@@ -6,7 +6,7 @@ import {
 import { fDateTime, formatDuration } from "src/utils/format-time";
 import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
-import { runColor } from "../runs.constants";
+import { STATUS_META, runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
@@ -158,7 +158,16 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
       <NumCell value={row.trials ?? 1} />
       <NumCell value={row.tasks} />
 
-      <NumCell value={`${row.passRate}%`} bold />
+      <NumCell
+        value={
+          row.passRate != null
+            ? `${row.passRate}%`
+            : row.status === "no_score"
+              ? STATUS_META.no_score.label
+              : DASH
+        }
+        bold
+      />
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />
       <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />

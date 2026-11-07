@@ -4,6 +4,11 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
+import {
+  callActorTimeout,
+  callActorWhen,
+  effectiveTrigger,
+} from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // One scenario, opened from its table row, laid out as the designer's
@@ -18,28 +23,53 @@ import { SCENARIO_SHAPE } from "./scenarios.shapes";
 
 const VAL_SX = { typography: "s1", color: "text.secondary", maxWidth: 760 };
 const SECTION_HEAD = {
-  typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary", mb: 1,
+  typography: "m3",
+  fontWeight: "fontWeightMedium",
+  color: "text.primary",
+  mb: 1,
 };
 
-export default function ScenarioDrawer({ row, onClose, onEdit, locked = false }) {
+export default function ScenarioDrawer({
+  row,
+  env,
+  onClose,
+  onEdit,
+  locked = false,
+}) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={680}>
       {row && (
         <Stack sx={{ height: "100%" }}>
           <Stack
-            direction="row" alignItems="center" spacing={1.5}
-            sx={{ px: 3, py: 2, pr: 6, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{
+              px: 3,
+              py: 2,
+              pr: 6,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
           >
             <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
+              <Typography
+                noWrap
+                sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
+              >
                 {row.name || row.title}
               </Typography>
             </Box>
             {!locked && onEdit && (
               <Button
-                size="small" variant="outlined" color="inherit"
+                size="small"
+                variant="outlined"
+                color="inherit"
                 onClick={() => onEdit(row)}
-                startIcon={<Iconify icon="solar:pen-new-square-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:pen-new-square-linear" width={14} />
+                }
                 sx={{ flexShrink: 0 }}
               >
                 Edit
@@ -47,7 +77,7 @@ export default function ScenarioDrawer({ row, onClose, onEdit, locked = false })
             )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} />
+            <ScenarioSheet row={row} env={env} />
           </Box>
         </Stack>
       )}
@@ -57,13 +87,20 @@ export default function ScenarioDrawer({ row, onClose, onEdit, locked = false })
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
+  env: PropTypes.shape({ callActors: PropTypes.array }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
 };
 
-function ScenarioSheet({ row }) {
+function ScenarioSheet({ row, env }) {
   const persona = row.persona?.name ? row.persona : null;
+  const listed = Object.fromEntries(
+    (env?.callActors || []).map((one) => [one.id, one]),
+  );
+  const names = Object.fromEntries(
+    Object.values(listed).map((one) => [one.id, one.name || one.id]),
+  );
   const goals = normaliseSubTasks(row.subTasks);
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
@@ -71,44 +108,101 @@ function ScenarioSheet({ row }) {
   const rows = [
     row.number != null && (
       <Row key="number" label="#">
-        <Typography className="sd-val" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.number}</Typography>
+        <Typography
+          className="sd-val"
+          sx={{ fontVariantNumeric: "tabular-nums" }}
+        >
+          {row.number}
+        </Typography>
       </Row>
     ),
     persona && (
       <Row key="persona" label="Persona">
         <Typography className="sd-val">
-          <Box component="span" sx={{ color: "text.primary", fontWeight: "fontWeightMedium" }}>{persona.name}</Box>
+          <Box
+            component="span"
+            sx={{ color: "text.primary", fontWeight: "fontWeightMedium" }}
+          >
+            {persona.name}
+          </Box>
           {personaSubline(persona) ? ` · ${personaSubline(persona)}` : ""}
         </Typography>
       </Row>
     ),
     situation && (
       <Row key="situation" label="Situation">
-        <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>{situation}</Typography>
+        <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
+          {situation}
+        </Typography>
       </Row>
     ),
     goals.length > 0 && (
       <Row key="goals" label="Sub-goals">
         <Stack spacing={1} sx={{ maxWidth: 760 }}>
           {goals.map((g, i) => (
-            <Stack key={g.id} direction="row" spacing={1} alignItems="flex-start">
+            <Stack
+              key={g.id}
+              direction="row"
+              spacing={1}
+              alignItems="flex-start"
+            >
               <Typography
                 sx={{
-                  typography: "s1", color: "text.disabled", width: 14, flexShrink: 0,
+                  typography: "s1",
+                  color: "text.disabled",
+                  width: 14,
+                  flexShrink: 0,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
                 {`${i + 1}.`}
               </Typography>
-              <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>{g.label}</Typography>
+              <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>
+                {g.label}
+              </Typography>
             </Stack>
+          ))}
+        </Stack>
+      </Row>
+    ),
+    row.callActors?.length > 0 && (
+      <Row key="actors" label="Actors">
+        <Stack spacing={1.25} sx={{ maxWidth: 760 }}>
+          {row.callActors.map((one) => (
+            <Box key={one.id}>
+              <Typography className="sd-val">
+                <Box
+                  component="span"
+                  sx={{ color: "text.primary", fontWeight: 600 }}
+                >
+                  {listed[one.id]?.name || one.id}
+                </Box>
+                {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
+                {` · ${callActorWhen(effectiveTrigger(one, listed[one.id]), listed[one.id]?.channel)}`}
+              </Typography>
+              {callActorTimeout(listed[one.id], names) && (
+                <Typography className="sd-val" sx={{ color: "text.secondary" }}>
+                  {callActorTimeout(listed[one.id], names)}
+                </Typography>
+              )}
+              {(one.instruction || listed[one.id]?.goal) && (
+                <Typography
+                  className="sd-val"
+                  sx={{ color: "text.secondary", whiteSpace: "pre-line" }}
+                >
+                  {one.instruction || listed[one.id]?.goal}
+                </Typography>
+              )}
+            </Box>
           ))}
         </Stack>
       </Row>
     ),
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
-        <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>{idealOutcome}</Typography>
+        <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
+          {idealOutcome}
+        </Typography>
       </Row>
     ),
   ].filter(Boolean);
@@ -120,7 +214,9 @@ function ScenarioSheet({ row }) {
         <Typography sx={SECTION_HEAD}>Scenario</Typography>
         <Box
           sx={{
-            border: "1px solid", borderColor: "divider", borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
             "& > .sr + .sr": { borderTop: "1px solid", borderColor: "divider" },
           }}
         >
@@ -131,18 +227,27 @@ function ScenarioSheet({ row }) {
   );
 }
 
-ScenarioSheet.propTypes = { row: SCENARIO_SHAPE };
+ScenarioSheet.propTypes = {
+  row: SCENARIO_SHAPE,
+  env: PropTypes.shape({ callActors: PropTypes.array }),
+};
 
 function Row({ label, children }) {
   return (
     <Box
       className="sr"
       sx={{
-        display: "grid", gridTemplateColumns: { xs: "1fr", sm: "124px minmax(0, 1fr)" },
-        columnGap: 2, rowGap: 0.25, px: 1.5, py: 1,
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", sm: "124px minmax(0, 1fr)" },
+        columnGap: 2,
+        rowGap: 0.25,
+        px: 1.5,
+        py: 1,
       }}
     >
-      <Typography sx={{ typography: "s1", color: "text.subtitle" }}>{label}</Typography>
+      <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
+        {label}
+      </Typography>
       <Box minWidth={0}>{children}</Box>
     </Box>
   );
