@@ -155,14 +155,45 @@ def changed_files(repo: Path, base: str) -> dict[str, str | None]:
     return result
 
 
-def added_lines(repo: Path, base: str, path: str) -> set[int]:
-    """Line numbers at the head that the change added or modified in one file."""
-    out = run(["git", "diff", "-U0", f"{base}...HEAD", "--", path], repo).stdout
-    lines: set[int] = set()
-    for m in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", out, re.MULTILINE):
-        start, count = int(m.group(1)), int(m.group(2) or "1")
-        lines.update(range(start, start + count))
-    return lines
+def line_ranks(diff: str) -> dict[int, int]:
+    """Rank the head lines of a `git diff -U0` for one file: 0 new code, 1 touched.
+
+    A line is new code unless its hunk removed a line with the same code (ignoring
+    comments and whitespace): adding a comment to an old line only touches it.
+    Lines the diff does not show rank 2, which callers apply as the default.
+    """
+    ranks: dict[int, int] = {}
+    removed: Counter = Counter()
+    added: list[tuple[int, str]] = []
+    line_no = 0
+
+    def flush() -> None:
+        for number, code in added:
+            if removed[code] > 0:
+                removed[code] -= 1
+                ranks[number] = 1
+            else:
+                ranks[number] = 0
+        removed.clear()
+        added.clear()
+
+    for raw in diff.splitlines():
+        header = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw)
+        if header:
+            flush()
+            line_no = int(header.group(1))
+        elif raw.startswith("-") and not raw.startswith("---"):
+            removed[normalize(raw[1:])] += 1
+        elif raw.startswith("+") and not raw.startswith("+++"):
+            added.append((line_no, normalize(raw[1:])))
+            line_no += 1
+    flush()
+    return ranks
+
+
+def changed_line_ranks(repo: Path, base: str, path: str) -> dict[int, int]:
+    """line_ranks for one file's change since the base."""
+    return line_ranks(run(["git", "diff", "-U0", f"{base}...HEAD", "--", path], repo).stdout)
 
 
 def normalize(line: str) -> str:
@@ -252,13 +283,14 @@ def new_violations(
     head: list[Violation],
     base: list[Violation],
     renames: dict[str, str | None],
-    changed: dict[str, set[int]],
+    ranks: dict[str, dict[int, int]],
 ) -> list[Violation]:
     """Head findings with no matching finding at the base.
 
-    Findings match on (head path, rule, source line text), counted as a multiset,
-    so a moved line does not count as new. When a key has more findings at the
-    head than at the base, the extra ones are taken from changed lines first.
+    Findings match on (head path, rule, normalized source line), counted as a
+    multiset, so a moved line does not count as new. When a key has more findings
+    at the head than at the base, the extra ones are taken from new code first,
+    then from touched lines (see line_ranks), then from the rest.
     """
     to_head = {old: new for new, old in renames.items() if old}
     base_count = Counter((to_head.get(v.path, v.path), v.code, v.source) for v in base)
@@ -270,8 +302,8 @@ def new_violations(
         excess = len(items) - base_count.get(key, 0)
         if excess <= 0:
             continue
-        lines = changed.get(key[0], set())
-        items = sorted(items, key=lambda v: (v.line not in lines, v.line))
+        file_ranks = ranks.get(key[0], {})
+        items = sorted(items, key=lambda v: (file_ranks.get(v.line, 2), v.line))
         result.extend(items[:excess])
     return sorted(result, key=lambda v: (v.path, v.line, v.code))
 
@@ -313,7 +345,7 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
     base_paths = sorted(p for p in files.values() if p)
     app_head = [p for p in head_paths if not is_test_or_migration(p)]
     app_base = [p for p in base_paths if not is_test_or_migration(p)]
-    changed = {p: added_lines(repo, base, p) for p in head_paths}
+    ranks = {p: changed_line_ranks(repo, base, p) for p in head_paths}
 
     with tempfile.TemporaryDirectory(prefix="lint-delta-base-") as tmp:
         base_tree = Path(tmp) / "base"
@@ -331,7 +363,7 @@ def check(repo: Path, base: str, ruff: str) -> list[Violation]:
         finally:
             run(["git", "worktree", "remove", "--force", str(base_tree)], repo, ok_codes=(0, 128))
 
-    found = new_violations(head, old, files, changed)
+    found = new_violations(head, old, files, ranks)
     for path in sorted(head_dirty):
         base_path = files.get(path)
         if base_path is None or base_path not in base_dirty:

@@ -59,8 +59,32 @@ class PureFunctionTests(unittest.TestCase):
             v("futureagi/a.py", "BLE001", 4, "except Exception:"),
             v("futureagi/a.py", "BLE001", 11, "except Exception:"),
         ]
-        found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {"futureagi/a.py": {10, 11}})
+        found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, {"futureagi/a.py": {11: 0}})
         self.assertEqual([x.line for x in found], [11])
+
+    def test_new_code_outranks_a_line_that_only_gained_a_comment(self):
+        base = [v("futureagi/a.py", "BLE001", 4, "except Exception:")]
+        head = [
+            v("futureagi/a.py", "BLE001", 4, "except Exception:"),
+            v("futureagi/a.py", "BLE001", 11, "except Exception:"),
+        ]
+        ranks = {"futureagi/a.py": {4: 1, 11: 0}}
+        found = gate.new_violations(head, base, {"futureagi/a.py": "futureagi/a.py"}, ranks)
+        self.assertEqual([x.line for x in found], [11])
+
+    def test_line_ranks_tell_new_code_from_a_comment_edit(self):
+        diff = "\n".join(
+            [
+                "@@ -4 +4 @@ def first():",
+                "-    except Exception:",
+                "+    except Exception:  # existing fallback",
+                "@@ -5,0 +6,3 @@",
+                "+",
+                "+def second():",
+                "+    pass",
+            ]
+        )
+        self.assertEqual(gate.line_ranks(diff), {4: 1, 6: 0, 7: 0, 8: 0})
 
     def test_a_renamed_file_keeps_its_old_violations(self):
         base = [v("futureagi/old.py", "T201", 2, "print(x)")]
@@ -192,7 +216,8 @@ class EndToEndTests(unittest.TestCase):
         self.write("futureagi/app/old_ugly.py", "y=2\n")
         base = self.commit()
 
-        self.write("futureagi/app/mod.py", HEAD_MOD)
+        # A comment on the old except line must not draw the new finding to it.
+        self.write("futureagi/app/mod.py", HEAD_MOD.replace("except Exception:\n        return 0", "except Exception:  # existing fallback\n        return 0"))
         self.write("futureagi/app/old_ugly.py", "y=3\n")  # unformatted at the base too: not new
         self.write("futureagi/app/new_ugly.py", "x=1\n")  # new and unformatted: new
         self.write("futureagi/app/tests/test_mod.py", 'def test_x():\n    print("x")\n')  # tests: no T201
