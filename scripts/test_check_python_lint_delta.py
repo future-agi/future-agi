@@ -124,6 +124,9 @@ CONFIG = textwrap.dedent(
 
     [tool.ruff.lint]
     select = ["E", "F", "B"]
+
+    [tool.ruff.lint.per-file-ignores]
+    "app/cli.py" = ["T201"]
     """
 )
 
@@ -181,6 +184,7 @@ class EndToEndTests(unittest.TestCase):
         self.write("futureagi/app/new_ugly.py", "x=1\n")  # new and unformatted: new
         self.write("futureagi/app/tests/test_mod.py", 'def test_x():\n    print("x")\n')  # tests: no T201
         self.write("futureagi/app/migrations/0001_x.py", 'print("x")\n')  # excluded
+        self.write("futureagi/app/cli.py", 'print("x")\n')  # per-file-ignores survive --select
         self.commit()
 
         code, found, proc = self.gate(base)
