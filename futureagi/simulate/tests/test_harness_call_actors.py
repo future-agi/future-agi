@@ -409,6 +409,29 @@ def test_a_pinned_suite_version_keeps_each_scenario_s_call_actors():
     assert "actors" not in _member_content({"name": "a"})
 
 
+def test_a_pinned_suite_version_keeps_what_starts_a_scenario_and_what_happened_before_it():
+    from simulate.services.harness_versioning.versions import _member_content
+
+    document = {
+        "name": "a",
+        "pre_run": [
+            {
+                "actors": ["manager"],
+                "where": {"action": "chat.post_message"},
+                "about": "deal 8",
+            }
+        ],
+        "starts_with": {"actor": "manager", "text": "Apply the agreed discount"},
+        "faults": [{"action": "crm.apply_discount", "mode": "timeout_after_commit"}],
+        "limits": {"max_messages": 4},
+    }
+    kept = _member_content(document)
+    for field in ("pre_run", "starts_with", "faults", "limits"):
+        assert kept[field] == document[field]
+    # An edit to one of them alone reads as a change to the scenario.
+    assert _member_content({**document, "faults": []}) != kept
+
+
 @pytest.mark.django_db
 def test_a_hostile_call_actor_filter_value_matches_nothing_and_never_errors(
     organization, workspace

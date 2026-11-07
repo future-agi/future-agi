@@ -71,6 +71,13 @@ MEMBER_FIELDS = (
     "background_noise",
     "max_turns",
     "actors",
+    # Who talked before the run, what starts it, the world's faults and the scenario's own actor limits: each
+    # changes what a scenario tests, so an edit to one alone is a change.
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
 )
 
 
