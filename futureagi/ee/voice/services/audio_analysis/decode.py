@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ee.voice.services.audio_metrics import _SILENCE_POWER, _frame_power
 from ee.voice.services.audio_provenance import validate_object_key
 
 from .constants import (
@@ -138,6 +137,16 @@ def fetch_audio(s3, *, bucket, key, call_id, expected_version=None, sleep=time.s
         body.close()
 
 
+def _frame_power(y, sr):
+    """Native, uncentered 25/10 ms float64 mean-square frames for silence only."""
+    frame = max(1, round(sr * 0.025))
+    hop = max(1, round(sr * 0.01))
+    samples = np.asarray(y, dtype=np.float64)
+    cumulative = np.concatenate(([0.0], np.cumsum(samples * samples)))
+    starts = np.arange(0, len(samples) - frame + 1, hop)
+    return (cumulative[starts + frame] - cumulative[starts]) / frame
+
+
 def decode_audio(
     data: bytes, *, channel_index=None, expected_channels=None
 ) -> DecodedAudio:
@@ -179,7 +188,7 @@ def decode_audio(
                 raise AudioDeterministicError("invalid_audio")
             if count / sr < MIN_DURATION_SECONDS:
                 raise AudioDeterministicError("insufficient_audio")
-            if _frame_power(target, sr).max() < _SILENCE_POWER:
+            if _frame_power(target, sr).max() < 1e-8:
                 raise AudioDeterministicError("no_voice")
             return DecodedAudio(
                 target,

@@ -27,6 +27,29 @@ def test_state_precedence(states, expected):
     assert derive_state(dict(enumerate({"state": s} for s in states))) == expected
 
 
+def test_canonical_algorithm_and_preprocessing_versions_survive_projection():
+    from ee.voice.services.audio_analysis.constants import (
+        PITCH_ALGORITHM_VERSION,
+        PREPROCESSING_VERSION,
+        SNR_ALGORITHM_VERSION,
+    )
+
+    assert PITCH_ALGORITHM_VERSION == "pyin_c2c7_16k_v1"
+    assert SNR_ALGORITHM_VERSION == "power_quantiles_q90_q10_16k_v1"
+    assert PREPROCESSING_VERSION == "native_target_decode_canonical_16k_v1"
+    raw = empty_envelope(0)
+    raw["source"] = {"preprocessing_version": PREPROCESSING_VERSION}
+    raw["metrics"]["average_pitch_hz"]["algorithm_version"] = PITCH_ALGORITHM_VERSION
+    raw["metrics"]["estimated_snr_db"]["algorithm_version"] = SNR_ALGORITHM_VERSION
+    safe = sanitize_for_api(raw)
+    assert safe["source"] == raw["source"]
+    for name in ("average_pitch_hz", "estimated_snr_db"):
+        assert (
+            safe["metrics"][name]["algorithm_version"]
+            == raw["metrics"][name]["algorithm_version"]
+        )
+
+
 def test_null_column_not_requested():
     result = sanitize_for_api(None, 4)
     assert result == empty_envelope(4, "not_analyzed")

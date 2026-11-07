@@ -73,25 +73,18 @@ class SileroVad:
 
 
 class EnergyActivityDetector:
-    """TEST ONLY: helper energy activity is not a validated speech detector."""
+    """TEST ONLY: native energy activity is not a validated speech detector."""
 
     detector_id = "test-only-energy-v1"
 
     def detect(self, y16k):
-        from ee.voice.services.audio_metrics import (
-            _ACTIVITY_MARGIN_DB,
-            _NOISE_FLOOR_PERCENTILE,
-            _POWER_EPSILON,
-            _frame_power,
-        )
-
-        if not len(y16k):
+        if len(y16k) < 400:
             return []
-        power = _frame_power(y16k, 16000)
-        floor = max(
-            float(np.percentile(power, _NOISE_FLOOR_PERCENTILE)), _POWER_EPSILON
-        )
-        active = power > floor * 10 ** (_ACTIVITY_MARGIN_DB / 10)
+        samples = np.asarray(y16k, dtype=np.float64)
+        frames = np.lib.stride_tricks.sliding_window_view(samples, 400)[::160]
+        power = np.mean(frames * frames, axis=1)
+        floor = max(float(np.percentile(power, 10)), 1e-12)
+        active = power > floor * 10 ** (6 / 10)
         return interval_union(
             (i * 0.01, min(i * 0.01 + 0.025, len(y16k) / 16000))
             for i in np.flatnonzero(active)

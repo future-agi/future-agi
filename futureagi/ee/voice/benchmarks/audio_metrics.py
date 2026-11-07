@@ -1,8 +1,8 @@
 """Measure local audio stages without downloading weights or running inference.
 
 Run from futureagi/: python -m ee.voice.benchmarks.audio_metrics --self-test
-The pitch/SNR stages call the same DSP primitives as pitch_snr's combined
-wrapper, separately, so an SNR measurement does not include another pYIN pass.
+The pitch/SNR stages call the canonical waveform API separately, including its
+16 kHz conversion. An SNR measurement does not include a pYIN pass.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from typing import Any, TypeVar
 
 import numpy as np
 
-from ee.voice.services import audio_metrics as helper
-from ee.voice.services.audio_analysis import decode, pitch_snr
+from ee.voice.services.audio_analysis import decode
+from evaluations.engine.audio_metrics import analyze_waveform
 
 STAGES = ("decode", "pitch", "snr", "resample", "vqi")
 _T = TypeVar("_T")
@@ -82,14 +82,15 @@ def _measure(operation: Callable[[], _T], iteration: int) -> tuple[_T, dict[str,
 
 
 def _pitch(audio: decode.DecodedAudio) -> object:
-    import librosa
-
-    return helper._average_pitch_hz(librosa, audio.waveform, audio.sample_rate_hz)
+    return analyze_waveform(
+        audio.waveform, audio.sample_rate_hz, compute_pitch=True, compute_snr=False
+    )
 
 
 def _snr(audio: decode.DecodedAudio) -> object:
-    power = helper._frame_power(audio.waveform, audio.sample_rate_hz)
-    return pitch_snr._estimated_snr_db_detail(power)[0]
+    return analyze_waveform(
+        audio.waveform, audio.sample_rate_hz, compute_pitch=False, compute_snr=True
+    )
 
 
 def _resample(audio: decode.DecodedAudio) -> object:
@@ -181,8 +182,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     operations = {"pitch": _pitch, "snr": _snr, "resample": _resample}
     descriptions = {
-        "pitch": "audio_metrics._average_pitch_hz (pYIN used by pitch_snr)",
-        "snr": "audio_metrics._frame_power + pitch_snr._estimated_snr_db_detail",
+        "pitch": "audio_metrics.analyze_waveform(compute_snr=False): "
+        "16 kHz conversion + pYIN C2-C7",
+        "snr": "audio_metrics.analyze_waveform(compute_pitch=False): "
+        "16 kHz conversion + RMS-power q90/q10 SNR",
         "resample": "vqi.resample_for_vqi (soxr_hq, 16000 Hz)",
     }
     for stage in stages:

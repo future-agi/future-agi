@@ -224,21 +224,73 @@ def test_fetch_lying_head_closes_body():
     assert body.closed
 
 
-def test_white_noise_has_no_noise_floor_and_pitch_is_spurious():
-    """Unvoiced broadband noise has no pauses; pYIN still invents a pitch.
+@pytest.mark.parametrize("sr", [8000, 16000, 44100, 48000])
+def test_silence_gate_keeps_native_rounded_uncentered_float64_frames(sr):
+    y = np.random.default_rng(2094).normal(0, 0.001, sr).astype(np.float32)
+    before = y.tobytes()
+    frame, hop = round(sr * 0.025), round(sr * 0.01)
+    expected = np.array(
+        [
+            np.mean(y[start : start + frame].astype(np.float64) ** 2)
+            for start in range(0, len(y) - frame + 1, hop)
+        ]
+    )
+    np.testing.assert_allclose(decode._frame_power(y, sr), expected, rtol=1e-10)
+    assert y.tobytes() == before
 
-    Measured on the seed-2094 10 s / 16 kHz fixture: the unchanged
-    `pyin_c2c6_v1` estimator reports ~78 Hz over ~3.3 s of voiced coverage, so
-    the 0.25 s gate does not suppress it. A `no_voiced_frames` assertion is
-    therefore not achievable without changing the pinned estimator. What holds
-    is the SNR side: no pauses means `no_noise_floor`. Recorded deviation vs
-    AC05 wording; see SLICE1-NOTES.md.
+
+@pytest.mark.parametrize("amplitude,allowed", [(0.000099, False), (0.000101, True)])
+def test_silence_gate_retains_1e_8_power_threshold(amplitude, allowed):
+    data = wav(np.full(16000, amplitude))
+    if allowed:
+        assert decode.decode_audio(data).target_sample_count == 16000
+    else:
+        with pytest.raises(AudioDeterministicError, match="no_voice"):
+            decode.decode_audio(data)
+
+
+def test_silence_gate_does_not_pad_an_unframed_tail():
+    y = np.zeros(16000)
+    y[-1] = 1
+    with pytest.raises(AudioDeterministicError, match="no_voice"):
+        decode.decode_audio(wav(y))
+
+
+def test_white_noise_records_canonical_behavior_and_applies_pitch_coverage():
+    """Canonical pYIN falsely voices seeded noise: ~78.65 Hz over 4.88 seconds.
+
+    The coverage gate does not suppress this false positive. Quantile contrast
+    also produces a finite negative SNR (~-10.26 dB), unlike the old pause gate.
+    These are measured fixture regressions, not claims of calibrated accuracy.
     """
     from ee.voice.services.audio_analysis.pitch_snr import analyze_pitch_snr
+    from evaluations.engine.audio_metrics import analyze_waveform
 
     decoded = decode.decode_audio(
         wav(np.random.default_rng(2094).normal(0, 0.1, 160000))
     )
+    metrics, _ = analyze_waveform(decoded.waveform, decoded.sample_rate_hz)
     pitch, snr = analyze_pitch_snr(decoded.waveform, decoded.sample_rate_hz)
-    assert pitch["state"] == "available" and 50 < pitch["value"] < 150
-    assert snr["reason"] == "no_noise_floor"
+    voiced_seconds = pitch["coverage"]["voiced_seconds"]
+    print(
+        f"WHITE_NOISE_CANONICAL pitch_hz={metrics.average_pitch_hz!r} "
+        f"voiced_seconds={voiced_seconds!r} "
+        f"pitch_state={pitch['state']} snr_db={metrics.estimated_snr_db!r} "
+        f"snr_state={snr['state']} coverage={snr['coverage']!r}"
+    )
+    assert metrics.average_pitch_hz == pytest.approx(78.6456, abs=0.1)
+    assert voiced_seconds == pytest.approx(4.88, abs=0.032)
+    assert metrics.estimated_snr_db == pytest.approx(-10.2601, abs=0.01)
+    if voiced_seconds < 0.25:
+        assert pitch["state"] == "unavailable"
+        assert pitch["value"] is None
+        assert pitch["reason"] == (
+            "no_voiced_frames" if voiced_seconds == 0 else "insufficient_voice"
+        )
+    else:
+        assert pitch["state"] == "available"
+        assert pitch["value"] == metrics.average_pitch_hz
+    if metrics.estimated_snr_db is None:
+        assert snr["reason"] == "no_noise_floor"
+    else:
+        assert snr["value"] == metrics.estimated_snr_db

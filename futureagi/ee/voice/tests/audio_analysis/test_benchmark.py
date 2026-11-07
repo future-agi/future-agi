@@ -85,10 +85,12 @@ def test_fixture_repeats_json_file_resample_and_vqi_skip(wav_fixture, tmp_path):
 
 
 def test_snr_selection_does_not_run_pitch(wav_fixture, monkeypatch, capsys):
-    def unexpected_pitch(*args):
+    import librosa
+
+    def unexpected_pitch(*args, **kwargs):
         pytest.fail("SNR benchmark must not include pYIN")
 
-    monkeypatch.setattr(benchmark.helper, "_pitch_detail", unexpected_pitch)
+    monkeypatch.setattr(librosa, "pyin", unexpected_pitch)
     assert (
         benchmark.main(
             [
@@ -105,6 +107,24 @@ def test_snr_selection_does_not_run_pitch(wav_fixture, monkeypatch, capsys):
     report = json.loads(capsys.readouterr().out)
     assert list(report["stages"]) == ["snr"]
     _assert_measurements(report["stages"]["snr"], 1)
+
+
+@pytest.mark.parametrize(
+    "stage,flags",
+    [
+        ("pitch", {"compute_pitch": True, "compute_snr": False}),
+        ("snr", {"compute_pitch": False, "compute_snr": True}),
+    ],
+)
+def test_stage_uses_canonical_waveform_api(monkeypatch, stage, flags):
+    from unittest.mock import Mock
+
+    analyze = Mock(return_value=object())
+    monkeypatch.setattr(benchmark, "analyze_waveform", analyze)
+    audio = SimpleNamespace(waveform=np.ones(100), sample_rate_hz=44100)
+    result = getattr(benchmark, f"_{stage}")(audio)
+    assert result is analyze.return_value
+    analyze.assert_called_once_with(audio.waveform, 44100, **flags)
 
 
 def test_vqi_skip_does_not_decode_or_load_operator_weights(

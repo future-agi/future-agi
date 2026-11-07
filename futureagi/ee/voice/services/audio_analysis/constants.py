@@ -26,10 +26,10 @@ FAILED_REASONS = frozenset(
     "invalid_audio nonfinite_output storage_unavailable provider_access_denied timeout analysis_error other_failed".split()
 )
 PIPELINE_VERSION = "audio_metrics_pipeline_v1"
-PITCH_ALGORITHM_VERSION = "pyin_c2c6_v1"
-SNR_ALGORITHM_VERSION = "energy_pause_v1"
+PITCH_ALGORITHM_VERSION = "pyin_c2c7_16k_v1"
+SNR_ALGORITHM_VERSION = "power_quantiles_q90_q10_16k_v1"
 VQI_ALGORITHM_VERSION = "dnsmos_ovrl_mean_v1"
-PREPROCESSING_VERSION = "native_v1"
+PREPROCESSING_VERSION = "native_target_decode_canonical_16k_v1"
 VQI_PREPROCESSING_VERSION = "resample_soxr_hq_16k_v1"
 POLYNOMIAL_VERSION = "dnsmos_regular_poly_591184a"
 WINDOW_POLICY_VERSION = "win9.01_hop1_minspeech3_cov80_v1"

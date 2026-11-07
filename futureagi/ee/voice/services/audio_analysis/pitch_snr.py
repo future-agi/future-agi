@@ -1,16 +1,10 @@
-"""Eligibility and interval coverage over the unchanged helper's own frames."""
+"""EE eligibility and interval coverage over the canonical OSS measurements."""
 
 import math
 
 import numpy as np
 
-from ee.voice.services.audio_metrics import (
-    _ACTIVITY_MARGIN_DB,
-    _NOISE_FLOOR_PERCENTILE,
-    _POWER_EPSILON,
-    _estimated_snr_db_detail,
-    analyze_waveform,
-)
+from evaluations.engine.audio_metrics import analyze_waveform
 
 from .constants import PITCH_ALGORITHM_VERSION, SNR_ALGORITHM_VERSION
 from .envelope import metric_entry
@@ -57,6 +51,13 @@ def _result(name, value, reason, **kwargs):
 
 
 def analyze_pitch_snr(y, sr):
+    """Apply coverage gates without changing the canonical scalar estimates.
+
+    For quantile SNR, active_seconds covers the union of frames at/above the
+    speech (90th) quantile; inactive_seconds covers frames at/below the noise
+    (10th) quantile. These are power proxies, not a speech/pause classifier, and
+    their interval unions may overlap. Nonfinite powers never contribute.
+    """
     metrics, frames = analyze_waveform(y, sr)
     duration = len(y) / sr
     voiced = frames.voiced_flag
@@ -64,8 +65,13 @@ def analyze_pitch_snr(y, sr):
         voiced = np.array([], dtype=bool)
     else:
         voiced = voiced & np.isfinite(frames.f0)
-    hop = frames.pitch_hop_seconds or 0
-    seconds = frame_coverage(voiced, 4 * hop, hop, duration, centered=True)
+    seconds = frame_coverage(
+        voiced,
+        frames.pitch_frame_seconds,
+        frames.pitch_hop_seconds,
+        duration,
+        centered=frames.pitch_centered,
+    )
     pitch_reason = (
         "no_voiced_frames"
         if seconds == 0
@@ -86,20 +92,25 @@ def analyze_pitch_snr(y, sr):
         },
     )
     power = frames.frame_power
-    if len(power):
-        floor = max(
-            float(np.percentile(power, _NOISE_FLOOR_PERCENTILE)), _POWER_EPSILON
-        )
-        active = power > floor * 10 ** (_ACTIVITY_MARGIN_DB / 10)
-        _, _, floored, capped = _estimated_snr_db_detail(power)
-    else:
-        active = np.array([], dtype=bool)
-        floored = capped = False
+    finite = np.isfinite(power)
+    active = inactive = np.zeros(len(power), dtype=bool)
+    if finite.any():
+        noise, speech = np.quantile(power[finite], [0.1, 0.9])
+        active = finite & (power >= speech)
+        inactive = finite & (power <= noise)
     active_s = frame_coverage(
-        active, frames.frame_seconds, frames.hop_seconds, duration
+        active,
+        frames.frame_seconds,
+        frames.hop_seconds,
+        duration,
+        centered=frames.frame_centered,
     )
     inactive_s = frame_coverage(
-        ~active, frames.frame_seconds, frames.hop_seconds, duration
+        inactive,
+        frames.frame_seconds,
+        frames.hop_seconds,
+        duration,
+        centered=frames.frame_centered,
     )
     snr_reason = (
         "no_noise_floor"
@@ -119,6 +130,7 @@ def analyze_pitch_snr(y, sr):
             "inactive_seconds": inactive_s,
             "frame_count": len(power),
         },
-        flags={"noise_floor_floored": floored, "value_capped": capped},
+        # The canonical estimator neither floors nor caps; retain the schema keys.
+        flags={"noise_floor_floored": False, "value_capped": False},
     )
     return pitch, snr
