@@ -26,7 +26,9 @@ with workflow.unsafe.imports_passed_through():
         ScheduleAudioAnalysisInput,
         ScheduleAudioAnalysisOutput,
     )
-    from ee.voice.temporal.workflows.audio_analysis_workflow import AudioAnalysisWorkflow
+    from ee.voice.temporal.workflows.audio_analysis_workflow import (
+        AudioAnalysisWorkflow,
+    )
 
 from simulate.semantics import CallType
 from simulate.temporal.constants import (

@@ -206,9 +206,9 @@ from simulate.utils.test_execution_utils import (
 )
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
-from tfc.temporal.common.client import terminate_workflow_sync
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
+from tfc.temporal.common.client import terminate_workflow_sync
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,

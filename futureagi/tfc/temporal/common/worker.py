@@ -31,7 +31,11 @@ def audio_worker_options(task_queue: str) -> dict:
         return {}
     from django.conf import settings
 
-    return {"max_concurrent_activities": max(1, settings.VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES)}
+    return {
+        "max_concurrent_activities": max(
+            1, settings.VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES
+        )
+    }
 
 
 async def run_worker(

@@ -137,9 +137,7 @@ def prepare_vqi_windows(y, sr, detector):
     ]
     covered = interval_seconds(
         _intersections(
-            interval_union(
-                (s / 16000, (s + WINDOW_SAMPLES) / 16000) for s in admitted
-            ),
+            interval_union((s / 16000, (s + WINDOW_SAMPLES) / 16000) for s in admitted),
             spans,
         )
     )
