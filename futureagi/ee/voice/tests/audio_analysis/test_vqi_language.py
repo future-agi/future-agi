@@ -88,7 +88,7 @@ def test_persisted_language_source(eligible_call, source):
         )
     )
     assert aa._declared_language(persisted) == (
-        "fr" if source == "definition" else "en"
+        None if source == "definition" else "en"
     )
 
 
@@ -225,16 +225,15 @@ def test_language_changed_during_analysis_rejects_commit(eligible_call):
     from ee.voice.services.audio_analysis.errors import StaleAnalysisError
 
     call = eligible_call
-    agent = call.test_execution.agent_definition
-    agent.language = "en"
-    agent.save(update_fields=["language"])
+    call.agent_version = make_version(call, {"language": "en"}, 1)
+    call.save(update_fields=["agent_version"])
     scheduled = schedule(call)
     call.refresh_from_db()
     input = aa.AnalyzeCallAudioInput(
         str(call.id), scheduled.analysis_id, 0, scheduled.deadline_at
     )
-    agent.language = "fr"
-    agent.save(update_fields=["language"])
+    call.agent_version = make_version(call, {"language": "fr"}, 2)
+    call.save(update_fields=["agent_version"])
     with pytest.raises(StaleAnalysisError, match="stale_identity"):
         aa._commit_result(
             input,

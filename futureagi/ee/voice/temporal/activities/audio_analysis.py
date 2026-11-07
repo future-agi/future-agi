@@ -109,9 +109,16 @@ def _schedule_audio_analysis(
         return ScheduleAudioAnalysisOutput(False, skip_reason="flag_off")
     with transaction.atomic():
         call = (
-            CallExecution.objects.select_for_update(of=("self",))
+            CallExecution.objects.select_for_update(
+                of=("self", "test_execution", "test_execution__run_test")
+            )
             .select_related("test_execution__run_test")
-            .filter(id=input.call_id, deleted=False)
+            .filter(
+                id=input.call_id,
+                deleted=False,
+                test_execution__deleted=False,
+                test_execution__run_test__deleted=False,
+            )
             .first()
         )
         if call is None:
@@ -149,13 +156,17 @@ def _schedule_audio_analysis(
         except AudioProvenanceError as exc:
             return skip(exc.reason, exc.state)
         stored = call.audio_metrics or {}
-        if stored.get("analysis_id") == analysis_id and stored.get("state") != "failed":
+        if stored.get("analysis_id") == analysis_id:
+            # The activity may have committed before losing its completion ack.
+            # Resume the launch with the original deadline; the deterministic
+            # child workflow ID is the duplicate-start boundary.
+            pending = stored.get("state") == "pending"
             return ScheduleAudioAnalysisOutput(
-                False,
+                pending,
                 analysis_id,
                 generation,
                 stored.get("deadline_at"),
-                "duplicate_identity",
+                None if pending else "duplicate_identity",
             )
         now = datetime.now(UTC)
         env = empty_envelope(generation)
@@ -212,10 +223,10 @@ def _single_declared_language(language, languages):
 
 
 def _declared_language(call):
-    """Use the persisted tested-agent version before any mutable definition.
+    """Use only immutable tested-agent configuration as language evidence.
 
-    A present but empty/ambiguous snapshot stays unknown. Never resolve the
-    latest version or use the simulator's language to fill missing evidence.
+    Missing or empty/ambiguous snapshots stay unknown. Never resolve the latest
+    version, mutable definition or simulator language to fill missing evidence.
     """
     execution = call.test_execution
     run = execution.run_test
@@ -230,27 +241,29 @@ def _declared_language(call):
             return _single_declared_language(
                 snapshot.get("language"), snapshot.get("languages")
             )
-    agent = execution.agent_definition or run.agent_definition
-    if agent is None or agent.organization_id != run.organization_id:
-        return None
-    return _single_declared_language(agent.language, agent.languages)
+    return None
 
 
-def _load_current(input):
+def _load_current(input, *, for_update=False):
     from ee.voice.services.audio_analysis.errors import StaleAnalysisError
     from simulate.models.test_execution import CallExecution
 
-    call = (
-        CallExecution.objects.select_related(
-            "agent_version",
-            "test_execution__agent_version",
-            "test_execution__agent_definition",
-            "test_execution__run_test__agent_version",
-            "test_execution__run_test__agent_definition",
-        )
-        .filter(id=input.call_id, deleted=False)
-        .first()
+    query = CallExecution.objects.select_related(
+        "agent_version",
+        "test_execution__agent_version",
+        "test_execution__run_test__agent_version",
+    ).filter(
+        id=input.call_id,
+        deleted=False,
+        test_execution__deleted=False,
+        test_execution__run_test__deleted=False,
     )
+    if for_update:
+        # Ancestor locks serialize the final check with their soft deletion.
+        query = query.select_for_update(
+            of=("self", "test_execution", "test_execution__run_test")
+        )
+    call = query.first()
     if call is None:
         raise StaleAnalysisError("tombstone")
     if call.audio_analysis_generation != input.generation:
@@ -303,13 +316,10 @@ def _commit_result(
 
     from ee.voice.services.audio_analysis.commit import commit_envelope
     from ee.voice.services.audio_analysis.errors import StaleAnalysisError
-    from simulate.models.test_execution import CallExecution
 
     with transaction.atomic():
-        # Lock source and envelope together; replacement after scheduling must
-        # not let an old waveform commit against the same pending envelope.
-        CallExecution.objects.select_for_update().filter(pk=input.call_id).first()
-        current = _load_current(input)
+        # Lock the source, envelope and ancestor tombstones through the commit.
+        current = _load_current(input, for_update=True)
         if provenance is not None and current.audio_provenance != provenance:
             raise StaleAnalysisError("stale_identity")
         if (

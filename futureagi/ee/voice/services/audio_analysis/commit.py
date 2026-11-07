@@ -12,8 +12,17 @@ def commit_envelope(
 
     with transaction.atomic():
         try:
-            call = CallExecution.objects.select_for_update(of=("self",)).get(
-                id=call_id, deleted=False
+            call = (
+                CallExecution.objects.select_related("test_execution__run_test")
+                .select_for_update(
+                    of=("self", "test_execution", "test_execution__run_test")
+                )
+                .get(
+                    id=call_id,
+                    deleted=False,
+                    test_execution__deleted=False,
+                    test_execution__run_test__deleted=False,
+                )
             )
         except CallExecution.DoesNotExist:
             raise StaleAnalysisError("tombstone") from None

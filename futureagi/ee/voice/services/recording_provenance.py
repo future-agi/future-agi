@@ -28,15 +28,29 @@ async def recording_artifacts(recordings, *, pin_versions=False):
             continue
         version = None
         if pin_versions:
-            try:
-                head = await asyncio.to_thread(
-                    get_audio_storage().head_object, Bucket=bucket, Key=key
-                )
-                version = head.get("VersionId") or head.get("ETag")
-            except Exception:
-                # A manifest may record an unknown version. Fetch still uses a
-                # conditional read, and never falls back to the provider URL.
-                pass
+            for attempt in range(3):
+                try:
+                    head = await asyncio.to_thread(
+                        get_audio_storage().head_object, Bucket=bucket, Key=key
+                    )
+                    version = next(
+                        (
+                            value
+                            for value in (head.get("VersionId"), head.get("ETag"))
+                            if isinstance(value, str)
+                            and value.strip()
+                            and value != "null"
+                        ),
+                        None,
+                    )
+                    if version:
+                        break
+                except Exception:
+                    # Preserve playback even if pinning fails. The scheduler
+                    # rejects an unpinned target with storage_unavailable.
+                    pass
+                if attempt < 2:
+                    await asyncio.sleep(0.1 * (attempt + 1))
         artifacts.append(
             ProvenanceArtifact(role, key, version, codec=key.rsplit(".", 1)[-1])
         )

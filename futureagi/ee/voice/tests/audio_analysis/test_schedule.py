@@ -11,9 +11,9 @@ from ee.voice.temporal.activities.audio_analysis import (
     ScheduleAudioAnalysisInput,
     schedule_audio_analysis,
 )
-from simulate.tests.test_call_execution_audio_metrics_api import (
-    audio_call as audio_call,
-)
+from simulate.tests import test_call_execution_audio_metrics_api
+
+audio_call = test_call_execution_audio_metrics_api.audio_call
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_schedule_gates(eligible_call, settings, kind, reason, state):
         ("/operator/model", "/operator/calibration", "pending", None),
     ],
 )
-def test_pending_envelope_and_duplicate_identity(
+def test_pending_envelope_retry_resumes_launch(
     eligible_call, settings, model, calibration, vqi_state, reason
 ):
     settings.VOICE_AUDIO_METRICS_DNSMOS_MODEL_PATH = model
@@ -111,7 +111,11 @@ def test_pending_envelope_and_duplicate_identity(
         assert env["metrics"][name]["value"] is None
     assert env["metrics"]["voice_quality_index"]["state"] == vqi_state
     assert env["metrics"]["voice_quality_index"]["reason"] == reason
-    assert schedule(eligible_call).skip_reason == "duplicate_identity"
+    # The pending write succeeded but Temporal lost the activity completion.
+    # Retrying must return the same launch, not strand the persisted envelope.
+    retry = schedule(eligible_call)
+    assert retry.scheduled
+    assert retry == result
     eligible_call.refresh_from_db()
     assert eligible_call.audio_metrics == env
 

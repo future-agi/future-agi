@@ -231,4 +231,9 @@ def validate_manifest(
             artifact.provider_role == "stereo"
         ):
             raise AudioProvenanceError("unknown_agent_track")
+    # Never mint an analysis identity (or fetch audio) for an unpinned target.
+    # S3's literal null version is mutable, so capture must use its ETag instead.
+    version = artifact.object_version_or_etag
+    if not isinstance(version, str) or not version.strip() or version == "null":
+        raise AudioProvenanceError("storage_unavailable")
     return artifact
