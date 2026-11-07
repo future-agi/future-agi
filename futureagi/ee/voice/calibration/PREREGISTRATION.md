@@ -86,3 +86,26 @@ data** regardless of this number.
   ratings are new, but source-utterance overlap cannot be excluded.
 - The Silero detector is version-pinned but not validated against adjudicated
   activity labels (PRD >= 95% precision / >= 90% recall gate remains open).
+
+## Outcome (recorded 2026-11-07, after the single locked-test evaluation)
+
+Stage 1 (manifest sha256 `7531ecf1…ecfbd`): 1,452 clips read; 595 eligible
+(English 185 calibration / 90 selection / 199 locked test; German 121). Most
+exclusions are clips with no full 9.01 s window (`insufficient_voice`: 824);
+29 clips had fewer than 5 ratings. Stage 2 chose K = 12 knots (selection RMSE
+0.597) and evaluated the locked tests once (`studies/nisqa_live_v1/stage2-report.json`):
+
+| Held-out cohort | n (groups) | MOS RMSE | Spearman | lb95 | pair acc | bias | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| en/sip/provider_received_track | 194 (106) | 0.502 | 0.664 | 0.566 | 0.915 | +0.065 | **fails** RMSE, Spearman, lb95 |
+| de/sip/provider_received_track | 95 (8) | 0.789 | 0.432 | 0.129 | 0.765 | −0.286 | **fails** all but n |
+
+5 English and 26 German held-out clips fell outside the calibration support
+(`out_of_domain`). Normalized-index RMSE: 0.627 (en), 0.986 (de).
+
+No cohort passed, so no artifact was written and VQI stays `not_validated`.
+Gates were not changed and nothing was refitted on the locked tests. The label
+diagnostic (`label-noise-diagnostic.json`, descriptive only) estimates English
+label reliability ≈ 0.81 (≈5 votes/clip; correlation ceiling ≈ 0.90) and German
+≈ 0.97, so the shortfall is not explained by label noise alone: regular DNSMOS
+OVRL tracks these recorded telephone/VoIP paths only moderately.

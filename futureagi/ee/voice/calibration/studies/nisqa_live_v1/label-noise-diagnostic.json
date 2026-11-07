@@ -1,0 +1,38 @@
+{
+ "calibration": {
+  "n": 185,
+  "mos_mean": 2.3375,
+  "mos_sd": 0.6417,
+  "label_noise_rmse_floor_mos": 0.3022,
+  "label_reliability_est": 0.7782,
+  "max_attainable_corr_est": 0.8822,
+  "votes_median": 5.0
+ },
+ "selection": {
+  "n": 90,
+  "mos_mean": 2.2179,
+  "mos_sd": 0.7057,
+  "label_noise_rmse_floor_mos": 0.3092,
+  "label_reliability_est": 0.808,
+  "max_attainable_corr_est": 0.8989,
+  "votes_median": 5.0
+ },
+ "test": {
+  "n": 199,
+  "mos_mean": 2.2345,
+  "mos_sd": 0.6719,
+  "label_noise_rmse_floor_mos": 0.295,
+  "label_reliability_est": 0.8072,
+  "max_attainable_corr_est": 0.8985,
+  "votes_median": 5.0
+ },
+ "external_test": {
+  "n": 121,
+  "mos_mean": 2.8471,
+  "mos_sd": 0.9337,
+  "label_noise_rmse_floor_mos": 0.1661,
+  "label_reliability_est": 0.9684,
+  "max_attainable_corr_est": 0.9841,
+  "votes_median": 24.0
+ }
+}
