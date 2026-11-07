@@ -302,7 +302,7 @@ class TestConvertTraceToGraph:
     def test_single_llm_span(
         self, trace, project, organization, workspace, user, llm_node_template
     ):
-        _make_llm_span(trace, project, name="Summarize")
+        span = _make_llm_span(trace, project, name="Summarize")
 
         graph, version = convert_trace_to_graph(trace, user, organization, workspace)
 
@@ -317,6 +317,9 @@ class TestConvertTraceToGraph:
         nodes = list(Node.no_workspace_objects.filter(graph_version=version))
         assert len(nodes) == 1
         assert nodes[0].name == "Summarize"
+        assert nodes[0].config.get("source_span_id") == str(span.id)
+        assert nodes[0].config.get("source_trace_id") == str(trace.id)
+        assert "source_parent_span_id" not in nodes[0].config
 
     def test_multiple_llm_spans_with_hierarchy(
         self, trace, project, organization, workspace, user, llm_node_template
@@ -337,12 +340,41 @@ class TestConvertTraceToGraph:
         )
         assert len(nodes) == 2
 
+        node_map = {n.name: n for n in nodes}
+        assert node_map["First LLM"].config.get("source_span_id") == str(llm1.id)
+        assert node_map["First LLM"].config.get("source_trace_id") == str(trace.id)
+        assert "source_parent_span_id" not in node_map["First LLM"].config
+
+        assert node_map["Second LLM"].config.get("source_span_id") == str(llm2.id)
+        assert node_map["Second LLM"].config.get("source_trace_id") == str(trace.id)
+        assert node_map["Second LLM"].config.get("source_parent_span_id") == str(llm1.id)
+
         connections = list(
             NodeConnection.no_workspace_objects.filter(graph_version=version)
         )
         assert len(connections) == 1
         assert connections[0].source_node.name == "First LLM"
         assert connections[0].target_node.name == "Second LLM"
+
+    def test_source_span_provenance_persisted(
+        self, trace, project, organization, workspace, user, llm_node_template
+    ):
+        """Verify that trace-to-graph conversion faithfully preserves span provenance metadata."""
+        span1 = _make_llm_span(trace, project, name="Generator", start_offset_s=0)
+        span2 = _make_llm_span(
+            trace, project, name="Reviewer", parent_span_id=span1.id, start_offset_s=1
+        )
+
+        _, version = convert_trace_to_graph(trace, user, organization, workspace)
+        nodes = {n.name: n for n in Node.no_workspace_objects.filter(graph_version=version)}
+
+        assert nodes["Generator"].config["source_span_id"] == str(span1.id)
+        assert nodes["Generator"].config["source_trace_id"] == str(trace.id)
+        assert "source_parent_span_id" not in nodes["Generator"].config
+
+        assert nodes["Reviewer"].config["source_span_id"] == str(span2.id)
+        assert nodes["Reviewer"].config["source_trace_id"] == str(trace.id)
+        assert nodes["Reviewer"].config["source_parent_span_id"] == str(span1.id)
 
     def test_no_llm_spans_raises(self, trace, project, organization, workspace, user):
         _make_chain_span(trace, project, name="Only Chain")
@@ -499,7 +531,7 @@ class TestConvertTraceToGraph:
             status="OK",
             span_attributes={},
         )
-        llm2 = _make_llm_span(
+        _make_llm_span(
             trace, project, name="LLM2", parent_span_id=tool.id, start_offset_s=5
         )
 
