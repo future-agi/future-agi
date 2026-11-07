@@ -207,12 +207,14 @@ def ruff_unformatted(ruff: str, tree: Path, paths: list[str]) -> set[str]:
     rel = [str(PurePosixPath(p).relative_to(BACKEND_DIR)) for p in paths]
     if not rel:
         return set()
-    proc = run([ruff, "format", "--check", "--no-cache", "--force-exclude", "--", *rel], tree / BACKEND_DIR, ok_codes=(0, 1))
-    found = set()
-    for line in proc.stdout.splitlines():
-        if line.startswith("Would reformat: "):
-            found.add(f"{BACKEND_DIR}/{line.removeprefix('Would reformat: ').strip()}")
-    return found
+    # JSON output: ruff 0.17 prints display diagnostics, not "Would reformat:" lines.
+    cmd = [ruff, "format", "--check", "--no-cache", "--force-exclude", "--output-format", "json"]
+    proc = run(cmd + ["--", *rel], tree / BACKEND_DIR, ok_codes=(0, 1))
+    root = (tree / BACKEND_DIR).resolve()
+    return {
+        f"{BACKEND_DIR}/{Path(f['filename']).resolve().relative_to(root).as_posix()}"
+        for f in json.loads(proc.stdout or "[]")
+    }
 
 
 def new_violations(
