@@ -37,6 +37,19 @@ def test_user_code_example_without_project_uses_default_project_name(auth_client
 
 
 @pytest.mark.django_db
+def test_user_code_example_uses_a_model_openai_still_serves(auth_client):
+    # gpt-3.5-turbo was shut down on 2026-10-23, so the snippet users copy
+    # verbatim must not call it; max_tokens is rejected by the gpt-5 family (use max_completion_tokens).
+    response = auth_client.get(USER_CODE_EXAMPLE_PATH)
+
+    assert response.status_code == status.HTTP_200_OK
+    code_example = response.json()["result"]
+    assert 'model="gpt-6.1-terra"' in code_example
+    assert "gpt-3.5-turbo" not in code_example
+    assert "max_tokens" not in code_example
+
+
+@pytest.mark.django_db
 def test_user_code_example_rejects_non_observe_project(auth_client, project):
     response = auth_client.get(
         USER_CODE_EXAMPLE_PATH,
