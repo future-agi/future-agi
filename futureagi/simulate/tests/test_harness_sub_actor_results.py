@@ -75,6 +75,7 @@ def test_not_applicable_and_inconclusive_are_published_with_their_reason_and_cou
         "expected": 4,
         "executed": 3,
         "failed": 1,
+        "unmeasured": 0,
         "complete": False,
     }
 
