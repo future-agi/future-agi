@@ -78,6 +78,29 @@ class SpeechAPIHandler(BaseModelHandler):
             run_prompt_config=self.context.run_prompt_config,
         )
 
+    def _is_audio_preview_alias(self) -> bool:
+        """
+        Check if the model is an audio-preview name that reached this handler.
+
+        TTSHandler only routes exact gpt-4o-audio-preview names to
+        AudioPreviewHandler, so provider-qualified names (for example
+        "openai/gpt-4o-audio-preview") arrive here and rely on the
+        completion fallback below.
+        """
+        return "gpt-4o-audio-preview" in self.context.model
+
+    def _extract_input_text(self) -> str:
+        """
+        Text sent in the speech request.
+
+        Literal TTS speaks the user script only. Audio-preview aliases are
+        completion-generated audio: they keep every role, as before, so the
+        404 fallback to AudioPreviewHandler behaves exactly as it did.
+        """
+        if self._is_audio_preview_alias():
+            return AudioProcessor.extract_text_from_messages(self.context.messages)
+        return AudioProcessor.extract_literal_speech_script(self.context.messages)
+
     def _should_fallback_to_completion(self, error: Exception) -> bool:
         """
         Check if we should fallback to completion endpoint for audio-preview.
@@ -93,9 +116,8 @@ class SpeechAPIHandler(BaseModelHandler):
         """
         error_str = str(error).lower()
         is_404_error = "404" in error_str or "invalid url" in error_str
-        is_audio_preview = "gpt-4o-audio-preview" in self.context.model
 
-        return is_404_error and is_audio_preview
+        return is_404_error and self._is_audio_preview_alias()
 
     def execute_sync(self, streaming: bool = False) -> HandlerResponse:
         """
@@ -111,9 +133,7 @@ class SpeechAPIHandler(BaseModelHandler):
 
         try:
             # Extract input text
-            input_text = AudioProcessor.extract_text_from_messages(
-                self.context.messages
-            )
+            input_text = self._extract_input_text()
 
             # Build speech parameters
             speech_params = self._build_speech_params(input_text)
@@ -176,10 +196,10 @@ class SpeechAPIHandler(BaseModelHandler):
 
     async def execute_async(self, streaming: bool = False) -> HandlerResponse:
         """
-        Execute TTS request asynchronously via litellm.speech().
+        Execute TTS request asynchronously via litellm.aspeech().
 
-        Note: litellm.speech() doesn't have an async version, so we use
-        sync_to_async wrapper.
+        Only the output formatting and upload step is wrapped with
+        sync_to_async.
 
         Args:
             streaming: Not used for TTS
@@ -191,9 +211,7 @@ class SpeechAPIHandler(BaseModelHandler):
 
         try:
             # Extract input text
-            input_text = AudioProcessor.extract_text_from_messages(
-                self.context.messages
-            )
+            input_text = self._extract_input_text()
 
             # Build speech parameters
             speech_params = self._build_speech_params(input_text)
