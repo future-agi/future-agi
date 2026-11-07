@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// OpenAI-shaped jobs map every durable state onto OpenAI's enum and always
-// carry its nullable fields; native jobs keep the gateway vocabulary and only
-// gain keys that have a value (completed_at stays absent until set).
+// The OpenAI dialect maps every durable state onto OpenAI's enum and always
+// carries its nullable fields; the native dialect keeps the gateway vocabulary
+// and only gains keys that have a value (completed_at stays absent until set).
 func TestStatusResponseWireDialects(t *testing.T) {
 	now := time.Unix(1793000000, 0)
 	for _, tc := range []struct {
@@ -40,8 +40,12 @@ func TestStatusResponseWireDialects(t *testing.T) {
 				t.Fatalf("%s native gained empty %s", tc.status, k)
 			}
 		}
+		// The creation shape alone never changes the native serializer.
 		j.Wire = WireOpenAI
-		o := j.ToStatusResponse()
+		if again := j.ToStatusResponse(); again["status"] != tc.status || again["gateway_status"] != nil {
+			t.Fatalf("%s native serializer followed the job wire: %v", tc.status, again)
+		}
+		o := j.ToOpenAIResponse()
 		if o["status"] != tc.openai || o["gateway_status"] != tc.status || o["progress"] != tc.progress {
 			t.Fatalf("%s openai: %v", tc.status, o)
 		}

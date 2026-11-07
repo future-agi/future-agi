@@ -510,7 +510,7 @@ deferral (none today) · `retired` = provider retired the API.
 
 | ID | Family | Exact model IDs | State | Text→video | Image→video | References | Audio out | Cancel | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| P01 | BytePlus Seedance 2.5 | `dreamina-seedance-2-5-260628` | implemented | yes | first, first+last | image / video / audio (audio-only allowed) | optional, default on | queued only | adapter + contract suite; account activation and LIVE smoke pending |
+| P01 | BytePlus Seedance 2.5 | `dreamina-seedance-2-5-260628` | implemented | yes | first, first+last | image / video / audio (audio-only allowed) | optional, default on | queued only | adapter + contract suite; account activation and LIVE smoke pending; 2026-11-07 doc revalidation left open mapping mismatches ([contract §2a](docs/video-generation/provider-adapter-contract.md#2a-revalidation-against-current-modelark-docs-2026-11-07)) |
 | P02 | BytePlus Seedance 2.0 | `dreamina-seedance-2-0-260128` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01 |
 | P03 | BytePlus Seedance 2.0 Fast / Mini | `dreamina-seedance-2-0-fast-260128`, `dreamina-seedance-2-0-mini-260615` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01; 480p/720p only |
 | P04 | BytePlus Seedance 1.x | `seedance-1-5-pro-251215`, `seedance-1-0-pro-250528`, `seedance-1-0-pro-fast-251015` | implemented | yes | first; first+last except 1.0 Pro Fast | none | 1.5 only | queued only | same as P01; legacy inventory kept under D03 |

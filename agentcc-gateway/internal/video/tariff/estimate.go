@@ -99,7 +99,29 @@ func estimateBytePlus(res capability.Resolved, opts Options) (*EstimateResult, e
 	}
 	return &EstimateResult{UsageLine: video.UsageLine{Unit: VideoTokens, Quantity: tokens, Source: video.UsageEstimate, TariffRevision: Revision, Currency: "USD", USD: float64(micros) / 1e6}, Micros: micros, Basis: "upper_bound", Rate: rate}, nil
 }
+
+// dimensions returns a width and height whose product bounds the output pixel
+// count. Seedance renders on a fixed grid rather than short-side x ratio: the
+// 1:1 480p frame is 640x640, and the 2026-11-07 OpenRouter smoke returned
+// 864x496 for 480p 16:9. Every grid frame is covered by the tier bound below:
+// the 16:9 frame rounded up to multiples of 16 plus one 16-pixel row.
 func dimensions(resolution, ratio string) (float64, float64, error) {
+	w, h, err := ratioDimensions(resolution, ratio)
+	if err != nil {
+		return 0, 0, err
+	}
+	short := h
+	if w < h {
+		short = w
+	}
+	ceil16 := func(x float64) float64 { return math.Ceil(x/16) * 16 }
+	tierWidth, tierHeight := ceil16(short*16/9), ceil16(short)+16
+	if tierWidth*tierHeight > w*h {
+		return tierWidth, tierHeight, nil
+	}
+	return w, h, nil
+}
+func ratioDimensions(resolution, ratio string) (float64, float64, error) {
 	short := map[string]float64{"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}[resolution]
 	if short == 0 {
 		return 0, 0, ErrUnpriced

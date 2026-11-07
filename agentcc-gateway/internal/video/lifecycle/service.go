@@ -247,13 +247,6 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 	if err != nil {
 		return fail(err)
 	}
-	// A job's response shape is fixed when it is created, so one
-	// Idempotency-Key replayed across the native and OpenAI shapes is a
-	// conflict rather than a replay that answers in the other dialect.
-	if rc.Metadata["video_wire"] == capability.WireOpenAI {
-		sum := sha256.Sum256([]byte(fp + "|wire=" + capability.WireOpenAI))
-		fp = hex.EncodeToString(sum[:])
-	}
 	estimate, err := tariff.Estimate(resolved, tariff.Options{MinTokensWithVideoInput: pc.MinTokensWithVideoInput})
 	priced := err == nil && pc.TariffRevision != "" && pc.TariffRevision == tariff.RevisionFor(service)
 	if !priced && !pc.AllowUnpricedModels {

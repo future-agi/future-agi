@@ -64,7 +64,7 @@ func TestOpenRouter_SettlesReportedUSDCost(t *testing.T) {
 	cost := 0.0461
 	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(&cost))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
 	j := f.acceptOpenRouter(t)
-	if j.EstimateUnit != provider.USD || j.ReservedMicros != 53034 || j.TariffRevision != capability.OpenRouterRevision || j.RateUSDPerMillion != 1e6 {
+	if j.EstimateUnit != provider.USD || j.ReservedMicros != 55444 || j.TariffRevision != capability.OpenRouterRevision || j.RateUSDPerMillion != 1e6 {
 		t.Fatalf("estimate unit=%s reserved=%d revision=%s rate=%v", j.EstimateUnit, j.ReservedMicros, j.TariffRevision, j.RateUSDPerMillion)
 	}
 	j = f.runToTerminal(t, j.ID)
@@ -90,7 +90,7 @@ func TestOpenRouter_NullCostIsUnknownNotZero(t *testing.T) {
 	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
 	j := f.acceptOpenRouter(t)
 	j = f.runToTerminal(t, j.ID)
-	if j.Status != video.StatusCompleted || j.SettlementState != video.SettlementUnsettled || j.BillingKnown || j.SettledMicros != 0 || j.ReservedMicros != 53034 {
+	if j.Status != video.StatusCompleted || j.SettlementState != video.SettlementUnsettled || j.BillingKnown || j.SettledMicros != 0 || j.ReservedMicros != 55444 {
 		t.Fatalf("status=%s settlement=%s known=%v settled=%d reserved=%d", j.Status, j.SettlementState, j.BillingKnown, j.SettledMicros, j.ReservedMicros)
 	}
 	if _, ok := j.ToStatusResponse()["cost"]; ok {
@@ -216,7 +216,7 @@ func TestOpenRouter_UsageRefreshIsBounded(t *testing.T) {
 		f.tick(t)
 	}
 	j = f.job(t, j.ID)
-	if j.UsagePolls != maxUsagePolls || j.SettlementState != video.SettlementUnsettled || j.ReservedMicros != 53034 {
+	if j.UsagePolls != maxUsagePolls || j.SettlementState != video.SettlementUnsettled || j.ReservedMicros != 55444 {
 		t.Fatalf("usage_polls=%d settlement=%s reserved=%d", j.UsagePolls, j.SettlementState, j.ReservedMicros)
 	}
 	total, _, _ := f.budget.GetSpend(j.OrgID, "org", "", "total")
@@ -243,5 +243,19 @@ func TestOpenRouter_VerifiedImageTypeReplacesDeclared(t *testing.T) {
 	j := f.job(t, r.Job.ID)
 	if !strings.Contains(string(j.RequestCanonical), `"media_type":"image/png"`) || strings.Contains(string(j.RequestCanonical), "image/jpeg") {
 		t.Fatalf("%s", j.RequestCanonical)
+	}
+}
+
+// A 429 during an accounting read honours Retry-After and does not use up one
+// of the bounded reads.
+func TestOpenRouter_UsageRefreshHonoursCooldown(t *testing.T) {
+	limited := videotest.Reply{Status: 429, Header: map[string][]string{"Retry-After": {"3600"}}}
+	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil)), limited}, Fetch: videotest.Reply{Body: videotest.MP4()}})
+	j := f.runToTerminal(t, f.acceptOpenRouter(t).ID)
+	f.clock.Advance(6 * time.Minute)
+	f.tick(t)
+	j = f.job(t, j.ID)
+	if j.UsagePolls != 0 || j.NextPollAt.Sub(f.clock.Now()) < time.Hour || j.SettlementState != video.SettlementUnsettled {
+		t.Fatalf("usage_polls=%d next=%v settlement=%s", j.UsagePolls, j.NextPollAt.Sub(f.clock.Now()), j.SettlementState)
 	}
 }

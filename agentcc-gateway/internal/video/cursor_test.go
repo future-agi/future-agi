@@ -23,7 +23,9 @@ func TestListCursorSurvivesFilterChanges(t *testing.T) {
 	if err != nil || n != 2 || ids(page) != "ba" {
 		t.Fatalf("asc %v %d %v", ids(page), n, err)
 	}
-	for _, cursor := range []string{"missing", "x"} {
+	gone := time.Now()
+	all = append(all, &VideoJob{ID: "z", OrgID: "o1", Status: StatusRunning, CreatedAt: base, DeletedAt: &gone})
+	for _, cursor := range []string{"missing", "x", "z"} {
 		if _, _, err = filterJobs(all, "o1", VideoListFilters{Limit: 10, Order: "desc", After: cursor}); err == nil {
 			t.Fatalf("cursor %q accepted", cursor)
 		}

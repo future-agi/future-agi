@@ -168,6 +168,44 @@ Retention: task records 7 days; our metadata retention 30d exceeds it, so after 
 
 Errors: create-time validation errors are synchronous HTTP 4xx with `error.code` (ModelArk error codes page); 2.5 task-type constraint errors can arrive asynchronously as `failed` with `InvalidParameter.TaskTypeConstraint`. Adapter maps synchronous 4xx to `failed/submit_rejected` (reservation released), 401/403 to `provider_access_denied`, 429 to retry (with the prepared-phase rule), 5xx to unknown/retry per section 7.2 of the architecture.
 
+### 2a. Revalidation against current ModelArk docs (2026-11-07)
+
+Read-only comparison of this adapter with the ModelArk create, retrieve, list,
+cancel/delete, Seedance 2.5 tutorial, pricing, error and model-list pages
+(revisions 2026-10-17 to 2026-11-03) and Bifrost's `core/providers/byteplus`
+at `1aad7d80`. Rates and the token formula match. Fixed in this PR: the
+reservation now covers Seedance's fixed output grid (1:1 480p is 640x640, not
+480x480), which also applies to the OpenRouter Seedance route.
+
+Open mismatches. Native BytePlus stays disabled and contract-only until these
+are fixed and a live account proves auth, billing and output privacy:
+
+1. `camera_fixed=false` is sent on all 2.x models and `generate_audio=false`
+   on the 1.0 models, which do not document those fields.
+2. `frames` is enabled on 2.x and 1.5; the docs list it for 1.0 Pro and Pro
+   Fast only (the existing fixtures expect it on 2.5).
+3. Reference videos are sent as `data:video/...` in the worker path; the docs
+   accept a video URL or asset ID only.
+4. `omni_reference_task_type=reference` is sent for 2.0 models, which do not
+   document it.
+5. `return_last_frame=true` is accepted but the returned last frame is dropped.
+6. Seedance 1.0 text-to-video accepts `ratio=adaptive`, which is undocumented.
+7. Seedance 1.5 rejects the documented `duration=-1`.
+8. Reconciliation compares a generated ratio with the literal `adaptive`.
+9. The serialized request is not bounded after base64 expansion (two 26 MiB
+   images exceed 64 MiB).
+10. Reference video duration, geometry and fps are not validated against the
+    documented per-model limits.
+11. Advertised image formats exceed the ingress decoders, and exact 0.4 and 2.5
+    ratios are rejected although the documented bounds are inclusive.
+
+Documentation drift: edit/extend task-type mismatches can be asynchronous
+(`InvalidParameter.TaskTypeMismatch`); Seedance 1.5 retires on 2026-11-11;
+reference-count and size limits here are gateway limits, narrower than the
+docs; the 100-download cap is documented for 2.5 only; the pricing page now
+states that failed generations are not charged, and draft task IDs created
+after 2026-10-28 are kept 14 days. None of this is verified against an account.
+
 ## 3. Google Veo via Gemini API (P05, P06)
 
 Checked 2026-10-02: https://ai.google.dev/gemini-api/docs/veo (page footer "Last updated 2026-09-17 UTC").

@@ -83,10 +83,22 @@ func (s *Service) refreshUsage(ctx context.Context, j *video.VideoJob, l video.L
 	if errors.Is(err, errLimited) {
 		return s.saveLater(ctx, j, l, time.Second)
 	}
+	// A provider cooldown is honoured and does not use up an accounting read.
+	var up *provider.UpstreamError
+	if errors.As(err, &up) && up.Status == 429 {
+		return s.saveLater(ctx, j, l, max(up.RetryAfter, 5*time.Minute))
+	}
 	j.UsagePolls++
+	next := 5 * time.Minute
+	if up != nil && up.RetryAfter > next {
+		next = up.RetryAfter
+	}
+	if err == nil && obs.RetryAfter != nil && *obs.RetryAfter > next {
+		next = *obs.RetryAfter
+	}
 	terminal := obs.Normalized == provider.StateCompleted || obs.Normalized == provider.StateFailed || obs.Normalized == provider.StateCancelled
 	if err != nil || !terminal || obs.Usage == nil || len(obs.Usage.Lines) == 0 {
-		return s.saveLater(ctx, j, l, 5*time.Minute)
+		return s.saveLater(ctx, j, l, next)
 	}
 	if j.Usage == nil {
 		j.Usage = &video.VideoUsage{Model: j.Model}

@@ -109,22 +109,75 @@ func TestVideoOpenAIWireCreateStatusListDelete(t *testing.T) {
 	}
 }
 
-// One Idempotency-Key cannot be replayed across the native and OpenAI shapes:
-// the response dialect is fixed at creation, so the second shape conflicts.
-func TestVideoIdempotencyKeyIsBoundToWire(t *testing.T) {
+// One Idempotency-Key replayed in the other shape returns the same job (the
+// generation request is identical), answered in the requester's dialect.
+func TestVideoIdempotentReplayAnswersInRequesterDialect(t *testing.T) {
 	f := newVideoHTTP(t)
-	if w := f.request("POST", "/v1/videos", f.keyA, "cross-wire", videoTestBody); w.Code != 202 {
-		t.Fatal(w.Code, w.Body.String())
-	}
+	native := jsonObject(t, f.request("POST", "/v1/videos", f.keyA, "cross-wire", videoTestBody))
 	body, ct := openAIForm(t, map[string]string{"model": videoTestModel, "prompt": "private prompt"})
-	if w := f.form(f.keyA, "cross-wire", body, ct); w.Code != 409 || !strings.Contains(w.Body.String(), "idempotency_conflict") {
-		t.Fatal("cross-wire replay", w.Code, w.Body.String())
+	replay := jsonObject(t, f.form(f.keyA, "cross-wire", body, ct))
+	if replay["id"] != native["id"] || replay["status"] != "queued" || replay["gateway_status"] != "submitting" || native["status"] != "submitting" {
+		t.Fatalf("native %v replay %v", native, replay)
 	}
-	if w := f.form(f.keyA, "openai-first", body, ct); w.Code != 202 {
+	first := jsonObject(t, f.form(f.keyA, "openai-first", body, ct))
+	back := jsonObject(t, f.request("POST", "/v1/videos", f.keyA, "openai-first", videoTestBody))
+	if back["id"] != first["id"] || back["status"] != "submitting" || back["gateway_status"] != nil {
+		t.Fatalf("openai %v native replay %v", first, back)
+	}
+}
+
+// Every response uses one dialect chosen per request: the explicit header, the
+// OpenAI SDKs' X-Stainless-Lang header, else the job's creation shape for a
+// single job and native for lists. A list never mixes dialects.
+func TestVideoDialectIsChosenPerRequest(t *testing.T) {
+	f := newVideoHTTP(t)
+	native := jsonObject(t, f.request("POST", "/v1/videos", f.keyA, "d-native", videoTestBody))
+	body, ct := openAIForm(t, map[string]string{"model": videoTestModel, "prompt": "openai prompt", "seconds": "5"})
+	openai := jsonObject(t, f.form(f.keyA, "d-openai", body, ct))
+	get := func(path string, header ...string) map[string]any {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Authorization", "Bearer "+f.keyA)
+		for i := 0; i+1 < len(header); i += 2 {
+			r.Header.Set(header[i], header[i+1])
+		}
+		w := httptest.NewRecorder()
+		f.s.httpServer.Handler.ServeHTTP(w, r)
+		return jsonObject(t, w)
+	}
+	statuses := func(list map[string]any) []any {
+		out := []any{}
+		for _, row := range list["data"].([]any) {
+			out = append(out, row.(map[string]any)["status"])
+		}
+		return out
+	}
+	if s := statuses(get("/v1/videos")); len(s) != 2 || s[0] != "submitting" || s[1] != "submitting" {
+		t.Fatalf("default list must be native: %v", s)
+	}
+	for _, h := range [][]string{{"X-AgentCC-Video-Dialect", "openai"}, {"X-Stainless-Lang", "python"}} {
+		if s := statuses(get("/v1/videos", h...)); len(s) != 2 || s[0] != "queued" || s[1] != "queued" {
+			t.Fatalf("%v list must be OpenAI for every row: %v", h, s)
+		}
+	}
+	if o := get("/v1/videos/" + openai["id"].(string)); o["status"] != "queued" || o["gateway_status"] != "submitting" {
+		t.Fatalf("creation shape default: %v", o)
+	}
+	if o := get("/v1/videos/"+openai["id"].(string), "X-AgentCC-Video-Dialect", "native"); o["status"] != "submitting" || o["gateway_status"] != nil {
+		t.Fatalf("explicit native: %v", o)
+	}
+	if o := get("/v1/videos/"+native["id"].(string), "X-Stainless-Lang", "python"); o["status"] != "queued" {
+		t.Fatalf("SDK read of a native job: %v", o)
+	}
+	r := httptest.NewRequest("DELETE", "/v1/videos/"+openai["id"].(string), nil)
+	r.Header.Set("Authorization", "Bearer "+f.keyA)
+	r.Header.Set("X-AgentCC-Video-Dialect", "sora")
+	w := httptest.NewRecorder()
+	f.s.httpServer.Handler.ServeHTTP(w, r)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_video_dialect") {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w := f.request("POST", "/v1/videos", f.keyA, "openai-first", videoTestBody); w.Code != 409 {
-		t.Fatal("reverse cross-wire replay", w.Code, w.Body.String())
+	if still := get("/v1/videos/" + openai["id"].(string)); still["id"] != openai["id"] {
+		t.Fatal("rejected header still deleted the job", still)
 	}
 }
 func TestVideoOpenAIWireValidation(t *testing.T) {
@@ -199,13 +252,23 @@ func runClientContract(t *testing.T, env, script, marker string) {
 	if !strings.Contains(string(out), marker) {
 		t.Fatal("contract script did not finish")
 	}
+	nativeID := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		if id, ok := strings.CutPrefix(strings.TrimSpace(line), "NATIVE_JOB "); ok {
+			nativeID = id
+		}
+	}
 	jobs, _, e := f.store.ListByOrg("a", video.VideoListFilters{Limit: 100})
 	if e != nil {
 		t.Fatal(e)
 	}
 	for _, j := range jobs {
-		if j.Wire != capability.WireOpenAI {
-			t.Fatalf("SDK job %s stored as wire %q", j.ID, j.Wire)
+		want := capability.WireOpenAI
+		if j.ID == nativeID {
+			want = ""
+		}
+		if j.Wire != want {
+			t.Fatalf("job %s stored as wire %q, want %q", j.ID, j.Wire, want)
 		}
 	}
 }

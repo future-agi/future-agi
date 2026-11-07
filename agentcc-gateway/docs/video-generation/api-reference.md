@@ -232,7 +232,7 @@ Query parameters:
 | `order` | `asc` or `desc` (default) by `created_at`, ties broken by `id` |
 | `status` | One of the normalized states |
 | `model` | Registry-known service-qualified ID |
-| `after` | Cursor: a video ID from a previous page; results start after it in the requested order. It is positioned by that job even if it no longer matches `status` or `model`. Unknown or foreign IDs answer 400 `invalid_filter`. Cannot be combined with `offset`; with `after`, `total` counts the jobs after the cursor. |
+| `after` | Cursor: a video ID from a previous page; results start after it in the requested order. It is positioned by that job even if it no longer matches `status` or `model`. Unknown, foreign or locally deleted IDs answer 400 `invalid_filter`; restart from the first page. Cannot be combined with `offset`; with `after`, `total` counts the jobs after the cursor. |
 
 Invalid values are rejected with 400 `invalid_filter`; they are never
 silently ignored.
@@ -410,15 +410,22 @@ which is unchanged: those three fields were unknown to it and rejected.
 | `input_reference` | A first-frame image: a multipart file, or JSON `{"image_url": "https://..."}` or a `data:image/...;base64,` URL. The type sent upstream is the one sniffed from the bytes at ingress and must be a format the model accepts. `file_id` is not supported. |
 | `audio`, `resolution`, `aspect_ratio` | Gateway extensions (SDKs pass them via `extra_body`). A `size` that conflicts with `resolution` or `aspect_ratio` is refused. |
 
-Every field may appear once; unknown fields are rejected as in the native
-contract. `Idempotency-Key` is still required (SDKs pass it via
+Every field may appear once (a repeated multipart part or JSON key is 400
+`invalid_parameter`); unknown fields are rejected as in the native contract. `Idempotency-Key` is still required (SDKs pass it via
 `extra_headers`).
 
-A job's response shape is fixed when it is created: jobs created through the
-OpenAI shape answer with OpenAI's status enum, and replaying an
-`Idempotency-Key` in the other shape is 409 `idempotency_conflict`. A list
-therefore shows each job in the shape it was created with. OpenAI-shaped jobs
-use:
+Responses use one dialect per request, never a mix:
+
+1. `X-AgentCC-Video-Dialect: openai` or `native`, when sent (any other value
+   is 400 `invalid_video_dialect`, checked before any side effect);
+2. otherwise the OpenAI dialect for the official OpenAI SDKs, recognized by
+   the `X-Stainless-Lang` header they send on every call;
+3. otherwise the create request's own shape for `POST`, the shape that created
+   the job for single-job reads, cancel and delete, and native for lists.
+
+Replaying an `Idempotency-Key` in the other shape returns the same job (the
+generation request is identical), answered in the replaying request's
+dialect. The OpenAI dialect uses:
 `queued` (for `submitting`, `submission_unknown` and `queued`),
 `in_progress`, `completed` and `failed` (also for `cancelled`, with error
 code `cancelled`). The durable gateway state stays visible as

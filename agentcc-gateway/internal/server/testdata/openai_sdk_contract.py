@@ -11,6 +11,7 @@ import os
 import struct
 import sys
 import time
+import urllib.request
 import uuid
 import zlib
 
@@ -74,8 +75,19 @@ def main():
         check(polled.status == "completed", f"sdk poll helper: {polled.status}")
         report["sdk_poll_helper"] = polled.status
 
-    seen = [v.id for v in client.videos.list(limit=1)]
-    check(video.id in seen and framed.id in seen and len(seen) == len(set(seen)), f"cursor pagination: {seen}")
+    # A job created by a native JSON client reads in the OpenAI dialect here,
+    # and a list through the SDK never mixes dialects.
+    native_req = urllib.request.Request(base + "/videos", method="POST", data=json.dumps({"model": model, "prompt": "native client job"}).encode(), headers={"Authorization": "Bearer " + key, "Content-Type": "application/json", "Idempotency-Key": "native-" + uuid.uuid4().hex})
+    with urllib.request.urlopen(native_req) as r:
+        native = json.loads(r.read())
+    check(native["status"] == "submitting", f"native create: {native}")
+    print("NATIVE_JOB", native["id"], flush=True)
+    enum = {"queued", "in_progress", "completed", "failed"}
+    check(client.videos.retrieve(native["id"]).status in enum, "native job read through the SDK is not in OpenAI's enum")
+    listed = list(client.videos.list(limit=1))
+    seen = [v.id for v in listed]
+    check(video.id in seen and framed.id in seen and native["id"] in seen and len(seen) == len(set(seen)), f"cursor pagination: {seen}")
+    check(all(v.status in enum for v in listed), f"mixed dialect list: {[v.status for v in listed]}")
     report["listed_via_cursor"] = len(seen)
 
     other = OpenAI(base_url=base, api_key=os.environ["GATEWAY_OTHER_KEY"], max_retries=0)

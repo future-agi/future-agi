@@ -58,6 +58,9 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 	if len(bytes.TrimSpace(body)) == 0 || bytes.TrimSpace(body)[0] != '{' || json.Unmarshal(body, &raw) != nil {
 		return OpenAICreate{}, invalid("invalid_request", "body", "object required")
 	}
+	if k, dup := duplicateKey(body); dup {
+		return OpenAICreate{}, invalid("invalid_parameter", k, "field repeated")
+	}
 	var c OpenAICreate
 	for k, v := range raw {
 		if !openAIFields[k] {
@@ -95,6 +98,32 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 		c.set(k, s)
 	}
 	return c, nil
+}
+
+// duplicateKey reports a repeated top-level key, which json.Unmarshal would
+// otherwise resolve silently to the last value.
+func duplicateKey(body []byte) (string, bool) {
+	d := json.NewDecoder(bytes.NewReader(body))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return "", false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		t, err := d.Token()
+		k, ok := t.(string)
+		if err != nil || !ok {
+			return "", false
+		}
+		if seen[k] {
+			return k, true
+		}
+		seen[k] = true
+		var skip json.RawMessage
+		if d.Decode(&skip) != nil {
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // DecodeOpenAIMultipart parses the multipart body the OpenAI SDKs send. Each

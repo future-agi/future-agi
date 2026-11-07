@@ -78,7 +78,7 @@ func TestMetricsUnsettledAndUnknownCounters(t *testing.T) {
 		t.Fatal(e)
 	}
 	out := reg.Render()
-	for _, v := range []string{"video_submission_unknown_total 1", "video_unresolved_total 1", "video_unsettled_micros 1155600"} {
+	for _, v := range []string{"video_submission_unknown_total 1", "video_unresolved_total 1", "video_unsettled_micros 1181280"} {
 		if !strings.Contains(out, v) {
 			t.Fatal(v, out)
 		}

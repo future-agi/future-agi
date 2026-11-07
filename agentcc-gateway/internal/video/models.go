@@ -199,13 +199,21 @@ func (j *VideoJob) ToStatusResponse() map[string]interface{} {
 	if j.Size != "" {
 		resp["size"] = j.Size
 	}
-	if j.Wire == WireOpenAI {
-		openAIOverlay(j, resp)
-	}
 	return resp
 }
 
-// WireOpenAI mirrors capability.WireOpenAI without importing capability.
+// ToOpenAIResponse is the status object in the OpenAI Videos API dialect. The
+// handler chooses the dialect per request, so one job reads consistently for
+// each client whichever shape created it.
+func (j *VideoJob) ToOpenAIResponse() map[string]interface{} {
+	resp := j.ToStatusResponse()
+	openAIOverlay(j, resp)
+	return resp
+}
+
+// WireOpenAI mirrors capability.WireOpenAI without importing capability. On a
+// job it records the shape that created it, the default dialect for reads of
+// that job when the caller does not choose one.
 const WireOpenAI = "openai"
 
 // openAIOverlay presents OpenAI's status enum and error object while keeping

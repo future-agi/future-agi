@@ -98,6 +98,10 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 		videoError(w, e)
 		return
 	}
+	openAI, ok := videoDialect(w, r, wire == capability.WireOpenAI)
+	if !ok {
+		return
+	}
 	if wire != "" {
 		rc.Metadata["video_wire"] = wire
 	}
@@ -176,7 +180,39 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 	if accepted.Replay && job.IsTerminal() {
 		status = 200
 	}
-	videoJSON(w, status, job.ToSubmitResponse())
+	videoJSON(w, status, videoResponse(job, openAI))
+}
+
+// VideoDialectHeader selects the response dialect: "openai" or "native".
+const VideoDialectHeader = "X-AgentCC-Video-Dialect"
+
+// videoDialect picks one response dialect for the whole request. An explicit
+// header wins; the official OpenAI SDKs (Stainless-generated, they send
+// X-Stainless-Lang on every call) get the OpenAI dialect; otherwise the caller's
+// default applies: the create request's shape, a job's creation shape for
+// single-job reads, and native for lists. Dialect never affects which job an
+// Idempotency-Key replays to.
+func videoDialect(w http.ResponseWriter, r *http.Request, def bool) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get(VideoDialectHeader))) {
+	case "":
+	case "openai":
+		return true, true
+	case "native":
+		return false, true
+	default:
+		models.WriteError(w, models.ErrBadRequest("invalid_video_dialect", "X-AgentCC-Video-Dialect must be openai or native"))
+		return false, false
+	}
+	if r.Header.Get("X-Stainless-Lang") != "" {
+		return true, true
+	}
+	return def, true
+}
+func videoResponse(j *video.VideoJob, openAI bool) map[string]any {
+	if openAI {
+		return j.ToOpenAIResponse()
+	}
+	return j.ToStatusResponse()
 }
 
 // decodeVideoCreate keeps the native JSON contract unchanged and adds the
@@ -226,7 +262,11 @@ func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
 		videoError(w, e)
 		return
 	}
-	videoJSON(w, 200, j.ToStatusResponse())
+	openAI, ok := videoDialect(w, r, j.Wire == capability.WireOpenAI)
+	if !ok {
+		return
+	}
+	videoJSON(w, 200, videoResponse(j, openAI))
 }
 func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 	rc := h.videoReadContext(w, r)
@@ -258,14 +298,19 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 		models.WriteError(w, models.ErrBadRequest("invalid_filter", "Invalid video list filter"))
 		return
 	}
+	openAI, ok := videoDialect(w, r, false)
+	if !ok {
+		return
+	}
 	jobs, total, e := h.videoService.List(rc.Metadata["org_id"], f)
 	if e != nil {
 		videoError(w, e)
 		return
 	}
+	// Every row uses the one dialect chosen for this request.
 	rows := make([]map[string]any, 0, len(jobs))
 	for _, j := range jobs {
-		rows = append(rows, j.ToStatusResponse())
+		rows = append(rows, videoResponse(j, openAI))
 	}
 	// first_id/last_id make the list usable as an OpenAI cursor page.
 	var first, last any
@@ -280,6 +325,9 @@ func (h *Handlers) CancelVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Release()
+	if _, ok := videoDialect(w, r, false); !ok {
+		return // reject a bad header before any side effect
+	}
 	j, e := h.videoService.Cancel(r.Context(), r.URL.Query().Get("video_id"), rc.Metadata["org_id"])
 	if e != nil {
 		videoError(w, e)
@@ -289,7 +337,11 @@ func (h *Handlers) CancelVideo(w http.ResponseWriter, r *http.Request) {
 	if j.CancelState == "requested" {
 		status = 202
 	}
-	videoJSON(w, status, j.ToStatusResponse())
+	openAI, ok := videoDialect(w, r, j.Wire == capability.WireOpenAI)
+	if !ok {
+		return
+	}
+	videoJSON(w, status, videoResponse(j, openAI))
 }
 func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 	rc := h.videoReadContext(w, r)
@@ -297,13 +349,20 @@ func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Release()
+	if _, ok := videoDialect(w, r, false); !ok {
+		return // reject a bad header before any side effect
+	}
 	j, e := h.videoService.Delete(r.Context(), r.URL.Query().Get("video_id"), rc.Metadata["org_id"])
 	if e != nil {
 		videoError(w, e)
 		return
 	}
+	openAI, ok := videoDialect(w, r, j.Wire == capability.WireOpenAI)
+	if !ok {
+		return
+	}
 	object := "video"
-	if j.Wire == capability.WireOpenAI {
+	if openAI {
 		object = "video.deleted"
 	}
 	videoJSON(w, 200, map[string]any{"id": j.ID, "object": object, "deleted": true, "deletion_scope": "local_only", "upstream_may_continue": j.UpstreamMayContinue, "accounting_retained": true})

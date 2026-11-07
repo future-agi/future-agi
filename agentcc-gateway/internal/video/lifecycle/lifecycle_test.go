@@ -539,7 +539,8 @@ func TestBudget_ConcurrentReservationsCannotOverspend(t *testing.T) {
 	close(accepted)
 	count := len(accepted)
 	total, _, ok := f.budget.GetSpend("org-a", "org", "", "total")
-	if !ok || count != 8 || total > 10 || total != float64(count)*1.1556 {
+	// 1.18128 USD per job: 5s 720p within the Seedance grid bound (1280x736).
+	if d := total - float64(count)*1.18128; !ok || count != 8 || total > 10 || d > 1e-9 || d < -1e-9 {
 		t.Fatalf("accepted=%d spend=%f", count, total)
 	}
 }
@@ -632,7 +633,7 @@ func TestActiveLimitsAreAtomic(t *testing.T) {
 		t.Fatal(len(accepted))
 	}
 	total, _, _ := f.budget.GetSpend("org-a", "org", "", "total")
-	if total != 1.1556 {
+	if d := total - 1.18128; d > 1e-9 || d < -1e-9 {
 		t.Fatal(total)
 	}
 	for id := range accepted {

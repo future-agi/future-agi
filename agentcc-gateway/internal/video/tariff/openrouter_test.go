@@ -28,7 +28,7 @@ func TestOpenRouterEstimatesForSmokeClips(t *testing.T) {
 		audio             bool
 		micros            int64
 	}{
-		{"bytedance/seedance-1-5-pro", "480p", 4, false, 53034},
+		{"bytedance/seedance-1-5-pro", "480p", 4, false, 55444},
 		{"google/veo-3.1-lite", "720p", 4, false, 120000},
 		{"kwaivgi/kling-v3.0-std", "720p", 3, false, 420000},
 		{"alibaba/wan-3.0", "480p", 2, false, 250000},
@@ -42,7 +42,7 @@ func TestOpenRouterEstimatesForSmokeClips(t *testing.T) {
 		}
 		total += e.Micros
 	}
-	if total != 1353034 || total >= 5_000_000 {
+	if total != 1355444 || total >= 5_000_000 {
 		t.Fatalf("smoke reservation total %d", total)
 	}
 }
@@ -54,7 +54,7 @@ func TestOpenRouterEstimateAudioAndInputs(t *testing.T) {
 		t.Fatal(a.Micros, b.Micros)
 	}
 	seedance, _ := Estimate(orResolved(t, "bytedance/seedance-1-5-pro", 4, "480p", "16:9", true), Options{})
-	if seedance.Micros != 106068 {
+	if seedance.Micros != 110888 {
 		t.Fatal(seedance.Micros)
 	}
 	frame := video.Input{Role: video.FirstFrame, MediaType: "image/png", Source: video.Source{Data: "aW1n"}}

@@ -49,17 +49,18 @@ func TestBytePlusTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Quantity != 388800 || e.Micros != 4548960 || e.TariffRevision != Revision || e.Basis != "upper_bound" {
+	// 1080p bound: 1920x1104 px (the 1920x1088 grid frame plus one 16 px row).
+	if e.Quantity != 397440 || e.Micros != 4650048 || e.TariffRevision != Revision || e.Basis != "upper_bound" {
 		t.Fatalf("%+v", e)
 	}
 	r.Request.DurationSeconds = -1
 	e, err = Estimate(*r, Options{})
-	if err != nil || e.Quantity != 1458000 {
+	if err != nil || e.Quantity != 1490400 {
 		t.Fatal(e, err)
 	}
 	r.Request.ProviderOptions["frames"] = int64(29)
 	e, err = Estimate(*r, Options{})
-	if err != nil || e.Quantity != 58725 {
+	if err != nil || e.Quantity < 60030 || e.Quantity > 60031 {
 		t.Fatal(e, err)
 	}
 	r.Request.ProviderOptions = map[string]any{}
@@ -112,5 +113,20 @@ func TestPriceRejectsInvalidUsage(t *testing.T) {
 	micros, err := rate.Price(1)
 	if err != nil || micros != 11 {
 		t.Fatal("reservation must round up", micros, err)
+	}
+}
+
+// Seedance renders 1:1 at 640x640 for 480p and 960x960 for 720p (ModelArk
+// create-task docs, read 2026-11-07), not short x short. The reservation must
+// cover the documented frame for every accepted ratio.
+func TestSeedanceGridFramesAreCovered(t *testing.T) {
+	for _, tc := range []struct {
+		res, ratio string
+		w, h       float64
+	}{{"480p", "1:1", 640, 640}, {"720p", "1:1", 960, 960}, {"480p", "16:9", 864, 496}, {"720p", "21:9", 1470, 630}, {"1080p", "1:1", 1440, 1440}} {
+		w, h, err := dimensions(tc.res, tc.ratio)
+		if err != nil || w*h < tc.w*tc.h {
+			t.Fatalf("%s %s: %vx%v below documented %vx%v (%v)", tc.res, tc.ratio, w, h, tc.w, tc.h, err)
+		}
 	}
 }

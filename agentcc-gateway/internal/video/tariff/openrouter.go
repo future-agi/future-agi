@@ -18,8 +18,8 @@ import (
 // The 2026-11-07 live smoke showed where list SKUs alone under-reserve: Kling
 // 3.0 Std and Wan 3.0 billed 5 output seconds for 3s and 2s requests, and
 // Seedance billed tokens on its real output (864x496, 97 frames for a 4s 480p
-// 16:9 request, 5.6% above the nominal 854x480x96). Hence minBilledSeconds and
-// tokenHeadroom below.
+// 16:9 request). Hence minBilledSeconds below, the grid pixel bound in
+// dimensions, and tokenHeadroom for frame counts.
 const OpenRouterRevision = capability.OpenRouterRevision
 
 // USDRate converts a provider-reported USD charge into microdollars: one
