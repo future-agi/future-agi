@@ -1,0 +1,258 @@
+{
+  "assembled": {
+    "content": "",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\n    \"location\": \"San Francisco, CA\"\n}",
+          "name": "get_weather"
+        },
+        "id": "get_weather_p1t92w7gfgq7",
+        "type": "function"
+      }
+    ],
+    "usage": null
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "",
+                  "name": "get_weather"
+                },
+                "id": "get_weather_p1t92w7gfgq7",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\n    \"",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "location",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "\":",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": " \"",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "San Francisco, CA",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "\"",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "\n",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "}",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "fba98ad3-e5a1-413c-a8de-84fbf9baabf7",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "error": null
+}

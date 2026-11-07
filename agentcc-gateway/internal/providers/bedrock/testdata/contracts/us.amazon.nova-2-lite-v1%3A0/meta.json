@@ -1,0 +1,42 @@
+{
+  "provider": "bedrock",
+  "model": "us.amazon.nova-2-lite-v1:0",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the Amazon Bedrock Runtime API model (Converse, ConverseStream, ContentBlock, ReasoningContentBlock, ContentBlockDelta, TokenUsage, StopReason; read from the AWS Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30 and aws-sdk-go-v2 service/bedrockruntime v1.63.8, the source of the published API reference, since docs.aws.amazon.com was not reachable from the authoring session) and the AWS event-stream framing (prelude, string headers :event-type / :content-type / :message-type, payload, CRC32), and the Amazon Nova 2 user guide (Using the Converse API; Extended thinking: reasoningConfig in additionalModelRequestFields, reasoning returned as a reasoningContent block whose reasoningText is the placeholder \"[REDACTED]\"), read 2026-10-28 through search excerpts. us.amazon.nova-2-lite-v1:0 is the US cross-region inference profile, which routes the gateway to Converse; its fixtures live in us.amazon.nova-2-lite-v1%3A0 (contracttest.ModelDir). Field names, event types and stop reasons are the documented ones; ids, token counts and text are invented, as is the content_filtered message text. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Reasoning cases carry reasoning_effort in request.json, which the gateway does not forward (no additionalModelRequestFields.reasoningConfig; see upstream_request.golden.json).",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.metrics",
+      "reason": "no canonical field: Bedrock's server-side latency (metrics.latencyMs) has no slot in the OpenAI response"
+    },
+    {
+      "path": "$.output.message.content[].reasoningContent",
+      "reason": "known gap B2: Converse reasoningContent blocks are dropped whole: the reasoning text (reasoning_content), its signature and redactedContent (thinking_blocks). Nova 2 redacts the text today (\"[REDACTED]\"), but the block still tells a client reasoning ran and was billed"
+    },
+    {
+      "path": "contentBlockDelta:$.delta.reasoningContent",
+      "reason": "known gap B2: ConverseStream reasoningContent deltas (text, signature, redactedContent) are decoded into converseBlockDeltaEvent, which has no field for them, and dropped (also reported as unknown_delta); streamed responses carry no reasoning_content"
+    },
+    {
+      "path": "metadata:$.metrics",
+      "reason": "no canonical field: Bedrock's server-side latency (metrics.latencyMs) has no slot in the OpenAI response"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "reasoningContent",
+      "reason": "known gap B2: Converse reasoningContent blocks are dropped (see allowed_unknown_fields)"
+    },
+    {
+      "kind": "unknown_delta",
+      "value": "reasoningContent",
+      "reason": "known gap B2: ConverseStream reasoningContent deltas (text, signature, redactedContent) are dropped; streamed responses carry no reasoning_content"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "content_filtered",
+      "reason": "known gap B5: stopReason content_filtered falls back to \"stop\", so a response the model's content filters blocked looks like a normal completion; \"content_filter\" is the canonical reason"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "source": "Cartesia Python SDK (github.com/cartesia-ai/cartesia-python at 3cb04193): /stt/turns/websocket as src/cartesia/resources/stt/auto_finalize.py opens it and examples/examples.py stt_auto_finalize_websocket drives it: 100 ms pcm_s16le frames, then {\"type\": \"close\"}",
+  "path": "/stt/turns/websocket",
+  "query": "encoding=pcm_s16le&model=ink-2&sample_rate=16000",
+  "headers": {
+    "Authorization": "Bearer gateway-key",
+    "Cartesia-Version": "2026-08-14"
+  },
+  "messages": [
+    {
+      "binary": 3200,
+      "repeat": 5
+    },
+    {
+      "json": {
+        "type": "close"
+      }
+    }
+  ]
+}

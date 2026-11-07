@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "path": "/v1/vector_stores/vs_68a1c0b2d4e6f8a0c2e4b6d8/file_batches",
+  "body": {
+    "file_ids": [
+      "file-9pQ2rT7vXbN4kM1sLz8cWd"
+    ]
+  }
+}

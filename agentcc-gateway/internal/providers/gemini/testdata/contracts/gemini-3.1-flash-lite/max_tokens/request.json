@@ -1,0 +1,10 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short poem about the sea."
+    }
+  ],
+  "max_tokens": 16
+}

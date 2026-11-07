@@ -1,0 +1,49 @@
+{
+  "canonical_error": {
+    "code": "provider_0",
+    "message": "bedrock converse exception: {\"message\":\"The model encountered an error while streaming the response.\",\"originalStatusCode\":500,\"originalMessage\":\"Internal error while generating.\"}",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "stream": {
+    "assembled": {
+      "content": "Hamlet returns to Elsinore",
+      "finish_reason": "",
+      "role": "assistant",
+      "usage": null
+    },
+    "chunks": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "bedrock-<generated>",
+        "model": "global.anthropic.claude-sonnet-4-6",
+        "object": "chat.completion.chunk"
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "Hamlet returns to Elsinore"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "bedrock-<generated>",
+        "model": "global.anthropic.claude-sonnet-4-6",
+        "object": "chat.completion.chunk"
+      }
+    ],
+    "error": "provider_0: bedrock converse exception: {\"message\":\"The model encountered an error while streaming the response.\",\"originalStatusCode\":500,\"originalMessage\":\"Internal error while generating.\"}"
+  }
+}

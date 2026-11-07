@@ -1,0 +1,11 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "messages": [
+    {
+      "role": "user",
+      "content": "[A request the streaming safety classifier declines partway through the answer]"
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true
+}

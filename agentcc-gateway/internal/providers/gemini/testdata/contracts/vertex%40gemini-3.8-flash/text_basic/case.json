@@ -1,0 +1,3 @@
+{
+  "notes": "A plain answer from Vertex AI generateContent (v1beta1 GenerateContentResponse: createTime, responseId, modelVersion; UsageMetadata with trafficType and per-modality details; candidate index omitted, proto3 JSON's default). Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally."
+}

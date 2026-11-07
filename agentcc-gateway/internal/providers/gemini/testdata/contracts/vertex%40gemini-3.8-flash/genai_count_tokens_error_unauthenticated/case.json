@@ -1,0 +1,6 @@
+{
+  "endpoint": "genai_count_tokens",
+  "status": 401,
+  "recordable": false,
+  "notes": "Native google-genai passthrough on Vertex AI: request.json is the raw body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the gateway resolves the model to a provider configured for Vertex AI and doGenAIRequest / StreamGenerateContent relay it to the publisher-model URL (.../v1beta1/projects/<p>/locations/<l>/publishers/google/models/<model>:<action>), returning the upstream status and body untouched. 401 UNAUTHENTICATED with ErrorInfo ACCESS_TOKEN_EXPIRED, as vertex@gemini-3.8-flash/error_unauthenticated, for PredictionService.CountTokens (the RPC the v1beta1 discovery document names for countTokens): an expired OAuth token, relayed with its status and body. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28). Not recordable: no request the recorder sends, with working credentials, induces it."
+}

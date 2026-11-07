@@ -1,0 +1,7 @@
+{
+  "relevant_spans": {
+    "mode": "enabled",
+    "threshold": 0.1,
+    "max_spans": 3
+  }
+}

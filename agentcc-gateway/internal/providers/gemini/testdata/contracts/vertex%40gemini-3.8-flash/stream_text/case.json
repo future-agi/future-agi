@@ -1,0 +1,3 @@
+{
+  "notes": "streamGenerateContent?alt=sse on Vertex AI: every chunk carries createTime, responseId and modelVersion; usageMetadata here only on the final chunk (a recording settles whether intermediate chunks carry it too). Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally."
+}

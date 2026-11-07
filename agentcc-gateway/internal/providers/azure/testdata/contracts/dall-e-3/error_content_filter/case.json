@@ -1,0 +1,6 @@
+{
+  "endpoint": "images",
+  "status": 400,
+  "recordable": false,
+  "notes": "Synthetic, from github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json dalleErrorResponse (code, message, inner_error with code ResponsibleAIPolicyViolation, content_filter_results and revised_prompt); code contentFilter (a value of the Azure error-code enum, OpenAIAuthoring ErrorCode) and the message are those Microsoft's DALL-E how-to (learn.microsoft.com, azure/ai-services/openai/how-to/dall-e) gives for a prompt the filter blocks, as quoted in search results: the page was not reachable from the authoring session, and a Microsoft Q&A thread shows a dall-e-3 deployment answering with code content_policy_violation instead, so which code a live deployment sends is unverified. The revised prompt is written to match request.json's prompt. Not recordable: it means sending a prompt that trips the filter. The golden pins type \"\": gap A6 (Azure's own error bodies carry no type)."
+}

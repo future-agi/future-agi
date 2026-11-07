@@ -1,0 +1,21 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "The generated text has been blocked by our content filters."
+        }
+      ]
+    }
+  },
+  "stopReason": "content_filtered",
+  "usage": {
+    "inputTokens": 15,
+    "outputTokens": 11,
+    "totalTokens": 26
+  },
+  "metrics": {
+    "latencyMs": 517
+  }
+}

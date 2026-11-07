@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "content": "",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-4-argon",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 4096,
+    "prompt_tokens": 19,
+    "total_tokens": 4115
+  }
+}

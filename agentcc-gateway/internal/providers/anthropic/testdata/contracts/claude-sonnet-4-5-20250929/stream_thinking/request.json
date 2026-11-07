@@ -1,0 +1,15 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the greatest common divisor of 1071 and 462?"
+    }
+  ],
+  "max_tokens": 4096,
+  "stream": true,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  }
+}

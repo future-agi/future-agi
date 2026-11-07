@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "embeddings_float as base64. Recordable."
+}

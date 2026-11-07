@@ -1,0 +1,18 @@
+{
+  "provider": "vertex",
+  "format": "discovery",
+  "url": "https://aiplatform.googleapis.com/$discovery/rest?version=v1beta1",
+  "spec_version": {
+    "id": "aiplatform:v1beta1",
+    "revision": "20261012",
+    "version": "v1beta1"
+  },
+  "sha256": "afc16fcfa37544c81c7d57a6c74ffe84243b4a93f1c9193b2e9d0f273034443e",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "Google APIs Terms of Service",
+  "roots": [
+    "embed_content",
+    "generate_content",
+    "predict"
+  ]
+}

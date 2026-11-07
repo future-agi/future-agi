@@ -1,0 +1,54 @@
+{
+  "body": {
+    "anthropic_version": "bedrock-2023-05-31",
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What's the weather like in San Francisco right now?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "tool_choice": {
+      "type": "auto"
+    },
+    "tools": [
+      {
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+          "properties": {
+            "location": {
+              "description": "The city and state, e.g. San Francisco, CA",
+              "type": "string"
+            },
+            "unit": {
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "location"
+          ],
+          "type": "object"
+        },
+        "name": "get_weather"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "d358afbd80a709247ae40ff9b73f219b6cf00d97a67af1bcde924eb95e9f6076",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/anthropic.claude-opus-5-5/invoke"
+}

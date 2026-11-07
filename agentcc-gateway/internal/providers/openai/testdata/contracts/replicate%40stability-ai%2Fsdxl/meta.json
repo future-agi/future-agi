@@ -1,0 +1,14 @@
+{
+  "provider": "openai",
+  "model": "replicate@stability-ai/sdxl",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: GET https://api.replicate.com/v1/models, the one endpoint of the gateway's that Replicate serves (its official SDKs' 37 operations have no other OpenAI path: replicate/replicate-python-stainless 48e138a15eeb44be36d871ad822b5e86d3852db3 api.md). list_models is the body of the official Go client's TestListModels mock, github.com/replicate/replicate-go d30ddaf19d936bf03f552a44b899a239329bf6e7 client_test.go: replicate.Page[replicate.Model] with two results as json.Marshal writes it (Page's previous and next are omitempty and unset; every Model field present, zero where the test sets none). The page shape and the Model fields agree with replicate-python-stainless's SyncCursorURLPage {results, next, previous} (pagination.py) and types/model_list_response.py. list_models_error_rate_limit is the same client's retry tests' error body for a 429 (replicate.APIError{Detail: http.StatusText(status)}, an RFC 7807 problem, error.go), which ListModels never reads (gap O33). Filed under stability-ai/sdxl, the mock's first model, because the request names no model.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.results",
+      "reason": "known gap RP1: Replicate's model list is a page, {next, previous, results: [Model]}, not OpenAI's {object, data}: ListModels decodes no models from it, so the gateway lists none of Replicate's models. The replicate preset reaches Replicate's own predictions API, which has no other OpenAI endpoint"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

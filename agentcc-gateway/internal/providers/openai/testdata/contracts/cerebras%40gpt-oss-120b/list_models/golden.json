@@ -1,0 +1,14 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "gpt-oss-120b",
+    "object": "model",
+    "owned_by": "Cerebras"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "llama3.1-8b",
+    "object": "model",
+    "owned_by": "Cerebras"
+  }
+]

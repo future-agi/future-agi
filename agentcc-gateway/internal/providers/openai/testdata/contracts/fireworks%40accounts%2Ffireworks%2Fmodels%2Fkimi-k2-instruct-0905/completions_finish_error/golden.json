@@ -1,0 +1,19 @@
+{
+  "choices": [
+    {
+      "finish_reason": "error",
+      "index": 0,
+      "logprobs": null,
+      "text": " Par"
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "cmpl-2c8e1a7d4b9f3e6a",
+  "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+  "object": "text_completion",
+  "usage": {
+    "completion_tokens": 1,
+    "prompt_tokens": 5,
+    "total_tokens": 6
+  }
+}

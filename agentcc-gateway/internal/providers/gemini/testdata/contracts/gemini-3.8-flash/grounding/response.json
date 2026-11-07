@@ -1,0 +1,84 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Spain won Euro 2024, defeating England 2-1 in the final. This was Spain's fourth European Championship title.",
+            "thoughtSignature": "0csE0MJL0fVkb4zxtu+dEpNN/O8afdpRx3FyYdCmnWBQE6zbYfGVnPVILZe5Zfm+lr4T2bSp9rwhFPdXuJmvfzDKl9HCo0b2H245WZGn/rLzuF8sQZ3x0hXA0ahnTk34"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "groundingMetadata": {
+        "searchEntryPoint": {
+          "renderedContent": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\"></div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://www.google.com/search?q=UEFA+Euro+2024+winner\">UEFA Euro 2024 winner</a>\n  </div>\n</div>\n"
+        },
+        "groundingChunks": [
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHq3ZbP34KCzb01Msy0ayBqZZerQShBZvGRlQ-GYPz",
+              "title": "uefa.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG0KdGwGBc8zKhhsObX5O02Ba55pxp9Yu6ND8RTXM8",
+              "title": "aljazeera.com"
+            }
+          }
+        ],
+        "groundingSupports": [
+          {
+            "segment": {
+              "startIndex": 0,
+              "endIndex": 56,
+              "text": "Spain won Euro 2024, defeating England 2-1 in the final."
+            },
+            "groundingChunkIndices": [
+              0,
+              1
+            ],
+            "confidenceScores": [
+              0.97,
+              0.93
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 57,
+              "endIndex": 109,
+              "text": "This was Spain's fourth European Championship title."
+            },
+            "groundingChunkIndices": [
+              0
+            ],
+            "confidenceScores": [
+              0.95
+            ]
+          }
+        ],
+        "retrievalMetadata": {},
+        "webSearchQueries": [
+          "UEFA Euro 2024 winner"
+        ]
+      },
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 9,
+    "candidatesTokenCount": 27,
+    "thoughtsTokenCount": 144,
+    "totalTokenCount": 180,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 9
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "E8MhpDlr_C4jpJIBojf63W4"
+}

@@ -1,0 +1,28 @@
+{
+  "id": "3f8c1a2e-6b4d-4e9a-a7c1-0d5e2f8b9c63",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "Alice is a girl with 2 sisters, so the family has 3 girls: Alice and her 2 sisters. Each of Alice's brothers has all 3 girls as sisters."
+      },
+      {
+        "type": "text",
+        "text": "Alice's brother has 3 sisters: Alice and her 2 sisters."
+      }
+    ]
+  },
+  "finish_reason": "COMPLETE",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 31,
+      "output_tokens": 97
+    },
+    "tokens": {
+      "input_tokens": 528,
+      "output_tokens": 97
+    },
+    "cached_tokens": 0
+  }
+}

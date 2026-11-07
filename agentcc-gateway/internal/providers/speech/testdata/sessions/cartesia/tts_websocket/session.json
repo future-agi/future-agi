@@ -1,0 +1,107 @@
+{
+  "source": "Cartesia Python SDK (github.com/cartesia-ai/cartesia-python at 3cb04193): /tts/websocket as src/cartesia/lib/_tts.py drives it (GenerationRequestParam per push, continue false from no_more_inputs, CancelContextRequest from cancel), the parts of examples/examples.py tts_websocket_continuations, and the voice object of src/cartesia/types/voice_specifier_param.py",
+  "path": "/tts/websocket",
+  "headers": {
+    "Authorization": "Bearer gateway-key",
+    "Cartesia-Version": "2026-08-14"
+  },
+  "messages": [
+    {
+      "json": {
+        "context_id": "3f1e8f3a-7d2c-4b8e-9a51-2c6d0e4b7a10",
+        "model_id": "sonic-3",
+        "transcript": "The road ",
+        "voice": {
+          "mode": "id",
+          "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+        },
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "3f1e8f3a-7d2c-4b8e-9a51-2c6d0e4b7a10",
+        "model_id": "sonic-3",
+        "transcript": "goes ever ",
+        "voice": {
+          "mode": "id",
+          "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+        },
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "3f1e8f3a-7d2c-4b8e-9a51-2c6d0e4b7a10",
+        "model_id": "sonic-3",
+        "transcript": "on and ",
+        "voice": {
+          "mode": "id",
+          "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+        },
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "3f1e8f3a-7d2c-4b8e-9a51-2c6d0e4b7a10",
+        "model_id": "sonic-3",
+        "transcript": "on.",
+        "voice": {
+          "mode": "id",
+          "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+        },
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "3f1e8f3a-7d2c-4b8e-9a51-2c6d0e4b7a10",
+        "model_id": "sonic-3",
+        "transcript": "",
+        "voice": {
+          "mode": "id",
+          "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+        },
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": false,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "cancel": true,
+        "context_id": "9b2d4c61-0e7f-4a3b-8c5d-1f6e2a9b0c34"
+      }
+    }
+  ],
+  "notes": "The model is named in each request, so it is admitted when it first appears; characters are the transcripts'."
+}

@@ -1,0 +1,24 @@
+{
+  "body": {
+    "max_tokens": 16000,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Is 2^31 - 1 prime? Answer yes or no with one sentence of justification.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5"
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

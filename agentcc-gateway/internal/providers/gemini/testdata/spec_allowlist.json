@@ -1,0 +1,381 @@
+{
+  "provider": "gemini",
+  "note": "Spec paths, blobs, enum values and events the adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec).",
+  "unmapped": [
+    {
+      "subset": "gemini/batch_embed_contents",
+      "path": "$.embeddings[].shape",
+      "reason": "no canonical field: the soft-token tensor shape of a multimodal embedding; the vector is in values"
+    },
+    {
+      "subset": "gemini/batch_embed_contents",
+      "path": "$.usageMetadata",
+      "reason": "known gap G23: the embedding usage the API reports (usageMetadata.promptTokenCount) is dropped; the canonical usage is hard-coded 0, so embeddings are never billed"
+    },
+    {
+      "subset": "gemini/embed_content",
+      "path": "$.embedding.shape",
+      "reason": "no canonical field: the soft-token tensor shape of a multimodal embedding; the vector is in values"
+    },
+    {
+      "subset": "gemini/embed_content",
+      "path": "$.usageMetadata",
+      "reason": "known gap G23: the embedding usage the API reports (usageMetadata.promptTokenCount) is dropped; the canonical usage is hard-coded 0, so embeddings are never billed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].avgLogprobs",
+      "reason": "known gap G29: logprobs are neither requested (logprobs / top_logprobs are not sent as responseLogprobs / logprobs) nor translated (logprobsResult, avgLogprobs), although the canonical choice has a logprobs field"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].citationMetadata",
+      "reason": "known gap G30: citation metadata (recitation sources with spans, URIs and licenses; citationSources on the Gemini API, citations on Vertex AI) is dropped; code recitations carry license information a client may be required to show"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].audioTranscription",
+      "reason": "known gap G31: audioTranscription (the text of generated audio) is dropped; the canonical audio content part has no transcript, though OpenAI's message audio carries one"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].codeExecutionResult",
+      "reason": "known gap G10: executableCode and codeExecutionResult parts are dropped; the caller gets the final text without the code that was run or its output"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].executableCode",
+      "reason": "known gap G10: executableCode and codeExecutionResult parts are dropped; the caller gets the final text without the code that was run or its output"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].fileData.displayName",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.id",
+      "reason": "known gap G32: the upstream functionCall.id is dropped; the gateway numbers calls call_N itself and never sends functionResponse.id back, so parallel calls to the same function are matched by order alone"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.id",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.parts",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.scheduling",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.willContinue",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].inlineData.displayName",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].mediaProcessing",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].mediaResolution",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].partMetadata",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].speechMetadata",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].toolCall",
+      "reason": "known gap G10: server-side toolCall / toolResponse parts (Google Search, URL context, Maps, File Search invocations the API runs itself) are dropped, as code-execution parts are"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].toolResponse",
+      "reason": "known gap G10: server-side toolCall / toolResponse parts are dropped, as code-execution parts are"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].videoMetadata",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].continuationToken",
+      "reason": "known gap G2: the long-decode continuationToken is dropped; the gateway neither follows it nor lets a client send it back, so output past the per-request cap is unreachable"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishMessage",
+      "reason": "known gap G3: finishMessage, the text explaining why generation stopped (a malformed call, a blocked term), is dropped"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingAttributions",
+      "reason": "no content: populated for GenerateAnswer (attributed question answering) calls only, which the gateway does not make"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.googleMapsWidgetContextToken",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].image",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].maps",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].retrievedContext",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingSupports",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.imageSearchQueries",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.retrievalMetadata",
+      "reason": "no canonical field: retrievalMetadata only carries googleSearchDynamicRetrievalScore, populated by the googleSearchRetrieval dynamic threshold"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.searchEntryPoint",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].groundingMetadata.webSearchQueries",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].index",
+      "reason": "no content: the candidate's position; the gateway never sets candidateCount, so it is always 0, which becomes choice 0"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].logprobsResult",
+      "reason": "known gap G29: logprobs are neither requested (logprobs / top_logprobs are not sent as responseLogprobs / logprobs) nor translated (logprobsResult, avgLogprobs), although the canonical choice has a logprobs field"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].safetyRatings",
+      "reason": "known gap G11: per-category safety ratings, including which category blocked the answer, are dropped; finish_reason content_filter says only that something was filtered"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].tokenCount",
+      "reason": "no canonical field: a per-candidate token count; usage carries the totals"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].urlContextMetadata",
+      "reason": "known gap G8: url_context retrieval status per URL is dropped, so a caller cannot tell whether the model read the page"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.modelStatus",
+      "reason": "known gap G33: modelStatus (model stage and retirement time) is dropped, so a client is never told its model is deprecated or about to be retired"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.promptFeedback",
+      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, safetyRatings; on Vertex AI also blockReasonMessage) is dropped; with no candidates the response has an empty choices array and the stream emits nothing"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.responseId",
+      "reason": "known gap G12: responseId is dropped; the canonical id is a gateway-generated gen-<nanos>"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.cacheTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.candidatesTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.serviceTier",
+      "reason": "known gap G25: usageMetadata.serviceTier (standard / flex / priority) is dropped, so a flex or priority request is priced at the standard rate"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.toolUsePromptTokenCount",
+      "reason": "known gap G9: toolUsePromptTokenCount (tool results fed back as input, billed as input) is not added to prompt_tokens, so usage and cost under-count the request"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.usageMetadata.toolUsePromptTokensDetails",
+      "reason": "known gap G9: toolUsePromptTokenCount (tool results fed back as input, billed as input) is not added to prompt_tokens, so usage and cost under-count the request"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.args",
+      "reason": "tool arguments: whatever the model passed the function, re-encoded as the canonical tool call's JSON arguments"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.response",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "BLOCKLIST",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "CONTINUATION",
+      "reason": "known gap G1: CONTINUATION (the per-request output cap was hit with budget left) falls back to \"stop\", so a truncated answer looks complete; \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "ESCALATION",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "FINISH_REASON_UNSPECIFIED",
+      "reason": "no content: the default value, which the spec documents as unused"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_OTHER",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_PROHIBITED_CONTENT",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_RECITATION",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_SAFETY",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "LANGUAGE",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MALFORMED_FUNCTION_CALL",
+      "reason": "known gap G3: the model's function call was invalid; the reason falls back to \"stop\" with no content and no tool call, so the caller sees an empty, normal-looking completion"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MALFORMED_RESPONSE",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MISSING_THOUGHT_SIGNATURE",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "NO_IMAGE",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "PROHIBITED_CONTENT",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "PUP_LIMITED_DISABLED",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "SPII",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "TOO_MANY_TOOL_CALLS",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "gemini/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "UNEXPECTED_TOOL_CALL",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    }
+  ],
+  "events": [],
+  "kinds": [
+    {
+      "subset": "gemini/predict",
+      "path": "$.predictions[]",
+      "reason": "the spec leaves predictions untyped (any) because Vertex AI and the Gemini API serve every predict model through it; Imagen predictions are objects (bytesBase64Encoded, mimeType, raiFilteredReason, safetyAttributes: googleapis/go-genai generatedImageFromVertex), which geminiPrediction decodes"
+    }
+  ]
+}

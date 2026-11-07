@@ -1,0 +1,10 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of France? Answer in one sentence."
+    }
+  ],
+  "max_tokens": 256
+}

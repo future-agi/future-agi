@@ -1,0 +1,15 @@
+{
+  "body": {
+    "model": "gpt-image-2-2026-04-21",
+    "n": 1,
+    "prompt": "A cute baby sea otter",
+    "quality": "high",
+    "size": "1024x1024"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/images/generations"
+}

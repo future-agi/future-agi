@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "provider": "bedrock",
+  "root": "converse_errors",
+  "format": "smithy",
+  "select": "operation com.amazonaws.bedrockruntime#Converse -> errors",
+  "description": "Converse error shapes; AWS sends the shape name as x-amzn-ErrorType and the members as the JSON body",
+  "events": ["AccessDeniedException","InternalServerException","ModelErrorException","ModelNotReadyException","ModelTimeoutException","ResourceNotFoundException","ServiceUnavailableException","ThrottlingException","ValidationException"],
+  "exception_events": ["AccessDeniedException","InternalServerException","ModelErrorException","ModelNotReadyException","ModelTimeoutException","ResourceNotFoundException","ServiceUnavailableException","ThrottlingException","ValidationException"],
+  "paths": {
+    "AccessDeniedException:$": {"kinds":["object"]},
+    "AccessDeniedException:$.message": {"kinds":["string"]},
+    "InternalServerException:$": {"kinds":["object"]},
+    "InternalServerException:$.message": {"kinds":["string"]},
+    "ModelErrorException:$": {"kinds":["object"]},
+    "ModelErrorException:$.message": {"kinds":["string"]},
+    "ModelErrorException:$.originalStatusCode": {"kinds":["integer"]},
+    "ModelErrorException:$.resourceName": {"kinds":["string"]},
+    "ModelNotReadyException:$": {"kinds":["object"]},
+    "ModelNotReadyException:$.message": {"kinds":["string"]},
+    "ModelTimeoutException:$": {"kinds":["object"]},
+    "ModelTimeoutException:$.message": {"kinds":["string"]},
+    "ResourceNotFoundException:$": {"kinds":["object"]},
+    "ResourceNotFoundException:$.message": {"kinds":["string"]},
+    "ServiceUnavailableException:$": {"kinds":["object"]},
+    "ServiceUnavailableException:$.message": {"kinds":["string"]},
+    "ThrottlingException:$": {"kinds":["object"]},
+    "ThrottlingException:$.message": {"kinds":["string"]},
+    "ValidationException:$": {"kinds":["object"]},
+    "ValidationException:$.message": {"kinds":["string"]}
+  }
+}

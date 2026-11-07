@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Sunlight scatters off air molecules, and shorter blue wavelengths scatter far more than red ones (Rayleigh scattering), so blue light reaches us from every part of the sky.",
+            "thoughtSignature": "RGidP97yu0vL9D+D0/37zSlpAt++b3ZppDTF5Xbj/q00KevNNE9CERfXJAKiyJPpKI5Qqahov5RwMH32jlZ0yBa7bFcL8jbbF5MFJcULhXNc4ILukUlXQ/6vuW+WvNX6"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 11,
+    "candidatesTokenCount": 33,
+    "thoughtsTokenCount": 96,
+    "totalTokenCount": 140,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 11
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "u02IQ0EeLU0LDm1Zljf32BA"
+}

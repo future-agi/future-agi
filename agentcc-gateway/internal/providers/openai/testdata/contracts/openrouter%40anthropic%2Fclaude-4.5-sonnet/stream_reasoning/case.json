@@ -1,0 +1,3 @@
+{
+  "notes": "ChatStreamingResponse chunks: reasoning and reasoning_details deltas first, then content, the finish chunk, and the usage chunk (choices empty, usage with cost). Stream requests carry stream_options.include_usage because StreamChatCompletion forces it on every stream. Recordable."
+}

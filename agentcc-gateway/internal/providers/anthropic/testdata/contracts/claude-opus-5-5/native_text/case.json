@@ -1,0 +1,10 @@
+{
+  "endpoint": "anthropic_messages",
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/messages (the Message object, 2026 usage shape: output_tokens_details, service_tier, speed, inference_geo) and build-with-claude/prompt-caching (the system-prompt caching request with a 1h cache_control, and its usage example: input_tokens 2048, cache_read_input_tokens 1800, cache_creation_input_tokens 248 split 148 5m / 100 1h, output_tokens 503); id and text invented. Drives the native /v1/messages passthrough (CreateAnthropicMessage) and the billing the gateway reads from it (anthropicfmt.ExtractUsage / ExtractModel, as handlers_anthropic.go does). Recordable: a real cached request yields cache tokens once the prefix is long enough to cache.",
+  "sanity_gaps": [
+    {
+      "failure": "cache_read_input_tokens",
+      "reason": "known gap U8: the native passthrough bills input_tokens only; Anthropic's input_tokens excludes cache reads and writes, so a cached /v1/messages request (every Claude Code turn) is billed for 2048 of its 4096 input tokens and its cache writes are never priced"
+    }
+  ]
+}

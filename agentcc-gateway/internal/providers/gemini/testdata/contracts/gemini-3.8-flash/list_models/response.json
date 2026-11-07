@@ -1,0 +1,60 @@
+{
+  "models": [
+    {
+      "name": "models/gemini-3.8-flash",
+      "version": "3.8",
+      "displayName": "Gemini 3.8 Flash",
+      "description": "Our fast, cost-efficient thinking model.",
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ],
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 64,
+      "maxTemperature": 2,
+      "thinking": true,
+      "modelStage": "STABLE"
+    },
+    {
+      "name": "models/gemini-4-argon",
+      "version": "4",
+      "displayName": "Gemini 4 Argon",
+      "description": "Our most capable model, with long decode.",
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 262144,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ],
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 64,
+      "maxTemperature": 2,
+      "thinking": true,
+      "modelStage": "PREVIEW"
+    },
+    {
+      "name": "models/gemini-embedding-2",
+      "version": "2",
+      "displayName": "Gemini Embedding 2",
+      "description": "Multimodal embedding model.",
+      "inputTokenLimit": 8192,
+      "outputTokenLimit": 1,
+      "supportedGenerationMethods": [
+        "embedContent",
+        "countTokens",
+        "countTextTokens",
+        "asyncBatchEmbedContent"
+      ],
+      "modelStage": "STABLE"
+    }
+  ],
+  "nextPageToken": "Ch1tb2RlbHMvZ2VtaW5pLWVtYmVkZGluZy0y"
+}

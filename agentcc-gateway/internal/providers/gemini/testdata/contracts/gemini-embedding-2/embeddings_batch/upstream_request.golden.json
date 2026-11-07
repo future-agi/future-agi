@@ -1,0 +1,34 @@
+{
+  "body": {
+    "requests": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "What is the meaning of life?"
+            }
+          ]
+        },
+        "model": "models/gemini-embedding-2",
+        "outputDimensionality": 128
+      },
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "How does the brain work?"
+            }
+          ]
+        },
+        "model": "models/gemini-embedding-2",
+        "outputDimensionality": 128
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-embedding-2:batchEmbedContents"
+}

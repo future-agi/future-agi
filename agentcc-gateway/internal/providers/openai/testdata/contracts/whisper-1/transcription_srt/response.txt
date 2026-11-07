@@ -1,0 +1,4 @@
+1
+00:00:00,000 --> 00:00:03,320
+The beach was a popular spot on a hot summer day.
+

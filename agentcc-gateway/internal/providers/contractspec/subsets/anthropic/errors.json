@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "provider": "anthropic",
+  "root": "errors",
+  "format": "openapi",
+  "select": "POST /v1/messages -> 400,401,403,404,408,409,412,413,429,431,499,500,501,503,504,529 application/json",
+  "description": "error bodies of /v1/messages, decoded by parseAnthropicError (also the data of a mid-stream error event)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.error": {"kinds":["object"]},
+    "$.error.details": {"kinds":["object"],"nullable":true},
+    "$.error.details.appeal_url": {"kinds":["string"],"nullable":true},
+    "$.error.details.error_code": {"kinds":["string"],"enum":["available_tools_limit_exceeded","claude_code_key_creator_not_member","claude_code_version_too_old","cmek_key_disabled","cmek_key_network_blocked","cmek_key_unreachable","compaction_block_ambiguous","compaction_block_misplaced","compaction_content_mismatch","compaction_incomplete_turn","compaction_nothing_to_summarize","compaction_signature_invalid","compaction_too_many_tool_references","compaction_tool_changes_mismatch","compaction_unavailable","enforced_spend_limit_reached","organization_on_hold","request_body_encoding_invalid","request_body_encoding_unsupported","request_body_too_large_after_decoding","skill_read_blocked_undecryptable","tool_name_conflict","tool_reference_unresolved"]},
+    "$.error.message": {"kinds":["string"],"variants":["type=api_error","type=authentication_error","type=billing_error","type=invalid_request_error","type=not_found_error","type=overloaded_error","type=permission_error","type=rate_limit_error","type=timeout_error"]},
+    "$.error.type": {"kinds":["string"],"enum":["api_error","authentication_error","billing_error","invalid_request_error","not_found_error","overloaded_error","permission_error","rate_limit_error","timeout_error"],"variants":["type=api_error","type=authentication_error","type=billing_error","type=invalid_request_error","type=not_found_error","type=overloaded_error","type=permission_error","type=rate_limit_error","type=timeout_error"]},
+    "$.request_id": {"kinds":["string"],"nullable":true},
+    "$.type": {"kinds":["string"],"enum":["error"]}
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Write a one-line haiku about autumn rain."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {}
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

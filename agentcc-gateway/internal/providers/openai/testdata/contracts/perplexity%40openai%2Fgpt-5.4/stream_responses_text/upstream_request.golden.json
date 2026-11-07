@@ -1,0 +1,21 @@
+{
+  "body": {
+    "input": [
+      {
+        "content": "Summarize the file.",
+        "role": "user"
+      }
+    ],
+    "model": "openai/gpt-5.4",
+    "prompt_cache_key": "doc-1",
+    "service_tier": "priority",
+    "stream": true
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

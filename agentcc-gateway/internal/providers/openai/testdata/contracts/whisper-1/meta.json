@@ -1,0 +1,30 @@
+{
+  "provider": "openai",
+  "model": "whisper-1",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /audio/transcriptions and the deprecated POST /audio/translations with whisper-1: CreateTranscriptionResponseVerboseJson (the \"Segment timestamps\" example verbatim, usage of type \"duration\"), and the text and srt response formats, which are not JSON (text/plain; the whole body is the text). Translation: CreateTranslationResponseJson, the operation's example verbatim, and its verbose_json form (CreateTranslationResponseVerboseJson: language, duration, text, segments). Uploads are placeholders (see gpt-4o-mini-transcribe-2025-12-15).",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.usage",
+      "reason": "known gap O18: the upstream usage is ignored; the server prices transcription and translation from the uploaded WAV's duration (server/handlers_audio.go), so token-billed gpt-4o-*-transcribe models are priced by the wrong unit and non-WAV uploads go unpriced. The body still reaches the client unchanged"
+    },
+    {
+      "path": "$.task",
+      "reason": "no canonical field: the body is passed through to the client unchanged (TranscriptionResponse.Body); the gateway reads text alone"
+    },
+    {
+      "path": "$.language",
+      "reason": "no canonical field: the body is passed through to the client unchanged (TranscriptionResponse.Body); the gateway reads text alone"
+    },
+    {
+      "path": "$.duration",
+      "reason": "no canonical field: the body is passed through to the client unchanged (TranscriptionResponse.Body); the gateway reads text alone"
+    },
+    {
+      "path": "$.segments",
+      "reason": "no canonical field: the body is passed through to the client unchanged (TranscriptionResponse.Body); the gateway reads text alone"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

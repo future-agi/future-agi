@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "provider": "openai",
+  "root": "images",
+  "format": "openapi",
+  "select": "POST /images/generations -> 200 application/json",
+  "description": "image generation response, decoded by CreateImage into models.ImageResponse (usage drives gpt-image cost)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.background": {"kinds":["string"],"enum":["opaque","transparent"]},
+    "$.created": {"kinds":["integer"]},
+    "$.data": {"kinds":["array"]},
+    "$.data[]": {"kinds":["object"]},
+    "$.data[].b64_json": {"kinds":["string"]},
+    "$.data[].revised_prompt": {"kinds":["string"]},
+    "$.data[].url": {"kinds":["string"]},
+    "$.output_format": {"kinds":["string"],"enum":["jpeg","png","webp"]},
+    "$.quality": {"kinds":["string"],"enum":["high","low","max","medium","xhigh"]},
+    "$.safety_identifier": {"kinds":["string"],"nullable":true},
+    "$.size": {"kinds":["string"],"enum":["1024x1024","1024x1536","1536x1024"],"open_enum":true},
+    "$.usage": {"kinds":["object"]},
+    "$.usage.input_tokens": {"kinds":["integer"]},
+    "$.usage.input_tokens_details": {"kinds":["object"]},
+    "$.usage.input_tokens_details.image_tokens": {"kinds":["integer"]},
+    "$.usage.input_tokens_details.text_tokens": {"kinds":["integer"]},
+    "$.usage.output_tokens": {"kinds":["integer"]},
+    "$.usage.output_tokens_details": {"kinds":["object"]},
+    "$.usage.output_tokens_details.image_tokens": {"kinds":["integer"]},
+    "$.usage.output_tokens_details.text_tokens": {"kinds":["integer"]},
+    "$.usage.total_tokens": {"kinds":["integer"]}
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "endpoint": "genai_generate",
+  "recordable": false,
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). Explicit context caching (cachedContent), which only the native route can send: usage follows the recorded output of google-gemini/cookbook quickstarts/rest/Caching_REST.ipynb (promptTokenCount 323388 includes cachedContentTokenCount 323383), plus the thoughts and cacheTokensDetails the v1beta UsageMetadata documents. Not recordable: it needs a context cache created beforehand, and the cache name here is the cookbook's, which does not exist for the recorder's key.",
+  "sanity_gaps": [
+    {
+      "failure": "cachedContentTokenCount",
+      "reason": "known gap G18: native GenAI billing (genaifmt.ExtractUsageMetadata) ignores cachedContentTokenCount, so the 323383 cached prompt tokens are billed at the full input rate instead of the cached rate"
+    }
+  ]
+}

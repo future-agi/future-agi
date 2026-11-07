@@ -1,0 +1,26 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Is 2^31 - 1 a prime number? Answer yes or no with one line of justification."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingLevel": "high"
+      }
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:generateContent"
+}

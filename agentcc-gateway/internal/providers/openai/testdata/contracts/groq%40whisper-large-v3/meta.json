@@ -1,0 +1,14 @@
+{
+  "provider": "openai",
+  "model": "groq@whisper-large-v3",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Groq's OpenAPI spec as embedded in its official SDK, github.com/groq/groq-python scripts/mock at 55066d94acca028c3cb74e050f2711b80ade6298 (2026-09-04; pinned as contractspec/subsets/groq): POST /openai/v1/audio/transcriptions and POST /openai/v1/audio/translations, each operation's \"Default\" example (x-groq-metadata) verbatim: the request names whisper-large-v3 and uploads a file, the answer is CreateTranscriptionResponseJson / CreateTranslationResponseJson (text) plus x_groq {id}, which the examples carry and the schemas do not. The adapter lifts text and passes the body through. The texts are the examples' placeholders, not what the uploads say: the suite uploads its own speech in place of the examples' sample_audio.m4a, so a recording needs nothing else. No error case: the spec defines ErrorResponse / Error (message, type, param, code, failed_generation, schema_*, debug) but no operation lists an error response, and no Groq source (spec, SDK, cookbook) gives a value for its type or code, so an error body would be invented. console.groq.com was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.x_groq",
+      "reason": "no canonical field: Groq's request id (x_groq.id); the body is passed through to the client unchanged (TranscriptionResponse.Body) and the gateway reads text alone"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

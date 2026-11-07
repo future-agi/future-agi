@@ -1,0 +1,17 @@
+{
+  "upstream": {
+    "header": {
+      "Authorization": [
+        "Token platform-key"
+      ]
+    },
+    "kind": "transcription",
+    "url": "wss://api.deepgram.com/v1/listen?encoding=linear16&interim_results=true&model=nova-3&sample_rate=16000&smart_format=true"
+  },
+  "usage": {
+    "audio_seconds": 1,
+    "characters": 0,
+    "model": "deepgram/nova-3",
+    "voice": ""
+  }
+}

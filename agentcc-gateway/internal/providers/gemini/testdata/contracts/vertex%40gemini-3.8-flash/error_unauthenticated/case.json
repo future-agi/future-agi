@@ -1,0 +1,5 @@
+{
+  "recordable": false,
+  "notes": "401 UNAUTHENTICATED with ErrorInfo ACCESS_TOKEN_EXPIRED (google/api/error_reason.proto's example, for aiplatform): an expired OAuth token. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28). Not recordable: no request the recorder sends, with working credentials, induces it.",
+  "status": 401
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 504,
+    "message": "Deadline expired before operation could complete.",
+    "status": "DEADLINE_EXCEEDED"
+  }
+}

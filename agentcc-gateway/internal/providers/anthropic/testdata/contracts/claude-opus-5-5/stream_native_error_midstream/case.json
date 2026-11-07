@@ -1,0 +1,11 @@
+{
+  "endpoint": "anthropic_messages",
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/build-with-claude/streaming (\"Error events\": an overloaded_error event mid-stream; its data line is the page's) on the stream_native_text request; ids and text invented. The passthrough relays the error event unchanged; billing sees message_start's usage and no message_delta, so the handler estimates the output (applyAnthropicStreamUsage). Not recordable: nothing a client sends induces it.",
+  "sanity_gaps": [
+    {
+      "failure": "cache_read_input_tokens",
+      "reason": "known gap U8: the native passthrough bills input_tokens only; Anthropic's input_tokens excludes cache reads and writes, so the cached input of a failed stream is under-billed too"
+    }
+  ]
+}

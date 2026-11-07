@@ -1,0 +1,13 @@
+[
+  "count_tokens:$",
+  "genai:$.candidates",
+  "genai:$.responseId",
+  "genai_embed:$",
+  "genai_error:$",
+  "list_models:$",
+  "vertex_count_tokens:$",
+  "vertex_genai:$.candidates",
+  "vertex_genai:$.createTime",
+  "vertex_genai:$.responseId",
+  "vertex_genai_embed:$"
+]

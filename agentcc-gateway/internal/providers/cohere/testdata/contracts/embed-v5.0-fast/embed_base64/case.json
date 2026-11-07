@@ -1,0 +1,10 @@
+{
+  "endpoint": "embeddings",
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28): POST /v2/embed (EmbedByTypeResponse, ApiMeta, EmbeddingType) and its example for embed-v5.0-fast (texts hello and goodbye, meta with api_version, warnings and billed_units), each vector cut to its first 8 values, plus response_type (EmbedByTypeResponse.response_type). The client asks for encoding_format base64 and 512 dimensions (OpenAI's embeddings request); the adapter asks Cohere for float (embedding_types is always [\"float\"]) at the model's default size, so the body is what Cohere answers that request with. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "the client asked for encoding_format base64",
+      "reason": "known gap K9: encoding_format and dimensions are not forwarded: the adapter always asks for embedding_types [\"float\"] and never sends output_dimension, so a client asking for base64 gets float arrays it cannot decode, and one asking for 512 dimensions gets the model's default size (embed-v4.0 and newer take output_dimension)"
+    }
+  ]
+}

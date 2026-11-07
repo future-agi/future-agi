@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /inference/v1/models (ListModels): the legacy SDK's ListModelsResponse (see meta.json). Filed under kimi-k2-instruct-0905 because the request names no model. Recordable."
+}

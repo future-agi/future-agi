@@ -237,7 +237,7 @@ func TestTranslateResponse_GroundingSourcesBecomeAnnotations(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	out := translateResponse(&resp, "gemini-3.6-flash")
+	out := translateResponse(&resp, "gemini-3.6-flash", nil)
 	if len(out.Choices) != 1 {
 		t.Fatalf("choices = %d, want 1", len(out.Choices))
 	}
@@ -282,7 +282,7 @@ func TestTranslateResponse_NoGroundingLeavesNoAnnotations(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	out := translateResponse(&resp, "gemini-3.6-flash")
+	out := translateResponse(&resp, "gemini-3.6-flash", nil)
 	if got := out.Choices[0].Message.Annotations; len(got) != 0 {
 		t.Errorf("annotations = %s, want none", got)
 	}

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "provider": "azure",
+  "root": "embeddings",
+  "format": "openapi",
+  "select": "POST /deployments/{deployment-id}/embeddings -> 200 application/json",
+  "description": "embeddings response, decoded by CreateEmbedding",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.data": {"kinds":["array"]},
+    "$.data[]": {"kinds":["object"]},
+    "$.data[].embedding": {"kinds":["array"]},
+    "$.data[].embedding[]": {"kinds":["number"]},
+    "$.data[].index": {"kinds":["integer"]},
+    "$.data[].object": {"kinds":["string"]},
+    "$.model": {"kinds":["string"]},
+    "$.object": {"kinds":["string"]},
+    "$.usage": {"kinds":["object"]},
+    "$.usage.prompt_tokens": {"kinds":["integer"]},
+    "$.usage.total_tokens": {"kinds":["integer"]}
+  }
+}

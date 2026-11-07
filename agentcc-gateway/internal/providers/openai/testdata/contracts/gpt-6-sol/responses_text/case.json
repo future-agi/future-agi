@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The /v1/responses passthrough (CreateResponse): the body goes back unchanged; the server prices it from model and usage (server/handlers_responses.go applyResponsesUsage, checked by internal/server/contract_openai_responses_test.go). The spec's \"Text input\" example but for the model. Recordable."
+}

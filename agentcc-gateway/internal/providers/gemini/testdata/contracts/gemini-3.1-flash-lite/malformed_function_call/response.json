@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    {
+      "content": {},
+      "finishReason": "MALFORMED_FUNCTION_CALL",
+      "finishMessage": "Malformed function call: print(default_api.get_weather(location='Paris, France') > default_api.get_weather(location='Lyon, France'))",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 64,
+    "totalTokenCount": 64,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 64
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.1-flash-lite",
+  "responseId": "Yi8vsvX9Zf6xacsxr1iMiys"
+}

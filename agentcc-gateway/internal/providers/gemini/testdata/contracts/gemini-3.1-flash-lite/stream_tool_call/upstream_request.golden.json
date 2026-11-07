@@ -1,0 +1,52 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What's the weather like in Tokyo?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "description": "Get the current weather in a given location",
+            "name": "get_weather",
+            "parametersJsonSchema": {
+              "properties": {
+                "location": {
+                  "description": "The city and country, e.g. Paris, France",
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.1-flash-lite:streamGenerateContent",
+  "query": "alt=sse"
+}

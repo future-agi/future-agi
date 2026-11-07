@@ -1,0 +1,4 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from the ConverseStreamOutput / ResponseStream unions of the same model (an exception is an event-stream message with :message-type exception and :exception-type <member>, its members as the JSON payload), and the event-stream framing described in contract_eventstream_test.go. internalServerException is a member of ConverseStreamOutput (InternalServerException, 500). Not recordable: a server failure cannot be induced. Message invented. A 500 becoming a 502 is right, so this case has no sanity gap: it is the contrast to the other exceptions (gap B16)."
+}

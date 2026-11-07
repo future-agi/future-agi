@@ -1,0 +1,38 @@
+{
+  "provider": "openai",
+  "model": "mistral@mistral-ocr-latest",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from Mistral's official SDK, github.com/mistralai/client-python at 90e3009: models/ocrresponse.py (pages, model, usage_info, document_annotation), ocrpageobject.py (index, markdown, images, dimensions; header, footer, hyperlinks, tables and blocks optional), ocrimageobject.py (id, top_left_x, top_left_y, bottom_right_x, bottom_right_y, image_base64, image_annotation), ocrpagedimensions.py, ocrusageinfo.py, and docs/sdks/ocr/README.md for the request. The adapter's OCR posts to /v1/ocr for the mistral preset.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.pages[].images[].id",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.pages[].images[].top_left_x",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.pages[].images[].top_left_y",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.pages[].images[].bottom_right_x",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.pages[].images[].bottom_right_y",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.pages[].images[].image_annotation",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    },
+    {
+      "path": "$.document_annotation",
+      "reason": "known gap MI3: the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

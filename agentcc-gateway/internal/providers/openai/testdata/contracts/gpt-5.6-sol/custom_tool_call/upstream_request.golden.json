@@ -1,0 +1,27 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Use the code_exec tool to print hello world to the console.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "low",
+    "tools": [
+      {
+        "custom": {
+          "description": "Executes arbitrary python code",
+          "name": "code_exec"
+        },
+        "type": "custom"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

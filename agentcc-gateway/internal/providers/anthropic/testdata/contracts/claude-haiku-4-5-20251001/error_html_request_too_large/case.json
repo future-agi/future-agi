@@ -1,0 +1,12 @@
+{
+  "status": 413,
+  "content_type": "text/html",
+  "recordable": false,
+  "notes": "Synthetic. platform.claude.com/docs/en/api/errors#request-size-limits: \"On the first-party Claude API, Cloudflare returns this error before the request reaches the API servers.\" This is Cloudflare's own 413 page, the body a client gets when Cloudflare answers instead of the API (the page does not show the body; error_request_too_large has the documented JSON form). Not recordable: it needs a body over 128 MB.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 413 became 502",
+      "reason": "known gap X6: an error body parseAnthropicError cannot decode (HTML or text from Cloudflare or a proxy) becomes ErrUpstreamProvider, which is always 502, whatever the upstream status: a 4xx turns into a retryable upstream failure that is retried, failed over and counted against the circuit breaker"
+    }
+  ]
+}

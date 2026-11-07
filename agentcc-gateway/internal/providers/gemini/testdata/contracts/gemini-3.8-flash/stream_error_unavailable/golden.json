@@ -1,0 +1,6 @@
+{
+  "code": "provider_UNAVAILABLE",
+  "message": "The model is overloaded. Please try again later.",
+  "status": 502,
+  "type": "upstream_error"
+}

@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "fireworks@nomic-ai/nomic-embed-text-v1.5",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: POST /inference/v1/embeddings, which the Stainless SDK (Fireworks' official SDK, github.com/fw-ai-external/python-sdk at 374be9a61edba68214489c866c549c43a739b63a (2026-10-21), whose types Stainless generates from Fireworks' spec (the spec itself is not public)) does not wrap. The shape is Fireworks' official legacy SDK, PyPI fireworks-ai 0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee, 2025-10-17) fireworks/client/embedding.py (endpoint \"embeddings\") and api.py EmbeddingResponse {object \"list\", data[] EmbeddingInfo {index, embedding (floats or a base64 string), object \"embedding\"}, model, usage UsageInfo {prompt_tokens, total_tokens, completion_tokens}, perf_metrics}; the request is the one Fireworks' official cookbook, github.com/fw-ai/cookbook at 57968a2237b663be33078d2747a28463983ae134 training/case-studies/embedding_support_search/retrieval_eval.py posts ({model, input}), and the model the one its archived/integrations/MongoDB/project_rag_with_mongodb README embeds with. The vector values and token counts are placeholders of the schema's shape (a real nomic-embed-text-v1.5 vector has 768 floats). No error case: no official source shows a Fireworks error body (the Stainless SDK keeps the raw body; the legacy SDK only synthesizes one when the body is not JSON), so one would be invented. docs.fireworks.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

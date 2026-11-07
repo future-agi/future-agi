@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "provider": "vertex",
+  "root": "predict",
+  "format": "discovery",
+  "select": "method projects.locations.publishers.models.predict -> GoogleCloudAiplatformV1beta1PredictResponse",
+  "description": "Vertex predict response (Imagen)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.deployedModelId": {"kinds":["string"]},
+    "$.metadata": {"kinds":["any"],"opaque":true},
+    "$.model": {"kinds":["string"]},
+    "$.modelDisplayName": {"kinds":["string"]},
+    "$.modelVersionId": {"kinds":["string"]},
+    "$.predictions": {"kinds":["array"]},
+    "$.predictions[]": {"kinds":["any"],"opaque":true}
+  }
+}

@@ -57,7 +57,7 @@ func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.C
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("parsing responses response: %v", err))
 	}
-	return resp.toChat(), nil
+	return resp.toChatShape(common.NewShapeReporter(ctx, adapterName, p.id)), nil
 }
 
 // StreamChatCompletionViaResponses streams a chat request on the Responses
@@ -84,6 +84,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 		defer stream.Close()
 
 		conv := responsesStreamConverter{model: req.Model, created: time.Now().Unix()}
+		conv.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 		send := func(chunk models.StreamChunk) bool {
 			select {
 			case chunks <- chunk:
@@ -105,6 +106,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 			var ev responsesStreamEvent
 			if err := json.Unmarshal([]byte(data), &ev); err != nil {
 				slog.Warn("failed to parse responses stream event", "error", err, "provider", p.id)
+				conv.shape.Report(common.ShapeMalformed, "responses stream event")
 				continue
 			}
 			out, apiErr := conv.convert(&ev)
@@ -418,12 +420,25 @@ type responsesUsage struct {
 
 // toChat translates a Responses API response into a chat completion.
 func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
+	return r.toChatShape(nil)
+}
+
+// toChatShape is toChat, reporting what the translation skips to shape:
+// output items other than messages and function calls (reasoning, server
+// tool calls, ...), message parts other than text and refusals, and a stop
+// it has no finish reason for.
+func (r *responsesResponse) toChatShape(shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	msg := models.Message{Role: "assistant"}
 	var text strings.Builder
 	for _, item := range r.Output {
 		switch item.Type {
 		case "message":
 			for _, c := range item.Content {
+				switch c.Type {
+				case "output_text", "refusal":
+				default:
+					shape.Report(common.ShapeUnknownBlock, "message."+c.Type)
+				}
 				text.WriteString(c.Text)
 				text.WriteString(c.Refusal)
 			}
@@ -433,6 +448,8 @@ func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
 				Type:     "function",
 				Function: models.FunctionCall{Name: item.Name, Arguments: item.Arguments},
 			})
+		default:
+			shape.Report(common.ShapeUnknownBlock, item.Type)
 		}
 	}
 	if text.Len() > 0 || len(msg.ToolCalls) == 0 {
@@ -445,7 +462,7 @@ func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
 		Model:   r.Model,
 		Choices: []models.Choice{{
 			Message:      msg,
-			FinishReason: r.finishReason(len(msg.ToolCalls) > 0),
+			FinishReason: r.finishReasonShape(shape, len(msg.ToolCalls) > 0),
 		}},
 		Usage: r.Usage.toChat(),
 	}
@@ -453,6 +470,25 @@ func (r *responsesResponse) toChat() *models.ChatCompletionResponse {
 
 // finishReason is the chat finish reason for a response that ended.
 func (r *responsesResponse) finishReason(calledTools bool) string {
+	return r.finishReasonShape(nil, calledTools)
+}
+
+// finishReasonShape is finishReason, reporting to shape a response that
+// ended for a reason it has no finish reason for: an incomplete reason other
+// than max_output_tokens and content_filter (the Responses API also documents
+// max_messages and steered), or a status other than completed and
+// incomplete. Either becomes "stop".
+func (r *responsesResponse) finishReasonShape(shape *common.ShapeReporter, calledTools bool) string {
+	switch {
+	case r.Status == "incomplete" && r.IncompleteDetails != nil:
+		switch r.IncompleteDetails.Reason {
+		case "max_output_tokens", "content_filter":
+		default:
+			shape.Report(common.ShapeUnmappedFinishReason, "incomplete:"+r.IncompleteDetails.Reason)
+		}
+	case r.Status != "" && r.Status != "completed" && r.Status != "incomplete":
+		shape.Report(common.ShapeUnmappedFinishReason, "status:"+r.Status)
+	}
 	if r.Status == "incomplete" && r.IncompleteDetails != nil {
 		switch r.IncompleteDetails.Reason {
 		case "max_output_tokens":
@@ -511,6 +547,8 @@ type responsesStreamConverter struct {
 	// tool_calls deltas are numbered; keyed by output item ID.
 	toolIndex map[string]int
 	done      bool
+	// shape receives what the translation skips (nil-safe): see convert.
+	shape *common.ShapeReporter
 }
 
 func (c *responsesStreamConverter) chunk(delta models.Delta, finish *string) models.StreamChunk {
@@ -542,6 +580,11 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 
 	case "response.output_item.added":
 		if ev.Item == nil || ev.Item.Type != "function_call" {
+			if ev.Item != nil && ev.Item.Type != "message" {
+				// A message's text arrives as output_text deltas; any other
+				// item (reasoning, a server tool call) is dropped.
+				c.shape.Report(common.ShapeUnknownBlock, ev.Item.Type)
+			}
 			return nil, nil
 		}
 		if c.toolIndex == nil {
@@ -572,7 +615,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		if resp == nil {
 			resp = &responsesResponse{}
 		}
-		finish := resp.finishReason(len(c.toolIndex) > 0)
+		finish := resp.finishReasonShape(c.shape, len(c.toolIndex) > 0)
 		final := c.chunk(models.Delta{}, &finish)
 		usage := models.StreamChunk{
 			ID:      c.id,
@@ -595,6 +638,18 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 	case "error":
 		c.done = true
 		return nil, models.ErrUpstreamProvider(http.StatusBadGateway, ev.Message)
+
+	case "response.queued", "response.in_progress",
+		"response.content_part.added", "response.content_part.done",
+		"response.output_text.done", "response.refusal.done",
+		"response.function_call_arguments.done", "response.output_item.done":
+		// Lifecycle events, and the .done forms that repeat what the deltas
+		// and output_item.added already carried: nothing to translate.
+
+	default:
+		// Everything else carries output the chat translation drops:
+		// reasoning summaries and text, annotations, server tool progress.
+		c.shape.Report(common.ShapeUnknownEvent, ev.Type)
 	}
 	return nil, nil
 }

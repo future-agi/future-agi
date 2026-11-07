@@ -1,0 +1,4 @@
+{
+  "recordable": false,
+  "notes": "ErrorChunkResponse ({error, status_code}) after output started, the third member of the SDK's ChatCompletion union; error.type, code and param are optional and left out. Message invented. Nothing a client sends induces it."
+}

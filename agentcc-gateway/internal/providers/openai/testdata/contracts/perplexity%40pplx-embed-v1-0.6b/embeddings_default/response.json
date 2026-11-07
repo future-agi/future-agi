@@ -1,0 +1,20 @@
+{
+  "object": "list",
+  "model": "pplx-embed-v1-0.6b",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": "DP0tB/ohAIA="
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1,
+    "total_tokens": 1,
+    "cost": {
+      "currency": "USD",
+      "input_cost": 4e-09,
+      "total_cost": 4e-09
+    }
+  }
+}

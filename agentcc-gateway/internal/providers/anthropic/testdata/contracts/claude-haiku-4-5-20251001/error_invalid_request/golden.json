@@ -1,0 +1,6 @@
+{
+  "code": "provider_invalid_request_error",
+  "message": "max_tokens: 1000000 > 64000, which is the maximum allowed number of output tokens for claude-haiku-4-5-20251001",
+  "status": 400,
+  "type": "invalid_request_error"
+}

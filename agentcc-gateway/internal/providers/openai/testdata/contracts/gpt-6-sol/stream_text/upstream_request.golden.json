@@ -1,0 +1,26 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "developer"
+      },
+      {
+        "content": "Hello!",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-6-sol",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

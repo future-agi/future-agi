@@ -1,0 +1,16 @@
+{
+  "body": {
+    "file": {
+      "bytes": 30317,
+      "filename": "german.m4a"
+    },
+    "model": "whisper-1",
+    "response_format": "verbose_json"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "multipart/form-data; boundary=<random>"
+  },
+  "method": "POST",
+  "path": "/v1/audio/translations"
+}

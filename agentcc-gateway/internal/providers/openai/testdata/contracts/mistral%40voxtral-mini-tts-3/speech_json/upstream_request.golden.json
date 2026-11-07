@@ -1,0 +1,14 @@
+{
+  "body": {
+    "input": "Hello, how can I help you today?",
+    "model": "voxtral-mini-tts-3",
+    "response_format": "pcm",
+    "voice": ""
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/audio/speech"
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 500,
+    "message": "An internal error has occurred. Please retry or report in https://developers.generativeai.google/guide/troubleshooting",
+    "status": "INTERNAL"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "recordable": false,
+  "notes": "The SDK's \"exposes structured error details\" body verbatim (test/errors.test.ts), status 400 as there. It names a model the request does not, so a recording of this request could not reproduce it.",
+  "sanity_gaps": [
+    {
+      "failure": "error param",
+      "reason": "known gap O7: parseProviderError drops the error's param (models.APIError.Param is never set), so the client cannot tell which parameter was rejected"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The transcript is the air-to-ground loop of Apollo 11, from the Saturn V launch through lunar landing and EVA to splashdown in the Pacific.",
+            "thoughtSignature": "xC6AQS7TLTOfynF1tvmvIcfo47TmmNgy4Po/v8qbu4izHinKj9b3PAGdSm2j/HF2RPnJuiAGfg2N7qVy19VWJ9vNa/+1oDyCG1EVewx2HoS/iy8sN8891r9QWLZ/qRms"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 323388,
+    "candidatesTokenCount": 397,
+    "thoughtsTokenCount": 212,
+    "totalTokenCount": 323997,
+    "cachedContentTokenCount": 323383,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 323388
+      }
+    ],
+    "cacheTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 323383
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "1eYjTRwPQjv2guFnrcj7KkU"
+}

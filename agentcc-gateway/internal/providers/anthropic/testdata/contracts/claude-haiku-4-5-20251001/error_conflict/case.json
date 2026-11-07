@@ -1,0 +1,14 @@
+{
+  "status": 409,
+  "headers": {
+    "request-id": "req_011CVnAD9mWk4Tz1Qe8rFs2g"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (409 conflict_error, which the page documents and the OpenAPI spec lists for POST /v1/messages; the message is the page's description); request_id invented. Not recordable: nothing in a Messages request induces it on demand.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 409 became 502",
+      "reason": "known gap X4: mapAnthropicStatus maps by error type and ignores the HTTP status, so an error type it does not list falls back to 502 upstream_error, which the router retries, fails over and counts against the circuit breaker: conflict_error is a client error that a retry on another provider cannot fix"
+    }
+  ]
+}

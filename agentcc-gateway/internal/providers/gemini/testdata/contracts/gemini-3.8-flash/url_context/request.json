@@ -1,0 +1,14 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the purpose of the document at https://www.rfc-editor.org/rfc/rfc9110.html in two sentences."
+    }
+  ],
+  "tools": [
+    {
+      "url_context": {}
+    }
+  ]
+}

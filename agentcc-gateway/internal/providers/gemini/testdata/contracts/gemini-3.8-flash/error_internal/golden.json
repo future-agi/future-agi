@@ -1,0 +1,6 @@
+{
+  "code": "provider_INTERNAL",
+  "message": "An internal error has occurred. Please retry or report in https://developers.generativeai.google/guide/troubleshooting",
+  "status": 502,
+  "type": "upstream_error"
+}

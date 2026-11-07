@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "A stream cut off by max_output_tokens: it ends with response.incomplete (ResponseIncompleteEvent), one of the terminal events the server reads usage from. Recordable."
+}

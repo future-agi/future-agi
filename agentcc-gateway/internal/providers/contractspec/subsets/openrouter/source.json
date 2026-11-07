@@ -1,0 +1,22 @@
+{
+  "provider": "openrouter",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/OpenRouterTeam/python-sdk/752139b7d0b9a71baece3468203a358e07a341b5/.speakeasy/in.openapi.yaml",
+  "repo": "OpenRouterTeam/python-sdk",
+  "path": ".speakeasy/in.openapi.yaml",
+  "commit": "752139b7d0b9a71baece3468203a358e07a341b5",
+  "spec_version": {
+    "info.version": "1.0.0",
+    "openapi": "3.1.0"
+  },
+  "sha256": "d3d4e7afe7dbb90465c589f88db45dbb008a9683e92212371e70e2133c60a8ee",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "MIT (info.license)",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "embeddings",
+    "errors",
+    "models"
+  ]
+}

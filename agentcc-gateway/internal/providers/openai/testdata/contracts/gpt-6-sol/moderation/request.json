@@ -1,0 +1,12 @@
+{
+  "model": "gpt-6-sol",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarise the plot of Macbeth in two sentences."
+    }
+  ],
+  "moderation": {
+    "model": "omni-moderation-latest"
+  }
+}

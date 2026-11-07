@@ -1,0 +1,9 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "In one sentence, what does a compiler do?"
+    }
+  ]
+}

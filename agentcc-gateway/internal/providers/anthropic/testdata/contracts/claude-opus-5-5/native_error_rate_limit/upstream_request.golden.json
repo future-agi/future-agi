@@ -1,0 +1,33 @@
+{
+  "body": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "Analyze the major themes in Pride and Prejudice.",
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "system": [
+      {
+        "text": "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n",
+        "type": "text"
+      },
+      {
+        "cache_control": {
+          "ttl": "1h",
+          "type": "ephemeral"
+        },
+        "text": "<the entire contents of Pride and Prejudice>",
+        "type": "text"
+      }
+    ]
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

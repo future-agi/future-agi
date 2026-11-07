@@ -1,0 +1,10 @@
+{
+  "endpoint": "embeddings",
+  "notes": "EmbeddingsResponse, which carries no usage. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "usage is missing",
+      "reason": "known gap TG5: Together's embeddings answer has no usage (EmbeddingsResponse is object, model and data), so the canonical response has none and the gateway has no token count to price a Together embedding request from"
+    }
+  ]
+}

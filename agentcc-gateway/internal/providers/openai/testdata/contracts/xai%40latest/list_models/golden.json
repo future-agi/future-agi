@@ -1,0 +1,20 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "latest",
+    "object": "model",
+    "owned_by": "xai"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "grok-420-reasoning",
+    "object": "model",
+    "owned_by": "xai"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "grok-imagine-image",
+    "object": "model",
+    "owned_by": "xai"
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "rate_limit_error",
+    "message": "This request would exceed the rate limit for your organization (3f9c1e2a-7b4d-4c8e-9a1f-6d2b8e0c5a71) of 50 requests per minute. For details, refer to: https://docs.claude.com/en/api/rate-limits. You can see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later. You may also contact sales at https://www.anthropic.com/contact-sales to discuss your options for a rate limit increase."
+  },
+  "request_id": "req_011CVmY2c7Pn4rKx9wQ3tLzB"
+}

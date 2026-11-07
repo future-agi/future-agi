@@ -1,0 +1,49 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v1/speak, its query (model, encoding, sample_rate) and client messages SpeakV1Text, SpeakV1Flush, SpeakV1Clear, SpeakV1Close",
+  "path": "/v1/speak",
+  "query": "model=aura-2-thalia-en&encoding=linear16&sample_rate=24000",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "messages": [
+    {
+      "json": {
+        "type": "Speak",
+        "text": "Hello, how can I help you today?"
+      }
+    },
+    {
+      "json": {
+        "type": "Flush"
+      }
+    },
+    {
+      "json": {
+        "type": "Speak",
+        "text": "Our office is open from nine to five, Monday to Friday."
+      }
+    },
+    {
+      "json": {
+        "type": "Clear"
+      }
+    },
+    {
+      "json": {
+        "type": "Speak",
+        "text": "Goodbye!"
+      }
+    },
+    {
+      "json": {
+        "type": "Flush"
+      }
+    },
+    {
+      "json": {
+        "type": "Close"
+      }
+    }
+  ],
+  "notes": "Characters are the Speak texts'; the Aura name is split into model aura-2 and voice thalia-en."
+}

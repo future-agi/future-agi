@@ -1,0 +1,54 @@
+{
+  "assembled": {
+    "content": "A B-tree stays balanced because every insertion and deletion works from the leaves up",
+    "finish_reason": "",
+    "usage": {
+      "completion_tokens": 626,
+      "prompt_tokens": 12,
+      "total_tokens": 638
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "A B-tree stays balanced because every insertion"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 619,
+        "prompt_tokens": 12,
+        "total_tokens": 631
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and deletion works from the leaves up"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 626,
+        "prompt_tokens": 12,
+        "total_tokens": 638
+      }
+    }
+  ],
+  "error": "provider_UNAVAILABLE: The model is overloaded. Please try again later."
+}

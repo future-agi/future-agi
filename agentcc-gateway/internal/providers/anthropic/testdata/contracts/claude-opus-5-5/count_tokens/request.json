@@ -1,0 +1,40 @@
+{
+  "model": "claude-opus-5-5",
+  "system": [
+    {
+      "type": "text",
+      "text": "Today's date is 2024-06-01."
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, world"
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather in a given location",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city and state, e.g. San Francisco, CA"
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "celsius",
+              "fahrenheit"
+            ]
+          }
+        },
+        "required": [
+          "location"
+        ]
+      }
+    }
+  ]
+}

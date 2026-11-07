@@ -1,0 +1,26 @@
+{
+  "body": {
+    "anthropic_version": "bedrock-2023-05-31",
+    "max_tokens": 64,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Say hello.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "bbe91aab6a2a1af8773bf12cf66b0f455f0731e05b1c8c377117a1b7e6f45e40",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/anthropic.claude-opus-5-5/invoke-with-response-stream"
+}

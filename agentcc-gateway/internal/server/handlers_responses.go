@@ -375,19 +375,24 @@ func responsesEventType(ev streaming.Event) string {
 	return payload.Type
 }
 
+// responsesPricedFields are the parts of a Responses API response the gateway
+// prices from (applyResponsesUsage). Named so the contract test can audit
+// OpenAI's response against it.
+type responsesPricedFields struct {
+	Model string `json:"model"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
 // applyResponsesUsage moves a Responses API response's model and token counts
 // onto rc, which is what the cost plugin prices from. A response without usage
 // leaves rc.Response without it, so the request goes unpriced rather than
 // priced at zero.
 func applyResponsesUsage(rc *models.RequestContext, body []byte) {
-	var parsed struct {
-		Model string `json:"model"`
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-			TotalTokens  int `json:"total_tokens"`
-		} `json:"usage"`
-	}
+	var parsed responsesPricedFields
 	_ = json.Unmarshal(body, &parsed)
 	if parsed.Model != "" {
 		rc.ResolvedModel = parsed.Model

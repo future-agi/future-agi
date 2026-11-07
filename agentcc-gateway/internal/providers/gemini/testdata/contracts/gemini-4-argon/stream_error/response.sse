@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"parts":[{"text":"A B-tree stays balanced because every insertion"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":8,"thoughtsTokenCount":611,"totalTokenCount":631,"promptTokensDetails":[{"modality":"TEXT","tokenCount":12}]},"modelVersion":"gemini-4-argon","responseId":"raDKpsaHJjdOt2d7Nb97qbc"}
+
+data: {"candidates":[{"content":{"parts":[{"text":" and deletion works from the leaves up"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":15,"thoughtsTokenCount":611,"totalTokenCount":638,"promptTokensDetails":[{"modality":"TEXT","tokenCount":12}]},"modelVersion":"gemini-4-argon","responseId":"raDKpsaHJjdOt2d7Nb97qbc"}
+
+data: {"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}
+

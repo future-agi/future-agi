@@ -1,0 +1,4 @@
+{
+  "endpoint": "completions",
+  "notes": "The SDK README's completions request verbatim; CompletionResponse (see meta.json), ending with stop. Recordable."
+}

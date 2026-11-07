@@ -1,0 +1,5 @@
+[
+  "$",
+  "$.choices[].message.content",
+  "chunk:$"
+]

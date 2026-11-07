@@ -1,0 +1,106 @@
+{
+  "assembled": {
+    "content": "Hello! How can I help you today?",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 12,
+      "prompt_tokens": 10,
+      "total_tokens": 22
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "! How can I help"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " you today?"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 12,
+        "prompt_tokens": 10,
+        "total_tokens": 22
+      }
+    }
+  ],
+  "error": null
+}

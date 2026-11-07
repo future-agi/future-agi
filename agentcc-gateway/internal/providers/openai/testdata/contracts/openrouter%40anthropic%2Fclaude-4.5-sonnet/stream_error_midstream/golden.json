@@ -1,0 +1,35 @@
+{
+  "canonical_error": {
+    "code": "provider_502",
+    "message": "provider error (HTTP 502): {\"id\":\"gen-1793170600-Pz7wKc2NvQ8mT4rL1xJb\",\"object\":\"chat.completion.chunk\",\"created\":1793170600,\"model\":\"anthropic/claude-4.5-sonnet\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"error\"}],\"error\":{\"code\":502,\"message\":\"Provider returned error\",\"metadata\":{\"error_type\":\"provider_unavailable\",\"provider_code\":\"529\"}}}",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "stream": {
+    "assembled": {
+      "content": "The capital",
+      "finish_reason": "",
+      "role": "assistant",
+      "usage": null
+    },
+    "chunks": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "The capital",
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "gen-1793170600-Pz7wKc2NvQ8mT4rL1xJb",
+        "model": "anthropic/claude-4.5-sonnet",
+        "object": "chat.completion.chunk"
+      }
+    ],
+    "error": "provider_502: provider error (HTTP 502): {\"id\":\"gen-1793170600-Pz7wKc2NvQ8mT4rL1xJb\",\"object\":\"chat.completion.chunk\",\"created\":1793170600,\"model\":\"anthropic/claude-4.5-sonnet\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"error\"}],\"error\":{\"code\":502,\"message\":\"Provider returned error\",\"metadata\":{\"error_type\":\"provider_unavailable\",\"provider_code\":\"529\"}}}"
+  }
+}

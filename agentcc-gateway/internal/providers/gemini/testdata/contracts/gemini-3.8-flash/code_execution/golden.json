@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "I'll generate the first 50 primes and add them up.The sum of the first 50 prime numbers is **5117**.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 409,
+    "prompt_tokens": 26,
+    "total_tokens": 435
+  }
+}

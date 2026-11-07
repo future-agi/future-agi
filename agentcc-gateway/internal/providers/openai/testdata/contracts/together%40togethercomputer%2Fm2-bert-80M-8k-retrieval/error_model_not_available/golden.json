@@ -1,0 +1,6 @@
+{
+  "code": "model_not_available",
+  "message": "Invalid or unavailable model",
+  "status": 400,
+  "type": "invalid_request_error"
+}

@@ -1,0 +1,21 @@
+{
+  "body": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "What is the capital of France? Think it through briefly.",
+        "role": "user"
+      }
+    ],
+    "model": "anthropic/claude-4.5-sonnet",
+    "reasoning": {
+      "max_tokens": 512
+    }
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

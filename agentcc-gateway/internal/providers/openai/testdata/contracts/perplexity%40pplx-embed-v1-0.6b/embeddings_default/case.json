@@ -1,0 +1,10 @@
+{
+  "endpoint": "embeddings",
+  "notes": "The SDK test's request, which names no encoding: the answer is still a base64 string (see meta.json). Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "is a base64 string, but the request asked for floats",
+      "reason": "known gap P1: Perplexity's embeddings are int8 or binary vectors encoded in base64 (encoding_format base64_int8 or base64_binary; it has no float encoding, and its base64 is not OpenAI's float32): a request that asks for floats, or names no encoding as OpenAI clients may, gets a base64 string, which the canonical response passes through unconverted, so an OpenAI client cannot read the vector"
+    }
+  ]
+}

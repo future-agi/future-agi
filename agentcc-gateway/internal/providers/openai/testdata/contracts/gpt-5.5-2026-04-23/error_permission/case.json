@@ -1,0 +1,5 @@
+{
+  "status": 403,
+  "recordable": false,
+  "notes": "Synthetic: /chat/completions 403 \"Access to a personal API organization is blocked by the organization policy\" (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)), whose only documented content type is text/plain: \"JSON-encoded error text containing an error object and the HTTP status\". The error object's type is the one openai-python's tests send for a 403; the message paraphrases the spec. Needs an organization with that policy, so it is not recordable."
+}

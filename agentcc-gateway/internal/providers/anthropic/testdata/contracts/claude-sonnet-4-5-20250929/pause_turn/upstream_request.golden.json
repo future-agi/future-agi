@@ -1,0 +1,31 @@
+{
+  "body": {
+    "max_tokens": 2048,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Compare the population growth of the five largest US cities over the last decade.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-sonnet-4-5-20250929",
+    "tools": [
+      {
+        "max_uses": 10,
+        "name": "web_search",
+        "type": "web_search_20250305"
+      }
+    ]
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

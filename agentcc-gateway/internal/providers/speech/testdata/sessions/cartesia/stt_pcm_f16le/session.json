@@ -1,0 +1,15 @@
+{
+  "source": "Cartesia Python SDK (github.com/cartesia-ai/cartesia-python at 3cb04193): /stt/websocket with pcm_f16le, one of STTEncoding's values (src/cartesia/types/stt_encoding.py)",
+  "path": "/stt/websocket",
+  "query": "encoding=pcm_f16le&model=ink-2&sample_rate=16000",
+  "headers": {
+    "Authorization": "Bearer gateway-key",
+    "Cartesia-Version": "2026-08-14"
+  },
+  "sanity_gaps": [
+    {
+      "failure": "raw encoding \"pcm_f16le\", which cartesia documents, is refused",
+      "reason": "known gap CA1: pcm_f16le (2 bytes a sample) has no width in the meter, so the session is refused with 400 unmeterable_audio"
+    }
+  ]
+}

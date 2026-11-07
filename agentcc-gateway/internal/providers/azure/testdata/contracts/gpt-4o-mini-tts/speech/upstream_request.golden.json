@@ -1,0 +1,15 @@
+{
+  "body": {
+    "input": "Hi! What are you going to make?",
+    "model": "gpt-4o-mini-tts",
+    "response_format": "mp3",
+    "voice": "fable"
+  },
+  "headers": {
+    "api-key": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/openai/deployments/gpt-4o-mini-tts/audio/speech",
+  "query": "api-version=2025-04-01-preview"
+}

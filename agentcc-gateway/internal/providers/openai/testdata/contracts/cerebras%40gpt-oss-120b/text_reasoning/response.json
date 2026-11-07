@@ -1,0 +1,36 @@
+{
+  "id": "chatcmpl-5b2c3d4e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "gpt-oss-120b",
+  "system_fingerprint": "fp_70185065a4",
+  "time_info": {
+    "queue_time": 0.000208,
+    "prompt_time": 0.002831,
+    "completion_time": 0.026478,
+    "total_time": 0.031233,
+    "created": 1793170512.1
+  },
+  "usage": {
+    "prompt_tokens": 72,
+    "completion_tokens": 58,
+    "total_tokens": 130,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 21
+    }
+  },
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "reasoning": "Answer briefly: latency and cost.",
+        "content": "Fast inference keeps interactive apps responsive and makes multi-step agents affordable."
+      }
+    }
+  ]
+}

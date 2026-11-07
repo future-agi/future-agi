@@ -1,0 +1,26 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 256
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Summarize the plot of Hamlet in two sentences."
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "4ba93abc87a066232bd93dcefa38074d796ec57fd80d22f86bcb6927f17131cd",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/global.anthropic.claude-sonnet-4-6/converse-stream"
+}

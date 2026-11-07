@@ -1,0 +1,5 @@
+{
+  "endpoint": "images",
+  "status": 410,
+  "notes": "The ErrorResponse of the 410 the spec documents for /images/generations; message from its description, type the documented invalid_request_error, code null. Recordable: any dall-e-3 request induces it."
+}

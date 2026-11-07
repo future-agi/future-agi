@@ -1,0 +1,46 @@
+{
+  "provider": "cohere",
+  "model": "command-a-reasoning-08-2025",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the Cohere v2 Chat API reference (cohere-openapi.yaml: /v2/chat, ChatResponseV2, AssistantMessageResponse, ChatThinkingContent, Citation, ChatToolSource, Usage, ChatFinishReason, StreamedChatResponseV2 and every stream event schema, x-fern-streaming terminator [DONE]) and the docs pages v2/docs/streaming, v2/docs/tool-use-streaming, v2/docs/tool-use-citations, v2/docs/tool-use-overview, docs/reasoning and docs/models, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience (the source of docs.cohere.com, which was not reachable from the authoring session). Command A Reasoning thinks by default (thinking.type enabled unless disabled), so no request knob is needed; its responses lead with a thinking content block, streamed as content-start type thinking plus content-delta delta.message.content.thinking. Field names, event types and finish reasons are the documented ones; ids, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.message.content[].thinking",
+      "reason": "known gap K4: a reasoning model's thinking content blocks are dropped (unknown_block:thinking) instead of becoming reasoning_content"
+    },
+    {
+      "path": "$.usage.cached_tokens",
+      "reason": "known gap K2: cached prompt tokens are dropped instead of reported as prompt_tokens_details.cached_tokens, so cache hits are invisible to cost accounting"
+    },
+    {
+      "path": "content-delta:$.delta.message.content.thinking",
+      "reason": "known gap K4: streamed thinking is dropped; each thinking delta becomes an empty content chunk instead of reasoning_content"
+    },
+    {
+      "path": "message-end:$.delta.finish_reason",
+      "reason": "known gap K1: message-end carries finish_reason under delta, and the parser reads a top-level finish_reason that is never sent, so every stream ends with \"stop\" (unmapped_finish_reason with an empty value); a tool-call stream says \"stop\" instead of \"tool_calls\", and MAX_TOKENS truncation is invisible"
+    },
+    {
+      "path": "message-end:$.delta.usage",
+      "reason": "known gap K1: message-end carries usage under delta, and the parser reads a top-level usage that is never sent, so no stream reports usage (see streamSanityGaps in contract_test.go); billing and budgets see zero tokens for every Cohere stream"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "thinking",
+      "reason": "known gap K4: a reasoning model's thinking content blocks are dropped (unknown_block:thinking) instead of becoming reasoning_content"
+    },
+    {
+      "kind": "unknown_delta",
+      "value": "thinking",
+      "reason": "known gap K4: streamed thinking is dropped (see content-delta:$.delta.message.content.thinking)"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "",
+      "reason": "known gap K1: the parser reads message-end's finish_reason from the wrong place (see message-end:$.delta.finish_reason), finds none, and falls back to \"stop\""
+    }
+  ]
+}

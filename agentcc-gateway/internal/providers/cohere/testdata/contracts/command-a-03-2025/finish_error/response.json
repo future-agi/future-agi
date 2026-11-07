@@ -1,0 +1,24 @@
+{
+  "id": "a9c2e6f4-8b1d-4a73-b5e9-3f7c1d8a2e64",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Hel"
+      }
+    ]
+  },
+  "finish_reason": "ERROR",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 3,
+      "output_tokens": 1
+    },
+    "tokens": {
+      "input_tokens": 494,
+      "output_tokens": 1
+    },
+    "cached_tokens": 0
+  }
+}

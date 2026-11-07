@@ -1,0 +1,6 @@
+{
+  "code": "provider_429",
+  "message": "You are past the per minute request limit, please wait and try again later.",
+  "status": 429,
+  "type": "rate_limit_error"
+}

@@ -1,0 +1,6 @@
+{
+  "code": "ServiceUnavailable",
+  "message": "The service is temporarily unable to process your request. Please try again later.",
+  "status": 502,
+  "type": ""
+}

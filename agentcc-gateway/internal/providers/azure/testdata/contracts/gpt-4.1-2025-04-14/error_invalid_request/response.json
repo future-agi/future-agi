@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "max_completion_tokens is too large: 1000000. This model supports at most 32768 completion tokens, whereas you provided 1000000.",
+    "type": "invalid_request_error",
+    "param": "max_completion_tokens",
+    "code": "invalid_value"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "provider": "xai",
+  "root": "embeddings",
+  "format": "openapi",
+  "select": "POST /v1/embeddings -> 200 application/json",
+  "description": "embeddings response, decoded by CreateEmbedding; OpenAI-compatible preset served by the openai adapter",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.data": {"kinds":["array"]},
+    "$.data[]": {"kinds":["object"]},
+    "$.data[].embedding": {"kinds":["array","string"]},
+    "$.data[].embedding[]": {"kinds":["number"]},
+    "$.data[].index": {"kinds":["integer"]},
+    "$.data[].object": {"kinds":["string"]},
+    "$.model": {"kinds":["string"]},
+    "$.object": {"kinds":["string"]},
+    "$.usage": {"kinds":["object"],"nullable":true},
+    "$.usage.prompt_tokens": {"kinds":["integer"]},
+    "$.usage.total_tokens": {"kinds":["integer"]}
+  }
+}

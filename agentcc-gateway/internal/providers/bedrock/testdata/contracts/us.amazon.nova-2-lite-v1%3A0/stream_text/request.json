@@ -1,0 +1,11 @@
+{
+  "model": "us.amazon.nova-2-lite-v1:0",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say hello."
+    }
+  ],
+  "max_tokens": 64,
+  "stream": true
+}

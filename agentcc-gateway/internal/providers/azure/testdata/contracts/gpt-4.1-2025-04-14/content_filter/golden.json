@@ -1,0 +1,49 @@
+{
+  "choices": [
+    {
+      "finish_reason": "content_filter",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-7R1nGnsXO8n4oi9UPz2f3UHdgAYMn",
+  "model": "gpt-4.1-2025-04-14",
+  "object": "chat.completion",
+  "prompt_filter_results": [
+    {
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "jailbreak": {
+          "detected": false,
+          "filtered": false
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": false,
+          "severity": "safe"
+        }
+      },
+      "prompt_index": 0
+    }
+  ],
+  "system_fingerprint": "fp_b705f0c291",
+  "usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 17,
+    "total_tokens": 17
+  }
+}

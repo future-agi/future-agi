@@ -1,0 +1,20 @@
+{
+  "promptFeedback": {
+    "blockReason": "PROHIBITED_CONTENT",
+    "blockReasonMessage": "The prompt is blocked due to prohibited contents."
+  },
+  "usageMetadata": {
+    "promptTokenCount": 9,
+    "totalTokenCount": 9,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 9
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "createTime": "2026-10-28T09:14:03.218734Z",
+  "responseId": "YwvDaJ06yk4IP19g1o7vS-E"
+}

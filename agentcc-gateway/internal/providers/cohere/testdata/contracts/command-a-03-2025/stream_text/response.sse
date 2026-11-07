@@ -1,0 +1,23 @@
+event: message-start
+data: {"id":"29f14a5a-11de-4cae-9800-25e4747408ea","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: content-start
+data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"Hello"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"! How can I help"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" you today?"}}}}
+
+event: content-end
+data: {"type":"content-end","index":0}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":3,"output_tokens":9},"tokens":{"input_tokens":494,"output_tokens":9},"cached_tokens":0}}}
+
+data: [DONE]
+

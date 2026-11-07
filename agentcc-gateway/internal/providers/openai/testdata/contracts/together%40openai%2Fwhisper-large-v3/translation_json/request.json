@@ -1,0 +1,4 @@
+{
+  "model": "openai/whisper-large-v3",
+  "file": "german.m4a"
+}

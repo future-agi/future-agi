@@ -1,0 +1,6 @@
+{
+  "status": 502,
+  "content_type": "text/html",
+  "recordable": false,
+  "notes": "Synthetic: Cloudflare's own 502 page, which a client gets when the edge in front of the API (platform.claude.com/docs/en/api/errors#request-size-limits) cannot reach it, instead of an Anthropic error body. Not recordable: nothing a client sends induces it. Pins the fallback for a body that is not JSON; a 5xx stays a 5xx."
+}

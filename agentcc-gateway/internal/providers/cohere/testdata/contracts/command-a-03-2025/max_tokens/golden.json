@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "content": "On a rocky spit of the Breton coast, old Yann tended the lamp every",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "0b7e2f4a-9c1d-4e3b-8a6f-5d2c7e9a1b04",
+  "model": "command-a-03-2025",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 16,
+    "prompt_tokens": 499,
+    "total_tokens": 515
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "endpoint": "completions",
+  "notes": "CompletionCreateResponse ending with \"error\", a value the SDK's Choice.finish_reason documents (see meta.json). Not recordable on demand: it needs a generation that fails.",
+  "recordable": false,
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason \"error\" is not canonical",
+      "reason": "known gap FW1: Fireworks' finish_reason \"error\" (the generation failed) passes through as a non-canonical finish reason, and the request ends as a success with whatever text came before: the inbound translators fall back to a default and clients that switch on finish_reason miss the failure"
+    }
+  ]
+}

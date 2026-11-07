@@ -1,0 +1,6 @@
+{
+  "code": "provider_403",
+  "message": "provider error (HTTP 403): {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Request blocked: prompt injection patterns detected\",\n    \"metadata\": {\n      \"patterns\": [\n        \"ignore all previous instructions\"\n      ]\n    }\n  },\n  \"openrouter_metadata\": {\n    \"attempt\": 1,\n    \"endpoints\": {\n      \"available\": [\n        {\n          \"model\": \"openai/gpt-4o\",\n          \"provider\": \"OpenAI\",\n          \"selected\": false\n        }\n      ],\n      \"total\": 1\n    },\n    \"is_byok\": false,\n    \"pipeline\": [\n      {\n        \"data\": ...",
+  "status": 502,
+  "type": "upstream_error"
+}

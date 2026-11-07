@@ -1,0 +1,22 @@
+{
+  "id": "9f75d94c-5047-4f9f-ad14-4a42ef5d3ff3",
+  "meta": {
+    "billed_units": {
+      "search_units": 192
+    }
+  },
+  "results": [
+    {
+      "index": 2,
+      "relevance_score": 0.8428898
+    },
+    {
+      "index": 0,
+      "relevance_score": 0.085889876
+    },
+    {
+      "index": 4,
+      "relevance_score": 0.04667134
+    }
+  ]
+}

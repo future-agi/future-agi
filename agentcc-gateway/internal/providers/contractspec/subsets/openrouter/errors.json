@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "provider": "openrouter",
+  "root": "errors",
+  "format": "openapi",
+  "select": "POST /chat/completions -> 400,401,402,403,404,408,413,422,429,500,502,503,524,529 application/json",
+  "description": "error bodies of the chat endpoint (every modeled 4xx/5xx), decoded by the adapter's error parser; OpenAI-compatible preset served by the openai adapter",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.error": {"kinds":["object"]},
+    "$.error.code": {"kinds":["integer"]},
+    "$.error.message": {"kinds":["string"]},
+    "$.error.metadata": {"kinds":["map","object"],"nullable":true,"opaque":true},
+    "$.openrouter_metadata": {"kinds":["map","object"],"nullable":true,"opaque":true},
+    "$.user_id": {"kinds":["string"],"nullable":true}
+  }
+}

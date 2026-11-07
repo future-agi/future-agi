@@ -1,0 +1,7 @@
+{
+  "model": "gpt-4o-mini-tts-2025-12-15",
+  "input": "The quick brown fox jumped over the lazy dog.",
+  "voice": "alloy",
+  "instructions": "Speak in a cheerful and positive tone.",
+  "stream_format": "sse"
+}

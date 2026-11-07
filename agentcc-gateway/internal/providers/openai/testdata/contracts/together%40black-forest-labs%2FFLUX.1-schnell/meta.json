@@ -1,0 +1,30 @@
+{
+  "provider": "openai",
+  "model": "together@black-forest-labs/FLUX.1-schnell",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Together's OpenAPI spec as embedded in its official SDK, github.com/togethercomputer/together-py scripts/mock at 3428f80887121c5715f670f3cffa71b2ed482c12 (2026-10-28; pinned as contractspec/subsets/together), POST /v1/images/generations: the request's examples (model black-forest-labs/FLUX.1-schnell, the prompt; response_format url, one of its enum's two values) and ImageResponse (id, model, object \"list\", data[] ImageResponseDataUrl {index, url, type \"url\"}), with no response example: the id and the url are placeholders. ImageResponse has no created, so the canonical response's is 0. No error case: the operation documents no error response.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.id",
+      "reason": "no canonical field: models.ImageResponse has no id, so a generated image cannot be traced in Together's logs"
+    },
+    {
+      "path": "$.model",
+      "reason": "no canonical field: models.ImageResponse has no model; the request names it"
+    },
+    {
+      "path": "$.object",
+      "reason": "no canonical field: always \"list\""
+    },
+    {
+      "path": "$.data[].index",
+      "reason": "no canonical field: models.ImageData has no index; the position in data gives it"
+    },
+    {
+      "path": "$.data[].type",
+      "reason": "no canonical field: whether the image is a url or b64_json, which the field set says"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

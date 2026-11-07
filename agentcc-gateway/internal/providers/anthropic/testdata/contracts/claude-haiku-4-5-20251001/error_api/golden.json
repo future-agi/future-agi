@@ -1,0 +1,6 @@
+{
+  "code": "provider_api_error",
+  "message": "Internal server error",
+  "status": 502,
+  "type": "upstream_error"
+}

@@ -1,0 +1,8 @@
+{
+  "status": 401,
+  "headers": {
+    "apim-request-id": "0d9a2c7e-4b1f-4f65-a3e8-6c5b9d2f1a04"
+  },
+  "recordable": false,
+  "notes": "Synthetic. Body: the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json) with only code and message, as the service answers a bad api-key; the wording is the service's as gateway test suites quote it (litellm, bifrost). learn.microsoft.com was not reachable from the authoring session. Not recordable: the recorder sends a valid key. The golden pins type \"\". Known gap A6: Azure's own error bodies (a bad api-key, an unknown deployment, a content-filter rejection, an outage) carry no type, and parseProviderError copies the empty one, so the canonical error's type is empty."
+}

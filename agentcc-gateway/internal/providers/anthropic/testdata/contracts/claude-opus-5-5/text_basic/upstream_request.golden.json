@@ -1,0 +1,24 @@
+{
+  "body": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Hello, Claude",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5"
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

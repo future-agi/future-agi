@@ -1,0 +1,9 @@
+{
+  "status": 403,
+  "headers": {
+    "x-amzn-ErrorType": "AccessDeniedException",
+    "x-amzn-RequestId": "a91f0c2e-6d4b-4e7a-9c35-0b8d2f71e6a4"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). AccessDeniedException is 403. Not recordable: it needs an account without access to the model, and the recorder's account has access to every fixture model. The golden pins type authentication_error: gap B15 (403 is a permission error, which the gateway has a type for)."
+}

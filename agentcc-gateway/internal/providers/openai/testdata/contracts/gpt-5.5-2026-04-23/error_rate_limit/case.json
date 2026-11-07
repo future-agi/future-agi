@@ -1,0 +1,15 @@
+{
+  "status": 429,
+  "headers": {
+    "retry-after": "2",
+    "x-request-id": "req_3c5e7a9b1d2f4a6c8e0b2d4f6a8c0e1f"
+  },
+  "recordable": false,
+  "notes": "Synthetic: components/responses/InferenceRateLimited (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)), the 429 of /chat/completions: its slowDown example body verbatim and its Retry-After header (integer seconds). x-request-id is the header openai-python reads. The x-ratelimit-{limit,remaining,reset}-{requests,tokens} headers are not in the spec, the SDKs or the cookbook (platform.openai.com, which documents them, is unreachable from the authoring sandbox), so they are left out rather than invented. Inducing a 429 means exhausting a real limit.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap O6: the retry-after header is dropped (and retry-after-ms and x-request-id, which openai-python reads too); models.APIError has no retry field, so the gateway retries and fails over on its own schedule instead of when OpenAI says, and the client loses the hint"
+    }
+  ]
+}

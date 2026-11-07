@@ -1,0 +1,12 @@
+{
+  "content": {
+    "parts": [
+      {
+        "text": "The jetpack is cool"
+      }
+    ]
+  },
+  "embedContentConfig": {
+    "outputDimensionality": 128
+  }
+}

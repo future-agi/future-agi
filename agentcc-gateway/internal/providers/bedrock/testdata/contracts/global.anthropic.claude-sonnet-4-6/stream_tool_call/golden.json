@@ -1,0 +1,195 @@
+{
+  "assembled": {
+    "content": "I'll check the current weather in San Francisco for you.",
+    "finish_reason": "tool_calls",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\": \"San Francisco, CA\", \"unit\": \"fahrenheit\"}",
+          "name": "get_weather"
+        },
+        "id": "tooluse_Q2vTt4xDQy6gX1rW9mJ3dA",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 87,
+      "prompt_tokens": 412,
+      "total_tokens": 499
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "I'll check the current weather"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " in San Francisco for you."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "",
+                  "name": "get_weather"
+                },
+                "id": "tooluse_Q2vTt4xDQy6gX1rW9mJ3dA",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\": \"San",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": " Francisco, CA\", \"unit\"",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": ": \"fahrenheit\"}",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 87,
+        "prompt_tokens": 412,
+        "total_tokens": 499
+      }
+    }
+  ],
+  "error": null
+}

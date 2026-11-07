@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "The generated text has been blocked by our content filters.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "bedrock-<generated>",
+  "model": "us.amazon.nova-2-lite-v1:0",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 11,
+    "prompt_tokens": 15,
+    "total_tokens": 26
+  }
+}

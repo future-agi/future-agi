@@ -1,0 +1,4 @@
+{
+  "status": 400,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (400 invalid_request_error) with the message format the API uses for an over-limit max_tokens; request_id invented. Recordable: request.json asks for max_tokens 1000000, above the model's 64000 output limit, which the API rejects with this error."
+}

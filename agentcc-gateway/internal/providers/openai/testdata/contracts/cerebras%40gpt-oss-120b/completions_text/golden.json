@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "text": "night. The wind howled through the trees as the old house creaked and groaned."
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "cmpl-4d5e6f70-8192-4a3b-9c4d-5e6f708192a3",
+  "model": "gpt-oss-120b",
+  "object": "text_completion",
+  "system_fingerprint": "fp_70185065a4",
+  "usage": {
+    "completion_tokens": 17,
+    "prompt_tokens": 7,
+    "total_tokens": 24
+  }
+}

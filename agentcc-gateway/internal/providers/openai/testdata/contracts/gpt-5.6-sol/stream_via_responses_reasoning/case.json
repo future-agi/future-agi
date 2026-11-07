@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "via_responses_reasoning streamed: the reasoning item's summary arrives as reasoning_summary_part.added, reasoning_summary_text.delta / .done and reasoning_summary_part.done (ResponseStreamEvent in the spec), then the message. Recordable with reasoning.summary \"auto\" upstream (see via_responses_reasoning)."
+}

@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "conflict_error",
+    "message": "The request conflicts with the current state of a resource."
+  },
+  "request_id": "req_011CVnAD9mWk4Tz1Qe8rFs2g"
+}

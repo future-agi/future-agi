@@ -1,0 +1,26 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What is the sum of the first 50 prime numbers? Generate and run code for the calculation."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "codeExecution": {}
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

@@ -1,0 +1,10 @@
+{
+  "model": "us.amazon.nova-2-lite-v1:0",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short story about a lighthouse keeper."
+    }
+  ],
+  "max_tokens": 16
+}

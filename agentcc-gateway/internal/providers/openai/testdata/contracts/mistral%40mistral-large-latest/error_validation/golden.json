@@ -1,0 +1,6 @@
+{
+  "code": "provider_422",
+  "message": "provider error (HTTP 422): {\n  \"detail\": [\n    {\n      \"type\": \"greater_than_equal\",\n      \"loc\": [\n        \"body\",\n        \"max_tokens\"\n      ],\n      \"msg\": \"Input should be greater than or equal to 0\",\n      \"input\": -1,\n      \"ctx\": {\n        \"ge\": 0\n      }\n    }\n  ]\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

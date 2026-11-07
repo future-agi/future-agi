@@ -1,0 +1,29 @@
+{
+  "endpoint": "anthropic_messages",
+  "status": 429,
+  "headers": {
+    "retry-after": "12",
+    "request-id": "req_011CVnAR6gAt9Uf2Qj5xZa8r",
+    "anthropic-ratelimit-requests-limit": "4000",
+    "anthropic-ratelimit-requests-remaining": "3912",
+    "anthropic-ratelimit-requests-reset": "2026-10-28T12:00:12Z",
+    "anthropic-ratelimit-input-tokens-limit": "2000000",
+    "anthropic-ratelimit-input-tokens-remaining": "0",
+    "anthropic-ratelimit-input-tokens-reset": "2026-10-28T12:00:12Z",
+    "anthropic-ratelimit-output-tokens-limit": "400000",
+    "anthropic-ratelimit-output-tokens-remaining": "381000",
+    "anthropic-ratelimit-output-tokens-reset": "2026-10-28T12:00:01Z"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (429 rate_limit_error and the error shape) and platform.claude.com/docs/en/api/rate-limits (retry-after in seconds; anthropic-ratelimit-{requests,input-tokens,output-tokens}-{limit,remaining,reset}, reset as RFC 3339); organization ID, limits and request_id invented. Not recordable: it needs an organization at its limit. A streaming request: StreamAnthropicMessage gets the 429 before any event.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 429 became 502",
+      "reason": "known gap X7: StreamAnthropicMessage turns every upstream error status into ErrUpstreamProvider (502, the raw body as its message), and the handler answers with that error, so a streaming /v1/messages client (Claude Code) gets a retryable 502 api_error instead of Anthropic's 429 rate_limit_error (or 400, 401, 404 ...) with its own body"
+    },
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap X3: the retry-after header (and every anthropic-ratelimit-* header) is dropped; models.APIError has no retry field"
+    }
+  ]
+}

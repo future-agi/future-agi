@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "EmbeddingsResponseOutput for base64_int8, as the request asks (see meta.json). Recordable."
+}

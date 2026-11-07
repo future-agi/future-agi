@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28): POST /v2/embed (EmbedByTypeResponse, ApiMeta, EmbeddingType) and its example for embed-v5.0-fast (texts hello and goodbye, meta with api_version, warnings and billed_units), each vector cut to its first 8 values. Every EmbeddingType at once: the adapter only ever asks for float, so upstream_patch.json asks for all six during recording, to pin the shape of each (int8/uint8 between -128..127 / 0..255, binary/ubinary packed to 1/8 the float length, base64 the float bytes); the quantised values here are derived from the float values. Recordable with the patch."
+}

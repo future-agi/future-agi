@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "Your request exceeds the service quota for your account. You can view your quotas at Viewing service quotas. You can resubmit your request later.",
+  "status": 400,
+  "type": "invalid_request_error"
+}

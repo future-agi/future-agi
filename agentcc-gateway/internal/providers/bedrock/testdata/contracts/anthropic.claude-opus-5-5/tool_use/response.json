@@ -1,0 +1,29 @@
+{
+  "id": "msg_bdrk_01Wq5zR8sT1yU4iO7pA2sD6f",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5-5",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll check the current weather in San Francisco."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_bdrk_01T1x1fJ34qAmk2tNTrN7Up6",
+      "name": "get_weather",
+      "input": {
+        "location": "San Francisco, CA",
+        "unit": "fahrenheit"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 472,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 89
+  }
+}

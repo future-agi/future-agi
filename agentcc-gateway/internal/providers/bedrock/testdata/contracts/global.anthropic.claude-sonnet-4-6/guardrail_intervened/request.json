@@ -1,0 +1,10 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write step-by-step instructions for picking a car door lock."
+    }
+  ],
+  "max_tokens": 512
+}

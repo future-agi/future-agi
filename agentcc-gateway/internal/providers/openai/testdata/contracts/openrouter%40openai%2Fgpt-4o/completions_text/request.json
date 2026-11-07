@@ -1,0 +1,5 @@
+{
+  "model": "openai/gpt-4o",
+  "prompt": "Write a haiku about the sea.",
+  "max_tokens": 32
+}

@@ -1,0 +1,6 @@
+{
+  "endpoint": "speech",
+  "status": 400,
+  "recordable": false,
+  "notes": "ErrorData for a 400 (see meta.json for the values). Not recordable: the model is available."
+}

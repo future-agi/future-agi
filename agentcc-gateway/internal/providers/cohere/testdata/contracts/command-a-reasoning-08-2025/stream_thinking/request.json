@@ -1,0 +1,11 @@
+{
+  "model": "command-a-reasoning-08-2025",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Alice has 3 brothers and she also has 2 sisters. How many sisters does Alice's brother have?"
+    }
+  ],
+  "max_tokens": 4096,
+  "stream": true
+}

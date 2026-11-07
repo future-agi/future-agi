@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-DkR5x2Wm8pQ4nT7vYb1cHs3ZaE9fG","object":"chat.completion.chunk","created":1793170512,"model":"gpt-5.5-2026-04-23","service_tier":"default","system_fingerprint":"fp_4cbda46e15","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Qm4Tz"}
+
+data: {"id":"chatcmpl-DkR5x2Wm8pQ4nT7vYb1cHs3ZaE9fG","object":"chat.completion.chunk","created":1793170512,"model":"gpt-5.5-2026-04-23","service_tier":"default","system_fingerprint":"fp_4cbda46e15","choices":[{"index":0,"delta":{"content":"Hello"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"x9Kp2Lw"}
+
+data: {"id":"chatcmpl-DkR5x2Wm8pQ4nT7vYb1cHs3ZaE9fG","object":"chat.completion.chunk","created":1793170512,"model":"gpt-5.5-2026-04-23","service_tier":"default","system_fingerprint":"fp_4cbda46e15","choices":[{"index":0,"delta":{"content":"! How"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Vb7"}
+
+data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
+

@@ -1,0 +1,11 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Prove that there are infinitely many primes congruent to 3 mod 4."
+    }
+  ],
+  "max_tokens": 4096,
+  "reasoning_effort": "high"
+}

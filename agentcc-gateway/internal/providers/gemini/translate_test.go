@@ -1189,7 +1189,7 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if result.Object != "chat.completion" {
 		t.Errorf("Object = %q, want %q", result.Object, "chat.completion")
@@ -1258,7 +1258,7 @@ func TestTranslateResponse_FunctionCallResponse(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if len(result.Choices) != 1 {
 		t.Fatalf("Choices length = %d, want 1", len(result.Choices))
@@ -1307,7 +1307,7 @@ func TestTranslateResponse_MultipleFunctionCalls(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if len(result.Choices[0].Message.ToolCalls) != 2 {
 		t.Fatalf("ToolCalls length = %d, want 2", len(result.Choices[0].Message.ToolCalls))
@@ -1417,7 +1417,7 @@ func TestTranslateResponse_TextAndFunctionCall(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	msg := result.Choices[0].Message
 	var content string
@@ -1452,7 +1452,7 @@ func TestTranslateResponse_FunctionCallUsesToolCallsFinishReason(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if result.Choices[0].FinishReason != "tool_calls" {
 		t.Errorf("finish reason = %q, want %q", result.Choices[0].FinishReason, "tool_calls")
@@ -1483,9 +1483,9 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 					},
 				},
 			}
-			result := translateResponse(resp, "test-model")
+			result := translateResponse(resp, "test-model", nil)
 			if result.Choices[0].FinishReason != tt.openai {
-				t.Errorf("mapGeminiFinishReason(%q) = %q, want %q",
+				t.Errorf("finish reason for %q = %q, want %q",
 					tt.gemini, result.Choices[0].FinishReason, tt.openai)
 			}
 		})
@@ -1501,7 +1501,7 @@ func TestTranslateResponse_NoCandidates(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if len(result.Choices) != 0 {
 		t.Errorf("Choices length = %d, want 0", len(result.Choices))
@@ -1525,7 +1525,7 @@ func TestTranslateResponse_NoUsage(t *testing.T) {
 		UsageMetadata: nil,
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if result.Usage != nil {
 		t.Errorf("Usage = %v, want nil", result.Usage)
@@ -1542,7 +1542,7 @@ func TestTranslateResponse_GeneratedIDPrefix(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "gemini-1.5-pro")
+	result := translateResponse(resp, "gemini-1.5-pro", nil)
 
 	if !strings.HasPrefix(result.ID, "gen-") {
 		t.Errorf("ID = %q, should start with 'gen-'", result.ID)
@@ -2233,7 +2233,7 @@ func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 		},
 	}
 
-	out := translateResponse(resp, "gemini-3.5-flash")
+	out := translateResponse(resp, "gemini-3.5-flash", nil)
 
 	if out.Usage == nil {
 		t.Fatal("expected usage to be populated")
@@ -2250,7 +2250,7 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 	for _, value := range []*int{nil, new(int)} {
 		resp := &geminiResponse{UsageMetadata: &geminiUsageMetadata{PromptTokenCount: 100,
 			CachedContentTokenCount: value}}
-		out := translateResponse(resp, "gemini-3.8-flash")
+		out := translateResponse(resp, "gemini-3.8-flash", nil)
 		if value == nil && out.Usage.PromptTokensDetails != nil {
 			t.Fatal("absent provider cache usage must remain unknown")
 		}
@@ -2260,7 +2260,7 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 	}
 	cached := 75
 	out := translateResponse(&geminiResponse{UsageMetadata: &geminiUsageMetadata{
-		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
+		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash", nil)
 	if out.Usage.PromptTokens != 100 || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":75}` {
 		t.Fatal("cached tokens must be retained without subtracting input context")
 	}

@@ -1,0 +1,28 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What is the derivative of x^x?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingLevel": "high"
+      }
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:streamGenerateContent",
+  "query": "alt=sse"
+}

@@ -1,0 +1,31 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"San Francisco, CA\"}",
+              "name": "get_weather"
+            },
+            "id": "get_weather_k3m9x2v7q1wz",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "8d2e4f6a-1b3c-4d5e-9f7a-2c4e6a8b0d13",
+  "model": "command-a-reasoning-08-2025",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 52,
+    "prompt_tokens": 937,
+    "total_tokens": 989
+  }
+}

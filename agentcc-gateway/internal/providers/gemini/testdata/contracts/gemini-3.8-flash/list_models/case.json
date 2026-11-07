@@ -1,0 +1,11 @@
+{
+  "endpoint": "list_models",
+  "recordable": false,
+  "notes": "GET /v1beta/models (ListModelsResponse, v1beta discovery). Layout and fields follow the recorded first page in google-gemini/cookbook quickstarts/rest/Models_REST.ipynb, which also carries modelStage (ModelStatus.modelStage's enum) although the discovery Model schema does not list it; the entries are this suite's models. Not recordable while ListModels sends nothing upstream (gap G26): the recorder fails a case whose adapter makes no request. Make it recordable when ListModels calls GET /v1beta/models.",
+  "sanity_gaps": [
+    {
+      "failure": "ListModels returned 0 models",
+      "reason": "known gap G26: Provider.ListModels returns nil without calling GET /v1beta/models, whose answer lists every model with its generation methods and token limits; new models are never discovered and the endpoint's shape is never read"
+    }
+  ]
+}

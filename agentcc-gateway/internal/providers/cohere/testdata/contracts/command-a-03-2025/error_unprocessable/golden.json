@@ -1,0 +1,6 @@
+{
+  "code": "provider_422",
+  "message": "invalid request: the request contains an invalid combination of fields.",
+  "status": 422,
+  "type": "invalid_request_error"
+}

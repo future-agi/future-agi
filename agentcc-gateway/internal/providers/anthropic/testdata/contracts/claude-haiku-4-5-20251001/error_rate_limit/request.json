@@ -1,0 +1,15 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a concise assistant."
+    },
+    {
+      "role": "user",
+      "content": "What is the capital of France? Answer in one sentence."
+    }
+  ],
+  "max_tokens": 256,
+  "temperature": 0.2
+}

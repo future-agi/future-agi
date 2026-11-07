@@ -1,0 +1,6 @@
+{
+  "code": "",
+  "message": "Access to this personal API organization is blocked by your organization's policy.",
+  "status": 403,
+  "type": "invalid_request_error"
+}

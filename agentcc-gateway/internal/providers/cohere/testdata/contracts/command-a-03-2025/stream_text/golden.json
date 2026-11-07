@@ -1,0 +1,84 @@
+{
+  "assembled": {
+    "content": "Hello! How can I help you today?",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": null
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "29f14a5a-11de-4cae-9800-25e4747408ea",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "29f14a5a-11de-4cae-9800-25e4747408ea",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "! How can I help"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "29f14a5a-11de-4cae-9800-25e4747408ea",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " you today?"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "29f14a5a-11de-4cae-9800-25e4747408ea",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "29f14a5a-11de-4cae-9800-25e4747408ea",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "error": null
+}

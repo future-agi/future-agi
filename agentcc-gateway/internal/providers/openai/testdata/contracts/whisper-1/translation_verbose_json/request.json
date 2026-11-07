@@ -1,0 +1,5 @@
+{
+  "model": "whisper-1",
+  "file": "german.m4a",
+  "response_format": "verbose_json"
+}

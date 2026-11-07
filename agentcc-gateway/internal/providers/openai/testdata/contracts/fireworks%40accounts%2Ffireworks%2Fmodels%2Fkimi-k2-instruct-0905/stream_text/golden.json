@@ -1,0 +1,78 @@
+{
+  "assembled": {
+    "content": "This is a test.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 6,
+      "prompt_tokens": 13,
+      "total_tokens": 19
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10",
+      "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "This is"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10",
+      "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " a test."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10",
+      "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10",
+      "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 13,
+        "total_tokens": 19
+      }
+    }
+  ],
+  "error": null
+}

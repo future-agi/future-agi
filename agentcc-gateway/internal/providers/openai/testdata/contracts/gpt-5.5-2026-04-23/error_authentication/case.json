@@ -1,0 +1,5 @@
+{
+  "status": 401,
+  "recordable": false,
+  "notes": "Synthetic: /chat/completions 401 \"Authentication failed because the API key is missing or revoked\" (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)) with the error body openai-python's own tests send for a 401 (tests/test_client.py, 35fc9f3). The recorder authenticates with a valid key, so it cannot record this."
+}

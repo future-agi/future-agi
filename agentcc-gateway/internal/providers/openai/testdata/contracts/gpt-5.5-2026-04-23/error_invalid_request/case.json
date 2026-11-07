@@ -1,0 +1,13 @@
+{
+  "status": 400,
+  "headers": {
+    "x-request-id": "req_7d1f0c8e2b9a4f6c8e1d3b5a7c9e0f12"
+  },
+  "notes": "Synthetic: the ErrorResponse shape (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), /chat/completions 400 \"Invalid chat completion request or incompatible request parameters\") with the unknown_parameter code and message format of the spec's own unknown_parameter example; x-request-id is the header openai-python reads into request_id. Recordable: request.json carries an unknown top-level parameter, which the adapter forwards (ChatCompletionRequest.Extra) and the API rejects.",
+  "sanity_gaps": [
+    {
+      "failure": "error param",
+      "reason": "known gap O7: parseProviderError drops the error's param (models.APIError.Param is never set), so the client cannot tell which parameter was rejected"
+    }
+  ]
+}

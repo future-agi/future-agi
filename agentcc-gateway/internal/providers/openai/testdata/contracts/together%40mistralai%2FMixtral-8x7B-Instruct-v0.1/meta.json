@@ -1,0 +1,18 @@
+{
+  "provider": "openai",
+  "model": "together@mistralai/Mixtral-8x7B-Instruct-v0.1",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Together's OpenAPI spec as embedded in its official SDK, github.com/togethercomputer/together-py scripts/mock at 3428f80887121c5715f670f3cffa71b2ed482c12 (2026-10-28; pinned as contractspec/subsets/together), POST /v1/completions: CompletionRequest's examples (model mistralai/Mixtral-8x7B-Instruct-v0.1, the prompt) and CompletionResponse (id, object \"text.completion\", created, model, prompt[], choices[] {text, seed, finish_reason, logprobs}, usage), with no response example: the id, timestamps, text, seed and token counts are placeholders, the answer ending with \"eos\" (FinishReason: stop, eos, length, tool_calls, function_call). The gateway never streams /v1/completions upstream (TextCompletion sets stream false), so there is no stream case. Error cases: the operation's 4xx answers are ErrorData ({error: {message, type, param, code}}), whose type and code are free strings; their values are the ones the same spec documents for Together's errors: the error categories of the queue endpoints' QueueError (\"invalid_request_error\", \"not_found_error\") and the error codes of its realtime endpoints (invalid_api_key \"Invalid API key provided (401)\", model_not_available \"Invalid or unavailable model (400)\"), each message being its code's documented description. docs.together.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.prompt",
+      "reason": "known gap TG7: Together's echoed prompt (prompt[]: the prompt's text and, with logprobs, its token log probabilities, returned when the request sets echo) is dropped: models.CompletionResponse has no field for it and no Extra, so a client that asks for echo gets neither, where OpenAI's completions echo the prompt inside choices[].text. Empty without echo"
+    },
+    {
+      "path": "$.choices[].seed",
+      "reason": "no canonical field: the sampling seed used, echoed per choice"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

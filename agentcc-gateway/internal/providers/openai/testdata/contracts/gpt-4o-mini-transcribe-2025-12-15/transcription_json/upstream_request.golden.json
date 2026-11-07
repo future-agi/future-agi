@@ -1,0 +1,15 @@
+{
+  "body": {
+    "file": {
+      "bytes": 9612,
+      "filename": "audio.mp3"
+    },
+    "model": "gpt-4o-mini-transcribe-2025-12-15"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "multipart/form-data; boundary=<random>"
+  },
+  "method": "POST",
+  "path": "/v1/audio/transcriptions"
+}

@@ -1,0 +1,84 @@
+{
+  "assembled": {
+    "content": "This is a test!",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 6,
+      "prompt_tokens": 14,
+      "total_tokens": 20
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "This",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "8f2c3a1b7d9e4f06-SJC",
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " is a",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "8f2c3a1b7d9e4f06-SJC",
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " test!",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "8f2c3a1b7d9e4f06-SJC",
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "8f2c3a1b7d9e4f06-SJC",
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 14,
+        "total_tokens": 20
+      }
+    }
+  ],
+  "error": null
+}

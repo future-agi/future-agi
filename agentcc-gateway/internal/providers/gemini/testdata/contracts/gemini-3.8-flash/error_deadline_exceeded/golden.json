@@ -1,0 +1,6 @@
+{
+  "code": "provider_DEADLINE_EXCEEDED",
+  "message": "Deadline expired before operation could complete.",
+  "status": 502,
+  "type": "upstream_error"
+}

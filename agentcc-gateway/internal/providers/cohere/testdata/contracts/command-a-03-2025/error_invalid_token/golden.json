@@ -1,0 +1,6 @@
+{
+  "code": "provider_498",
+  "message": "invalid request: the request contains a token that is not allowed.",
+  "status": 498,
+  "type": "invalid_request_error"
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_FAILED_PRECONDITION",
+  "message": "User location is not supported for the API use.",
+  "status": 502,
+  "type": "upstream_error"
+}

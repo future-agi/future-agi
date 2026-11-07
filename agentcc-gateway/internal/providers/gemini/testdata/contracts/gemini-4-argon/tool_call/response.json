@@ -1,0 +1,41 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "**Looking up Berlin**\n\nThe user wants Berlin's current weather in celsius; get_weather covers it.",
+            "thought": true
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Berlin, Germany",
+                "unit": "celsius"
+              }
+            },
+            "thoughtSignature": "sICc6bvBb5xbBleomQwg6xinupm/Iom4DWzzAwbU7TNm0ca/BG1nV/Ljhk7Qy9c1+hkNh11H6GlmBadBdfOs+/uM0aiaM3hfUAHpIt0RkNfV9QUgwrI9o7V/0LGAwAMj"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 61,
+    "candidatesTokenCount": 23,
+    "thoughtsTokenCount": 142,
+    "totalTokenCount": 226,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 61
+      }
+    ]
+  },
+  "modelVersion": "gemini-4-argon",
+  "responseId": "6jNjRO7PcL7A8uiDG5JGXl0"
+}

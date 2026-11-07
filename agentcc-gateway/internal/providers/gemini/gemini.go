@@ -19,6 +19,10 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/gauth"
 )
 
+// adapterName labels this adapter's unknown-shape reports and metric. The
+// Vertex AI path shares the same parser, so it reports under the same name.
+const adapterName = "gemini"
+
 type Provider struct {
 	id            string
 	baseURL       string
@@ -247,7 +251,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing response: %v", err))
 	}
 
-	return translateResponse(&gr2, model), nil
+	shape := common.NewShapeReporter(ctx, adapterName, p.id)
+	reportBlankParts(shape, &gr2, respBody)
+	return translateResponse(&gr2, model, shape), nil
 }
 
 // StreamChatCompletion sends a streaming request to Gemini.
@@ -324,6 +330,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		state := newStreamState(model)
+		state.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 
 		for scanner.Scan() {
 			line := scanner.Text()

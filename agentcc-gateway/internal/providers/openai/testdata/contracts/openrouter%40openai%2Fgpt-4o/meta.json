@@ -1,0 +1,36 @@
+{
+  "provider": "openai",
+  "model": "openrouter@openai/gpt-4o",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from OpenRouter's OpenAPI spec as vendored in its official SDK, github.com/OpenRouterTeam/python-sdk .speakeasy/in.openapi.yaml at 752139b7d0b9a71baece3468203a358e07a341b5 (2026-10-28; pinned as contractspec/subsets/openrouter), POST /responses (the /v1/responses passthrough, CreateResponse and StreamResponse: bodies go back unchanged; the server prices them from model and usage). responses_text is the request example and the 200 application/json example (OpenResponsesResult) verbatim. stream_responses_text follows the text/event-stream answer: ResponsesStreamingResponse is data lines alone (no event: names; the type is in each data object) ending in the [DONE] sentinel (x-speakeasy-sse-sentinel), and each event is its schema's example (OpenResponsesCreatedEvent, OpenResponsesInProgressEvent, StreamEventsResponseOutputItemAdded, ContentPartAddedEvent, TextDeltaEvent, TextDoneEvent, ContentPartDoneEvent, StreamEventsResponseOutputItemDone, StreamEventsResponseCompleted) with the model set to openai/gpt-4o for the examples' \"gpt-4\", sequence numbers made consecutive, the delta the examples skip filled in (\"! How can I help you?\" between \"Hello\" and the done text \"Hello! How can I help you?\"), and the completed response given its output item and usage (in OpenResponsesResult's shape, from the 200 example), which the server prices from. error_guardrail_blocked is the 403 \"guardrail-blocked\" example verbatim: its integer code is gap OR1, so it comes back as a 502. completions_text and completions_error_unauthorized drive TextCompletion against /api/v1/completions, which OpenRouter still serves as legacy text completions (OpenRouterTeam/docs c1b66058984cd1a184a6eb8d73030074f8c57e13, 2026-10-28: guides/features/router-metadata.mdx lists \"/api/v1/completions (legacy text completions)\" among the public completion routes) although its spec dropped the operation in python-sdk 1cad51ab (2026-02-05) without a deprecation note. The shape is from OpenRouter's OpenAPI spec at OpenRouterTeam/python-sdk 0c791b04d12fa94996bc78d0e00a5440a074785c (2026-01-21) .speakeasy/in.openapi.yaml, the last revision that models POST /completions (createCompletions): CompletionResponse (id, object \"text_completion\", created, model, provider, system_fingerprint, choices[] CompletionChoice {text, index, logprobs, finish_reason stop|length|content_filter|null, native_finish_reason, reasoning}, usage CompletionUsage {prompt_tokens, completion_tokens, total_tokens}), with no example: the id, timestamp, provider, text and token counts are placeholders and the prompt is the request's. The docs' Response type (api_reference/overview.mdx) gives object as \"chat.completion\" for every route and a NonChatChoice of {finish_reason, text, error}; the value set takes both. The gateway never streams /v1/completions upstream (TextCompletion sets stream false), so there is no stream case. completions_error_unauthorized is the current spec's 401 example (UnauthorizedResponse, the one every operation shares) in the ErrorResponse shape the docs give (api_reference/errors-and-debugging.mdx: {error: {code: number, message, metadata?}}); 0c791b04's ChatError allows a string code as well, but every documented body has the integer HTTP status, gap OR1.",
+  "allowed_unknown_fields": [
+    {
+      "path": "error:$.error.metadata",
+      "reason": "known gap OR5: the error's metadata (here the guardrail's matched patterns) is dropped, so a client cannot tell which provider failed or why a request was blocked"
+    },
+    {
+      "path": "error:$.openrouter_metadata",
+      "reason": "no canonical field: OpenRouter's routing record of the failed request"
+    },
+    {
+      "path": "$.provider",
+      "reason": "known gap OR8: OpenRouter's legacy completions extras (provider, the upstream it routed to; choices[].native_finish_reason, that provider's own finish reason; choices[].reasoning) are dropped: models.CompletionResponse and models.CompletionChoice have no Extra, unlike chat's types, so a client cannot tell which provider served a completion or read its reasoning"
+    },
+    {
+      "path": "$.choices[].native_finish_reason",
+      "reason": "known gap OR8: OpenRouter's legacy completions extras (provider, the upstream it routed to; choices[].native_finish_reason, that provider's own finish reason; choices[].reasoning) are dropped: models.CompletionResponse and models.CompletionChoice have no Extra, unlike chat's types, so a client cannot tell which provider served a completion or read its reasoning"
+    },
+    {
+      "path": "$.choices[].reasoning",
+      "reason": "known gap OR8: OpenRouter's legacy completions extras (provider, the upstream it routed to; choices[].native_finish_reason, that provider's own finish reason; choices[].reasoning) are dropped: models.CompletionResponse and models.CompletionChoice have no Extra, unlike chat's types, so a client cannot tell which provider served a completion or read its reasoning"
+    }
+  ],
+  "allowed_unknown_shapes": [],
+  "allowed_type_mismatches": [
+    {
+      "path": "error:$.error.code",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError cannot decode any OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and the client gets the raw body as the message"
+    }
+  ]
+}

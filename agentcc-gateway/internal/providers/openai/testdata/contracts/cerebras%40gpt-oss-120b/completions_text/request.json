@@ -1,0 +1,5 @@
+{
+  "prompt": "It was a dark and stormy ",
+  "max_tokens": 100,
+  "model": "gpt-oss-120b"
+}

@@ -1,0 +1,4 @@
+{
+  "status": 400,
+  "notes": "Gemini 3 validates thought signatures on function calls: replaying a model turn whose functionCall lost its thoughtSignature is a 400 (ai.google.dev/gemini-api/docs/thought-signatures). Recordable: a client that rebuilds the tool call id as plain call_0 (dropping the signature the gateway packs into it) sends exactly this. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

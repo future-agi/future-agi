@@ -1,0 +1,14 @@
+{
+  "notes": "The spec's 200 example ending with \"end_turn\" (see meta.json). Not recordable on demand: when xAI answers end_turn is not documented.",
+  "recordable": false,
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason \"end_turn\" is not canonical",
+      "reason": "known gap XA2: xAI's finish_reason \"end_turn\" passes through unmapped: not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it"
+    },
+    {
+      "failure": "usage.total_tokens = 135, want prompt 32 + completion 9",
+      "reason": "known gap XA1: xAI's completion_tokens (output_tokens in Responses) leave out the reasoning tokens, which total_tokens counts (completion_tokens_details.reasoning_tokens): the gateway prices completion_tokens, so a reasoning model's reasoning, which xAI bills as output, is not priced"
+    }
+  ]
+}

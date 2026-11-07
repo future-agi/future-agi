@@ -1,0 +1,8 @@
+{
+  "status": 403,
+  "headers": {
+    "request-id": "req_011CVnA7Hs3xNw9Kc2pRtB5m"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (403 permission_error; the message is the page's description of it); request_id invented. Not recordable: it needs a key restricted from the model or workspace."
+}

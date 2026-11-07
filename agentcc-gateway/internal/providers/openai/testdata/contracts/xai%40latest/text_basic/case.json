@@ -1,0 +1,9 @@
+{
+  "notes": "The spec's chat request and 200 examples verbatim. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "usage.total_tokens = 135, want prompt 32 + completion 9",
+      "reason": "known gap XA1: xAI's completion_tokens (output_tokens in Responses) leave out the reasoning tokens, which total_tokens counts (completion_tokens_details.reasoning_tokens): the gateway prices completion_tokens, so a reasoning model's reasoning, which xAI bills as output, is not priced"
+    }
+  ]
+}

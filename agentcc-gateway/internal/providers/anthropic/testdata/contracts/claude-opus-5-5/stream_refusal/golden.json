@@ -1,0 +1,78 @@
+{
+  "assembled": {
+    "content": "To start, you would enumerate the",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 8,
+      "prompt_tokens": 57,
+      "total_tokens": 65
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Rb4xJm8LrQ2tWcZ7nV3kHs",
+      "model": "claude-opus-5-5",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "To start, you would"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Rb4xJm8LrQ2tWcZ7nV3kHs",
+      "model": "claude-opus-5-5",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " enumerate the"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Rb4xJm8LrQ2tWcZ7nV3kHs",
+      "model": "claude-opus-5-5",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Rb4xJm8LrQ2tWcZ7nV3kHs",
+      "model": "claude-opus-5-5",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 8,
+        "prompt_tokens": 57,
+        "total_tokens": 65
+      }
+    }
+  ],
+  "error": null
+}

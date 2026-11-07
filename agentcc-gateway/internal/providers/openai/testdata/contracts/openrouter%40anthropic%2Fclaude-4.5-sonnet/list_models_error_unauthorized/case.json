@@ -1,0 +1,12 @@
+{
+  "endpoint": "list_models",
+  "status": 401,
+  "recordable": false,
+  "notes": "The 401 (UnauthorizedResponse) example of GET /models verbatim. Not recordable: the recorder sends a valid key.",
+  "sanity_gaps": [
+    {
+      "failure": "not a *models.APIError",
+      "reason": "known gap O33: ListModels drops an upstream error: on any status but 200 it returns a plain error (\"list models returned status N\") that is not a models.APIError and reads no body, so the status class, type, code and message are lost and a caller cannot tell a bad key from a rate limit or an outage. ListModels has no production caller today (cmd/contract-recorder's dispatch is the only one), so nothing serves this error to a client yet"
+    }
+  ]
+}

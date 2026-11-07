@@ -1,0 +1,29 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "You are a release-notes assistant. Summarise the change log the user pastes in one sentence.",
+        "role": "developer"
+      },
+      {
+        "content": "v2.3.0: adds prompt cache breakpoints, fixes retry jitter, drops Python 3.9.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-5.6-sol",
+    "prompt_cache_key": "release-notes-v1",
+    "reasoning_effort": "low",
+    "service_tier": "fast",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

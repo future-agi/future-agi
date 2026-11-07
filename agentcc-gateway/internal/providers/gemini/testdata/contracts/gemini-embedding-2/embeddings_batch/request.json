@@ -1,0 +1,8 @@
+{
+  "model": "gemini-embedding-2",
+  "input": [
+    "What is the meaning of life?",
+    "How does the brain work?"
+  ],
+  "dimensions": 128
+}

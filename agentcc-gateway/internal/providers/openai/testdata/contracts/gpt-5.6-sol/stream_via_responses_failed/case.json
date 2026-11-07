@@ -1,0 +1,5 @@
+{
+  "endpoint": "chat_via_responses",
+  "recordable": false,
+  "notes": "A stream that fails after output started: response.failed carries the Response with status \"failed\" and error {code, message} (ResponseFailedEvent, ResponseError: code server_error). Message invented. Nothing a client sends induces it."
+}

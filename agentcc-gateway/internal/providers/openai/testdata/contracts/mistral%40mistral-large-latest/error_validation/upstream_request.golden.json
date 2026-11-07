@@ -1,0 +1,18 @@
+{
+  "body": {
+    "max_tokens": -1,
+    "messages": [
+      {
+        "content": "Say hello.",
+        "role": "user"
+      }
+    ],
+    "model": "mistral-large-latest"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

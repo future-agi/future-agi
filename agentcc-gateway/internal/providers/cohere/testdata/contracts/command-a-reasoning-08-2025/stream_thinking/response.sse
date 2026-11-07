@@ -1,0 +1,32 @@
+event: message-start
+data: {"id":"6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: content-start
+data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"thinking","thinking":""}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"thinking":"Alice is a girl with 2 sisters, so the family has 3 girls: Alice and her 2 sisters."}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"thinking":" Each of Alice's brothers has all 3 girls as sisters."}}}}
+
+event: content-end
+data: {"type":"content-end","index":0}
+
+event: content-start
+data: {"type":"content-start","index":1,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":1,"delta":{"message":{"content":{"text":"Alice's brother has 3 sisters:"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":1,"delta":{"message":{"content":{"text":" Alice and her 2 sisters."}}}}
+
+event: content-end
+data: {"type":"content-end","index":1}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":31,"output_tokens":97},"tokens":{"input_tokens":528,"output_tokens":97},"cached_tokens":0}}}
+
+data: [DONE]
+

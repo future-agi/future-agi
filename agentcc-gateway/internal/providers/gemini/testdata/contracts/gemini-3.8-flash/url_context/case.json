@@ -1,0 +1,8 @@
+{
+  "sanity_gaps": [
+    {
+      "failure": "usage.total_tokens = 9956, want prompt 31 + completion 291",
+      "reason": "known gap G9: toolUsePromptTokenCount (the fetched page content, billed as input) is dropped, so prompt_tokens under-counts and total_tokens (Gemini's totalTokenCount, which includes it) no longer equals prompt + completion"
+    }
+  ]
+}

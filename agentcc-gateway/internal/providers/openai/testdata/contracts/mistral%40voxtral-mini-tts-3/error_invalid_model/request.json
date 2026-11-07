@@ -1,0 +1,5 @@
+{
+  "model": "voxtral-mini-tts-3",
+  "input": "Hello, how can I help you today?",
+  "response_format": "pcm"
+}

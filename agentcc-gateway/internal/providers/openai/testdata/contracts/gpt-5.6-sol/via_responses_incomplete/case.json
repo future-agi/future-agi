@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "A Response cut off by max_output_tokens: status \"incomplete\" with incomplete_details.reason \"max_output_tokens\" (Response, ResponseIncompleteDetails in the spec), the message item \"incomplete\". Recordable with a small max_completion_tokens."
+}

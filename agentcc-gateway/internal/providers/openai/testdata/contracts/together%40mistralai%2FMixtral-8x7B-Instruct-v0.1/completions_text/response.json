@@ -1,0 +1,20 @@
+{
+  "id": "8f2c3a1b7d9e4f06-SJC",
+  "object": "text.completion",
+  "created": 1793170512,
+  "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+  "prompt": [],
+  "choices": [
+    {
+      "text": " The capital of France is Paris.",
+      "seed": 4730159244373981000,
+      "finish_reason": "eos",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 17,
+    "completion_tokens": 8,
+    "total_tokens": 25
+  }
+}

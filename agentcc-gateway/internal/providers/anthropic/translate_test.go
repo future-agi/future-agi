@@ -684,7 +684,7 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 15},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if result.ID != "msg_abc" {
 		t.Errorf("id = %q, want %q", result.ID, "msg_abc")
@@ -736,7 +736,7 @@ func TestTranslateResponse_ToolUseResponse(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 30},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	choice := result.Choices[0]
 	if choice.FinishReason != "tool_calls" {
@@ -783,7 +783,7 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 				StopReason: tt.stopReason,
 				Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
 			}
-			result := translateResponse(resp)
+			result := translateResponse(resp, nil)
 			if result.Choices[0].FinishReason != tt.wantFinish {
 				t.Errorf("finish_reason = %q, want %q", result.Choices[0].FinishReason, tt.wantFinish)
 			}
@@ -801,7 +801,7 @@ func TestTranslateResponse_UsageMapping(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 100, OutputTokens: 50},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if result.Usage == nil {
 		t.Fatal("usage is nil")
@@ -830,7 +830,7 @@ func TestTranslateResponse_MultipleTextBlocks(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 5, OutputTokens: 5},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	var content string
 	if err := json.Unmarshal(result.Choices[0].Message.Content, &content); err != nil {
@@ -1722,7 +1722,7 @@ func TestTranslateResponse_CitationsBecomeURLCitationAnnotations(t *testing.T) {
 		StopReason: "end_turn",
 	}
 
-	out := translateResponse(resp)
+	out := translateResponse(resp, nil)
 	msg := out.Choices[0].Message
 
 	if len(msg.Annotations) == 0 {
@@ -1785,7 +1785,7 @@ func TestTranslateResponse_ServerToolUseIsNotAClientToolCall(t *testing.T) {
 		StopReason: "end_turn",
 	}
 
-	out := translateResponse(resp)
+	out := translateResponse(resp, nil)
 	if tc := out.Choices[0].Message.ToolCalls; len(tc) != 0 {
 		t.Fatalf("server-executed tool surfaced as %d client tool_calls: %+v", len(tc), tc)
 	}
@@ -1809,7 +1809,7 @@ func TestTranslateResponse_CarriesServerToolUsage(t *testing.T) {
 		},
 	}
 
-	out := translateResponse(resp)
+	out := translateResponse(resp, nil)
 	if out.Usage.ServerToolUse == nil {
 		t.Fatal("server_tool_use missing: the billable search count was dropped")
 	}
@@ -1826,7 +1826,7 @@ func TestTranslateResponse_NoServerToolUsageWhenAbsent(t *testing.T) {
 		StopReason: "end_turn",
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5},
 	}
-	if out := translateResponse(resp); out.Usage.ServerToolUse != nil {
+	if out := translateResponse(resp, nil); out.Usage.ServerToolUse != nil {
 		t.Errorf("server_tool_use = %+v, want nil for a request that ran no server tools", out.Usage.ServerToolUse)
 	}
 }
@@ -1857,7 +1857,7 @@ func TestTranslateResponse_NoAnnotationsWhenNoCitations(t *testing.T) {
 		Content:    []anthropicContentBlock{{Type: "text", Text: "plain answer"}},
 		StopReason: "end_turn",
 	}
-	if out := translateResponse(resp); len(out.Choices[0].Message.Annotations) != 0 {
+	if out := translateResponse(resp, nil); len(out.Choices[0].Message.Annotations) != 0 {
 		t.Errorf("annotations = %s, want none", out.Choices[0].Message.Annotations)
 	}
 }

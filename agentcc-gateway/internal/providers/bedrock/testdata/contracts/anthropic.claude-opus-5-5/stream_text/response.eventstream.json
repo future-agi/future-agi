@@ -1,0 +1,88 @@
+[
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "message_start",
+      "message": {
+        "id": "msg_bdrk_01Ua7TQfV2fqyM5cFv2nYtWj",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 1
+        }
+      }
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "content_block_start",
+      "index": 0,
+      "content_block": {
+        "type": "text",
+        "text": ""
+      }
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": {
+        "type": "text_delta",
+        "text": "Hello"
+      }
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": {
+        "type": "text_delta",
+        "text": "! How can I help you today?"
+      }
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "content_block_stop",
+      "index": 0
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "message_delta",
+      "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+      },
+      "usage": {
+        "output_tokens": 12
+      }
+    }
+  },
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "message_stop",
+      "amazon-bedrock-invocationMetrics": {
+        "inputTokenCount": 10,
+        "outputTokenCount": 12,
+        "invocationLatency": 655,
+        "firstByteLatency": 318
+      }
+    }
+  }
+]

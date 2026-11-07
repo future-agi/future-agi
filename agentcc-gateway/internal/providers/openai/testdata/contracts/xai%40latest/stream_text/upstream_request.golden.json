@@ -1,0 +1,26 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "You are a helpful assistant that can answer questions and help with tasks.",
+        "role": "system"
+      },
+      {
+        "content": "What is 101*3?",
+        "role": "user"
+      }
+    ],
+    "model": "latest",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

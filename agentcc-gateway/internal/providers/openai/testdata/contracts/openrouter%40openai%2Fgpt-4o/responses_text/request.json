@@ -1,0 +1,4 @@
+{
+  "input": "Tell me a joke",
+  "model": "openai/gpt-4o"
+}

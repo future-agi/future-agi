@@ -1,0 +1,6 @@
+{
+  "code": "provider_overloaded_error",
+  "message": "Overloaded",
+  "status": 502,
+  "type": "upstream_error"
+}

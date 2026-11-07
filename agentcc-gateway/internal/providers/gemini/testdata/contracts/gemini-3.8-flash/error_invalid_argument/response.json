@@ -1,0 +1,18 @@
+{
+  "error": {
+    "code": 400,
+    "message": "* GenerateContentRequest.tools[0].function_declarations[0].name: Invalid function name. Must be a-z, A-Z, 0-9, or contain underscores, colons, dots, and dashes, with a maximum length of 128.\n",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        "fieldViolations": [
+          {
+            "field": "tools[0].function_declarations[0].name",
+            "description": "Invalid function name. Must be a-z, A-Z, 0-9, or contain underscores, colons, dots, and dashes, with a maximum length of 128."
+          }
+        ]
+      }
+    ]
+  }
+}

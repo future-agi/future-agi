@@ -1,0 +1,13 @@
+{
+  "body": {
+    "max_tokens": 16,
+    "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+    "prompt": "The capital of France is"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/completions"
+}
