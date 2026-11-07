@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Typography } from "@mui/material";
 
-import { getSkillErrorCode, usePublishSkillDraft, useSkillCompare } from "src/api/skills";
+import { getSkillErrorCode, usePublishSkillDraft, useSaveSkillDraft, useSkillCompare, useSkillDraft } from "src/api/skills";
 import { paths } from "src/routes/paths";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -14,13 +14,15 @@ import ChecksList from "src/sections/skills/components/ChecksList";
 import FileStatusBadge from "src/sections/skills/components/FileStatusBadge";
 import TextDiff from "src/sections/skills/components/TextDiff";
 import useDraftChecks from "./useDraftChecks";
+import DraftConflictDialog from "./DraftConflictDialog";
 
-function PublishReview({ onClose, skill, draft }) {
+function PublishReview({ onClose, onDraftChange, skill, draft }) {
   const navigate = useNavigate();
   const [note, setNote] = useState(draft.note);
   const [labels, setLabels] = useState([]);
   const [acknowledged, setAcknowledged] = useState(false);
   const [stale, setStale] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const [failure, setFailure] = useState(null);
   const [serverChecks, setServerChecks] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -28,6 +30,8 @@ function PublishReview({ onClose, skill, draft }) {
   const checks = serverChecks ?? live.checks;
   const comparison = useSkillCompare(skill.id, draft.baseVersion, "draft");
   const publish = usePublishSkillDraft(skill.id);
+  const currentDraft = useSkillDraft(skill.id);
+  const save = useSaveSkillDraft(skill.id);
   const files = draft.baseVersion === null
     ? draft.files.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.content }))
     : (comparison.data?.files ?? []);
@@ -41,13 +45,15 @@ function PublishReview({ onClose, skill, draft }) {
     if (!canPublish || publish.isPending) return;
     setFailure(null);
     try {
-      const result = await publish.mutateAsync({ note, labels, acknowledgeWarnings: acknowledged, force: stale });
+      const result = await publish.mutateAsync({ note, labels, acknowledgeWarnings: acknowledged, force: stale, revision: draft.revision });
       enqueueSnackbar(result.unchanged ? "This version is already published." : `Published v${result.version.number}.`, { variant: "success" });
       onClose();
       navigate(paths.dashboard.skills.detail(skill.id));
     } catch (error) {
       const code = getSkillErrorCode(error);
-      if (code === "stale_base") {
+      if (code === "draft_conflict" || code === "draft_not_found") {
+        setConflict(true);
+      } else if (code === "stale_base") {
         setStale(true);
       } else if (code === "checks_failed" || code === "warnings_unacknowledged") {
         setServerChecks(error.detail);
@@ -58,6 +64,29 @@ function PublishReview({ onClose, skill, draft }) {
       }
     }
   };
+
+  if (conflict) return (
+    <DraftConflictDialog
+      open
+      onClose={onClose}
+      description="Nothing was published. Reload the changed draft, or overwrite it with your reviewed files. Review again before publishing."
+      refetch={currentDraft.refetch}
+      onReload={(latest) => {
+        if (latest) onDraftChange?.(latest);
+        else navigate(paths.dashboard.skills.detail(skill.id));
+      }}
+      onOverwrite={async (revision) => {
+        try {
+          const saved = await save.mutateAsync({ files: draft.files, note, baseVersion: draft.baseVersion, revision });
+          onDraftChange?.(saved);
+          return saved;
+        } catch {
+          // Keep the reviewed files available if a second tab wins the next CAS.
+          return null;
+        }
+      }}
+    />
+  );
 
   return (
     <ModalWrapper
@@ -121,13 +150,14 @@ function PublishReview({ onClose, skill, draft }) {
 
 const reviewPropTypes = {
   onClose: PropTypes.func.isRequired,
+  onDraftChange: PropTypes.func,
   skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired }).isRequired,
-  draft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, baseVersion: PropTypes.number }).isRequired,
+  draft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, baseVersion: PropTypes.number, revision: PropTypes.number.isRequired }).isRequired,
 };
 PublishReview.propTypes = reviewPropTypes;
 
-export default function PublishDialog({ open, onClose, skill, draft }) {
-  return open ? <PublishReview onClose={onClose} skill={skill} draft={draft} /> : null;
+export default function PublishDialog({ open, onClose, onDraftChange, skill, draft }) {
+  return open ? <PublishReview onClose={onClose} onDraftChange={onDraftChange} skill={skill} draft={draft} /> : null;
 }
 
 PublishDialog.propTypes = { ...reviewPropTypes, open: PropTypes.bool.isRequired };

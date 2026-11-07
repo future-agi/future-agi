@@ -160,10 +160,21 @@ def publish_draft(
     labels: list[str],
     acknowledge_warnings: bool,
     force: bool = False,
+    revision: int | None = None,
 ) -> PublishResult:
     """Publish and remove the same locked draft, retaining it on any failure."""
     skill = scoped_skill(skill, lock=True)
     draft = get_draft(skill=skill, user=user)
+    if revision is not None and revision != draft.revision:
+        raise SkillsHubError(
+            "draft_conflict",
+            "This draft changed. Reload it before publishing.",
+            status=409,
+            detail={
+                "revision": draft.revision,
+                "updated_at": draft.updated_at.isoformat(),
+            },
+        )
     result = publish_files(
         skill=skill,
         actor=Actor(user=user, api_key=None),

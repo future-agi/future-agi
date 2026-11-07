@@ -50,7 +50,14 @@ def credentials(request, user, workspace, organization):
 
 
 @pytest.fixture
-def client(credentials):
+def client(credentials, settings):
+    # Test settings omit this production middleware. Real-auth requests must still
+    # clear fixture scope before URL imports and after authentication, otherwise
+    # class-level querysets in unrelated views become pinned to the first tenant.
+    settings.MIDDLEWARE = [
+        "tfc.middleware.workspace_context.WorkspaceContextMiddleware",
+        *settings.MIDDLEWARE,
+    ]
     value = APIClient()
     value.credentials(**credentials[0])
     return value
@@ -70,6 +77,14 @@ def archive(files):
     return SimpleUploadedFile(
         "skills.zip", stream.getvalue(), content_type="application/zip"
     )
+
+
+def test_real_requests_clear_ambient_workspace(client, workspace):
+    from tfc.middleware.workspace_context import get_current_workspace
+
+    assert get_current_workspace() == workspace
+    result(client.get(BASE))
+    assert get_current_workspace() is None
 
 
 def test_full_authoring_lifecycle(client, make_skill_files):

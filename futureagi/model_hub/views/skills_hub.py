@@ -97,7 +97,7 @@ def invalid_import(errors):
 
 
 def contract(output=None, *, body=None, query=None, status=200, many=False, **kwargs):
-    responses = {code: s.SkillsError for code in (400, 401, 403, 404, 413)}
+    responses = dict.fromkeys((400, 401, 403, 404, 413), s.SkillsError)
     responses.update({409: s.SkillsConflictError, 422: s.SkillsChecksError})
     if output:
         responses[status] = s.envelope(output, many=many)
@@ -622,7 +622,7 @@ class SkillDraftView(SkillsView):
 
 
 class SkillDraftPublishView(SkillsView):
-    @contract(s.PublishResult, body=s.PublishOptions, status=201)
+    @contract(s.PublishResult, body=s.PublishDraftRequest, status=201)
     def post(self, request, skill_id):
         return self.published(
             request,
@@ -823,6 +823,11 @@ class SkillImportView(SkillsView):
                     labels=data["labels"],
                     tags=existing.tags if existing else [],
                     acknowledge_warnings=data["acknowledge_warnings"],
+                    source={
+                        "type": "import",
+                        "filename": item["filename"],
+                        "root": item["root"],
+                    },
                 )
             except SkillsHubError as exc:
                 result["failed"].append(

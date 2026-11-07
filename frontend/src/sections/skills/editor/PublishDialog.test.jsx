@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PublishDialog from "./PublishDialog";
 
-const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn() }));
+const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn() }));
 vi.mock("src/api/skills", () => ({
   usePublishSkillDraft: () => ({ mutateAsync: api.publish, isPending: false }),
   useRunSkillChecks: () => ({ mutateAsync: api.checks }),
   useSkillCompare: (...args) => api.compare(...args),
+  useSkillDraft: () => ({ refetch: api.refetch }),
+  useSaveSkillDraft: () => ({ mutateAsync: api.save }),
   getSkillErrorCode: (error) => error.code,
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => api.navigate }));
@@ -27,6 +29,8 @@ beforeEach(() => {
   api.checks.mockResolvedValue(checks());
   api.publish.mockResolvedValue({ version: { number: 3 }, unchanged: false });
   api.compare.mockReturnValue({ data: null, isPending: false, isError: false });
+  api.refetch.mockResolvedValue({ data: { ...draft, revision: 9, files: [{ path: "SKILL.md", content: "Other tab" }] } });
+  api.save.mockImplementation(async (payload) => ({ ...payload, revision: payload.revision + 1 }));
 });
 afterEach(() => cleanup());
 
@@ -55,7 +59,7 @@ describe("publish review", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the warnings/ }));
     expect(button).toBeEnabled();
     fireEvent.click(button);
-    await waitFor(() => expect(api.publish).toHaveBeenCalledWith({ note: "Reviewed policy", labels: ["production"], acknowledgeWarnings: true, force: false }));
+    await waitFor(() => expect(api.publish).toHaveBeenCalledWith({ note: "Reviewed policy", labels: ["production"], acknowledgeWarnings: true, force: false, revision: 1 }));
     expect(api.navigate).toHaveBeenCalledWith("/dashboard/skills/skill-id");
     expect(api.snackbar).toHaveBeenCalledWith("Published v3.", { variant: "success" });
     expect(close).toHaveBeenCalledOnce();
@@ -69,9 +73,9 @@ describe("publish review", () => {
     fireEvent.click(button);
     const force = await screen.findByRole("button", { name: "Publish anyway" });
     expect(screen.getByText(/Publishing anyway creates a version from your draft/)).toBeInTheDocument();
-    expect(api.publish).toHaveBeenCalledExactlyOnceWith({ note: "", labels: [], acknowledgeWarnings: false, force: false });
+    expect(api.publish).toHaveBeenCalledExactlyOnceWith({ note: "", labels: [], acknowledgeWarnings: false, force: false, revision: 1 });
     fireEvent.click(force);
-    await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true }));
+    await waitFor(() => expect(api.publish).toHaveBeenNthCalledWith(2, { note: "", labels: [], acknowledgeWarnings: false, force: true, revision: 1 }));
   });
 
   it("renders changed files first, opens their diff, and blocks when comparison fails", async () => {
@@ -109,6 +113,87 @@ describe("publish review", () => {
     expect(button).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it("stops publishing on a draft conflict and reloads the server draft into the editor", async () => {
+    api.publish.mockRejectedValueOnce({ code: "draft_conflict", detail: { revision: 8 } });
+    const onDraftChange = vi.fn();
+    const onClose = vi.fn();
+    renderDialog({ onDraftChange, onClose });
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    const reload = await screen.findByRole("button", { name: "Reload theirs" });
+    expect(screen.getByText(/Nothing was published/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish", exact: true })).not.toBeInTheDocument();
+    fireEvent.click(reload);
+    await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ revision: 9, files: [{ path: "SKILL.md", content: "Other tab" }] })));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(api.publish).toHaveBeenCalledOnce();
+    expect(api.save).not.toHaveBeenCalled();
+    expect(api.navigate).not.toHaveBeenCalled();
+  });
+
+  it("overwrites only with the freshly fetched revision, then returns to review instead of publishing automatically", async () => {
+    api.publish.mockRejectedValueOnce({ code: "draft_conflict", detail: { revision: 8 } });
+    const onDraftChange = vi.fn();
+    const onClose = vi.fn();
+    renderDialog({ onDraftChange, onClose });
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("Version note"), { target: { value: "Keep my review note" } });
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "Overwrite with mine" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(api.save).toHaveBeenCalledExactlyOnceWith({ files: draft.files, note: "Keep my review note", baseVersion: null, revision: 9 });
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ revision: 10, files: draft.files }));
+    expect(api.publish).toHaveBeenCalledOnce();
+    expect(api.navigate).not.toHaveBeenCalled();
+  });
+
+  it("preserves reviewed files if another writer wins again during overwrite", async () => {
+    api.publish.mockRejectedValueOnce({ code: "draft_conflict" });
+    api.save.mockRejectedValueOnce({ code: "draft_conflict" });
+    const onClose = vi.fn();
+    const onDraftChange = vi.fn();
+    renderDialog({ onClose, onDraftChange });
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "Overwrite with mine" }));
+    await screen.findByText(/Couldn't overwrite this draft/);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    api.refetch.mockResolvedValueOnce({ data: { ...draft, revision: 12 } });
+    fireEvent.click(screen.getByRole("button", { name: "Overwrite with mine" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ files: draft.files, revision: 12 }));
+    expect(api.publish).toHaveBeenCalledOnce();
+  });
+
+  it("does not overwrite when fetching the current draft fails", async () => {
+    api.publish.mockRejectedValueOnce({ code: "draft_conflict" });
+    api.refetch.mockResolvedValueOnce({ isError: true, error: new Error("offline") });
+    renderDialog();
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "Overwrite with mine" }));
+    await screen.findByText(/Couldn't load the current draft/);
+    expect(api.save).not.toHaveBeenCalled();
+    expect(api.publish).toHaveBeenCalledOnce();
+  });
+
+  it("returns to detail when the conflicted draft was removed", async () => {
+    api.publish.mockRejectedValueOnce({ code: "draft_not_found" });
+    api.refetch.mockResolvedValueOnce({ data: null });
+    renderDialog();
+    const button = screen.getByRole("button", { name: "Publish", exact: true });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "Reload theirs" }));
+    await waitFor(() => expect(api.navigate).toHaveBeenCalledWith("/dashboard/skills/skill-id"));
+    expect(api.save).not.toHaveBeenCalled();
   });
 
   it("does not run checks when closed", () => {

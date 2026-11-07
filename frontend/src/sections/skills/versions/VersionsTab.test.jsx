@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import {
   fireEvent,
   renderWithRouter,
@@ -94,6 +95,16 @@ describe("VersionsTab", () => {
       page: 2,
       pageSize: 25,
     });
+  });
+
+  it("opens the version menu on the first full pointer click", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<VersionsTab skill={skill} />);
+    await user.click(screen.getByRole("button", { name: "Actions for v2" }));
+    await user.click(screen.getByRole("menuitem", { name: "Compare with previous" }));
+    expect(mocks.push).toHaveBeenCalledWith(
+      "/dashboard/skills/skill-1/compare?from=1&to=2",
+    );
   });
 
   it("links to files and disables unavailable row comparisons", () => {

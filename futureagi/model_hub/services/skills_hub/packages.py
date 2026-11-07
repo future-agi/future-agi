@@ -239,7 +239,12 @@ def _entry_rejection(entry: zipfile.ZipInfo, path: str, counts: Counter) -> str 
 
 
 def _bundles(
-    files: dict[str, str], source: str, fallback_name: str, rejected: list[dict]
+    files: dict[str, str],
+    source: str,
+    fallback_name: str,
+    rejected: list[dict],
+    *,
+    filename: str | None = None,
 ) -> list[dict]:
     roots: list[str] = []
     for path in sorted(files, key=lambda name: (name.count("/"), name)):
@@ -273,6 +278,7 @@ def _bundles(
             {
                 "key": key,
                 "root": root,
+                "filename": filename if filename is not None else prefix + "SKILL.md",
                 "name": name,
                 "files": bundle_files,
                 "checks": checks,
@@ -309,6 +315,7 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
                     f"{index}:{filename}",
                     posixpath.splitext(posixpath.basename(filename))[0],
                     rejected,
+                    filename=filename,
                 )
             )
         else:

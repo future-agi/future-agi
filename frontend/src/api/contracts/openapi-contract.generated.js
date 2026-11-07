@@ -56034,6 +56034,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "decimal",
         },
+        autoreload_maxcharge: {
+          title: "Autoreload maxcharge",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        autoreload_consent: {
+          title: "Autoreload consent",
+          type: "boolean",
+          default: false,
+        },
+        autoreload_charge_now: {
+          title: "Autoreload charge now",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     AutoReloadSettingsResponse: {
@@ -86074,6 +86090,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
       },
     },
     SkillsHubPublishVersionRequest: {
@@ -114802,15 +114822,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         from: {
           title: "From",
-          description: "Any valid JSON value.",
+          description: "Positive version number or the literal draft.",
           type: "object",
-          "x-json-value": true,
+          "x-oneOf": [
+            {
+              type: "integer",
+              minimum: 1,
+            },
+            {
+              type: "string",
+              enum: ["draft"],
+            },
+          ],
         },
         to: {
           title: "To",
-          description: "Any valid JSON value.",
+          description: "Positive version number or the literal draft.",
           type: "object",
-          "x-json-value": true,
+          "x-oneOf": [
+            {
+              type: "integer",
+              minimum: 1,
+            },
+            {
+              type: "string",
+              enum: ["draft"],
+            },
+          ],
         },
         files: {
           type: "array",

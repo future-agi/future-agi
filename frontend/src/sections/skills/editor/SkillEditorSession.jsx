@@ -141,7 +141,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
       }} />
       <ConfirmDialog open={discardOpen} onClose={() => { if (!discard.isPending) setDiscardOpen(false); }} closeDisabled={discard.isPending} title="Discard draft?" content="This removes your saved draft and unsaved edits. Published versions and labels will not change." action={<Button variant="contained" color="error" disabled={saving || discard.isPending} onClick={discardDraft}>Discard draft</Button>} />
       <ConfirmDialog open={guard.blocked} onClose={guard.cancel} title="Leave with unsaved changes?" content="Your latest edits have not been saved. Stay to save them, or leave without those changes." action={<Button variant="contained" color="error" onClick={guard.proceed}>Leave without saving</Button>} />
-      {publishDraft && <PublishDialog open onClose={() => setPublishDraft(null)} skill={skill} draft={publishDraft} />}
+      {publishDraft && <PublishDialog open onClose={() => setPublishDraft(null)} onDraftChange={session.reload} skill={skill} draft={publishDraft} />}
     </Stack>
   );
 }

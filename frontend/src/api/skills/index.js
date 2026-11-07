@@ -11,7 +11,7 @@ import {
 
 export { skillsKeys } from './keys';
 export { endpoints } from './endpoints';
-export const getSkillErrorCode = (error) => error?.code || error?.response?.data?.code;
+export const getSkillErrorCode = (error) => error?.response?.data?.code || error?.code;
 const result = (response) => response.data.result;
 const pageParams = ({ pageSize, ...params } = {}) => ({ ...params, ...(pageSize != null ? { page_size: pageSize } : {}) });
 
@@ -131,7 +131,7 @@ export function useDiscardSkillDraft(id) {
   return useSkillsMutation(async () => { await axios.delete(endpoints.draft(id)); });
 }
 export function usePublishSkillDraft(id) {
-  return useSkillsMutation(async ({ note, labels, acknowledgeWarnings, force }) => mapPublish(result(await axios.post(endpoints.publishDraft(id), { note, labels, acknowledge_warnings: acknowledgeWarnings, force }))));
+  return useSkillsMutation(async ({ note, labels, acknowledgeWarnings, force, revision }) => mapPublish(result(await axios.post(endpoints.publishDraft(id), { note, labels, acknowledge_warnings: acknowledgeWarnings, force, revision }))));
 }
 export function useRestoreSkillVersion(id) {
   return useSkillsMutation(async ({ number, note }) => mapPublish(result(await axios.post(endpoints.restore(id, number), { note }))));

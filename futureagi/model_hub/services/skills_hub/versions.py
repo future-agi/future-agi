@@ -300,8 +300,10 @@ def publish_by_name(
     labels: list[str],
     tags: list[str],
     acknowledge_warnings: bool,
+    source: dict | None = None,
 ) -> PublishResult:
-    """Push from API/MCP without a stale-base check; identical pushes are no-ops."""
+    """Push by name, preserving provenance; identical pushes are no-ops."""
+    source = {"type": "api"} if source is None else source
     _validate_note(note)
     _validate_tags(tags)
     checks = _checked(files, name=None, acknowledge_warnings=acknowledge_warnings)
@@ -317,7 +319,7 @@ def publish_by_name(
                 name=frontmatter["name"],
                 description=frontmatter["description"],
                 tags=tags,
-                source={"type": "api"},
+                source=source,
             )
         except SkillsHubError as exc:
             if exc.code != "name_taken":
@@ -337,7 +339,7 @@ def publish_by_name(
         base_version=skill.latest_version_number or None,
         labels=labels,
         checks=checks,
-        source={"type": "api"},
+        source=source,
         force=True,
     )
 

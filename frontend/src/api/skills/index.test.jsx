@@ -92,8 +92,8 @@ describe('mutations', () => {
   it('sends publish warning acknowledgment and force explicitly', async () => {
     axios.post.mockResolvedValue(envelope({ version: { number: 2 }, unchanged: false }));
     const { result } = renderHook(() => api.usePublishSkillDraft('id'), { wrapper });
-    await act(() => result.current.mutateAsync({ note: 'Ready', labels: ['production'], acknowledgeWarnings: true, force: false }));
-    expect(axios.post).toHaveBeenCalledWith('/model-hub/skills/id/draft/publish/', { note: 'Ready', labels: ['production'], acknowledge_warnings: true, force: false });
+    await act(() => result.current.mutateAsync({ note: 'Ready', labels: ['production'], acknowledgeWarnings: true, force: false, revision: 7 }));
+    expect(axios.post).toHaveBeenCalledWith('/model-hub/skills/id/draft/publish/', { note: 'Ready', labels: ['production'], acknowledge_warnings: true, force: false, revision: 7 });
   });
   it('passes FormData unchanged so the browser sets the multipart boundary', async () => {
     axios.post.mockResolvedValue(envelope({ bundles: [] }));
@@ -115,4 +115,5 @@ it('downloads via the credentialed shared axios instance', async () => {
 it('reads normalized and raw Axios error codes', () => {
   expect(api.getSkillErrorCode({ code: 'stale_base' })).toBe('stale_base');
   expect(api.getSkillErrorCode({ response: { data: { code: 'checks_failed' } } })).toBe('checks_failed');
+  expect(api.getSkillErrorCode({ code: 'ERR_BAD_REQUEST', response: { status: 409, data: { code: 'draft_conflict' } } })).toBe('draft_conflict');
 });

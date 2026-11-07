@@ -19,7 +19,17 @@ const checks = { items: [{ code: 'description_short', severity: 'warning', messa
 const save = async (value) => { draft = { ...value, revision: value.revision + 1 }; return draft; };
 const runChecks = async () => checks;
 let publishAttempts = 0;
-const publish = async () => { if (!publishAttempts++) throw { code: 'stale_base', detail: { base_version: 1, latest_version: 2 } }; return { version: { number: 3 }, unchanged: false }; };
+const publish = async (value) => {
+  if (value.revision !== draft.revision) throw new Error('Publication was not bound to the saved draft revision');
+  if (!publishAttempts++) {
+    if (new URLSearchParams(location.search).has('conflict')) {
+      draft = { ...draft, revision: draft.revision + 1, files: [{ path: 'SKILL.md', content: root + '\\nUpdated in another tab.\\n' }] };
+      throw { code: 'draft_conflict', detail: { revision: draft.revision } };
+    }
+    throw { code: 'stale_base', detail: { base_version: 1, latest_version: 2 } };
+  }
+  return { version: { number: 3 }, unchanged: false };
+};
 export const useSkill = () => ({ data: skill });
 export const useSkillDraft = () => ({ data: draft, refetch: async () => ({ data: draft }) });
 export const useSkillVersion = () => ({ data: { files: draft.files } });
@@ -154,8 +164,31 @@ try {
   await pause(500);
   assert(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'No horizontal page overflow at phone width');
   await screenshot('editor-mobile-dark');
+  for (const [theme, choice] of [['light', 'Reload theirs'], ['dark', 'Overwrite with mine']]) {
+    await command('Emulation.setDeviceMetricsOverride', { width: theme === 'dark' ? 390 : 1440, height: 1000, deviceScaleFactor: 1, mobile: theme === 'dark' });
+    await command('Page.navigate', { url: `http://127.0.0.1:5414/dashboard/skills/synthetic/edit?conflict=1&theme=${theme}` });
+    await wait(() => evaluate("Boolean(document.querySelector('.monaco-editor'))"), 'conflict editor');
+    await click('Publish');
+    await wait(() => evaluate("document.body.textContent.includes('I reviewed the warnings')"), 'conflict review');
+    await evaluate("[...document.querySelectorAll('label')].find((item) => item.textContent.includes('I reviewed the warnings')).querySelector('input').click()");
+    await click('Publish');
+    await wait(() => evaluate("document.body.textContent.includes('Nothing was published.')"), 'revision conflict choices');
+    assert(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'Conflict dialog fits viewport');
+    await screenshot(`publish-conflict-${theme}`);
+    await click(choice);
+    await wait(() => evaluate("!document.querySelector('[role=dialog]')"), 'return to editor after conflict recovery');
+    await click('Preview');
+    assert.equal(await evaluate("document.body.textContent.includes('Updated in another tab.')"), choice === 'Reload theirs', 'Recovery chooses the intended files');
+    await click('Edit');
+    await click('Publish');
+    await wait(() => evaluate("document.body.textContent.includes('I reviewed the warnings')"), 'new review after conflict');
+    assert(await evaluate("[...document.querySelectorAll('[role=dialog] button')].find((item) => item.textContent.trim() === 'Publish').disabled"), 'Recovery requires a fresh warning acknowledgment');
+    await evaluate("[...document.querySelectorAll('label')].find((item) => item.textContent.includes('I reviewed the warnings')).querySelector('input').click()");
+    await click('Publish');
+    await wait(() => evaluate("document.body.textContent.includes('Published skill detail')"), 'revision-bound publication after recovery');
+  }
   assert.deepEqual(errors, [], 'No uncaught browser exceptions');
-  process.stdout.write(`PASS: light/dark editor, mobile overflow, file creation, Markdown preview, warning gate, stale-base confirmation, publish navigation. Screenshots: ${output}\n`);
+  process.stdout.write(`PASS: light/dark editor, mobile overflow, file creation, Markdown preview, warning gate, stale-base confirmation, revision-bound publishing, and reload/overwrite recovery in light/dark. Screenshots: ${output}\n`);
 } catch (error) {
   await captureFailure();
   throw error;

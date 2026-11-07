@@ -17,7 +17,7 @@ vi.mock("src/api/skills", () => ({
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("./SkillFileEditor", () => ({ default: ({ file, onChange, readOnly, target }) => <textarea aria-label="File content" data-line={target?.line} value={file.content} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} /> }));
 vi.mock("./DraftChecksPanel", () => ({ default: ({ onSelect }) => <button onClick={() => onSelect({ path: "SKILL.md", line: 3 })}>Open check</button> }));
-vi.mock("./PublishDialog", () => ({ default: ({ draft, onClose }) => <div role="dialog" aria-label="Publish review"><pre>{JSON.stringify(draft)}</pre><button onClick={onClose}>Close review</button></div> }));
+vi.mock("./PublishDialog", () => ({ default: ({ draft, onClose, onDraftChange }) => <div role="dialog" aria-label="Publish review"><pre>{JSON.stringify(draft)}</pre><button onClick={onClose}>Close review</button><button onClick={() => { onDraftChange({ ...draft, revision: 10, files: [{ path: "SKILL.md", content: "Reloaded during publication" }] }); onClose(); }}>Resolve publish conflict</button></div> }));
 vi.mock("src/sections/skills/components/SkillMarkdownPreview", () => ({ default: ({ content }) => <div>{content}</div> }));
 vi.mock("src/sections/skills/components/FileTree", () => ({ default: ({ files, onSelect, onCreate, onRename, onDelete }) => (
   <nav aria-label="Files">
@@ -63,6 +63,19 @@ describe("skill editor", () => {
     expect(api.save).toHaveBeenCalledExactlyOnceWith({ ...initial, files: [{ path: "SKILL.md", content: "My edits" }] });
     expect(screen.getByRole("dialog", { name: "Publish review" })).toHaveTextContent('"revision":5');
     expect(screen.getByLabelText("File content")).toHaveAttribute("readonly");
+  });
+
+  it("adopts conflict recovery from the publish dialog before saving or reviewing again", async () => {
+    mount();
+    await screen.findByLabelText("File content");
+    fireEvent.click(screen.getByRole("button", { name: "Publish", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resolve publish conflict" }));
+    expect(screen.getByLabelText("File content")).toHaveValue("Reloaded during publication");
+    expect(screen.getByRole("status")).toHaveTextContent("Saved");
+    fireEvent.click(screen.getByRole("button", { name: "Publish", exact: true }));
+    await screen.findByRole("dialog", { name: "Publish review" });
+    expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 10, files: [{ path: "SKILL.md", content: "Reloaded during publication" }] }));
+    expect(screen.getByRole("dialog", { name: "Publish review" })).toHaveTextContent('"revision":11');
   });
 
   it("checks the server revision before review even when local files are unchanged", async () => {

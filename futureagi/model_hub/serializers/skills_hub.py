@@ -12,7 +12,6 @@ from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.usage import fetches_7d_map
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
-from tfc.utils.serializer_fields import JsonValueField
 
 
 class HubSerializer(s.Serializer):
@@ -92,6 +91,14 @@ class PublishVersionRequest(PublishOptions):
     files = FileInput(many=True)
     base_version = s.IntegerField(min_value=1, allow_null=True, default=None)
     note = s.CharField(max_length=limits.MAX_NOTE, allow_blank=True, default="")
+
+
+class PublishDraftRequest(PublishOptions):
+    class Meta:
+        # Preserve the existing draft-publish contract name when extending it.
+        ref_name = "SkillsHubPublishOptions"
+
+    revision = s.IntegerField(required=False)
 
 
 class DraftRequest(HubSerializer):
@@ -520,6 +527,18 @@ class CompareSummary(HubSerializer):
     unchanged = s.IntegerField()
 
 
+class CompareRef(s.JSONField):
+    """The service returns integer version numbers or the literal draft."""
+
+    class Meta:
+        swagger_schema_fields = {
+            "x-oneOf": [
+                {"type": "integer", "minimum": 1},
+                {"type": "string", "enum": ["draft"]},
+            ],
+        }
+
+
 class CompareResult(HubSerializer):
     files = CompareFile(many=True)
     summary = CompareSummary()
@@ -528,12 +547,10 @@ class CompareResult(HubSerializer):
         fields = super().get_fields()
         # Version numbers or the literal 'draft'. JSON preserves the integer.
         return {
-            "from": JsonValueField(
+            "from": CompareRef(
                 help_text="Positive version number or the literal draft."
             ),
-            "to": JsonValueField(
-                help_text="Positive version number or the literal draft."
-            ),
+            "to": CompareRef(help_text="Positive version number or the literal draft."),
             **fields,
         }
 

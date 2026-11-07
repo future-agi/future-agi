@@ -4,7 +4,7 @@ import { Alert, Button, DialogActions, DialogContent, DialogTitle, Stack, Typogr
 
 import { ClosableDialog } from "src/components/custom-dialog";
 
-export default function DraftConflictDialog({ open, onClose, refetch, onReload, onOverwrite }) {
+export default function DraftConflictDialog({ open, onClose, refetch, onReload, onOverwrite, description = "Your edits have not been saved. Reload the server draft, or replace it with your files using its current revision." }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState(null);
   const resolve = async (overwrite) => {
@@ -34,7 +34,7 @@ export default function DraftConflictDialog({ open, onClose, refetch, onReload, 
       <DialogTitle>Draft changed in another tab</DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
-          <Typography variant="s1">Your edits have not been saved. Reload the server draft, or replace it with your files using its current revision.</Typography>
+          <Typography variant="s1">{description}</Typography>
           {failure && <Alert severity="error">{failure}</Alert>}
         </Stack>
       </DialogContent>
@@ -52,4 +52,5 @@ DraftConflictDialog.propTypes = {
   refetch: PropTypes.func.isRequired,
   onReload: PropTypes.func.isRequired,
   onOverwrite: PropTypes.func.isRequired,
+  description: PropTypes.string,
 };

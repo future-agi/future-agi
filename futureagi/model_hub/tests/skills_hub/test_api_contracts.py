@@ -31,6 +31,8 @@ def json_schema(value):
         return value
     if value.get("x-json-value"):
         return {}
+    if "x-oneOf" in value:
+        return {"oneOf": json_schema(value["x-oneOf"])}
     result = {
         key: json_schema(item) for key, item in value.items() if key != "x-nullable"
     }

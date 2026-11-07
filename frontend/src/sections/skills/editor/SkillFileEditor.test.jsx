@@ -4,16 +4,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SkillFileEditor from "./SkillFileEditor";
 
 const editor = vi.hoisted(() => ({ setPosition: vi.fn(), revealLineInCenter: vi.fn(), focus: vi.fn(), copy: vi.fn() }));
-vi.mock("@monaco-editor/react", () => ({
-  useMonaco: () => ({
-    Uri: { parse: (path) => ({ toString: () => path }) },
-    editor: {
-      getEditors: () => [{ ...editor, getModel: () => ({ uri: { toString: () => "scripts/check.py" } }) }],
-      onDidCreateEditor: () => ({ dispose: vi.fn() }),
-    },
-  }),
-  Editor: ({ value, onChange, language, options }) => <textarea aria-label="Code editor" data-language={language} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.target.value)} />,
-}));
+vi.mock("@monaco-editor/react", async () => {
+  const { default: PropTypes } = await import("prop-types");
+  function MockEditor({ value, onChange, language, options }) {
+    return <textarea aria-label="Code editor" data-language={language} value={value} readOnly={options.readOnly} onChange={(event) => onChange(event.target.value)} />;
+  }
+  MockEditor.propTypes = {
+    value: PropTypes.string,
+    onChange: PropTypes.func.isRequired,
+    language: PropTypes.string,
+    options: PropTypes.shape({ readOnly: PropTypes.bool }).isRequired,
+  };
+  return {
+    useMonaco: () => ({
+      Uri: { parse: (path) => ({ toString: () => path }) },
+      editor: {
+        getEditors: () => [{ ...editor, getModel: () => ({ uri: { toString: () => "scripts/check.py" } }) }],
+        onDidCreateEditor: () => ({ dispose: vi.fn() }),
+      },
+    }),
+    Editor: MockEditor,
+  };
+});
 vi.mock("src/utils/utils", () => ({ copyToClipboard: editor.copy }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 

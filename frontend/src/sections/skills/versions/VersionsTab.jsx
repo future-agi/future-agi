@@ -169,7 +169,7 @@ export default function VersionsTab({ skill }) {
             setMenu({ anchor: event.currentTarget, version: row.original });
           }}
         >
-          <Iconify icon="solar:menu-dots-bold" width={20} />
+          <Iconify icon="solar:menu-dots-bold" width={20} sx={{ pointerEvents: "none" }} />
         </IconButton>
       ),
     },
