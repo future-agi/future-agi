@@ -257,6 +257,9 @@ func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Release()
+	if _, ok := videoDialect(w, r, false); !ok {
+		return // reject a bad header before any lifecycle work
+	}
 	j, e := h.videoService.Get(r.Context(), r.URL.Query().Get("video_id"), rc.Metadata["org_id"])
 	if e != nil {
 		videoError(w, e)
@@ -373,6 +376,9 @@ func (h *Handlers) GetVideoContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Release()
+	if _, ok := videoDialect(w, r, false); !ok {
+		return
+	}
 	index := 0
 	var e error
 	if r.URL.Query().Has("artifact_index") {

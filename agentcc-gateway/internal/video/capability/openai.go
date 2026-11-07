@@ -67,6 +67,9 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 			return c, invalid("unknown_field", k, "unknown field")
 		}
 		if k == "input_reference" {
+			if nested, dup := duplicateKey(v); dup {
+				return c, invalid("invalid_parameter", "input_reference."+nested, "field repeated")
+			}
 			var ref struct {
 				ImageURL string `json:"image_url"`
 				FileID   string `json:"file_id"`

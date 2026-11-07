@@ -259,3 +259,18 @@ func TestOpenRouter_UsageRefreshHonoursCooldown(t *testing.T) {
 		t.Fatalf("usage_polls=%d next=%v settlement=%s", j.UsagePolls, j.NextPollAt.Sub(f.clock.Now()), j.SettlementState)
 	}
 }
+
+// Accounting reads stop a day after the job ended, so even a cost that would
+// now be reported is not fetched (rate-limited reads never count against
+// maxUsagePolls, so the age bound is what ends them).
+func TestOpenRouter_UsageRefreshEndsAfterMaxAge(t *testing.T) {
+	cost := 0.05
+	f := setupOpenRouter(t, videotest.Script{Poll: []videotest.Reply{videotest.JSONReply(orCompleted(nil)), videotest.JSONReply(orCompleted(&cost))}, Fetch: videotest.Reply{Body: videotest.MP4()}})
+	j := f.runToTerminal(t, f.acceptOpenRouter(t).ID)
+	f.clock.Advance(maxUsageRefreshAge + time.Minute)
+	f.tick(t)
+	j = f.job(t, j.ID)
+	if j.UsagePolls != 0 || j.SettlementState != video.SettlementUnsettled || j.SettledMicros != 0 {
+		t.Fatalf("usage_polls=%d settlement=%s settled=%d", j.UsagePolls, j.SettlementState, j.SettledMicros)
+	}
+}

@@ -207,13 +207,21 @@ func reserve(opts StoreOptions, j *VideoJob) (func() error, error) {
 }
 func replay(j *VideoJob, fp string) (AcceptResult, error) {
 	r := AcceptResult{Job: j, Replay: true}
-	if j.Fingerprint != fp {
+	if j.Fingerprint != fp && !(j.Wire == WireOpenAI && j.Fingerprint == legacyWireFingerprint(fp)) {
 		return r, ErrIdempotencyConflict
 	}
 	if j.DeletedAt != nil {
 		return r, ErrDeletedJob
 	}
 	return r, nil
+}
+
+// legacyWireFingerprint is the digest an earlier revision of this branch stored
+// for OpenAI-shaped jobs (fingerprint salted with the wire). New jobs store the
+// plain fingerprint; replays of those older records still match.
+func legacyWireFingerprint(fp string) string {
+	sum := sha256.Sum256([]byte(fp + "|wire=" + WireOpenAI))
+	return hex.EncodeToString(sum[:])
 }
 func validateFilters(f VideoListFilters) error {
 	if f.Limit < 1 || f.Limit > 100 || f.Offset < 0 || f.Order != "" && f.Order != "asc" && f.Order != "desc" || f.Status != "" && !validState(f.Status) {

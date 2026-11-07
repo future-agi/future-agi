@@ -168,6 +168,16 @@ func TestVideoDialectIsChosenPerRequest(t *testing.T) {
 	if o := get("/v1/videos/"+native["id"].(string), "X-Stainless-Lang", "python"); o["status"] != "queued" {
 		t.Fatalf("SDK read of a native job: %v", o)
 	}
+	for _, path := range []string{"/v1/videos/" + openai["id"].(string), "/v1/videos/" + openai["id"].(string) + "/content", "/v1/videos"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Authorization", "Bearer "+f.keyA)
+		r.Header.Set("X-AgentCC-Video-Dialect", "sora")
+		w := httptest.NewRecorder()
+		f.s.httpServer.Handler.ServeHTTP(w, r)
+		if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_video_dialect") {
+			t.Fatal(path, w.Code, w.Body.String())
+		}
+	}
 	r := httptest.NewRequest("DELETE", "/v1/videos/"+openai["id"].(string), nil)
 	r.Header.Set("Authorization", "Bearer "+f.keyA)
 	r.Header.Set("X-AgentCC-Video-Dialect", "sora")

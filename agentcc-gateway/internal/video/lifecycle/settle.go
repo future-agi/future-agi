@@ -55,6 +55,10 @@ func (s *Service) priceObservation(j *video.VideoJob, obs provider.Observation) 
 // minutes, about an hour) while its charge is still unknown.
 const maxUsagePolls = 12
 
+// maxUsageRefreshAge also ends accounting reads, including rate-limited ones
+// that do not count against maxUsagePolls, a day after the job ended.
+const maxUsageRefreshAge = 24 * time.Hour
+
 // refreshUsage re-reads a terminal job's provider status only to learn a
 // charge that was unknown when the job ended (for example OpenRouter reporting
 // usage.cost:null at completion). It never copies output, resubmits, or changes
@@ -105,6 +109,11 @@ func (s *Service) refreshUsage(ctx context.Context, j *video.VideoJob, l video.L
 	}
 	j.Usage.Lines = append([]provider.UsageLine(nil), obs.Usage.Lines...)
 	s.priceObservation(j, obs)
+	if !j.BillingKnown {
+		// Usage arrived but could not be priced; keep the provider's cooldown.
+		j.SettlementState = video.SettlementUnsettled
+		return s.saveLater(ctx, j, l, next)
+	}
 	if e := s.save(ctx, j, l); e != nil {
 		return e
 	}

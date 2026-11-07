@@ -92,6 +92,7 @@ func TestOpenAIJSONShape(t *testing.T) {
 		`{"model":"m","seconds":"4","input_reference":{"image_url":"http://insecure.example/a.png"}}`,
 		`{"model":"m","seconds":"4","audio":"yes"}`,
 		`{"model":"m","seconds":"4","seconds":"12"}`,
+		`{"model":"m","seconds":"4","input_reference":{"image_url":"https://a.example/x.png","image_url":"https://b.example/x.png"}}`,
 		`[]`,
 	} {
 		if _, err := DecodeOpenAIJSON([]byte(body)); err == nil {
