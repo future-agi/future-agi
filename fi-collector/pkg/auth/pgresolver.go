@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,9 +20,64 @@ type ResolveResult struct {
 	OrgID       string
 	WorkspaceID string
 	UserID      string
-	KeyType     string // "system", "user", "mcp"
-	mu          sync.RWMutex
-	Projects    map[string]string // project_name → project_id
+	KeyType     string // "system", "user", "mcp", "ingest"
+	// SimulationAgent is the agent an "ingest" key names; its ID is empty for
+	// every other key and for an ingest key made for no agent. It is set once
+	// before the result is cached and never changed.
+	SimulationAgent SimulationAgent
+	// columnsMissing marks an ingest key read without the agent column, so
+	// routing cannot know its agent.
+	columnsMissing bool
+	mu             sync.RWMutex
+	Projects       map[string]string // project_name → project_id
+	// projectTypes maps a project_id to its trace_type ("observe",
+	// "experiment") for the projects whose type resolution learned. A
+	// project missing here has an unknown type.
+	projectTypes map[string]string
+	// finding is why routing refused this key's agent. It is kept under mu
+	// for as long as this result is cached, so a refused agent costs no
+	// database statement per request; a new result starts without one.
+	finding *routeFinding
+	// failed holds digests of names with deterministic value/check failures
+	// until their retry time (failedProjectRetry).
+	failed map[[sha256.Size]byte]time.Time
+}
+
+// failedProjectRetry is how long a project name with a permanent value failure is
+// not tried again for the same key: its spans are dropped as unresolvable
+// meanwhile. Only fixed-size SHA-256 digests and expiry times are retained,
+// never request strings. maxFailedProjects also bounds the map allocation.
+const (
+	failedProjectRetry = time.Minute
+	maxFailedProjects  = 4096
+)
+
+// markFailed records that creating name failed.
+func (r *ResolveResult) markFailed(name string, now time.Time) {
+	if validateProjectName(name, "project_name") != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failed == nil || len(r.failed) >= maxFailedProjects {
+		for n, until := range r.failed {
+			if !now.Before(until) {
+				delete(r.failed, n)
+			}
+		}
+		if r.failed == nil || len(r.failed) >= maxFailedProjects {
+			r.failed = map[[sha256.Size]byte]time.Time{}
+		}
+	}
+	r.failed[sha256.Sum256([]byte(name))] = now.Add(failedProjectRetry)
+}
+
+// SimulationAgent is what key validation reads about the agent of a sandbox
+// key. A key whose agent row is gone has Deleted set and no OrgID.
+type SimulationAgent struct {
+	ID      string
+	OrgID   string
+	Deleted bool
 }
 
 // GetProject returns the project ID for a given name, thread-safe.
@@ -71,6 +130,38 @@ func (r *ResolveResult) SetProjectsInWorkspace(workspaceID string, projects map[
 	return true
 }
 
+// SetProjectTypesInWorkspace records trace_types by project id, under the
+// same workspace-scope proof as SetProjectsInWorkspace. Empty types are
+// skipped.
+func (r *ResolveResult) SetProjectTypesInWorkspace(workspaceID string, types map[string]string) bool {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, traceType := range types {
+		if id == "" || traceType == "" {
+			continue
+		}
+		if r.projectTypes == nil {
+			r.projectTypes = make(map[string]string, len(types))
+		}
+		r.projectTypes[id] = traceType
+	}
+	return true
+}
+
+// ProjectTypeInWorkspace returns the recorded trace_type of projectID, or ""
+// when it is unknown or the workspace is not this result's.
+func (r *ResolveResult) ProjectTypeInWorkspace(workspaceID, projectID string) string {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.projectTypes[projectID]
+}
+
 // MissingProjectsInWorkspace prevents a cached name from one workspace from
 // satisfying a lookup for another workspace.
 func (r *ResolveResult) MissingProjectsInWorkspace(workspaceID string, names []string) ([]string, bool) {
@@ -80,33 +171,51 @@ func (r *ResolveResult) MissingProjectsInWorkspace(workspaceID string, names []s
 	return r.MissingProjects(names), true
 }
 
-// ProjectIDsInWorkspace snapshots the project IDs that were resolved through
-// this authentication result. The server uses it as an in-memory sidecar
-// proof before handing canonical rows to the optional property writer.
+// ProjectIDsInWorkspace snapshots the ids of the visible projects that were
+// resolved through this authentication result. The server uses it as an
+// in-memory sidecar proof before handing canonical rows to the optional
+// property writer. A project under a reserved hidden name is left out.
 func (r *ResolveResult) ProjectIDsInWorkspace(workspaceID string) (map[string]struct{}, bool) {
+	return r.projectIDsInWorkspace(workspaceID, false)
+}
+
+// HiddenProjectIDsInWorkspace snapshots the ids of the projects resolved under
+// a reserved hidden name, which never feed the catalog or the notifier.
+func (r *ResolveResult) HiddenProjectIDsInWorkspace(workspaceID string) (map[string]struct{}, bool) {
+	return r.projectIDsInWorkspace(workspaceID, true)
+}
+
+func (r *ResolveResult) projectIDsInWorkspace(workspaceID string, hidden bool) (map[string]struct{}, bool) {
 	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
 		return nil, false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make(map[string]struct{}, len(r.Projects))
-	for _, id := range r.Projects {
-		if id != "" {
+	for name, id := range r.Projects {
+		if id != "" && isReservedProjectName(name) == hidden {
 			result[id] = struct{}{}
 		}
 	}
 	return result, true
 }
 
-// MissingProjects returns project names not yet in the map, thread-safe.
+// MissingProjects returns project names not yet in the map, thread-safe,
+// leaving out names whose permanent value failure was less than failedProjectRetry
+// ago.
 func (r *ResolveResult) MissingProjects(names []string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	now := time.Now()
 	var missing []string
 	for _, name := range names {
-		if _, ok := r.Projects[name]; !ok {
-			missing = append(missing, name)
+		if _, ok := r.Projects[name]; ok {
+			continue
 		}
+		if until, failed := r.failed[sha256.Sum256([]byte(name))]; failed && now.Before(until) {
+			continue
+		}
+		missing = append(missing, name)
 	}
 	return missing
 }
@@ -123,6 +232,7 @@ func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
 			removed = true
 		}
 	}
+	delete(r.projectTypes, projectID)
 	return removed
 }
 
@@ -130,6 +240,9 @@ func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
 type PGResolver struct {
 	read  *pgxpool.Pool
 	write *pgxpool.Pool
+	// columns picks the key statement; nil behaves as "not checked yet", which
+	// reads keys without the agent column.
+	columns *routingColumns
 }
 
 // NewPGResolver opens read and write connection pools.
@@ -178,20 +291,58 @@ func (r *PGResolver) Close() {
 	r.read.Close()
 }
 
-// ValidateKey checks an API key pair and returns the associated org context.
-// Returns nil, nil if the key is not found (invalid credentials).
-func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
-	const q = `
+const validateKeyQuery = `
 		SELECT k.organization_id, k.workspace_id, k.user_id, k.type
 		FROM accounts_orgapikey k
 		WHERE k.api_key = $1 AND k.secret_key = $2
 		  AND k.enabled = true AND k.deleted = false
 		LIMIT 1`
 
+// validateKeyWithAgentQuery also reads the agent of a sandbox key. The join is
+// a left join so that a key whose agent row was deleted still validates and is
+// told apart from an invalid key.
+const validateKeyWithAgentQuery = `
+		SELECT k.organization_id, k.workspace_id, k.user_id, k.type,
+		       k.simulation_agent_id, a.organization_id, a.deleted
+		FROM accounts_orgapikey k
+		LEFT JOIN simulate_agent_definition a
+		  ON a.id = k.simulation_agent_id AND k.type = 'ingest'
+		WHERE k.api_key = $1 AND k.secret_key = $2
+		  AND k.enabled = true AND k.deleted = false
+		LIMIT 1`
+
+// ValidateKey checks an API key pair and returns the associated org context.
+// Returns nil, nil if the key is not found (invalid credentials).
+func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
+	withAgent := r.columns.state() == columnsPresent
+	res, err := r.validateKey(ctx, apiKey, secretKey, withAgent)
+	if withAgent && isUndefinedColumn(err) {
+		// A migration was rolled back since the last check: do not fail every
+		// uncached key until the next one.
+		r.columns.set(columnsMissing)
+		return r.validateKey(ctx, apiKey, secretKey, false)
+	}
+	return res, err
+}
+
+func isUndefinedColumn(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42703"
+}
+
+func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, withAgent bool) (*ResolveResult, error) {
 	var orgID, keyType string
 	var workspaceID, userID *string
+	var agentID, agentOrgID *string
+	var agentDeleted *bool
 
-	err := r.read.QueryRow(ctx, q, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+	var err error
+	if withAgent {
+		err = r.read.QueryRow(ctx, validateKeyWithAgentQuery, apiKey, secretKey).Scan(
+			&orgID, &workspaceID, &userID, &keyType, &agentID, &agentOrgID, &agentDeleted)
+	} else {
+		err = r.read.QueryRow(ctx, validateKeyQuery, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+	}
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil // invalid key
@@ -216,13 +367,32 @@ func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) 
 	if userID != nil {
 		res.UserID = *userID
 	}
+	if keyType == keyTypeIngest {
+		if !withAgent {
+			res.columnsMissing = true
+		} else if agentID != nil && *agentID != "" {
+			res.SimulationAgent = SimulationAgent{ID: *agentID}
+			if agentOrgID != nil {
+				res.SimulationAgent.OrgID = *agentOrgID
+			}
+			// No agent row (hard-deleted) reads as deleted.
+			res.SimulationAgent.Deleted = agentOrgID == nil || agentDeleted == nil || *agentDeleted
+		}
+	}
 	return res, nil
 }
 
 const resolveProjectsQuery = `
-		SELECT id, name FROM tracer_project
+		SELECT id, name, trace_type FROM tracer_project
 		WHERE organization_id = $1 AND workspace_id = $2
 		  AND name = ANY($3) AND deleted = false`
+
+// ResolvedProject is the project a name resolved to and its trace_type
+// ("observe", "experiment").
+type ResolvedProject struct {
+	ID        string
+	TraceType string
+}
 
 // ResolveProjects batch-resolves project names to IDs for one exact
 // organization/workspace. A workspace-less lookup is always refused.
@@ -230,6 +400,27 @@ const resolveProjectsQuery = `
 func (r *PGResolver) ResolveProjects(
 	ctx context.Context, orgID, workspaceID string, names []string,
 ) (map[string]string, error) {
+	typed, err := r.ResolveProjectsWithTypes(ctx, orgID, workspaceID, names)
+	if err != nil || typed == nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(typed))
+	for name, p := range typed {
+		result[name] = p.ID
+	}
+	return result, nil
+}
+
+// ResolveProjectsWithTypes is ResolveProjects plus each project's
+// trace_type, read in the same statement.
+func (r *PGResolver) ResolveProjectsWithTypes(
+	ctx context.Context, orgID, workspaceID string, names []string,
+) (map[string]ResolvedProject, error) {
+	for _, name := range names {
+		if err := validateProjectName(name, "project_name"); err != nil {
+			return nil, err
+		}
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -243,13 +434,13 @@ func (r *PGResolver) ResolveProjects(
 	}
 	defer rows.Close()
 
-	result := make(map[string]string, len(names))
+	result := make(map[string]ResolvedProject, len(names))
 	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var id, name, traceType string
+		if err := rows.Scan(&id, &name, &traceType); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
-		result[name] = id
+		result[name] = ResolvedProject{ID: id, TraceType: traceType}
 	}
 	return result, rows.Err()
 }
@@ -291,8 +482,11 @@ func requireExactlyOneDefaultWorkspace(orgID string, ids []string) (string, erro
 // and returns its ID. Mirrors the Django get_or_create_project() in
 // tracer/utils/otel.py — same defaults, same unique constraint.
 func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID, name, traceType string) (string, error) {
+	if err := validateProjectName(name, "project_name"); err != nil {
+		return "", err
+	}
 	if traceType == "" {
-		traceType = "observe"
+		traceType = ProjectTypeObserve
 	}
 
 	// Legacy null-workspace callers resolve the one unambiguous active default

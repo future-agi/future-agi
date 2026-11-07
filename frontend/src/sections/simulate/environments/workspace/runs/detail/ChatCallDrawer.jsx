@@ -1,16 +1,20 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Chip, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { ShareDialog } from "src/components/share-dialog";
-import { useCallDetail } from "src/api/simulate-environments/runDetail";
+import {
+  useCallDetail,
+  useCallTraces,
+} from "src/api/simulate-environments/runDetail";
 
-import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
+import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import CallTracesPanel from "./CallTracesPanel";
+import { CALL_TRACES_COPY } from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -26,14 +30,6 @@ function RemovedChip() {
       data-testid="removed-eval-marker"
       size="small"
       label="Removed"
-      sx={{
-        height: 18,
-        fontSize: 10,
-        fontWeight: 600,
-        bgcolor: "background.neutral",
-        color: "text.subtitle",
-        "& .MuiChip-label": { px: 0.75 },
-      }}
     />
   );
 }
@@ -53,7 +49,7 @@ function NavArrow({ icon, label, onClick, disabled }) {
           aria-label={label}
           onClick={onClick}
           disabled={disabled}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: "2px", p: 0.25 }}
+          sx={{ p: 0.25 }}
         >
           <Iconify icon={icon} width={16} />
         </IconButton>
@@ -81,15 +77,18 @@ const ownsArrowKeys = {
 
 export default function ChatCallDrawer({
   task,
+  executionId = null,
   onClose,
   onPrev,
   onNext,
   hasPrev = false,
   hasNext = false,
+  traceOpen = false,
+  onTracePanelMountedChange,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
-    if (shareOpen) return undefined;
+    if (shareOpen || traceOpen) return undefined;
     const onKeyDown = (e) => {
       const tag = e.target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
@@ -103,9 +102,12 @@ export default function ChatCallDrawer({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [hasNext, hasPrev, onNext, onPrev, shareOpen]);
+  }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
+  const [artifact, setArtifact] = useState("transcript");
   const { callDetail, isLoading } = useCallDetail(task.id);
+  const callTraces = useCallTraces(executionId, task.id);
+  const showTraces = artifact === "traces";
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -119,8 +121,16 @@ export default function ChatCallDrawer({
     []
   ).filter((r) => r.kind !== "sub_goal");
   const failed = evalResults.filter((r) => r.passed === false);
+  // The list row's cells carry only a status; the drawer's error and skipped
+  // states read flags, so set them from it.
   const drawerEvals = evalResults.map((result) => ({
     ...result,
+    error:
+      result.error === true ||
+      result.status === SCORING_STATUS.FAILED ||
+      result.status === SCORING_STATUS.ERROR,
+    skipped:
+      result.skipped === true || result.status === SCORING_STATUS.SKIPPED,
     eval_name: result.name,
     score: result.score == null ? null : Math.round(result.score * 100),
     score_label:
@@ -157,8 +167,8 @@ export default function ChatCallDrawer({
           </IconButton>
         </Tooltip>
         <Stack direction="row" spacing={0.5}>
-          <NavArrow icon="mdi:chevron-up" label="Previous conversation (↑)" onClick={onPrev} disabled={!hasPrev} />
-          <NavArrow icon="mdi:chevron-down" label="Next conversation (↓)" onClick={onNext} disabled={!hasNext} />
+          <NavArrow icon="solar:alt-arrow-up-linear" label="Previous conversation (↑)" onClick={onPrev} disabled={!hasPrev} />
+          <NavArrow icon="solar:alt-arrow-down-linear" label="Next conversation (↓)" onClick={onNext} disabled={!hasNext} />
         </Stack>
         <Box flex={1} />
         <Tooltip arrow title="Share call">
@@ -167,7 +177,7 @@ export default function ChatCallDrawer({
           </IconButton>
         </Tooltip>
         <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="mingcute:close-line" width={16} sx={{ color: "text.subtitle" }} />
+          <Iconify icon="solar:close-linear" width={16} sx={{ color: "text.subtitle" }} />
         </IconButton>
       </Stack>
 
@@ -175,14 +185,26 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value="transcript"
-            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
+            value={showTraces ? "traces" : "transcript"}
+            onChange={(_, value) => setArtifact(value)}
+            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
+            <Tab value="transcript" label="Transcript" />
+            <Tab value="traces" label={CALL_TRACES_COPY.tab} />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {isLoading && turns.length === 0 ? (
+            {showTraces ? (
+              <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+                <CallTracesPanel
+                  traces={callTraces.traces}
+                  projectId={callTraces.projectId}
+                  testExecutionId={executionId}
+                  isError={callTraces.isError}
+                  onMountedChange={onTracePanelMountedChange}
+                />
+              </Box>
+            ) : isLoading && turns.length === 0 ? (
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
               </Stack>
@@ -210,19 +232,17 @@ export default function ChatCallDrawer({
                 mx: 2,
                 mb: 1.5,
                 p: 1.5,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: alpha(BUILD_TONES.red, 0.35),
-                bgcolor: (t) => alpha(BUILD_TONES.red, t.palette.mode === "dark" ? 0.1 : 0.05),
+                borderRadius: "8px",
+                bgcolor: "status.danger.bg",
               }}
               spacing={1}
             >
               {failed.map((r) => (
                 <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: BUILD_TONES.red, flexShrink: 0, mt: "1px" }} />
+                  <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "status.danger.solid", flexShrink: 0, mt: "1px" }} />
                   <Box minWidth={0}>
                     <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                         {r.name} failed{r.score != null ? ` (${Math.round(r.score * 100)})` : ""}
                       </Typography>
                       {r.removed && <RemovedChip />}
@@ -241,12 +261,12 @@ export default function ChatCallDrawer({
             onChange={(_, v) => setSide(v)}
             variant="scrollable"
             scrollButtons={false}
-            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
+            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab value="analytics" label="Chat analytics" sx={{ minHeight: 40 }} />
-            <Tab value="evals" label={`Evals (${evalResults.length})`} sx={{ minHeight: 40 }} />
-            <Tab value="messages" label="Messages" sx={{ minHeight: 40 }} />
-            <Tab value="attributes" label="Attributes" sx={{ minHeight: 40 }} />
+            <Tab value="analytics" label="Chat analytics" />
+            <Tab value="evals" label={`Evals (${evalResults.length})`} />
+            <Tab value="messages" label="Messages" />
+            <Tab value="attributes" label="Attributes" />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
@@ -322,9 +342,12 @@ ChatCallDrawer.propTypes = {
     provider: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,
+  executionId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
+  traceOpen: PropTypes.bool,
+  onTracePanelMountedChange: PropTypes.func,
 };

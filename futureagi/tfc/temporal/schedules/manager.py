@@ -274,8 +274,14 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
                 args=list(config.activity_args),
                 kwargs=dict(config.activity_kwargs),
                 queue=config.queue,
+                # Without these the workflow falls back to 12 h, so a hung
+                # pass would hold the schedule (overlap SKIP) for that long.
+                time_limit=activity_metadata.get("time_limit"),
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
+                schedule_to_start_timeout=activity_metadata.get(
+                    "schedule_to_start_timeout"
+                ),
             ),
             id=f"scheduled-{config.schedule_id}",
             task_queue=config.queue,

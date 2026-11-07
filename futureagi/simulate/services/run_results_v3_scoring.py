@@ -13,6 +13,19 @@ from simulate.models import SimulateEvalConfig
 
 logger = logging.getLogger(__name__)
 
+# Words the read models and call rows judge by, in the order the SQL lists them.
+UNMEASURED_EVAL_STATUSES = ("pending", "skipped", "error", "failed")
+ERRORED_EVAL_STATUSES = ("error", "failed")
+NATIVE_PASSED = ("pass", "passed", "true", "success", "successful")
+NATIVE_FAILED = ("fail", "failed", "false", "failure", "unsuccessful")
+HARNESS_ERROR = ("error", "errored", "cancelled", "canceled")
+HARNESS_FAILED = ("failed", "fail", "failure")
+HARNESS_INCONCLUSIVE = ("inconclusive", "unknown", "skipped")
+HARNESS_PASSED = ("passed", "pass", "success", "successful")
+QUEUED_CALL_STATUSES = ("pending", "queued")
+IN_PROGRESS_CALL_STATUSES = ("ongoing", "analyzing")
+ERRORED_CALL_STATUSES = ("failed", "cancelled")
+
 
 @dataclass(frozen=True)
 class EvalScoringSpec:
@@ -77,6 +90,18 @@ def resolve_eval_scoring_spec(config: SimulateEvalConfig) -> EvalScoringSpec:
     )
 
 
+def score_tokens(spec: EvalScoringSpec | None) -> tuple[list[str], list[str]]:
+    """The texts a stored score reads as 1.0 and as 0.0 under ``spec``."""
+    positive, negative = ["true"], ["false"]
+    if spec is None or spec.output_type == "pass_fail":
+        positive += ["pass", "yes", "success", "successful"]
+        negative += ["fail", "no", "failure", "unsuccessful"]
+    if spec is None:
+        positive.append("passed")
+        negative.append("failed")
+    return positive, negative
+
+
 def warn_invalid_eval_threshold(
     config: SimulateEvalConfig, spec: EvalScoringSpec
 ) -> None:
@@ -92,6 +117,34 @@ def warn_invalid_eval_threshold(
             reprlib.repr(configured_threshold)[:200],
             getattr(config, "id", None),
         )
+
+
+@dataclass(frozen=True)
+class LiveEval:
+    config: SimulateEvalConfig
+    spec: EvalScoringSpec
+
+
+class LiveEvals(dict[str, LiveEval]):
+    """A run test's live eval configs by id, each with its scoring spec."""
+
+    warned = False
+
+    def warn_invalid_thresholds(self) -> None:
+        """Log each invalid threshold once per load, by the first read that scores."""
+        if not self.warned:
+            self.warned = True
+            for live in self.values():
+                warn_invalid_eval_threshold(live.config, live.spec)
+
+
+def live_eval_specs(run_test_id: Any) -> LiveEvals:
+    return LiveEvals(
+        (str(config.id), LiveEval(config, resolve_eval_scoring_spec(config)))
+        for config in SimulateEvalConfig.objects.filter(
+            run_test_id=run_test_id, deleted=False
+        ).select_related("eval_template")
+    )
 
 
 def _number(value: Any) -> float | None:
@@ -153,7 +206,7 @@ def judge_stored_eval(eval_data: Any, spec: EvalScoringSpec) -> EvalJudgement:
     if not isinstance(eval_data, dict):
         return EvalJudgement(None, None)
     status = str(eval_data.get("status") or "").strip().lower()
-    if status in {"error", "failed"}:
+    if status in ERRORED_EVAL_STATUSES:
         return EvalJudgement("error", None)
     if status in {"pending", "skipped"}:
         return EvalJudgement(None, None)

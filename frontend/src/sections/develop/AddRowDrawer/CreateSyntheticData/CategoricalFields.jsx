@@ -72,7 +72,7 @@ const CategoricalFields = ({
           }}
         />
         <Iconify
-          icon="line-md:plus"
+          icon="solar:add-linear"
           color="text.primary"
           sx={{
             cursor: "pointer",
@@ -91,13 +91,12 @@ const CategoricalFields = ({
                 size="small"
                 deleteIcon={
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     width="12px"
                     height="12px"
                   />
                 }
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "action.hover",
                   color: "text.primary",
                   "&:hover": {

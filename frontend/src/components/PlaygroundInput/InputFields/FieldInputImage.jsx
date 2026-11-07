@@ -102,8 +102,8 @@ const FieldInputImage = ({ data, onChange, type, internalState }) => {
             p: 1.5,
           }}
         >
-          <IconButton sx={{ borderRadius: "4px" }} disabled={isPending}>
-            <SvgColor src="/icons/datasets/upload_file.svg" />
+          <IconButton disabled={isPending}>
+            <SvgColor width={24} src="/icons/datasets/upload_file.svg" />
           </IconButton>
           <Box textAlign="center">
             <Typography

@@ -5,7 +5,7 @@ import os
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -70,9 +70,52 @@ def store_window(
     payload: dict,
 ) -> Path:
     buffer_dir = _ensure_buffer_dir()
-    destination = buffer_dir / _window_filename(window_start, window_end)
+    # Include the install id in the filename.  The default bare-metal buffer
+    # lives under the shared temp directory, so two local installs must not
+    # overwrite or flush one another's heartbeat window.
+    try:
+        instance_id = str(UUID(str(payload.get("instance_id"))))
+    except (TypeError, ValueError, AttributeError):
+        instance_id = "legacy"
+    destination = (
+        buffer_dir / f"{instance_id}_{_window_filename(window_start, window_end)}"
+    )
+    # Migrate an unscoped window from an earlier release when it belongs to
+    # this install.  This avoids sending the same fixed window twice after an
+    # upgrade while leaving another install's legacy file untouched.
+    legacy_destination = buffer_dir / _window_filename(window_start, window_end)
     if destination.exists():
+        if legacy_destination.exists() and instance_id != "legacy":
+            try:
+                legacy_payload = json.loads(
+                    legacy_destination.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                legacy_payload = None
+            if (
+                isinstance(legacy_payload, dict)
+                and str(legacy_payload.get("instance_id")) == instance_id
+            ):
+                try:
+                    legacy_destination.unlink(missing_ok=True)
+                except OSError:
+                    pass
         return destination
+
+    if instance_id != "legacy" and legacy_destination.exists():
+        try:
+            legacy_payload = json.loads(legacy_destination.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            legacy_payload = None
+        if (
+            isinstance(legacy_payload, dict)
+            and str(legacy_payload.get("instance_id")) == instance_id
+        ):
+            try:
+                os.replace(legacy_destination, destination)
+                return destination
+            except OSError:
+                pass
 
     temporary = buffer_dir / (f".{destination.name}.{os.getpid()}.{uuid4().hex}.tmp")
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
@@ -91,13 +134,42 @@ def store_window(
     return destination
 
 
-def pending_windows(limit: int = BUFFER_FLUSH_BATCH_SIZE) -> list[Path]:
+def pending_windows(
+    limit: int = BUFFER_FLUSH_BATCH_SIZE,
+    instance_id: str | None = None,
+) -> list[Path]:
     buffer_dir = get_telemetry_buffer_dir()
     if not _trusted(buffer_dir):
         _refuse(buffer_dir)
         return []
     try:
-        return sorted(buffer_dir.glob("*.json"))[:limit]
+        if instance_id is None:
+            return sorted(buffer_dir.glob("*.json"))[:limit]
+
+        scoped_prefix = f"{instance_id}_"
+        scoped = list(buffer_dir.glob(f"{scoped_prefix}*.json"))
+        scoped_names = {path.name[len(scoped_prefix) :] for path in scoped}
+        # Before instance-scoped filenames were introduced, heartbeat windows
+        # were flat timestamp files.  Keep retrying those legacy files only
+        # when their payload belongs to this install; a second install sharing
+        # the old default temp directory must never claim them.
+        legacy = []
+        for path in buffer_dir.glob("*.json"):
+            if path.name.startswith(scoped_prefix):
+                continue
+            # If migration could not rename a legacy file, prefer the scoped
+            # copy so a fixed window is never delivered twice.
+            if path.name in scoped_names:
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and str(payload.get("instance_id")) == str(
+                instance_id
+            ):
+                legacy.append(path)
+        return sorted(scoped + legacy)[:limit]
     except OSError:
         logger.warning("deployment_telemetry_buffer_list_failed")
         return []
@@ -119,15 +191,18 @@ def delete_window(path: Path) -> None:
         logger.warning("deployment_telemetry_buffer_delete_failed")
 
 
-def clear_buffer() -> int:
+def clear_buffer(instance_id: str | None = None) -> int:
     removed = 0
-    for path in pending_windows(limit=10_000):
+    for path in pending_windows(limit=10_000, instance_id=instance_id):
         delete_window(path)
         removed += 1
     return removed
 
 
-def prune_expired_windows(now: datetime | None = None) -> int:
+def prune_expired_windows(
+    now: datetime | None = None,
+    instance_id: str | None = None,
+) -> int:
     cutoff = (now or datetime.now(UTC)) - timedelta(days=BUFFER_RETENTION_DAYS)
     removed = 0
     buffer_dir = get_telemetry_buffer_dir()
@@ -135,7 +210,11 @@ def prune_expired_windows(now: datetime | None = None) -> int:
         _refuse(buffer_dir)
         return removed
     try:
-        paths = buffer_dir.glob("*.json")
+        paths = (
+            pending_windows(limit=10_000, instance_id=instance_id)
+            if instance_id is not None
+            else buffer_dir.glob("*.json")
+        )
         for path in paths:
             try:
                 modified_at = datetime.fromtimestamp(path.stat().st_mtime, UTC)

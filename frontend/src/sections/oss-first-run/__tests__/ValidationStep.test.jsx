@@ -185,6 +185,31 @@ describe("ValidationStep", () => {
     ).toBeNull();
   });
 
+  it("folds the passing checks into the summary and keeps the rest in view", async () => {
+    mockData = {
+      status: "issues",
+      mode: "live",
+      checks: [check(), STORAGE_DOWN, SSL_LOCAL],
+    };
+    renderStep();
+    await screen.findByText(
+      "Fix the failed systems to continue with a production launch.",
+    );
+    expect(
+      screen.getByText("1 ready · 1 failed · 1 optional"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Core application database")).toBeNull();
+    expect(screen.getByText(STORAGE_DOWN.detail)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Not needed on a local install/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Onboard systems/, expanded: false }),
+    );
+    expect(screen.getByText("Core application database")).toBeInTheDocument();
+  });
+
   it("shows the next steps once pre-flight is clear", async () => {
     mockData = { status: "ok", mode: "live", checks: [check(), SSL_LOCAL] };
     renderStep();

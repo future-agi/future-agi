@@ -14,6 +14,8 @@ describe("workspace tab constants", () => {
       "scenarios",
       "evals",
       "runs",
+      "improvements",
+      "versions",
       "settings",
     ]);
   });
@@ -29,7 +31,7 @@ describe("workspace tab constants", () => {
 
   it("badges the counted tabs with their state key", () => {
     const badged = WORKSPACE_TABS.filter((t) => t.badge);
-    expect(badged.map((t) => t.badge)).toEqual(["scenarios", "evals", "runs"]);
+    expect(badged.map((t) => t.badge)).toEqual(["scenarios", "evals", "runs", "improvements"]);
   });
 });
 
