@@ -25,6 +25,7 @@ type AdaptiveStrategy struct {
 	healthMon       *HealthMonitor
 	updateInterval  time.Duration
 	stopCh          chan struct{}
+	stopOnce        sync.Once
 	phase           atomic.Int32 // 0=learning, 1=active
 }
 
@@ -146,7 +147,7 @@ func (a *AdaptiveStrategy) GetPhase() string {
 
 // Stop shuts down the background update loop.
 func (a *AdaptiveStrategy) Stop() {
-	close(a.stopCh)
+	a.stopOnce.Do(func() { close(a.stopCh) })
 }
 
 func (a *AdaptiveStrategy) updateLoop() {
