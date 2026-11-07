@@ -67,6 +67,11 @@ class AgentccRequestLog(BaseModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["organization", "-started_at"]),
+            models.Index(
+                fields=["organization", "workspace", "created_at", "id"],
+                condition=models.Q(deleted=False),
+                name="agentcc_req_export_scan",
+            ),
             models.Index(fields=["model"]),
             models.Index(fields=["provider"]),
             models.Index(fields=["api_key_id"]),

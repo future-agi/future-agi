@@ -1,10 +1,16 @@
 import time
 import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import structlog
 from django.db.models import F, Q
 
+from integrations.services.datadog_export import (
+    _datadog_export_owner,
+    _DatadogExportOwnershipLost,
+    _export_datadog,
+    _save_export_progress,
+)
 from tfc.temporal.drop_in.decorator import temporal_activity
 from tracer.utils.langfuse_upsert import upsert_langfuse_trace
 
@@ -18,16 +24,26 @@ EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
     """Find integration connections due for sync and dispatch sync activities."""
-    from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
 
     now = datetime.now(timezone.utc)
 
-    connections = IntegrationConnection.no_workspace_objects.filter(
-        status=ConnectionStatus.ACTIVE,
-        deleted=False,
-    ).exclude(platform=IntegrationPlatform.SLACK).filter(
-        Q(last_synced_at__isnull=True)
-        | Q(last_synced_at__lte=now - timedelta(seconds=60))
+    connections = (
+        IntegrationConnection.no_workspace_objects.using("default")
+        .filter(
+            Q(status=ConnectionStatus.ACTIVE)
+            | Q(platform=IntegrationPlatform.DATADOG, status=ConnectionStatus.SYNCING),
+            deleted=False,
+        )
+        .exclude(platform=IntegrationPlatform.SLACK)
+        .filter(
+            Q(last_synced_at__isnull=True)
+            | Q(last_synced_at__lte=now - timedelta(seconds=60))
+        )
     )
 
     dispatched = 0
@@ -69,7 +85,7 @@ def sync_integration_connection(connection_id: str):
     from integrations.transformers.base import get_transformer
 
     try:
-        connection = IntegrationConnection.no_workspace_objects.get(
+        connection = IntegrationConnection.no_workspace_objects.using("default").get(
             id=connection_id,
             deleted=False,
         )
@@ -475,12 +491,18 @@ def sync_integration_connection(connection_id: str):
 
 def _sync_export_integration(connection):
     """Export Agentcc request logs to a push-based integration (Datadog, PostHog, etc.)."""
-    from integrations.models import (
-        ConnectionStatus,
-        IntegrationConnection,
-        SyncLog,
-        SyncStatus,
-    )
+    if connection.platform != "datadog":
+        return _run_export_integration(connection)
+    with _datadog_export_owner(connection) as acquired:
+        if acquired:
+            return _run_export_integration(connection)
+
+
+def _run_export_integration(connection):
+    """Run a destination export, with exclusive ownership for Datadog."""
+    from django.db import transaction
+
+    from integrations.models import ConnectionStatus, SyncLog, SyncStatus
     from integrations.services.base import get_integration_service
     from integrations.services.credentials import CredentialManager
     from integrations.services.registry import ensure_services_loaded
@@ -490,7 +512,7 @@ def _sync_export_integration(connection):
     connection_id = str(connection.id)
 
     connection.status = ConnectionStatus.SYNCING
-    connection.save(update_fields=["status", "updated_at"])
+    _save_export_progress(connection, ["status", "updated_at"])
 
     now = datetime.now(timezone.utc)
 
@@ -498,10 +520,19 @@ def _sync_export_integration(connection):
     if not connection.last_synced_at:
         # First sync: export logs from the last 24 hours (or backfill_from).
         sync_from = connection.backfill_from or (now - timedelta(hours=24))
+    elif connection.platform == "datadog":
+        # Datadog uses durable receipt dedup; this bounds the metric run, not visibility.
+        sync_from = connection.last_synced_at
     else:
-        # Incremental: overlap by 1 minute for safety (target deduplicates).
+        # Preserve the existing lookback for the other export platforms.
         sync_from = connection.last_synced_at - timedelta(minutes=1)
     sync_to = now
+    if connection.platform == "datadog":
+        pending = connection.sync_cursor.get("datadog_export")
+        if pending:
+            # A failed run resumes the same membership and accounting interval.
+            sync_from = datetime.fromisoformat(pending["sync_from"])
+            sync_to = datetime.fromisoformat(pending["sync_to"])
 
     sync_log = SyncLog.objects.create(
         connection=connection,
@@ -536,25 +567,45 @@ def _sync_export_integration(connection):
         logs_sent = exported.get("logs_sent", 0)
         metrics_sent = exported.get("metrics_sent", 0)
 
-        # Success: update connection state.
-        update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
-        connection.status = ConnectionStatus.ACTIVE
-        connection.last_synced_at = sync_to
-        connection.status_message = ""
-        if not connection.backfill_completed:
-            connection.backfill_completed = True
-            update_fields.append("backfill_completed")
-        connection.save(update_fields=update_fields)
+        with transaction.atomic():
+            # Success: persist any explicit metric-drop audit with the checkpoint.
+            if exported.get("metrics_dropped"):
+                sync_log.error_details = {
+                    "metrics_dropped": exported["metrics_dropped"]
+                }
+            update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
+            if connection.platform == "datadog":
+                # Clear delivery progress atomically with the completed interval.
+                connection.sync_cursor.pop("datadog_export", None)
+                update_fields.append("sync_cursor")
+            connection.status = ConnectionStatus.ACTIVE
+            connection.last_synced_at = sync_to
+            connection.status_message = ""
+            backfill_drained = connection.platform != "datadog" or (
+                connection.sync_cursor.get("datadog_scan", {}).get(
+                    "forward_exhausted", False
+                )
+            )
+            if not connection.backfill_completed and backfill_drained:
+                connection.backfill_completed = True
+                update_fields.append("backfill_completed")
+            _save_export_progress(connection, update_fields)
 
-        # Use traces_fetched to store total items exported.
-        sync_log.status = (
-            SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
-        )
-        sync_log.completed_at = datetime.now(timezone.utc)
-        sync_log.traces_fetched = logs_sent
-        sync_log.traces_created = logs_sent
-        sync_log.spans_synced = metrics_sent
-        sync_log.save()
+            # Use traces_fetched to store total items exported.
+            if exported.get("metrics_dropped"):
+                sync_log.status = SyncStatus.PARTIAL
+                sync_log.error_message = (
+                    "Datadog metrics dropped: snapshot exceeded the intake age limit."
+                )
+            else:
+                sync_log.status = (
+                    SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
+                )
+            sync_log.completed_at = datetime.now(timezone.utc)
+            sync_log.traces_fetched = logs_sent
+            sync_log.traces_created = logs_sent
+            sync_log.spans_synced = metrics_sent
+            sync_log.save()
 
         logger.info(
             "export_complete",
@@ -564,6 +615,14 @@ def _sync_export_integration(connection):
             metrics_sent=metrics_sent,
         )
 
+    except _DatadogExportOwnershipLost:
+        sync_log.status = SyncStatus.FAILED
+        sync_log.error_message = "Export ownership lost; pending delivery will resume."
+        sync_log.completed_at = datetime.now(UTC)
+        sync_log.save(
+            update_fields=["status", "error_message", "completed_at", "updated_at"]
+        )
+        raise
     except Exception as e:
         logger.warning(
             "export_failed",
@@ -581,21 +640,35 @@ def _sync_export_integration(connection):
             http_status = e.response.status_code
 
         if http_status in (401, 403) or (
-            http_status is None and ("401" in error_msg or "403" in error_msg)
+            connection.platform != "datadog"
+            and http_status is None
+            and ("401" in error_msg or "403" in error_msg)
         ):
             connection.status = ConnectionStatus.ERROR
             connection.status_message = "Authentication failed. Check your API key."
             sync_log.status = SyncStatus.FAILED
-        elif http_status == 429 or (http_status is None and "429" in error_msg):
+        elif http_status == 429 or (
+            connection.platform != "datadog"
+            and http_status is None
+            and "429" in error_msg
+        ):
             connection.status = ConnectionStatus.ACTIVE
             connection.status_message = ""
             sync_log.status = SyncStatus.RATE_LIMITED
         else:
-            connection.status = ConnectionStatus.ERROR
+            # Datadog retries the durable snapshot on the next poll. Terminal
+            # authentication failures above require user action; transient sink
+            # or checkpoint failures must not remove the connection from polling.
+            connection.status = (
+                ConnectionStatus.ACTIVE
+                if connection.platform == "datadog"
+                and (http_status is None or http_status == 408 or http_status >= 500)
+                else ConnectionStatus.ERROR
+            )
             connection.status_message = f"Export failed: {error_msg[:500]}"
             sync_log.status = SyncStatus.FAILED
 
-        connection.save(update_fields=["status", "status_message", "updated_at"])
+        _save_export_progress(connection, ["status", "status_message", "updated_at"])
         sync_log.error_message = error_msg[:1000]
         sync_log.error_details = {
             "error": error_msg,
@@ -605,199 +678,6 @@ def _sync_export_integration(connection):
         sync_log.completed_at = datetime.now(timezone.utc)
         sync_log.save()
 
-
-def _export_datadog(connection, credentials, service, sync_from, sync_to):
-    """Export AgentccRequestLog entries to Datadog as logs + metrics."""
-    from django.db.models import Avg, Count, Sum
-
-    from agentcc.models import AgentccRequestLog
-
-    BATCH_SIZE = 500
-
-    # Query request logs for this org/workspace in the sync window.
-    qs = (
-        AgentccRequestLog.objects.filter(
-            organization=connection.organization,
-            deleted=False,
-        )
-        .filter(
-            Q(started_at__gte=sync_from, started_at__lt=sync_to)
-            | Q(
-                started_at__isnull=True,
-                created_at__gte=sync_from,
-                created_at__lt=sync_to,
-            )
-        )
-        .order_by("started_at", "created_at")
-    )
-
-    # If workspace is set on the connection, scope to that workspace.
-    if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
-
-    total_logs_sent = 0
-    offset = 0
-
-    while True:
-        batch = list(qs[offset : offset + BATCH_SIZE])
-        if not batch:
-            break
-
-        dd_logs = []
-        for log in batch:
-            tags = [
-                f"model:{log.model}",
-                f"provider:{log.provider}",
-                f"status_code:{log.status_code}",
-                f"gateway:{log.gateway_id}",
-            ]
-            if log.is_error:
-                tags.append("error:true")
-            if log.cache_hit:
-                tags.append("cache:hit")
-            if log.guardrail_triggered:
-                tags.append("guardrail:triggered")
-            if log.routing_strategy:
-                tags.append(f"routing:{log.routing_strategy}")
-
-            status = "error" if log.is_error else "info"
-            message = (
-                f"[{log.provider}] {log.model} "
-                f"status={log.status_code} "
-                f"latency={log.latency_ms}ms "
-                f"tokens={log.total_tokens} "
-                f"cost=${log.cost}"
-            )
-            if log.error_message:
-                message += f" error={log.error_message[:200]}"
-
-            # ISO-8601 date for log timestamp.
-            log_date = ""
-            if log.started_at:
-                log_date = log.started_at.isoformat()
-            elif log.created_at:
-                log_date = log.created_at.isoformat()
-
-            dd_log = {
-                "message": message,
-                "ddtags": ",".join(tags),
-                "status": status,
-                "date": log_date,
-                "attributes": {
-                    "request_id": log.request_id,
-                    "model": log.model,
-                    "provider": log.provider,
-                    "resolved_model": log.resolved_model,
-                    "latency_ms": log.latency_ms,
-                    "input_tokens": log.input_tokens,
-                    "output_tokens": log.output_tokens,
-                    "total_tokens": log.total_tokens,
-                    "cost": float(log.cost) if log.cost else 0,
-                    "status_code": log.status_code,
-                    "is_stream": log.is_stream,
-                    "is_error": log.is_error,
-                    "cache_hit": log.cache_hit,
-                    "fallback_used": log.fallback_used,
-                    "guardrail_triggered": log.guardrail_triggered,
-                    "started_at": log.started_at.isoformat() if log.started_at else "",
-                },
-            }
-            dd_logs.append(dd_log)
-
-        result = service.export_logs(credentials, dd_logs)
-        total_logs_sent += result.get("sent", 0)
-        offset += BATCH_SIZE
-
-        logger.debug(
-            "datadog_batch_sent",
-            batch_size=len(dd_logs),
-            total_sent=total_logs_sent,
-        )
-
-    # Export aggregated metrics for the window.
-    metrics_sent = 0
-    agg = AgentccRequestLog.objects.filter(
-        organization=connection.organization,
-        deleted=False,
-        started_at__gte=sync_from,
-        started_at__lt=sync_to,
-    )
-    if connection.workspace_id:
-        agg = agg.filter(workspace=connection.workspace)
-
-    agg = agg.aggregate(
-        total_requests=Count("id"),
-        total_errors=Count("id", filter=Q(is_error=True)),
-        avg_latency=Avg("latency_ms"),
-        total_input_tokens=Sum("input_tokens"),
-        total_output_tokens=Sum("output_tokens"),
-        total_cost=Sum("cost"),
-    )
-
-    ts = int(sync_to.timestamp())
-    series = []
-    metric_prefix = "agentcc.gateway"
-
-    if agg["total_requests"]:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.requests",
-                "type": 1,  # count
-                "points": [{"timestamp": ts, "value": agg["total_requests"]}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-    if agg["total_errors"]:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.errors",
-                "type": 1,
-                "points": [{"timestamp": ts, "value": agg["total_errors"]}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-    if agg["avg_latency"] is not None:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.latency_ms",
-                "type": 3,  # gauge
-                "points": [{"timestamp": ts, "value": float(agg["avg_latency"])}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-    if agg["total_input_tokens"]:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.input_tokens",
-                "type": 1,
-                "points": [{"timestamp": ts, "value": agg["total_input_tokens"]}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-    if agg["total_output_tokens"]:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.output_tokens",
-                "type": 1,
-                "points": [{"timestamp": ts, "value": agg["total_output_tokens"]}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-    if agg["total_cost"]:
-        series.append(
-            {
-                "metric": f"{metric_prefix}.cost",
-                "type": 1,
-                "points": [{"timestamp": ts, "value": float(agg["total_cost"])}],
-                "tags": [f"org:{connection.organization_id}"],
-            }
-        )
-
-    if series:
-        result = service.export_metrics(credentials, series)
-        metrics_sent = result.get("sent", 0)
-
-    return {"logs_sent": total_logs_sent, "metrics_sent": metrics_sent}
 
 
 def _get_export_queryset(connection, sync_from, sync_to):
