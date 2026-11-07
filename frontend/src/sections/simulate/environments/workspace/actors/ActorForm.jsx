@@ -29,6 +29,7 @@ import {
   initialFields,
   modesFor,
   recordKey,
+  parsedArguments,
   toRecord,
   triggerProblem,
 } from "./actorUtils";
@@ -206,6 +207,11 @@ export default function ActorForm({
   const timingKind = value("timing");
   const capName = channel ? "max_lines" : "max_turns";
   const capWrong = capProblem(value(capName));
+  const fallbackActs = permitted.includes(value("fallback"));
+  const argumentsWrong =
+    fallbackActs && parsedArguments(value("fallback_arguments")) === null
+      ? F.fallbackArgumentsWrong
+      : "";
 
   return (
     <SideDrawer
@@ -543,6 +549,11 @@ export default function ActorForm({
                     : F.answeredBy(nameOf(initial.fallback)),
                 },
               )}
+              {fallbackActs &&
+                text("fallback_arguments", F.fallbackArguments, {
+                  error: Boolean(argumentsWrong),
+                  helperText: argumentsWrong || F.fallbackArgumentsHelp,
+                })}
               {context.actorModels?.length > 0 &&
                 choice(
                   "model",
@@ -628,7 +639,8 @@ export default function ActorForm({
                 nameMissing ||
                 roleMissing ||
                 comesInIncomplete ||
-                Boolean(capWrong)
+                Boolean(capWrong) ||
+                Boolean(argumentsWrong)
               }
               onClick={() => onSave(toRecord(actor, fields, context))}
             >

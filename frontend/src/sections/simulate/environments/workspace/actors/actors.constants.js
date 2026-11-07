@@ -223,6 +223,10 @@ export const ACTORS_COPY = {
         collection: "Pick the records that bring them in",
       },
       takesAction: (action) => `${action} is taken for them`,
+      fallbackArguments: "Taken with (JSON)",
+      fallbackArgumentsHelp:
+        'What the action records, e.g. {"where": {"status": "pending"}, "set": {"status": "declined"}}',
+      fallbackArgumentsWrong: "Write a JSON object, or leave it empty",
       model: "Model they are played on",
       environmentModel: "The environment's model",
       modelHelp: "A cheaper model costs less per actor turn",

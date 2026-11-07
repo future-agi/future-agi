@@ -6,6 +6,7 @@ import {
   hidden,
   idFrom,
   idRule,
+  parsedArguments,
   readable,
   seenValue,
   toRecord,
@@ -441,5 +442,60 @@ describe("triggerProblem", () => {
     [{ mode: "always" }, {}],
   ])("says what %o still needs", (fields, expected) => {
     expect(triggerProblem(reader(fields))).toEqual(expected);
+  });
+});
+
+describe("a fallback action's arguments", () => {
+  const DANA = {
+    id: "supervisor",
+    name: "Dana Brooks",
+    permitted_actions: ["approvals.change"],
+    activation: {
+      trigger: { kind: "conditional", collection: "approvals" },
+      timeout_seconds: 30,
+      fallback: "approvals.change",
+      fallback_arguments: {
+        where: { status: "pending" },
+        set: { status: "declined" },
+      },
+    },
+  };
+
+  it("are kept when the form saves an edit elsewhere", () => {
+    for (const fields of [{ role: "Claims supervisor" }, { timeout: 45 }]) {
+      const saved = toRecord(DANA, fields, CONTEXT);
+      expect(saved.activation.fallback_arguments).toEqual(
+        DANA.activation.fallback_arguments,
+      );
+    }
+  });
+
+  it("are dropped when the fallback changes to something else", () => {
+    const saved = toRecord(DANA, { fallback: "decline" }, CONTEXT);
+    expect(saved.activation.fallback).toBe("decline");
+    expect(saved.activation).not.toHaveProperty("fallback_arguments");
+  });
+
+  it("are written as typed, and cleared when emptied", () => {
+    const typed = toRecord(
+      DANA,
+      {
+        fallback_arguments:
+          '{"where": {"id": 1}, "set": {"status": "declined"}}',
+      },
+      CONTEXT,
+    );
+    expect(typed.activation.fallback_arguments).toEqual({
+      where: { id: 1 },
+      set: { status: "declined" },
+    });
+    const emptied = toRecord(DANA, { fallback_arguments: "" }, CONTEXT);
+    expect(emptied.activation).not.toHaveProperty("fallback_arguments");
+  });
+
+  it("must be a JSON object", () => {
+    expect(parsedArguments("")).toEqual({});
+    expect(parsedArguments("[1]")).toBeNull();
+    expect(parsedArguments("{oops")).toBeNull();
   });
 });

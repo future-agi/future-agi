@@ -289,6 +289,9 @@ export const initialFields = (actor) => {
     ...triggerFields(activation.trigger),
     timeout: activation.timeout_seconds ?? 0,
     fallback: activation.fallback || "silent",
+    fallback_arguments: Object.keys(activation.fallback_arguments || {}).length
+      ? JSON.stringify(activation.fallback_arguments)
+      : "",
     model: actor?.model || "",
     max_turns: actor?.max_turns ?? "",
     max_lines: actor?.max_lines ?? "",
@@ -352,6 +355,19 @@ const withFacts = (knowledge, typed) => {
  * @param {Object} fields What the form holds, by field name.
  * @param {{ others?: Object[], loudness?: { channels?: string[] } }} context
  */
+// A fallback action's arguments as typed: a JSON object, or empty for none; null when it is not one.
+export const parsedArguments = (text) => {
+  if (!String(text ?? "").trim()) return {};
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 export const toRecord = (actor, fields, context) => {
   const start = initialFields(actor);
   const isNew = !actor.id;
@@ -420,7 +436,7 @@ export const toRecord = (actor, fields, context) => {
   }
   if (writes("permitted")) record.permitted_actions = read("permitted");
   if (edited("play")) record.play = read("play");
-  if (writes(...TRIGGER_FIELDS, "timeout", "fallback")) {
+  if (writes(...TRIGGER_FIELDS, "timeout", "fallback", "fallback_arguments")) {
     record.activation = { ...actor.activation };
     if (
       TRIGGER_FIELDS.some((name) => edited(name)) ||
@@ -432,6 +448,15 @@ export const toRecord = (actor, fields, context) => {
     if (writes("timeout"))
       record.activation.timeout_seconds = Number(read("timeout")) || 0;
     if (writes("fallback")) record.activation.fallback = read("fallback");
+    // A fallback's arguments belong to the action they were written for: a new fallback starts without them.
+    if (edited("fallback") && !edited("fallback_arguments"))
+      delete record.activation.fallback_arguments;
+    if (edited("fallback_arguments")) {
+      const given = parsedArguments(read("fallback_arguments"));
+      if (given && Object.keys(given).length)
+        record.activation.fallback_arguments = given;
+      else delete record.activation.fallback_arguments;
+    }
   }
   // Empty is the environment's model, and no limit of its own.
   if (edited("model")) {
