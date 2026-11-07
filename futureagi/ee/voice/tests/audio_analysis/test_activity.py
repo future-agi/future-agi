@@ -1,5 +1,6 @@
 """R11-R13, AC11-AC13: worker retry, source and failure boundaries."""
 
+import asyncio
 import copy
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -120,6 +121,32 @@ async def test_activity_heartbeats_and_terminal_vqi_not_upgraded(worker_case):
     assert (
         worker_case.commit.call_args.args[1]["source"]["target_sample_count"] == 16000
     )
+
+
+@pytest.mark.asyncio
+async def test_stage_heartbeats_are_sent_from_the_event_loop_thread(
+    worker_case, monkeypatch
+):
+    """A real worker rejects async-activity heartbeats from another thread."""
+    import threading
+
+    loop_thread = threading.get_ident()
+    stages = []
+    env = ActivityEnvironment()
+    env.on_heartbeat = lambda *details: stages.extend(
+        d["stage"] for d in details if isinstance(d, dict)
+    )
+    real_heartbeat = aa.activity.heartbeat
+
+    def loop_only_heartbeat(*details):
+        asyncio.get_running_loop()  # raises RuntimeError off the loop thread
+        assert threading.get_ident() == loop_thread
+        real_heartbeat(*details)
+
+    monkeypatch.setattr(aa.activity, "heartbeat", loop_only_heartbeat)
+    result = await env.run(aa.analyze_call_audio, worker_case.input)
+    assert result.committed
+    assert {"fetch", "decode", "pitch", "snr", "vqi", "commit"} <= set(stages)
 
 
 @pytest.mark.parametrize(

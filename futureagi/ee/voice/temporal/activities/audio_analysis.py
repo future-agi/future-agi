@@ -486,6 +486,9 @@ async def analyze_call_audio(input: AnalyzeCallAudioInput) -> AnalyzeCallAudioOu
             "Invalid analysis deadline", type="ValueError", non_retryable=True
         )
     async with Heartbeater(factor=4) as heartbeater, ShutdownMonitor() as monitor:
+        # checkpoint runs in the analysis thread; an async activity may only
+        # heartbeat from its event loop, so stage heartbeats are handed back.
+        loop = asyncio.get_running_loop()
 
         def checkpoint(stage):
             nonlocal last_stage
@@ -507,7 +510,7 @@ async def analyze_call_audio(input: AnalyzeCallAudioInput) -> AnalyzeCallAudioOu
             )
             last_stage = now
             heartbeater.details = ({"stage": stage},)
-            activity.heartbeat({"stage": stage})
+            loop.call_soon_threadsafe(activity.heartbeat, {"stage": stage})
 
         task = asyncio.create_task(asyncio.to_thread(_analyze, input, checkpoint))
         try:
