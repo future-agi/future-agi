@@ -669,7 +669,8 @@ class TrialStateChangeSerializer(serializers.Serializer):
 
 class ActorDecisionSerializer(serializers.Serializer):
     """One thing an actor did or chose in the trial: scheduled (mocked), decided (live) or written before it (history);
-    or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout)."""
+    or the world waiting on it (waiting) and what its fallback made of no answer in time (timeout).
+    """
 
     actor = serializers.CharField()
     play = serializers.ChoiceField(
@@ -1077,9 +1078,11 @@ def build_call_execution_detail(
             "function_calls": function_calls(call),
             "call_actors": _call_call_actors(call.call_metadata),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
-            "trial_state": (call.call_metadata or {}).get(TRIAL_STATE_KEY)
-            if isinstance(call.call_metadata, dict)
-            else None,
+            "trial_state": (
+                (call.call_metadata or {}).get(TRIAL_STATE_KEY)
+                if isinstance(call.call_metadata, dict)
+                else None
+            ),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

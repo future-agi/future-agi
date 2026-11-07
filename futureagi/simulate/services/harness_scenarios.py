@@ -516,7 +516,8 @@ SIMULATED_USER_ONLY = "Simulated user only"
 
 def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
     """A scenario's actors as `{id, instruction, trigger, knowledge, actions}`, the fields a run reads. A missing
-    trigger stays missing (the actor's own activation then applies), never stored as an empty one."""
+    trigger stays missing (the actor's own activation then applies), never stored as an empty one.
+    """
     entries: list[ScenarioCallActor] = [
         {
             "id": str(one["id"]),
@@ -545,7 +546,8 @@ def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
 
 def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
     """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
-    its event start. Refused when the scenario is saved, the same rule the builder keeps."""
+    its event start. Refused when the scenario is saved, the same rule the builder keeps.
+    """
     name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
     named = [
         str((one or {}).get("id") or "")

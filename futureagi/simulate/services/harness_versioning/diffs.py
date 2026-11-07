@@ -125,11 +125,13 @@ def environment_diff(
         "files": file_diff,
         **(
             {
-                "actors": None
-                if previous_actors is None or actors is None
-                else _named(
-                    keyed_diff(previous_actors, actors),
-                    {**(previous_actor_names or {}), **(actor_names or {})},
+                "actors": (
+                    None
+                    if previous_actors is None or actors is None
+                    else _named(
+                        keyed_diff(previous_actors, actors),
+                        {**(previous_actor_names or {}), **(actor_names or {})},
+                    )
                 )
             }
             if with_actors

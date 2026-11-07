@@ -9,7 +9,9 @@ from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests import test_harness_versioning_record as record_tests
 from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_api import _versioned
-from simulate.tests.test_harness_versioning_backfill import _legacy
+from simulate.tests.test_harness_versioning_backfill import (
+    _legacy,
+)
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -1475,6 +1477,6 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
             {"actor": {**reads, "knowledge": [*reads["knowledge"], bad]}},
             format="json",
         )
-        assert refused.status_code == 400 and said in refused.json()["message"], (
-            refused.content
-        )
+        assert (
+            refused.status_code == 400 and said in refused.json()["message"]
+        ), refused.content

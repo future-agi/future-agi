@@ -253,7 +253,8 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal of a receipt and whether it held, None when nothing decided it. A
     conversation the agent itself broke fails every goal it left undecided. A not
-    applicable or inconclusive sub-goal is neither held nor broken, so it is left out."""
+    applicable or inconclusive sub-goal is neither held nor broken, so it is left out.
+    """
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
     results = {
         str(one["name"]): sub_goal_result(dict(one))

@@ -588,9 +588,7 @@ def _record_problems(
         subject = (
             "The id"
             if where == "id"
-            else f"{actor_id}'s {where}:"
-            if where
-            else f"{actor_id}:"
+            else f"{actor_id}'s {where}:" if where else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
     for path, field in (rules.get("equal_when_set") or {}).items():
@@ -818,7 +816,8 @@ def _draft_read(
     environment: HostedHarnessJob, expected_revision: int | None
 ) -> tuple[Any, dict[str, bytes], dict[str, bytes]]:
     """The environment draft and both sides' files, refusing `draft_changed` (409) when the caller read an older
-    revision. The draft is read before its files, so an edit landing in between fails the write's revision check."""
+    revision. The draft is read before its files, so an edit landing in between fails the write's revision check.
+    """
     draft = drafts.fresh_draft(environment, "environment")
     sides = drafts.edit_sides(environment)
     if expected_revision is not None and expected_revision != (
@@ -1040,8 +1039,10 @@ def actor_view(
         # Whether a run plays this actor from what it sees. One that only acts in the world takes its listed actions
         # at their triggers and is given none of it.
         "played_from_view": played,
-        "unused_reason": None
-        if played
-        else "This actor only takes the actions its scenarios give it, so nothing here is given to it during a run. "
-        "Set it to decide its own actions, or to speak in the conversation, to have it play from this.",
+        "unused_reason": (
+            None
+            if played
+            else "This actor only takes the actions its scenarios give it, so nothing here is given to it during a run. "
+            "Set it to decide its own actions, or to speak in the conversation, to have it play from this."
+        ),
     }
