@@ -15,6 +15,7 @@ import {
   Tooltip,
   Alert,
   Button,
+  Chip,
 } from "@mui/material";
 import { TablePaginationCustom } from "src/components/table";
 import Section from "src/components/section";
@@ -22,7 +23,7 @@ import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 import useRequestLogs from "./hooks/useRequestLogs";
-import { formatCost } from "../utils/formatters";
+import { formatCost, isUnpricedRequest } from "../utils/formatters";
 import { REQUEST_TAG } from "../constants/requestTags";
 import {
   BUILTIN_COLUMNS,
@@ -163,7 +164,17 @@ function renderBuiltinCell(colKey, log, ctx) {
     case "cost":
       return (
         <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
-          <Typography variant="body2">{formatCost(log.cost)}</Typography>
+          {isUnpricedRequest(log) ? (
+            <Tooltip
+              title="No price is set for this model, so this request was recorded without a cost and isn't counted against budgets. Add a price for the model to track it."
+              placement="top"
+              arrow
+            >
+              <Chip label="Unpriced" size="small" variant="outlined" />
+            </Tooltip>
+          ) : (
+            <Typography variant="body2">{formatCost(log.cost)}</Typography>
+          )}
         </TableCell>
       );
     case "totalTokens":
