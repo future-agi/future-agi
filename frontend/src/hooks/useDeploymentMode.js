@@ -54,5 +54,8 @@ export function usePostLoginPath() {
 
   const returnTo = localStorage.getItem("redirectUrl");
   if (returnTo) return returnTo;
+  /* The hosted demo opens where every flow starts. */
+  if (import.meta.env.VITE_DEMO_MODE === "true")
+    return paths.dashboard.simulate.environments;
   return isOSS ? paths.dashboard.getstarted : paths.dashboard.falconAI;
 }

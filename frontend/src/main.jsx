@@ -1,3 +1,4 @@
+import "./demo/seedFirst";
 import React from "react";
 import { Suspense } from "react";
 import ReactDOM from "react-dom/client";

@@ -68,6 +68,22 @@ const page = (rows, params = {}) => {
 /* The features the prototype's flows use; the rest stay behind their upgrade screen. */
 const features = () => Object.fromEntries(["error_feed", "voice_sim", "optimization"].map((id) => [id, { allowed: true }]));
 
+/* Teammates, API keys and an observability connection for Settings and the Error Feed. */
+const TEAM = [
+  { id: USER.id, email: USER.email, name: USER.name, organization_role: "Owner", is_active: true, is_staff: false },
+  { id: "demo-user-2", email: "priya@futureagi.com", name: "Priya Shah", organization_role: "Admin", is_active: true, is_staff: false },
+  { id: "demo-user-3", email: "marcus@futureagi.com", name: "Marcus Reid", organization_role: "Member", is_active: true, is_staff: false },
+  { id: "demo-user-4", email: "elena@futureagi.com", name: "Elena Vargas", organization_role: "Member", is_active: true, is_staff: false },
+];
+const KEYS = [
+  { id: "demo-key-1", key_name: "CI pipeline", api_key: "fi_demo_4f2a••••••••", secret_key: "fs_demo_••••••••", created_by: USER.name, created_at: "2026-10-02T10:00:00Z", enabled: true, type: "user" },
+  { id: "demo-key-2", key_name: "Local development", api_key: "fi_demo_9c1e••••••••", secret_key: "fs_demo_••••••••", created_by: USER.name, created_at: "2026-10-20T10:00:00Z", enabled: true, type: "user" },
+];
+const CONNECTIONS = [
+  { id: "demo-conn-1", platform: "langfuse", display_name: "Langfuse", host_url: "https://cloud.langfuse.com", status: "active", status_message: "Synced", external_project_name: "support-agents", last_synced_at: "2026-11-07T08:40:00Z", total_traces_synced: 1840, total_spans_synced: 12650, total_scores_synced: 420, backfill_completed: true, backfill_progress: {}, sync_interval_seconds: 300, created_at: "2026-10-10T10:00:00Z" },
+];
+const drfPage = (rows) => ({ count: rows.length, next: null, previous: null, results: rows, total_pages: 1, current_page: 1 });
+
 /* path → result. Anything not listed answers an empty success. */
 const ROUTES = [
   [/\/simulate\/api\/personas\/$/, (q) => ({ status: true, result: personasPage(q) })],
@@ -79,8 +95,9 @@ const ROUTES = [
   [/\/accounts\/workspace\/list\/$/, () => ({ status: true, result: { workspaces: [{ ...WS, role: "Owner", is_default: true }], ...page([{ ...WS, role: "Owner" }]) } })],
   [/\/tracer\/project\/list_projects\/$/, (q) => ({ status: true, result: page(PROJECTS, q) })],
   [/\/tracer\/feed\/issues\/$/, () => ({ status: true, result: { data: [], total: 0, limit: 25, offset: 0 } })],
-  [/\/integrations\/connections\/$/, (q) => ({ status: true, result: page([], q) })],
-  [/\/accounts\/key\/get_secret_keys\/$/, (q) => ({ status: true, result: page([], q) })],
+  [/\/integrations\/connections\/$/, () => ({ status: true, result: { metadata: { total_count: CONNECTIONS.length, current_page: 1, page_size: 10, total_pages: 1, next_page: null }, connections: CONNECTIONS } })],
+  [/\/model-hub\/organizations\/[^/]+\/users\/$/, () => drfPage(TEAM)],
+  [/\/accounts\/key\/get_secret_keys\/$/, (q) => ({ status: true, result: page(KEYS, q) })],
   [/\/accounts\/first-checks\/$/, () => ({ status: true, result: { completed: true } })],
 ];
 
@@ -89,6 +106,8 @@ const answer = (method, url, params = {}) => {
   const q = { ...Object.fromEntries(u.searchParams), ...params };
   const hit = ROUTES.find(([re]) => re.test(u.pathname));
   if (hit) return hit[1](q, u.pathname);
+  /* Requests with no demo answer yet, readable in the console as __demoMisses. */
+  (window.__demoMisses ||= new Set()).add(`${method.toUpperCase()} ${u.pathname}`);
   return method === "get" ? { status: true, result: [] } : { status: true, result: {} };
 };
 
@@ -107,7 +126,6 @@ export const installDemoMode = (axiosInstance, axiosPackage, hostApi) => {
   /* The demo opens on Environments, where every flow starts. */
   if (!/^\/dashboard\/./.test(location.pathname) || /^\/dashboard\/falcon-ai/.test(location.pathname)) history.replaceState(null, "", "/dashboard/simulate/environments");
   localStorage.setItem("accessToken", "demo-token");
-  localStorage.setItem("refreshToken", "demo-token");
   axiosInstance.defaults.adapter = demoAdapter;
   axiosPackage.defaults.adapter = demoAdapter;
   const realFetch = window.fetch.bind(window);
