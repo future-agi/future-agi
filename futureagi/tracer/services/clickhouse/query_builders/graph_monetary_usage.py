@@ -12,14 +12,15 @@ def graph_monetary_rows_sql(
     columns: tuple[str, ...],
     child_condition: str = "1",
 ) -> str:
-    """Mask repeated summaries' money without removing traffic/topology rows.
+    """Mask repeated summaries' usage without removing traffic/topology rows.
 
     The caller supplies latest-live, tenant/window-scoped scalar rows. Read that
     population ONCE: materialize one light payload per trace, prove immediate
     Pydantic or descendant GenAI usage, then emit each physical row unchanged
-    except for its monetary contribution. Raw attribute/output maps must not be
-    retained in ``columns``. The child-window flag fences usage evidence while
-    keeping intermediate ancestry available. No chronological path is inferred.
+    except for its aggregate cost and token contributions. Raw attribute/output
+    maps must not be retained in ``columns``. The child-window flag fences usage
+    evidence while keeping intermediate ancestry available. No chronological
+    path is inferred.
     """
 
     def field(column: str, alias: str) -> str:
@@ -31,6 +32,8 @@ def graph_monetary_rows_sql(
         value = field(column, "graph_own_span")
         if column == "cost":
             value = f"if(graph_repeated_summary OR NOT ({flags}.1 OR {flags}.2), 0, {value})"
+        elif column in USAGE_COLUMNS[1:]:
+            value = f"if(graph_repeated_summary, 0, {value})"
         elif column == "graph_cost_flags":
             value = (
                 f"tuple(if(graph_repeated_summary, toUInt8(0), {value}.1), "
@@ -52,14 +55,18 @@ def graph_monetary_rows_sql(
             *USAGE_COLUMNS,
         )
     )
+    # Older internal callers supply two/three flags. Only the explicit fourth
+    # flag proves nonadditivity; unknown pricing alone must never hide tokens.
+    usage_flags = f"tupleConcat({field('graph_cost_flags', 'g')}, tuple(0, 0))"
     usage_values += (
-        f", tuple(0, 0, tupleElement(tupleConcat({field('graph_cost_flags', 'g')}, tuple(0)), 3))"
+        f", tuple(tupleElement({usage_flags}, 4), 0, tupleElement({usage_flags}, 3))"
         f", tupleElement(g, {len(columns) + 1})"
     )
     proof = repeated_usage_ids_sql(child_condition="c.10")
     repeated = (
-        f"{field('observation_type', 'graph_own_span')} != 'llm' "
-        f"AND has(graph_usage_state.2, {field('id', 'graph_own_span')})"
+        f"tupleElement(tupleConcat({flags}, tuple(0, 0)), 4) OR "
+        f"({field('observation_type', 'graph_own_span')} != 'llm' "
+        f"AND has(graph_usage_state.2, {field('id', 'graph_own_span')}))"
     )
     # ARRAY JOIN the singleton state before its rows: this materializes the
     # shared proof, rather than re-expanding it in every money/count projection.

@@ -437,6 +437,9 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
         # Count(filter=Q(status='ERROR')) shape without a new reader method.
         # Per-trace span count is bounded (UI/agent already caps display at
         # 200) so a single pass over the rows is cheap.
+        from tracer.services.clickhouse.query_builders.trace_usage import (
+            repeated_usage_summary_ids,
+        )
         from tracer.services.clickhouse.v2 import get_reader
 
         trace_id = getattr(trace, "id", None)
@@ -451,7 +454,13 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
                 )
             _span_count = len(_ch_spans)
             _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
-            _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
+            repeated_ids = repeated_usage_summary_ids([vars(s) for s in _ch_spans])
+            _total_tokens = sum(
+                s.total_tokens or 0
+                for s in _ch_spans
+                if s.attrs_string.get("fi.usage.contribution") != "none"
+                and (s.observation_type == "llm" or s.id not in repeated_ids)
+            )
             _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
             _agg = {
                 "span_count": _span_count,

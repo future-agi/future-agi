@@ -5,7 +5,12 @@ import pytest
 from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
     graph_monetary_rows_sql,
 )
-from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
+from tracer.services.clickhouse.query_builders.time_series import graph_cost_flags_sql
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
+from tracer.tests._copilot_usage_capture import captured_usage_rows
 from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
     _drop_legacy_ch_spans_mvs,  # noqa: F401 -- shadow global DB mutator
     _ensure_test_score_tenant_column,  # noqa: F401 -- shadow global DB mutator
@@ -56,9 +61,19 @@ def source_rows(shape):
                 0,
             )
         )
+    rows = [(*row, 0) for row in rows]
+    if shape == "upgrade-retry":
+        rows[0] = (*rows[0][:3], "unknown", *rows[0][4:])
+        rows.append(("agent", "", "agent-run", "agent", 0.0, 0, 0, 0, 1, 1))
+    elif shape == "additive-collision":
+        rows.append(("agent", "", "agent-run", "unknown", 0.25, 194, 190, 3, 1, 0))
+    elif shape == "independent-llm":
+        rows.append(("agent", "", "request", "llm", 0.25, 193, 190, 3, 0, 0))
+    elif shape == "explicit-nonadditive":
+        rows[0] = (*rows[0][:-1], 1)
     params = {}
     selects = []
-    fields = (*COLUMNS[:-1], "genai")
+    fields = (*COLUMNS[:-1], "genai", "nonadditive")
     for index, row in enumerate(rows):
         values = []
         for field, value in zip(fields, row, strict=True):
@@ -69,44 +84,122 @@ def source_rows(shape):
         )
     source = "(" + " UNION ALL ".join(selects) + ")"
     return (
-        f"(SELECT *, tuple(0, 0, genai) AS coverage, "
-        f"tuple(toUInt8(cost > 0), toUInt8(0), toUInt8(genai)) AS graph_cost_flags FROM {source})",
+        f"(SELECT *, tuple(nonadditive, 0, genai) AS coverage, "
+        f"tuple(toUInt8(cost > 0 AND NOT nonadditive), toUInt8(0), "
+        f"toUInt8(genai), toUInt8(nonadditive)) AS graph_cost_flags FROM {source})",
+        params,
+    )
+
+
+def aggregate_usage(ch, source, params, reader):
+    if reader == "graph":
+        query = graph_monetary_rows_sql(source=source, columns=COLUMNS)
+        projection = "sum(cost) AS cost, sum(total_tokens) AS tokens, sum(prompt_tokens) AS prompt, sum(completion_tokens) AS completion"
+        return ch.execute(f"SELECT {projection} FROM ({query})", params)
+    if reader in ("user", "materialized"):
+        query = usage_aggregate_sql(
+            coverage="coverage",
+            known_cost_fact="cost > 0" if reader == "user" else None,
+            materialized=reader == "materialized",
+        )
+        indices = (1, 4, 5, 6) if reader == "user" else (2, 3, 4, 5)
+        projection = ", ".join(
+            f"trace_metrics.{index} AS {name}"
+            for index, name in zip(
+                indices, ("cost", "tokens", "prompt", "completion"), strict=True
+            )
+        )
+        return ch.execute(
+            f"SELECT {projection} FROM (SELECT {query} FROM {source}) ARRAY JOIN trace_usage_metrics AS trace_metrics",
+            params,
+        )
+    query = usage_aggregate_sql(coverage="coverage")
+    return ch.execute(
+        f"SELECT usage_cost AS cost, usage_total_tokens AS tokens, usage_prompt_tokens AS prompt, usage_completion_tokens AS completion FROM (SELECT {query} FROM {source})",
         params,
     )
 
 
 @pytest.mark.parametrize(
-    "shape,tokens,cost",
+    "shape,tokens,prompt,completion,cost",
     [
-        ("direct", 193, 0.25),
-        ("nested", 193, 0.25),
-        ("pydantic", 193, 0.25),
-        ("pydantic-genai-nested", 386, 0.5),
-        ("parent-only", 193, 0.25),
-        ("unequal", 387, 0.5),
+        ("direct", 193, 190, 3, 0.25),
+        ("nested", 193, 190, 3, 0.25),
+        ("pydantic", 193, 190, 3, 0.25),
+        ("pydantic-genai-nested", 386, 380, 6, 0.5),
+        ("parent-only", 193, 190, 3, 0.25),
+        ("unequal", 387, 380, 6, 0.5),
+        ("upgrade-retry", 193, 190, 3, 0.25),
+        ("additive-collision", 580, 570, 9, 0.75),
+        ("independent-llm", 386, 380, 6, 0.5),
+        ("explicit-nonadditive", 193, 190, 3, 0.25),
     ],
 )
-@pytest.mark.parametrize("reader", ["list-session", "user", "graph"])
-def test_genai_summary_shared_readers(ch, shape, tokens, cost, reader):
+@pytest.mark.parametrize("reader", ["list-session", "materialized", "user", "graph"])
+def test_genai_summary_shared_readers(
+    ch, shape, tokens, prompt, completion, cost, reader
+):
     source, params = source_rows(shape)
-    if reader == "graph":
-        query = graph_monetary_rows_sql(source=source, columns=COLUMNS)
-        result = ch.execute(f"SELECT sum(cost) AS cost FROM ({query})", params)
-        assert result[0]["cost"] == pytest.approx(cost)
-    elif reader == "user":
-        query = usage_aggregate_sql(coverage="coverage", known_cost_fact="cost > 0")
-        result = ch.execute(
-            f"SELECT trace_metrics.1 AS cost, trace_metrics.4 AS tokens FROM (SELECT {query} FROM {source}) ARRAY JOIN trace_usage_metrics AS trace_metrics",
+    assert aggregate_usage(ch, source, params, reader) == [
+        {"cost": cost, "tokens": tokens, "prompt": prompt, "completion": completion}
+    ]
+
+
+@pytest.mark.parametrize("reader", ["list-session", "materialized", "user", "graph"])
+def test_capture_retry_across_normalization_upgrade_with_deployed_key(ch, reader):
+    from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import _SPANS_DDL
+
+    ch.execute(_SPANS_DDL)
+    source = (
+        f"(SELECT *, {usage_coverage_sql(attrs='attrs_string', include_summary=True)} AS coverage, "
+        f"{graph_cost_flags_sql()} AS graph_cost_flags FROM spans FINAL WHERE is_deleted = 0)"
+    )
+    expected = [{"cost": 0.0, "tokens": 88073, "prompt": 87533, "completion": 540}]
+    # The same immutable payload arrives first before, then after the collector
+    # upgrade; an additional retry must also remain stable under FINAL.
+    for version, normalized, count in [(1, False, 91), (2, True, 164), (3, True, 164)]:
+        rows = captured_usage_rows(normalized=normalized)
+        params = {}
+        values = []
+        columns = (
+            *rows[0],
+            "project_id",
+            "trace_id",
+            "start_time",
+            "service_name",
+            "_version",
+        )
+        for index, row in enumerate(rows):
+            row = {
+                **row,
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "trace_id": "82875303ebfe464f9f6a55fdbc718114",
+                "start_time": "2026-11-06 12:00:00",
+                "service_name": "copilot",
+                "_version": version,
+            }
+            for column, value in row.items():
+                params[f"{column}_{index}"] = value
+            values.append(
+                "(" + ", ".join(f"%({column}_{index})s" for column in columns) + ")"
+            )
+        ch.execute(
+            f"INSERT INTO spans ({', '.join(columns)}) VALUES {', '.join(values)}",
             params,
         )
-        assert result == [{"cost": cost, "tokens": tokens}]
-    else:
-        query = usage_aggregate_sql(coverage="coverage")
-        result = ch.execute(
-            f"SELECT usage_cost AS cost, usage_total_tokens AS tokens FROM (SELECT {query} FROM {source})",
-            params,
-        )
-        assert result == [{"cost": cost, "tokens": tokens}]
+        assert ch.execute("SELECT count() AS count FROM spans FINAL") == [
+            {"count": count}
+        ]
+        assert aggregate_usage(ch, source, {}, reader) == expected
+        if reader == "graph":
+            query = graph_monetary_rows_sql(source=source, columns=COLUMNS)
+            assert ch.execute(f"SELECT count() AS count FROM ({query})") == [
+                {"count": count}
+            ]
+        # The reader correction never rewrites persisted usage or hides rows.
+        assert ch.execute("SELECT sum(total_tokens) AS tokens FROM spans FINAL") == [
+            {"tokens": 176146}
+        ]
 
 
 @pytest.mark.parametrize("width", [1, 1000])

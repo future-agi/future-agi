@@ -50,10 +50,11 @@ class GraphCostCoverageBucket(GraphCostCoverage):
 
 
 def graph_cost_flags_sql(*, prefix: str = "") -> str:
-    """Two bounded monetary counters, evaluated on the usage scalar winner.
+    """Monetary counters plus summary/nonadditive proof bits on the scalar winner.
 
     Keep the shared classifier's nonadditive and unknown rules. A zero-cost
-    tokenless tool is not a monetary fact; an explicit provider zero is.
+    tokenless tool is not a monetary fact; an explicit provider zero is. The
+    nonadditive bit also excludes source summaries from graph token totals.
     """
     attrs = f"{prefix}attrs_string"
     coverage = usage_coverage_sql(attrs=attrs, prefix=prefix)
@@ -70,7 +71,8 @@ def graph_cost_flags_sql(*, prefix: str = "") -> str:
         f"tuple(toUInt8(NOT tupleElement({coverage}, 1) AND "
         f"NOT tupleElement({coverage}, 2) AND ({eligible})), "
         f"toUInt8(NOT tupleElement({coverage}, 1) AND tupleElement({coverage}, 2)), "
-        f"toUInt8({attrs}['gen_ai.operation.name'] = 'invoke_agent'))"
+        f"toUInt8({attrs}['gen_ai.operation.name'] = 'invoke_agent'), "
+        f"toUInt8(tupleElement({coverage}, 1)))"
     )
 
 

@@ -158,6 +158,38 @@ def test_unequal_physical_wrapper_sharing_id_keeps_its_usage():
     )
 
 
+@pytest.mark.parametrize("kind", ["agent", "tool", "llm"])
+def test_explicit_nonadditive_retry_cannot_veto_legacy_summary(kind):
+    normalized = row(
+        "agent",
+        kind=kind,
+        tokens=0,
+        cost=0,
+        span_attributes={
+            "gen_ai.operation.name": "invoke_agent",
+            "fi.usage.contribution": "none",
+        },
+    )
+    spans = [agent(), normalized, row("chat", "agent")]
+    assert repeated_usage_summary_ids(spans) == {"agent"}
+
+
+def test_additive_llm_sharing_summary_id_is_not_suppressed():
+    spans = [agent(), row("agent"), row("chat", "agent")]
+    summary, _ = compute_trace_summary_and_graph(
+        [
+            {
+                "observation_span": spans[0],
+                "children": [
+                    {"observation_span": spans[2], "children": []},
+                ],
+            },
+            {"observation_span": spans[1], "children": []},
+        ]
+    )
+    assert summary["total_tokens"] == 386
+
+
 def test_eval_reader_attribute_shape_matches_detail_shape():
     summary = agent()
     summary["attrs_string"] = summary.pop("span_attributes")

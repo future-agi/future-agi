@@ -49,10 +49,11 @@ SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
 # Reviewed unfiltered cursor shape: complete tuple-winner replay, followed by
 # the lexically bound trace-metric tuple before whole-user totals. The former
 # pin expanded the summary proof into each metric's SELECT alias. The current
-# pin adds a source-winner GenAI operation bit and descendant summary proof;
-# tenant, window, latest-live replay and cursor ordering are unchanged.
+# pin adds a source-winner GenAI operation bit and descendant summary proof,
+# excluding explicitly nonadditive retry siblings from its collision veto.
+# Tenant, window, latest-live replay and cursor ordering are unchanged.
 UNFILTERED_PAGE_DIGEST = (
-    "902cc3fb77034abef969a0a3e3b71d07d1796ad8387a8327a33771d3a7eb4438"
+    "006a8d93bc8d5d2799441f45d4e36f22e3aae0ce9067ddc68771af012a95eba5"
 )
 
 

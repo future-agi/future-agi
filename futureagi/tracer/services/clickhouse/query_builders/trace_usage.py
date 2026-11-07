@@ -37,6 +37,12 @@ def repeated_usage_summary_ids(spans: Sequence[Mapping[str, Any]]) -> set[str]:
     additive_ids = set()
     for span in spans:
         span_id = span.get("id")
+        attrs = span.get("span_attributes") or span.get("attrs_string") or {}
+        if attrs.get("fi.usage.contribution") == "none":
+            # A retry can retain both the legacy unknown and normalized agent
+            # rows: kind belongs to the replacement key. The nonadditive row
+            # cannot veto a proven legacy summary with the same logical id.
+            continue
         if not is_usage_summary_candidate(span):
             if span.get("observation_type") != "llm":
                 additive_ids.add(span_id)
@@ -64,8 +70,8 @@ def repeated_usage_summary_ids(spans: Sequence[Mapping[str, Any]]) -> set[str]:
             repeated.add(span_id)
         else:
             additive_ids.add(span_id)
-    # A logical id can have multiple physical rows. An unequal/non-summary
-    # sibling must not lose its usage merely because one version proved equal.
+    # A logical id can have multiple physical rows. An additive unequal or
+    # non-summary sibling must not lose usage because one version proved equal.
     return repeated - additive_ids
 
 
@@ -278,6 +284,7 @@ def repeated_usage_ids_sql(*, child_condition: str = "1") -> str:
     )
     genai_candidates = (
         f"arrayFilter(s -> s.4 != 'llm' AND s.3 != '{SUMMARY_NAME}' "
+        "AND NOT tupleElement(s.9, 1) "
         "AND tupleElement(tupleConcat(s.9, tuple(0)), 3), usage_spans)"
     )
     descendants = f"""
@@ -310,12 +317,14 @@ def repeated_usage_ids_sql(*, child_condition: str = "1") -> str:
         f"AND {legacy_comparison}, {pydantic_candidates}))"
     )
     # Pydantic keeps its original lightweight proof; only GenAI candidates
-    # enter the lexically bound descendant/collision proof.
+    # enter the lexically bound descendant/collision proof. Nonadditive physical
+    # siblings cannot veto an equal legacy wrapper after a normalization retry.
     genai = f"""
         arrayMap(summary_proofs ->
             arrayMap(proof -> proof.1, arrayFilter(proof -> proof.2
                 AND arrayCount(p -> p.1 = proof.1 AND p.2, summary_proofs)
-                    = arrayCount(c -> c.1 = proof.1 AND c.4 != 'llm', usage_spans), summary_proofs)),
+                    = arrayCount(c -> c.1 = proof.1 AND c.4 != 'llm'
+                        AND NOT tupleElement(c.9, 1), usage_spans), summary_proofs)),
             [arrayMap(s -> tuple(s.1,
                 arrayMap(proof_children -> notEmpty(proof_children) AND {comparisons},
                     [arrayMap(reachable_ids -> {descendants}, [{reachable}])[1]])[1]),
