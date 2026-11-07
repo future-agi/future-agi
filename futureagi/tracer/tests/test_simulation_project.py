@@ -799,7 +799,9 @@ def test_the_run_lookup_matches_the_v3_run_pages(
 
     # Only the payload builder is replaced; the lookup under test is the view's.
     monkeypatch.setattr(
-        run_results_v3, "build_call_execution_detail", lambda call, request: {}
+        run_results_v3,
+        "build_call_execution_detail",
+        lambda call, request, **_options: {},
     )
 
     def v3_reads_execution(request, execution):
