@@ -2340,6 +2340,29 @@
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
 
+### PROMPT-E2E-006 — commit availability and retry are clear in both themes
+
+**Goal:** Commit an existing non-draft prompt version with clear empty, ready, pending and retry states in both themes.  
+**Spec:** `flows/prompts/commit-dialog.spec.ts:18`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a synthetic non-draft version through the public API without executing a model
+2. open Commit in light and dark and enter, clear and re-enter a message
+3. hold the first save, observe loading, and inject one HTTP 500
+4. retry the retained message against the real backend and close on success
+5. reopen the empty dialog and commit the same version as default
+
+**Backend state verified:**
+
+- The real commit endpoint stores the exact retry message and preserves the non-default version, then stores the default-action message and sets the same version as default.
+
+**Browser observations:**
+
+- The ordinary Commit label changes from disabled to active theme text after typing, and back on clearing, in light and dark.
+- Pending disables both actions and shows loading; failure retains the message and permits retry; success closes and resets the dialog.
+
 ## settings
 
 ### SET-E2E-001 — admin restricts MCP tool groups for connected clients
