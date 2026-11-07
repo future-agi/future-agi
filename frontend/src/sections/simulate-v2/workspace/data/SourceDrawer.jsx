@@ -99,7 +99,7 @@ export default function SourceDrawer({
   onReconnect = null,
 }) {
   const source = (envState.sources || []).find((s) => s.id === sourceId);
-  const [tab, setTab] = useState("preview");
+  const [tabState, setTab] = useState("preview");
   const [plan, setPlan] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -207,6 +207,9 @@ export default function SourceDrawer({
     ["usage", "Used by"],
     ["versions", "Versions"],
   ];
+  /* The drawer stays mounted between sources, so a tab only a table has
+     (Mapping, Sensitive values) falls back to What was read for a file. */
+  const tab = TABS.some(([id]) => id === tabState) ? tabState : "preview";
 
   return (
     <SideDrawer open={open} onClose={onClose} width={560}>
