@@ -1,0 +1,307 @@
+# Production agent certification suite — v1.
+#
+# This manifest freezes the audited production-agent set from
+# rl-environment/test-agent-matrix.md. Every entry ships `enabled: false`
+# with explicit `pending` reasons: the matrix records commit SHAs for only
+# the two google/adk-samples agents, and no authorization records for
+# automated production calls exist yet. Campaign admission
+# (require_admission_ready) rejects this suite until entries are
+# materialized — pinned source commit, committed scenario config
+# (config_ref + config_sha256), declared secret_ref_set, and an
+# authorization block with automated_production_calls: approved.
+#
+# Note: the plan names this a 25-agent campaign; the matrix lists 26 rows.
+# All 26 are recorded here so the count discrepancy is explicit rather than
+# silently dropped — confirm the intended 25th entry when materializing.
+
+version: 1
+suite_key: production_agents_v1
+defaults:
+  interaction_count: 2
+  max_duration_seconds: 1800
+  artifacts:
+    level: full
+  trace_reference: https://traces.internal/certification/production_agents_v1
+
+cases:
+  - case_key: ride_booking__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Ride Booking
+      source: { repository: https://github.com/future-agi/ride-voice-agent }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: front_desk__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Front Desk
+      source: { repository: https://github.com/livekit/agents }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: drive_through__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Drive Through
+      source: { repository: https://github.com/livekit/agents }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: hotel_receptionist__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Hotel Receptionist
+      source: { repository: https://github.com/livekit/agents }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: livekit_starter__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: LiveKit Starter
+      source: { repository: https://github.com/livekit-examples/agent-starter-python }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: alderway__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Alderway
+      source: { repository: https://github.com/KarthikAvinashFI/alderway-voice-agent }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: packaged_python_chat__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Packaged Python Chat
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: unpackaged_python_chat__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Unpackaged Python Chat
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: ava_portfolio__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Ava Portfolio
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: retell_existing_voice__primary
+    enabled: false
+    pending: [target_endpoint_unrecorded, authorization_unverified]
+    agent:
+      name: Retell Existing Voice
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: retell_clone_rewire__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Retell Clone/Rewire
+      source: { repository: https://github.com/future-agi/agent-learning-kit }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: retell_code_created__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Retell Code-Created
+      source: { repository: https://github.com/future-agi/agent-learning-kit }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: retell_existing_chat__primary
+    enabled: false
+    pending: [target_endpoint_unrecorded, authorization_unverified]
+    agent:
+      name: Retell Existing Chat
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: vapi_existing_voice__primary
+    enabled: false
+    pending: [target_endpoint_unrecorded, authorization_unverified]
+    agent:
+      name: Vapi Existing Voice
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: vapi_clone_rewire__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Vapi Clone/Rewire
+      source: { repository: https://github.com/future-agi/agent-learning-kit }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: vapi_code_created__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Vapi Code-Created
+      source: { repository: https://github.com/future-agi/agent-learning-kit }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: multi_store__primary
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    agent:
+      name: Multi-store
+      source: { repository: https://github.com/future-agi/agent-learning-kit }
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: haystack_rag__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Haystack RAG
+      source: { repository: https://github.com/deepset-ai/haystack }
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: llamaindex_rag__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: LlamaIndex RAG
+      source: { repository: https://github.com/run-llama/llama_index }
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: langchain_sql__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: LangChain SQL
+      source: { repository: https://github.com/langchain-ai/langchain }
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: uber_admin_phone__primary
+    enabled: false
+    pending: [target_endpoint_unrecorded, authorization_unverified]
+    agent:
+      name: Uber Admin Phone
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: uber_guest_phone__primary
+    enabled: false
+    pending: [target_endpoint_unrecorded, authorization_unverified]
+    agent:
+      name: Uber Guest Phone
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: google_adk_memory_bank__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Google ADK Memory Bank
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: google_adk_travel_concierge__primary
+    enabled: false
+    pending: [authorization_unverified]
+    agent:
+      name: Google ADK Travel Concierge
+      source:
+        repository: https://github.com/google/adk-samples
+        commit_sha: b822efc7710498dfa4ff0d405c20ecdc6b92c8e3
+        path: python/agents/travel-concierge
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: google_adk_software_bug_assistant__primary
+    enabled: false
+    pending: [authorization_unverified]
+    agent:
+      name: Google ADK Software Bug Assistant
+      source:
+        repository: https://github.com/google/adk-samples
+        commit_sha: b822efc7710498dfa4ff0d405c20ecdc6b92c8e3
+        path: python/agents/software-bug-assistant
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: google_adk_multi_agent__primary
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    agent:
+      name: Google ADK Multi-Agent
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
