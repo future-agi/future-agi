@@ -19,7 +19,9 @@ def resources_for_scope(
 ) -> QuerySet[HubSkill]:
     if kind not in {"skill", "agent_context"}:
         raise SkillsHubError("resource_not_found", "Resource not found.", status=404)
-    return HubSkill.all_objects.filter(
+    # all_objects still applies ambient workspace filtering. Recovery and isolated
+    # credentials must instead use only the explicitly authorized scope below.
+    return HubSkill._base_manager.filter(
         organization_id=scope.organization_id,
         workspace_id=scope.workspace_id,
         workspace__organization_id=scope.organization_id,
