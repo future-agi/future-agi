@@ -1,4 +1,7 @@
-import { addIcon } from '@iconify/react';
+import { addCollection, addIcon } from '@iconify/react';
+import fileActionIcons from './fileActionIcons';
+
+addCollection(fileActionIcons);
 
 // Official Solar linear definitions, bundled locally so skill navigation works
 // on offline/self-hosted installations. The preferred magic-stick icon is not

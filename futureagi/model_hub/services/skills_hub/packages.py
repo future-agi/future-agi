@@ -180,7 +180,8 @@ def _zip_files(
             )
         except ZipDirectoryTooLarge as exc:
             raise _too_large(
-                "The ZIP directory exceeds the entry or metadata limit."
+                f"Keep ZIP imports within {limits.MAX_ZIP_ENTRIES:,} entries "
+                "and 10 MiB of directory metadata."
             ) from exc
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             entries = archive.infolist()

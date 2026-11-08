@@ -819,9 +819,7 @@ class SkillImportView(SkillsView):
             bucket = (
                 "unchanged"
                 if published.unchanged
-                else "updated"
-                if existing
-                else "created"
+                else "updated" if existing else "created"
             )
             version = published.version
             result[bucket].append(

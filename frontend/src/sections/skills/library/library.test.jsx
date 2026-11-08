@@ -183,16 +183,21 @@ describe("Skills library", () => {
     expect(filter).toHaveValue("support");
   });
 
-  it("keeps an off-page tag selected with no results and allows any tag on blur", () => {
+  it("keeps an off-page tag selected with no results and allows any tag on blur", async () => {
+    const user = userEvent.setup();
     api.list.mockReturnValue(listResult({ results: [], count: 0 }));
     renderLibrary("?search=missing&tag=finance&page=3");
     const filter = screen.getByRole("combobox", { name: "Tag" });
     expect(filter).toHaveValue("finance");
-    fireEvent.change(filter, { target: { value: "security" } });
-    fireEvent.blur(filter);
+    await user.click(filter);
+    await user.clear(filter);
+    await user.type(filter, "security");
+    await user.tab();
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "security", search: "missing", page: 1 }));
-    fireEvent.focus(filter);
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await user.click(filter);
+    // JSDOM misses MUI's higher-specificity parent-focus visibility rule.
+    // Browser coverage separately checks this control is visible and clickable.
+    await user.click(screen.getByLabelText("Clear"));
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ tag: "", search: "missing", page: 1 }));
     expect(filter).toHaveValue("");
   });

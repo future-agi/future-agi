@@ -12,9 +12,9 @@ from mcp_server.api_executor import (
     MCPRequestContext,
 )
 from mcp_server.constants import DEFAULT_TOOL_GROUPS, TOOL_GROUPS
-from mcp_server.generated_registry import GeneratedToolRegistry
+from mcp_server.generated_registry import GeneratedTool, GeneratedToolRegistry
 from mcp_server.response_limits import bounded_response
-from model_hub.models.skills_hub import HubSkillUsageDaily
+from model_hub.models.skills_hub import HubSkillUsageDaily, HubSkillVersion
 from model_hub.services.skills_hub.types import Actor
 from model_hub.services.skills_hub.versions import publish_by_name
 
@@ -28,23 +28,33 @@ SKILLS = {
 }
 
 
+def _tool(registry: GeneratedToolRegistry, name: str) -> GeneratedTool:
+    tool = registry.get(name)
+    assert tool is not None, f"Missing generated tool: {name}"
+    return tool
+
+
 def test_skills_registry_count_and_default_group():
     registry = GeneratedToolRegistry.from_manifest()
     assert registry.count() == 113
     assert {tool.name for tool in registry.list_by_groups(["skills"])} == SKILLS
     assert "skills" in TOOL_GROUPS and "skills" in DEFAULT_TOOL_GROUPS
     for name in SKILLS:
-        assert registry.get(name).annotations["readOnlyHint"] == (
+        assert _tool(registry, name).annotations["readOnlyHint"] == (
             name in {"list_skills", "get_skill", "read_skill_file"}
         )
     assert (
-        registry.get("list_skills").input_schema["properties"]["page_size"]["maximum"]
+        _tool(registry, "list_skills").input_schema["properties"]["page_size"][
+            "maximum"
+        ]
         == 100
     )
-    manifest_tool = registry.get("get_skill")
+    manifest_tool = _tool(registry, "get_skill")
     assert manifest_tool.input_schema["properties"]["file_limit"]["maximum"] == 25
     assert manifest_tool.input_schema["properties"]["file_offset"]["maximum"] == 200
-    assert {"file_offset", "file_limit"} <= set(manifest_tool.request["parameters"]["query"])
+    assert {"file_offset", "file_limit"} <= set(
+        manifest_tool.request["parameters"]["query"]
+    )
     assert "next_file_offset" in manifest_tool.description
 
 
@@ -94,7 +104,7 @@ def test_read_skill_file_reassembles_100kib_through_executor(
         acknowledge_warnings=True,
     )
     manifest = executor.execute_sync(
-        registry.get("get_skill"),
+        _tool(registry, "get_skill"),
         {"name": "large-skill", "include_content": True},
         context,
     )
@@ -103,7 +113,7 @@ def test_read_skill_file_reassembles_100kib_through_executor(
     text, offset = "", 0
     while True:
         response = executor.execute_sync(
-            registry.get("read_skill_file"),
+            _tool(registry, "read_skill_file"),
             {
                 "skill_id": manifest["skill_id"],
                 "number": manifest["version"],
@@ -129,7 +139,7 @@ def test_read_skill_file_reassembles_100kib_through_executor(
     ]
     with pytest.raises(APIExecutionError) as error:
         executor.execute_sync(
-            registry.get("get_skill"),
+            _tool(registry, "get_skill"),
             {"name": "large-skill", "label": "missing"},
             context,
         )
@@ -147,13 +157,13 @@ def test_all_skill_tools_execute_against_generated_contract(
     )
     content = "---\nname: mcp-skill\ndescription: Use when a workspace needs reusable instructions for reviewing a request.\n---\n\nRead the request.\n"
     pushed = executor.execute_sync(
-        registry.get("publish_skill"),
+        _tool(registry, "publish_skill"),
         {"files": [{"path": "SKILL.md", "content": content}]},
         context,
     )
     skill_id = pushed["skill"]["id"]
     label = executor.execute_sync(
-        registry.get("set_skill_label"),
+        _tool(registry, "set_skill_label"),
         {
             "skill_id": skill_id,
             "label": "production",
@@ -164,13 +174,13 @@ def test_all_skill_tools_execute_against_generated_contract(
     )
     assert label["version"] == 1
     updated = executor.execute_sync(
-        registry.get("update_skill_tags"),
+        _tool(registry, "update_skill_tags"),
         {"skill_id": skill_id, "tags": ["approved"]},
         context,
     )
     assert updated["tags"] == ["approved"]
     listed = executor.execute_sync(
-        registry.get("list_skills"), {"tag": "approved"}, context
+        _tool(registry, "list_skills"), {"tag": "approved"}, context
     )
     assert listed["count"] == 1
     assert listed["stats"]["in_production"] == 1
@@ -183,7 +193,7 @@ def test_set_history_label_through_executor(user, organization, workspace):
     context = MCPRequestContext(
         user=user, organization=organization, workspace=workspace
     )
-    versions = []
+    versions: list[HubSkillVersion] = []
     for body in ("Read the request.", "Read the updated instructions."):
         versions.append(
             publish_by_name(
@@ -208,7 +218,7 @@ def test_set_history_label_through_executor(user, organization, workspace):
         )
     skill = versions[0].skill
     moved = executor.execute_sync(
-        registry.get("set_skill_label"),
+        _tool(registry, "set_skill_label"),
         {
             "skill_id": str(skill.pk),
             "label": "history",
@@ -220,7 +230,7 @@ def test_set_history_label_through_executor(user, organization, workspace):
     assert moved["name"] == "history" and moved["version_id"] == str(versions[1].pk)
     with pytest.raises(APIExecutionError) as error:
         executor.execute_sync(
-            registry.get("set_skill_label"),
+            _tool(registry, "set_skill_label"),
             {
                 "skill_id": str(skill.pk),
                 "label": "history",
@@ -273,9 +283,11 @@ def test_get_skill_pages_maximum_manifest_through_executor(
         acknowledge_warnings=True,
     ).version
     arguments = {"name": "many-files"}
-    received = []
+    received: list[dict[str, str | int]] = []
     while True:
-        manifest = executor.execute_sync(registry.get("get_skill"), arguments, context)
+        manifest = executor.execute_sync(
+            _tool(registry, "get_skill"), arguments, context
+        )
         assert len(json.dumps(manifest, ensure_ascii=False).encode()) < 65536
         assert "_mcp" not in manifest and "frontmatter" not in manifest
         assert manifest["version_id"] == str(published.pk)
@@ -306,7 +318,7 @@ def test_get_skill_pages_maximum_manifest_through_executor(
     # The final, formerly unreachable file remains readable using immutable IDs.
     last = files[-1]
     chunk = executor.execute_sync(
-        registry.get("read_skill_file"),
+        _tool(registry, "read_skill_file"),
         {
             "skill_id": manifest["skill_id"],
             "number": manifest["version"],

@@ -1,6 +1,5 @@
 """Upload resource limits must stop reads/storage, not merely return a late 413."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -9,11 +8,14 @@ from django.core.files.uploadhandler import (
     MemoryFileUploadHandler,
     TemporaryFileUploadHandler,
 )
+from django.http import HttpRequest
+from rest_framework.exceptions import ParseError
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.views import skills_hub as views
+from model_hub.views.skills_uploads import BoundedMultipartStream
 
 BOUNDARY = "synthetic-skills-stream-boundary"
 MEDIA_TYPE = f"multipart/form-data; boundary={BOUNDARY}"
@@ -33,9 +35,9 @@ class LazyBody:
     def read(self, size=-1):
         assert 0 <= size <= CHUNK, "Multipart parsing must use bounded reads"
         # Fail safely even if a regression starts consuming a 900 MiB request.
-        assert self.bytes_read <= limits.MAX_MULTIPART_BYTES + 2 * CHUNK, (
-            "Oversized body was drained"
-        )
+        assert (
+            self.bytes_read <= limits.MAX_MULTIPART_BYTES + 2 * CHUNK
+        ), "Oversized body was drained"
         chunks = []
         while size and self.index < len(self.parts):
             part = self.parts[self.index]
@@ -81,12 +83,11 @@ def multipart_parts(files, *, field_bytes=0):
 
 
 def parse(stream, *, declared=None):
-    request = SimpleNamespace(
-        META={
-            "CONTENT_TYPE": MEDIA_TYPE,
-            "CONTENT_LENGTH": str(stream.length if declared is None else declared),
-        }
-    )
+    request = HttpRequest()
+    request.META = {
+        "CONTENT_TYPE": MEDIA_TYPE,
+        "CONTENT_LENGTH": str(stream.length if declared is None else declared),
+    }
     # Supply the vulnerable parser's normal handler chain too, so regression
     # tests exercise its old behavior rather than fail on a missing attribute.
     request.upload_handlers = [
@@ -158,12 +159,31 @@ def test_whole_multipart_budget_is_enforced_even_with_false_content_length(
     else:
         parts = [*multipart_parts([("done.txt", 5)]), oversize]
     body = LazyBody(parts)
+    if kind == "field":
+        with pytest.raises(SkillsHubError) as error:
+            parse(body, declared=1)
+        assert_large(error)
+        assert body.bytes_read == limits.MAX_MULTIPART_BYTES + 1
+    else:
+        # Django rejects oversized non-part headers before the wire cap. Never
+        # drain a malformed envelope just to turn its early 400 into a 413.
+        with pytest.raises(ParseError, match="Invalid multipart upload") as malformed:
+            parse(body, declared=1)
+        assert malformed.value.status_code == 400
+        assert body.bytes_read <= 2 * CHUNK
+    assert body.bytes_read < body.length
+    assert list(upload_settings.iterdir()) == []
+
+
+def test_wire_adapter_caps_arbitrary_envelope_bytes_without_draining():
+    body = LazyBody([limits.MAX_MULTIPART_BYTES + 4 * CHUNK])
+    stream = BoundedMultipartStream(body)
     with pytest.raises(SkillsHubError) as error:
-        parse(body, declared=1)
+        while stream.read(CHUNK):
+            pass
     assert_large(error)
     assert body.bytes_read == limits.MAX_MULTIPART_BYTES + 1
     assert body.bytes_read < body.length
-    assert list(upload_settings.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -179,7 +199,7 @@ def test_exact_file_limit_spools_with_bounded_memory_and_preserves_paths(
     try:
         assert isinstance(upload, TemporaryUploadedFile)
         assert upload.size == maximum
-        assert upload.skill_relative_path == "folder/" + filename
+        assert vars(upload)["skill_relative_path"] == "folder/" + filename
         assert upload.read(8) == b"x" * 8
         assert settings.FILE_UPLOAD_MAX_MEMORY_SIZE == 1024**3
     finally:
@@ -188,10 +208,13 @@ def test_exact_file_limit_spools_with_bounded_memory_and_preserves_paths(
 
 def test_exact_aggregate_and_wire_limits_are_accepted():
     files = [("first.zip", limits.MAX_ZIP_BYTES), ("second.zip", limits.MAX_ZIP_BYTES)]
-    parts = multipart_parts(files)
+    parts = multipart_parts(files, field_bytes=1)
     length = sum(part if isinstance(part, int) else len(part) for part in parts)
-    # Legal epilogue consumes the remaining wire budget, without increasing files.
-    body = LazyBody([*parts, limits.MAX_MULTIPART_BYTES - length])
+    # A valid form field fills the remaining budget. An oversized epilogue is
+    # rejected by Django's independent header limit, even below our wire cap.
+    body = LazyBody(
+        multipart_parts(files, field_bytes=limits.MAX_MULTIPART_BYTES - length + 1)
+    )
     parsed = parse(body)
     try:
         assert (
@@ -234,8 +257,8 @@ def test_both_import_routes_return_structured_413_before_package_parsing(
         format="multipart",
     )
     force_authenticate(request, user=user)
-    request.organization = organization
-    request.workspace = workspace
+    request.__dict__["organization"] = organization
+    request.__dict__["workspace"] = workspace
     response = view.as_view()(request)
     assert response.status_code == 413, response.data
     assert response.data["code"] == "payload_too_large"

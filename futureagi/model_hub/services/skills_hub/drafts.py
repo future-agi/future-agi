@@ -144,8 +144,9 @@ def save_draft(
 
 def _check_revision(draft: HubSkillDraft | None, revision: int) -> None:
     # Zero means no live draft, not a reset of the persisted revision sequence.
-    live = draft is not None and draft.discarded_at is None
-    current_revision = draft.revision if live else 0
+    current_revision = (
+        draft.revision if draft is not None and draft.discarded_at is None else 0
+    )
     if revision != current_revision:
         raise SkillsHubError(
             "draft_conflict",

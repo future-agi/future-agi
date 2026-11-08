@@ -181,7 +181,7 @@ def test_cross_skill_publish_acquires_shared_blobs_in_hash_order(
     barrier = Barrier(2, timeout=15)
     guard = Lock()
     first_hashes = {}
-    calls = {}
+    calls: dict[int, list[str]] = {}
     real_get_or_create = QuerySet.get_or_create
 
     def synchronized_get_or_create(queryset, *args, **kwargs):
@@ -296,17 +296,17 @@ def test_publication_uses_original_frontmatter_not_redacted_diagnostics(
             source=source,
         )
     else:
-        args = dict(
-            organization=organization,
-            workspace=workspace,
-            actor=hub_actor,
-            files=files,
-            note="",
-            labels=[],
-            tags=[],
-            acknowledge_warnings=True,
-            source=source,
-        )
+        args = {
+            "organization": organization,
+            "workspace": workspace,
+            "actor": hub_actor,
+            "files": files,
+            "note": "",
+            "labels": [],
+            "tags": [],
+            "acknowledge_warnings": True,
+            "source": source,
+        }
         result = publish_by_name(**args)
         repeated = publish_by_name(**args)
         assert repeated.unchanged and repeated.version.pk == result.version.pk

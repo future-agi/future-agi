@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Box, Button, ButtonBase, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, ButtonBase, IconButton, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import Iconify from 'src/components/iconify';
 import ModalWrapper from 'src/components/ModalWrapper/ModalWrapper';
 import { ConfirmDialog } from 'src/components/custom-dialog';
@@ -57,7 +57,8 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
   };
   const onKeyDown = (event, row, index) => {
     const folder = row.type === 'folder';
-    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End', 'Enter'].includes(event.key)) return;
+    // ButtonBase owns Enter/Space activation; only handle tree navigation here.
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     switch (event.key) {
       case 'ArrowDown': focus(rows[Math.min(index + 1, rows.length - 1)].path); break;
@@ -99,11 +100,11 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     setDialog(null);
   };
   return <Stack spacing={1} sx={{ minWidth: 0 }}>
-    {!readOnly && <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" aria-label="File actions">
-      <Button size="small" color="inherit" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}>New file</Button>
-      <Button size="small" color="inherit" onClick={() => openDialog('folder')} disabled={!onCreate}>New folder</Button>
-      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be renamed.' : ''}><span><Button size="small" color="inherit" disabled={!selectedFile || !onRename || protectedRoot} onClick={() => openDialog('rename')}>Rename</Button></span></Tooltip>
-      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be deleted.' : ''}><span><Button size="small" color="inherit" disabled={!selectedFile || !onDelete || protectedRoot} onClick={() => setDialog('delete')}>Delete</Button></span></Tooltip>
+    {!readOnly && <Stack direction="row" spacing={0.5} useFlexGap role="group" aria-label="File actions" sx={{ flexWrap: 'nowrap', '& > span': { display: 'inline-flex', flexShrink: 0 } }}>
+      <Tooltip title={files.length >= LIMITS.MAX_FILES ? 'File limit reached.' : 'New file'}><span><IconButton size="small" color="inherit" aria-label="New file" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}><Iconify icon="solar:file-add-linear" /></IconButton></span></Tooltip>
+      <Tooltip title="New folder"><span><IconButton size="small" color="inherit" aria-label="New folder" onClick={() => openDialog('folder')} disabled={!onCreate}><Iconify icon="solar:folder-with-files-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be renamed.' : 'Rename'}><span><IconButton size="small" color="inherit" aria-label="Rename" disabled={!selectedFile || !onRename || protectedRoot} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be deleted.' : 'Delete'}><span><IconButton size="small" color="inherit" aria-label="Delete" disabled={!selectedFile || !onDelete || protectedRoot} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
     </Stack>}
     {folderPrefix && !readOnly && <Typography variant="s3" color="text.secondary">New files will start in {folderPrefix}</Typography>}
     {!rows.length && <Typography variant="s3" color="text.secondary">No files yet.</Typography>}

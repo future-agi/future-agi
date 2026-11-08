@@ -3,6 +3,7 @@
 import asyncio
 import json
 import runpy
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.unit
 def body_app(settings, monkeypatch):
     # Force the real Django spool onto disk too, to prove cleanup on rejection.
     settings.FILE_UPLOAD_MAX_MEMORY_SIZE = 1
-    original = django_asgi.tempfile.SpooledTemporaryFile
+    original = tempfile.SpooledTemporaryFile
     spools = []
     dispatched = []
 
@@ -30,7 +31,7 @@ def body_app(settings, monkeypatch):
         spools.append(value)
         return value
 
-    monkeypatch.setattr(django_asgi.tempfile, "SpooledTemporaryFile", spool)
+    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", spool)
     handler = object.__new__(django_asgi.ASGIHandler)
 
     async def app(scope, receive, send):

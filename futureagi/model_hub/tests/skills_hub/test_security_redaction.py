@@ -50,6 +50,7 @@ def test_decoded_credentials_and_credential_keys_are_detected_and_redacted(
     }
     assert source == original
     parsed, _, _ = checks.parse_frontmatter(source[0]["content"])
+    assert parsed is not None
     assert VALUE in parsed["metadata"].values()
 
 
@@ -106,8 +107,8 @@ def test_checks_api_and_publish_warning_gate_use_decoded_secrets(
     def post(view, payload):
         request = APIRequestFactory().post("/model-hub/skills/", payload, format="json")
         force_authenticate(request, user=user)
-        request.organization = organization
-        request.workspace = workspace
+        request.__dict__["organization"] = organization
+        request.__dict__["workspace"] = workspace
         return view.as_view()(request)
 
     checked = post(views.SkillChecksView, {"files": source})

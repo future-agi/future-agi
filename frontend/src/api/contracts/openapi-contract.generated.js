@@ -26223,6 +26223,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: false,
             },
           },
+          file_offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 200,
+              default: 0,
+            },
+          },
+          file_limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 25,
+            },
+          },
         },
         responses: {
           200: {
@@ -26685,6 +26702,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/SkillsHistoryPageResponse",
           },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      put: {
+        operationId: "model-hub_skills_labels_history_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SkillsHubSetLabelRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsLabelOutResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "model-hub_skills_labels_history_delete",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SkillsHubRemoveLabelRequest",
+        },
+        queryParameters: {},
+        responses: {
           400: {
             $ref: "#/definitions/SkillsError",
           },
@@ -115118,8 +115208,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "version_id",
         "digest",
         "requested",
-        "frontmatter",
         "files",
+        "file_count",
+        "file_offset",
+        "next_file_offset",
         "created_at",
       ],
       type: "object",
@@ -115158,6 +115250,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         frontmatter: {
           title: "Frontmatter",
+          description:
+            "REST only. MCP callers read the original frontmatter from SKILL.md in chunks.",
           type: "object",
         },
         files: {
@@ -115165,6 +115259,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SkillsHubManifestFile",
           },
+        },
+        file_count: {
+          title: "File count",
+          type: "integer",
+        },
+        file_offset: {
+          title: "File offset",
+          type: "integer",
+        },
+        next_file_offset: {
+          title: "Next file offset",
+          type: "integer",
+          "x-nullable": true,
         },
         created_at: {
           title: "Created at",

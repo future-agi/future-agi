@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "88c30a3511855f2bb16d63dbce84b7e7f66b0513bcbf9930d9fff91c1a23f9b2",
+  "source_contract_sha256": "dd77ad77a1a976d3792797da69c3694e12c1760f674e19508ea572a97b2c18ac",
   "tool_count": 113,
   "tools": [
     {
@@ -11103,7 +11103,7 @@
     },
     {
       "name": "get_skill",
-      "description": "Resolve a skill manifest without file contents. Choose label or version; neither means production and missing labels never fall back. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed.",
+      "description": "Resolve a bounded skill manifest without file contents or frontmatter. Choose label or version; neither means production and missing labels never fall back. Files are sorted by path and paged (file_limit 1\u201325, default 25). Until next_file_offset is null, call get_skill again with file_offset=next_file_offset, the same name and the returned version pinned (omit label); file_count is the total inventory size. Never treat one page as the complete inventory. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed. SKILL.md contains the full original frontmatter. Every response stays within the 64 KiB MCP limit.",
       "group": "skills",
       "inputSchema": {
         "type": "object",
@@ -11123,6 +11123,19 @@
           "include_content": {
             "type": "boolean",
             "default": false
+          },
+          "file_offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 200,
+            "description": "Zero-based file offset. Pin version when following next_file_offset."
+          },
+          "file_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
+            "description": "Files per manifest page (1\u201325). REST defaults to all files; MCP defaults to 25."
           }
         },
         "additionalProperties": false,
@@ -11145,7 +11158,9 @@
             "label",
             "version",
             "name",
-            "include_content"
+            "include_content",
+            "file_offset",
+            "file_limit"
           ],
           "body": []
         }

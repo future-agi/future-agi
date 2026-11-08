@@ -11,12 +11,15 @@ from model_hub.services.skills_hub.drafts import (
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.limits import MAX_FILE_BYTES, MAX_FILES, MAX_NOTE
+from model_hub.services.skills_hub.types import FileInput
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
 def test_save_incomplete_content_and_revision_conflict(hub_skill, user):
-    files = [{"path": "SKILL.md", "content": "An unfinished draft without frontmatter"}]
+    files: list[FileInput] = [
+        {"path": "SKILL.md", "content": "An unfinished draft without frontmatter"}
+    ]
     draft = save_draft(
         skill=hub_skill,
         user=user,
@@ -117,7 +120,7 @@ def test_draft_storage_limits(hub_skill, user, files, note):
 
 
 def test_draft_accepts_exact_byte_limits(hub_skill, user):
-    files = [
+    files: list[FileInput] = [
         {"path": f"{index}.txt", "content": "é" * (MAX_FILE_BYTES // 2)}
         for index in range(4)
     ]

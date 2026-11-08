@@ -91,7 +91,7 @@ await server.listen();
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, executablePath: process.env.SKILLS_CHROME_PATH });
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (error) => {
@@ -163,6 +163,17 @@ try {
       await page.getByRole("link", { name: "tagged-skill-0", exact: true }).waitFor();
       assert.equal(await page.getByRole("link", { name: "tagged-skill-25", exact: true }).count(), 0);
       assert.equal(new URL(page.url()).searchParams.get("tag"), "support");
+      await tagFilter.fill("missing-tag");
+      await tagFilter.press("Tab");
+      await page.getByRole("heading", { name: "No skills found" }).waitFor();
+      assert.equal(new URL(page.url()).searchParams.get("tag"), "missing-tag");
+      await tagFilter.focus();
+      const clearTag = page.getByRole("button", { name: "Clear", exact: true });
+      assert.equal(await clearTag.isVisible(), true);
+      await clearTag.click();
+      assert.equal(new URL(page.url()).searchParams.has("tag"), false);
+      assert.equal(await tagFilter.inputValue(), "");
+      await page.getByRole("link", { name: "tagged-skill-0", exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme}/${width}/tag filter: page overflow`);
       await page.screenshot({ path: path.join(output, `${theme}-${width}-tag-filter.png`), fullPage: true, animations: "disabled" });
     }

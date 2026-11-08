@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import IO, cast
+
 from django.core.files.uploadedfile import UploadedFile
 from django.core.files.uploadhandler import (
     FileUploadHandler,
@@ -58,7 +60,7 @@ class SkillsUploadHandler(FileUploadHandler):
 
     def new_file(self, *args, **kwargs):
         super().new_file(*args, **kwargs)
-        is_zip = self.file_name.lower().endswith(".zip")
+        is_zip = (self.file_name or "").lower().endswith(".zip")
         self.maximum = limits.MAX_ZIP_BYTES if is_zip else limits.MAX_FILE_BYTES
         self.file_bytes = 0
         self.file_count += 1
@@ -119,7 +121,11 @@ class SkillMultipartParser(MultiPartParser):
         handlers = [SkillsUploadHandler(request), storage]
         try:
             data, files = RelativePathMultipartParser(
-                meta, BoundedMultipartStream(stream), handlers, context.get("encoding")
+                meta,
+                # Django only reads this adapter; its stub requires the full IO API.
+                cast(IO[bytes], BoundedMultipartStream(stream)),
+                handlers,
+                context.get("encoding"),
             ).parse()
         except Exception as exc:
             # Django closes completed files on failure; the current partial file

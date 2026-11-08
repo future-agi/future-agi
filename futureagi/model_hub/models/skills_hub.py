@@ -197,7 +197,7 @@ class HubSkillLabelEvent(models.Model):
         ]
 
 
-class LiveDraftManager(models.Manager):
+class LiveDraftManager(models.Manager["HubSkillDraft"]):
     """Hide revision tombstones from ordinary draft readers and relations."""
 
     def get_queryset(self) -> "models.QuerySet[HubSkillDraft]":

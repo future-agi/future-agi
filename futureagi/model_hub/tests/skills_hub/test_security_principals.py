@@ -1,7 +1,6 @@
 """Real JWT/user/MCP/system-key regressions for the private draft boundary."""
 
 import json
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -256,7 +255,7 @@ def test_user_bound_principals_keep_private_authoring(
     [("system", "self"), ("unknown", "self"), ("user", "other"), ("mcp", "none")],
 )
 def test_private_principal_fails_closed_for_forced_auth_callers(user, kind, owner):
-    key = SimpleNamespace(
+    key = OrgApiKey(
         type=kind, user_id={"self": user.pk, "other": uuid4(), "none": None}[owner]
     )
     assert private_user(user=user, api_key=key) is None

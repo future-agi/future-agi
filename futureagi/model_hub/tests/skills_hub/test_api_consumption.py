@@ -36,9 +36,7 @@ def test_history_label_mutations_preserve_audit_reads(
     assert moved["name"] == "history"
     assert moved["version_id"] == str(second.pk)
     assert moved["version"] == 2
-    conflict = client.put(
-        path, {"version": 1, "expected_version": 1}, format="json"
-    )
+    conflict = client.put(path, {"version": 1, "expected_version": 1}, format="json")
     assert conflict.status_code == 409 and conflict.data["code"] == "label_conflict"
     assert (
         client.delete(path, {"expected_version": 2}, format="json").status_code == 204
@@ -82,9 +80,7 @@ def test_batch_download_packages_and_counts_each_resolved_skill(
         )
         files = make_skill_files(
             name,
-            extra=[
-                {"path": "references/policy.md", "content": f"Policy for {name}."}
-            ],
+            extra=[{"path": "references/policy.md", "content": f"Policy for {name}."}],
         )
         version = publish_skill(
             skill,
@@ -142,7 +138,9 @@ def test_batch_download_packages_and_counts_each_resolved_skill(
         }
         for skill, version, _ in selected[:2]
     ]
-    assert lock["skipped"] == [{"name": "unlabelled-skill", "reason": "label_not_found"}]
+    assert lock["skipped"] == [
+        {"name": "unlabelled-skill", "reason": "label_not_found"}
+    ]
     key = credentials[1]
     consumer = f"key:{key.pk}" if key else f"user:{hub_actor.user.pk}"
     assert set(
@@ -251,4 +249,6 @@ def test_manifest_file_paging_is_optional_and_lossless(
         {"file_limit": 26},
     ):
         response = client.get(BASE + "resolve/", {**query, **invalid})
-        assert response.status_code == 400 and response.data["code"] == "invalid_selector"
+        assert (
+            response.status_code == 400 and response.data["code"] == "invalid_selector"
+        )

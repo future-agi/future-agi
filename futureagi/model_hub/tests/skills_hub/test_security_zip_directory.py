@@ -1,4 +1,4 @@
-"""Reject metadata amplification before either importer constructs a ZipFile."""
+"""Reject metadata amplification before the v1 importer constructs a ZipFile."""
 
 import io
 import struct
@@ -7,9 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from model_hub.services.skills_hub import limits, packages
+from model_hub.services.skills_hub import limits, packages, zip_directory
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.v11.repository_zip import parse_repository_zip
 from model_hub.services.skills_hub.zip_directory import (
     ZipDirectoryTooLarge,
     preflight_zip_directory,
@@ -37,15 +36,12 @@ def set_declared_count(raw, count):
     return bytes(data)
 
 
-def read_archive(raw, importer):
-    if importer == "upload":
-        return packages.parse_upload([("synthetic.zip", raw)])
-    return parse_repository_zip(raw, path="")
+def read_archive(raw):
+    return packages.parse_upload([("synthetic.zip", raw)])
 
 
-@pytest.mark.parametrize("importer", ["upload", "repository"])
 @pytest.mark.parametrize("kind", ["many_entries", "lying_count", "oversized_metadata"])
-def test_rejects_before_zipinfo_materialization(importer, kind, monkeypatch):
+def test_rejects_before_zipinfo_materialization(kind, monkeypatch):
     if kind == "many_entries":
         # The reported exploit: valid, empty entries below the compressed-byte cap.
         raw = archive(60_000)
@@ -62,11 +58,9 @@ def test_rejects_before_zipinfo_materialization(importer, kind, monkeypatch):
     )
     monkeypatch.setattr(zipfile, "ZipFile", constructor)
     with pytest.raises(SkillsHubError) as error:
-        read_archive(raw, importer)
+        read_archive(raw)
     assert error.value.status == 413
-    assert error.value.code == (
-        "payload_too_large" if importer == "upload" else "github_archive_too_large"
-    )
+    assert error.value.code == "payload_too_large"
     constructor.assert_not_called()
 
 
@@ -104,11 +98,27 @@ def test_valid_zip64_and_prepended_archives_inspect_same_directory(
             zipped.comment = b"synthetic comment"
         raw = prefix + stream.getvalue()
     assert preflight_zip_directory(raw, max_entries=1) == 1
-    uploaded = read_archive(raw, "upload")
+    uploaded = read_archive(raw)
     assert uploaded["rejected"] == []
     assert uploaded["bundles"][0]["files"][0]["content"].encode() == SKILL
-    repository = read_archive(raw, "repository")
-    assert repository["bundle"]["files"][0]["content"].encode() == SKILL
+
+
+@pytest.mark.parametrize("prefix", [b"", b"synthetic prefix\n"])
+@pytest.mark.parametrize("location_signature", [b"PK\x05\x06", b"PK\x06\x06"])
+def test_zip64_accepts_legacy_and_normalized_reader_locations(
+    prefix, location_signature, monkeypatch
+):
+    with monkeypatch.context() as context:
+        context.setattr(zipfile, "ZIP64_LIMIT", 0)
+        raw = prefix + archive(1)
+    metadata = zip_directory._zip_layout._EndRecData(io.BytesIO(raw))
+    assert metadata is not None
+    metadata[zip_directory._zip_layout._ECD_LOCATION] = raw.rfind(location_signature)
+    monkeypatch.setattr(zipfile, "_EndRecData", lambda _stream: metadata)
+    constructor = Mock(side_effect=AssertionError("Do not allocate ZipInfo objects"))
+    monkeypatch.setattr(zipfile, "ZipFile", constructor)
+    assert preflight_zip_directory(raw, max_entries=1) == 1
+    constructor.assert_not_called()
 
 
 def test_zip64_count_is_bounded_before_construction(monkeypatch):
@@ -126,9 +136,8 @@ def test_zip64_count_is_bounded_before_construction(monkeypatch):
     "kind",
     ["count_mismatch", "truncated_record", "bad_signature", "bad_bounds", "split_disk"],
 )
-@pytest.mark.parametrize("importer", ["upload", "repository"])
 def test_malformed_directory_is_rejected_without_constructing_archive(
-    kind, importer, monkeypatch
+    kind, monkeypatch
 ):
     raw = bytearray(archive(1))
     end = raw.rfind(b"PK\x05\x06")
@@ -147,15 +156,9 @@ def test_malformed_directory_is_rejected_without_constructing_archive(
         side_effect=AssertionError("Malformed directory must not materialize")
     )
     monkeypatch.setattr(zipfile, "ZipFile", constructor)
-    if importer == "upload":
-        result = read_archive(bytes(raw), importer)
-        assert result["bundles"] == []
-        assert result["rejected"] == [
-            {"path": "synthetic.zip", "reason": "archive_invalid"}
-        ]
-    else:
-        with pytest.raises(SkillsHubError) as error:
-            read_archive(bytes(raw), importer)
-        assert error.value.code == "github_bundle_invalid"
-        assert error.value.detail == {"reason": "archive_invalid"}
+    result = read_archive(bytes(raw))
+    assert result["bundles"] == []
+    assert result["rejected"] == [
+        {"path": "synthetic.zip", "reason": "archive_invalid"}
+    ]
     constructor.assert_not_called()

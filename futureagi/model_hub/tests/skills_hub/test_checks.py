@@ -144,7 +144,10 @@ def test_clean_unicode_crlf_and_exact_token_counts():
     root = skill(body="Read [café](references/caf%C3%A9.md).\r\n")
     root["content"] = root["content"].replace("\n", "\r\n")
     reference = {"path": "references/café.md", "content": "日本語\t🙂\r\n"}
-    result = checks.run_checks([root, reference], expected_name="help-desk")
+    result = checks.run_checks(
+        [root, {"path": reference["path"], "content": reference["content"]}],
+        expected_name="help-desk",
+    )
     assert result["summary"] == {"errors": 0, "warnings": 0, "infos": 0}
     assert result["frontmatter"] == {"name": "help-desk", "description": DESCRIPTION}
     assert result["tokens"] == {
