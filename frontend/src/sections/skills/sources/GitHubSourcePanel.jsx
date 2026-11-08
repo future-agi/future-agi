@@ -69,14 +69,17 @@ export default function GitHubSourcePanel({ skill }) {
     </Section>
     {error && <Alert severity="error">{error}</Alert>}
     {draft.isError && <ErrorState title="Could not check your draft" detail="Reload before staging so an existing draft is not replaced." onRetry={draft.refetch} />}
-    {draft.data && <Button variant="outlined" size="small" onClick={openDraft}>Open your draft</Button>}
+    {(draft.data || (previewId && !staged)) && <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+      {draft.data && <Button variant="outlined" size="small" onClick={openDraft}>Open your draft</Button>}
+      {previewId && !staged && <Button variant="outlined" size="small" onClick={() => draft.refetch()} disabled={busy || draft.isFetching}>Refresh draft status</Button>}
+    </Stack>}
     {previewId && preview.isPending && <ContentSkeleton variant="rows" rows={3} label="Checking source updates" />}
     {preview.isError && <ErrorState title="Could not load the update preview" onRetry={preview.refetch} />}
     {staged ? <Stack spacing={1}>
       <Alert severity="info">Replacement draft staged. Nothing was published or promoted.</Alert>
       <Button variant="outlined" onClick={openDraft}>Review and test changes</Button>
     </Stack> : preview.data && <GitHubPreviewReview key={preview.data.id} preview={preview.data} onStage={accept}
-      busy={busy || draft.isPending || draft.isError} hasDraft={Boolean(draft.data)} />}
+      busy={busy} stageDisabled={draft.isPending || draft.isFetching || draft.isError} hasDraft={Boolean(draft.data)} />}
   </Stack>;
 }
 

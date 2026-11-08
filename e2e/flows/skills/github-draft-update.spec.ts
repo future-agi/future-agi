@@ -37,7 +37,7 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
       'review the exact files and inherited LICENSE/NOTICE, confirm rights and import an unpublished draft',
       'publish explicitly, then author and publish a local customization with honest source provenance',
       'create a personal draft, check upstream updates and inspect the replacement diff and divergence',
-      'verify that staging is blocked and preserves the personal draft, then explicitly discard it through the editor confirmation',
+      'verify that staging is blocked and preserves the personal draft, then explicitly discard it and refresh draft status without replacing the reviewed preview',
       'review replacement consequences, stage the retained update and inspect unchanged releases and the replay receipt',
     ], backendChecks: [
       'root continuation keeps the original immutable SHA and tracked ref despite branch movement',
@@ -114,6 +114,11 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
     expect(parent.outcome).toBe('needs_path');
     expect([...parent.roots].sort()).toEqual(['other', 'policy']);
     await fake.replaceRecording(sourceFixture.ref(shaB));
+    // Model a later check without sleeps or quota overrides. This expires the
+    // real 60-second policy and opens the next unchanged REST budget period.
+    // Continuation must still retain A even when re-resolving main would yield B.
+    const policyTime = await fake.advanceGitHubTime(3600);
+    await testInfo.attach('github-policy-clock', { body: JSON.stringify({ advanceSeconds: 3600, now: policyTime, retainedPreview: parent.id }), contentType: 'application/json' });
     await test.step('Choose the root at the original immutable commit', async () => {
       const dialog = page.getByRole('dialog');
       await dialog.getByRole('combobox', { name: 'Skill folder', exact: true }).click();
@@ -234,6 +239,12 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
       await editor.close();
       await page.bringToFront();
       expect((await scopeActors.send(actor, 'GET', `${SKILLS}${id}/draft/`)).status).toBe(404);
+      // Keep the reviewed preview and inputs; do not depend on browser focus timing
+      // or re-check a mutable source just to notice another tab discarded the draft.
+      const draftStatus = page.waitForResponse(res => res.url().endsWith(`${SKILLS}${id}/draft/`) && res.request().method() === 'GET', { timeout: UI_READY });
+      await page.getByRole('button', { name: 'Refresh draft status', exact: true }).click();
+      expect((await draftStatus).status()).toBe(404);
+      await expect(page.getByText('Your draft already exists. Open or discard it before staging an update.', { exact: true })).not.toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     let staged: Draft;
     await test.step('Review replacement consequences and stage the retained bytes', async () => {
@@ -248,6 +259,7 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
       const result = (await accepted.json()).result;
       expect(result.published).toBe(false);
       staged = result.draft;
+      expect(result.consumed).toEqual({ skill_id: id, draft_revision: staged.revision });
       await expect(page.getByText('Replacement draft staged. Nothing was published or promoted.', { exact: true })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     expect([...staged!.files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).toEqual(upstream);
@@ -255,8 +267,10 @@ test('SKILLS-E2E-003: review and stage an exact GitHub update without overwritin
     expect(staged!.source).toMatchObject({ commit_sha: shaB, upstream_digest: skillDigest(upstream) });
     expect(await releaseRows()).toEqual(releasesBefore);
     expect(await labelRows()).toEqual(labelsBefore);
-    const replay = (await actor.api.post<Envelope<{ draft: Draft; published: boolean }>>(`${SKILLS}${id}/source/stage-update/`, stageBody)).result;
-    expect([replay.published, replay.draft.revision, replay.draft.files]).toEqual([false, staged!.revision, staged!.files]);
+    // StageSourceOut returns the immutable acceptance receipt on replay, not the
+    // mutable draft payload. Read the actual draft independently to prove no save.
+    const replay = (await actor.api.post<Envelope<{ draft: Draft | null; published: boolean; consumed: { skill_id: string; draft_revision: number } }>>(`${SKILLS}${id}/source/stage-update/`, stageBody)).result;
+    expect(replay).toEqual({ published: false, draft: null, consumed: { skill_id: id, draft_revision: staged!.revision } });
     expect(await read<Draft>(`${SKILLS}${id}/draft/`)).toEqual(staged!);
     expect((await read<Source>(`${SKILLS}${id}/source/`)).imported_sha).toBe(shaA);
     await testInfo.attach('github-staging-receipt', { body: JSON.stringify({ id, update, personalRevision: personal!.revision, staged: staged!, replay, releasesBefore, labelsBefore, ledger: await fake.ledger() }), contentType: 'application/json' });

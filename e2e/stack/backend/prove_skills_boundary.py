@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from decimal import Decimal
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -51,6 +52,14 @@ def main(mode: str) -> None:
         ["gpt-4o-mini"] if mode == "overlay-on" else []
     )
     assert STANDARD_PROVIDER_BASES["openai"] == "https://api.openai.com/v1"
+    from tfc.utils import github_public
+
+    assert (github_public.time is time) == (mode != "overlay-on")
+    assert hasattr(github_public.resolve_sha, "__wrapped__") == (mode == "overlay-on")
+    assert github_public._limits("skills") == (3, 10)
+    # The overlay never mutates the process-wide clock or the real deadline clock.
+    assert abs(github_public.time.time() - time.time()) < 1
+    assert github_public.time.monotonic is time.monotonic
 
     transport = AsyncMock(
         return_value=litellm.ModelResponse(
