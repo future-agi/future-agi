@@ -39,7 +39,8 @@ RESOLUTION = openapi.Parameter(
 
 
 def contract(*args, **kwargs):
-    return skill_contract(*args, responses={503: SkillsError}, **kwargs)
+    responses = {503: SkillsError, **kwargs.pop("responses", {})}
+    return skill_contract(*args, responses=responses, **kwargs)
 
 
 def header_uuid(request, name, *, required=True):
@@ -159,7 +160,12 @@ class ConsumptionResolveView(ConsumptionView):
 
 class ConsumptionManifestView(ConsumptionView):
     @contract(
-        s.ConsumptionManifest, query=s.ManifestQuery, manual_parameters=[RESOLUTION]
+        s.ConsumptionManifest,
+        query=s.ManifestQuery,
+        manual_parameters=[RESOLUTION],
+        responses={
+            304: openapi.Response("Authorized immutable manifest not modified.")
+        },
     )
     def get(self, request, resource_id, number):
         result = consumption.read_consumption_manifest(

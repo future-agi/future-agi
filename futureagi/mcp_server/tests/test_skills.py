@@ -69,9 +69,27 @@ def test_skills_openapi_has_all_routes_and_errors():
         for path, item in contract["paths"].items()
         if path.startswith("/model-hub/skills/")
     }
-    assert len(paths) == 46
+    foundation_paths = {
+        "/model-hub/skills/contexts/credentials/",
+        "/model-hub/skills/contexts/credentials/{credential_id}/",
+    }
+    for prefix in ("consumption", "contexts"):
+        foundation_paths.add(f"/model-hub/skills/{prefix}/resolve/")
+        for suffix in ("access-check", "files", "manifest"):
+            foundation_paths.add(
+                f"/model-hub/skills/{prefix}/{{resource_id}}/versions/{{number}}/{suffix}/"
+            )
+    assert foundation_paths <= paths.keys()
+    legacy_paths = {
+        path: item for path, item in paths.items() if path not in foundation_paths
+    }
+    assert len(legacy_paths) == 46
+    assert len(paths) == 56
     methods = {"get", "post", "put", "patch", "delete"}
-    assert sum(len(methods.intersection(item)) for item in paths.values()) == 58
+    assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
+    assert (
+        sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11
+    )
     for item in paths.values():
         for method in methods.intersection(item):
             assert {"400", "401", "403", "404", "409", "413", "422"} <= item[method][

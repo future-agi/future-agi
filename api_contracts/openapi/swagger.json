@@ -47378,6 +47378,9 @@
                             "$ref": "#/definitions/SkillsError"
                         }
                     },
+                    "304": {
+                        "description": "Authorized immutable manifest not modified."
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -48214,6 +48217,9 @@
                         "schema": {
                             "$ref": "#/definitions/SkillsError"
                         }
+                    },
+                    "304": {
+                        "description": "Authorized immutable manifest not modified."
                     },
                     "default": {
                         "description": "Default error response",

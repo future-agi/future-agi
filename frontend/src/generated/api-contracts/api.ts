@@ -54642,6 +54642,11 @@ export type modelHubSkillsConsumptionVersionsManifestListResponse200 = {
   status: 200;
 };
 
+export type modelHubSkillsConsumptionVersionsManifestListResponse304 = {
+  data: void;
+  status: 304;
+};
+
 export type modelHubSkillsConsumptionVersionsManifestListResponse400 = {
   data: SkillsErrorApi;
   status: 400;
@@ -54696,7 +54701,7 @@ export type modelHubSkillsConsumptionVersionsManifestListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<
     HTTPStatusCodes,
-    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+    200 | 304 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
   >;
 };
 
@@ -54705,6 +54710,7 @@ export type modelHubSkillsConsumptionVersionsManifestListResponseSuccess =
     headers: Headers;
   };
 export type modelHubSkillsConsumptionVersionsManifestListResponseError = (
+  | modelHubSkillsConsumptionVersionsManifestListResponse304
   | modelHubSkillsConsumptionVersionsManifestListResponse400
   | modelHubSkillsConsumptionVersionsManifestListResponse401
   | modelHubSkillsConsumptionVersionsManifestListResponse403
@@ -55472,6 +55478,11 @@ export type modelHubSkillsContextsVersionsManifestListResponse200 = {
   status: 200;
 };
 
+export type modelHubSkillsContextsVersionsManifestListResponse304 = {
+  data: void;
+  status: 304;
+};
+
 export type modelHubSkillsContextsVersionsManifestListResponse400 = {
   data: SkillsErrorApi;
   status: 400;
@@ -55526,7 +55537,7 @@ export type modelHubSkillsContextsVersionsManifestListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<
     HTTPStatusCodes,
-    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+    200 | 304 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
   >;
 };
 
@@ -55535,6 +55546,7 @@ export type modelHubSkillsContextsVersionsManifestListResponseSuccess =
     headers: Headers;
   };
 export type modelHubSkillsContextsVersionsManifestListResponseError = (
+  | modelHubSkillsContextsVersionsManifestListResponse304
   | modelHubSkillsContextsVersionsManifestListResponse400
   | modelHubSkillsContextsVersionsManifestListResponse401
   | modelHubSkillsContextsVersionsManifestListResponse403
