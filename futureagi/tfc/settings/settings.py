@@ -220,6 +220,8 @@ CORS_ALLOW_HEADERS = (
         # before the POST because this is a non-simple header, so omitting it
         # here prevents the create request from ever reaching Django.
         "idempotency-key",
+        # Immutable Context continuations carry the credential-bound lease.
+        "x-context-resolution",
         "sentry-trace",
         "baggage",
         "traceparent",
@@ -326,6 +328,12 @@ SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
     "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
+        "ContextCredential": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Context <credential-id>.<secret>; never combine with API/secret keys.",
+        },
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
         "X-Secret-Key": {
             "type": "apiKey",
@@ -333,6 +341,8 @@ SWAGGER_SETTINGS = {
             "name": "X-Secret-Key",
         },
     },
+    # Keep the existing default schemes; Context is view-opt-in only.
+    "SECURITY_REQUIREMENTS": [{"X-Api-Key": []}, {"X-Secret-Key": []}],
     "USE_SESSION_AUTH": False,
 }
 
@@ -1730,6 +1740,14 @@ INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
 # tasks_l worker (start_temporal_worker --queue tasks_l) and schedule registration;
 # default-only workers cannot execute Skills jobs. No new container is required.
 SKILLS_TESTING_ENABLED = os.getenv("SKILLS_TESTING_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+# Independent from model testing: keep paid assistance off until original-key
+# recovery and non-destructive apply/delete journeys are qualified. Enabling
+# text comparisons must never enable paid generation as a side effect.
+SKILLS_ASSIST_ENABLED = os.getenv("SKILLS_ASSIST_ENABLED", "false").lower() in (
     "true",
     "1",
     "yes",

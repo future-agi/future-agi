@@ -1013,3 +1013,101 @@ def test_cancel_during_call_retains_spend_but_not_proposal(
     assert proposal.proposal is None
     assert proposal.job.known_output_tokens == 200
     provider_stub[0].assert_awaited_once()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_independent_assist_gate_blocks_new_spend_but_preserves_operation_recovery(
+    accept_proposal,
+    assist_request,
+    assist_principal,
+    hub_skill,
+    provider_stub,
+    settings,
+):
+    from uuid import uuid4
+
+    from asgiref.sync import async_to_sync
+
+    from model_hub.models.skills_hub_v11 import HubSkillJob, HubSkillModelCall
+    from model_hub.services.skills_hub.v11.assist import (
+        create_assist_proposal,
+        generate_assist_proposal,
+        preview_assist_proposal,
+    )
+
+    proposal, submission, key = accept_proposal(assist_request)
+    settings.SKILLS_ASSIST_ENABLED = False
+    assert settings.SKILLS_TESTING_ENABLED is True
+    assert (
+        create_assist_proposal(
+            principal=assist_principal,
+            skill_id=hub_skill.pk,
+            idempotency_key=key,
+            request=submission,
+        ).pk
+        == proposal.pk
+    )
+    with pytest.raises(SkillsHubError) as denied:
+        preview_assist_proposal(
+            principal=assist_principal, skill_id=hub_skill.pk, request=assist_request
+        )
+    assert denied.value.code == "skills_unavailable"
+    with pytest.raises(SkillsHubError) as denied:
+        create_assist_proposal(
+            principal=assist_principal,
+            skill_id=hub_skill.pk,
+            idempotency_key=uuid4(),
+            request=submission,
+        )
+    assert denied.value.code == "skills_unavailable"
+    with pytest.raises(SkillsHubError) as denied:
+        async_to_sync(generate_assist_proposal)(
+            scope=assist_principal.scope, proposal_id=proposal.pk
+        )
+    assert denied.value.code == "skills_unavailable"
+    assert HubSkillJob.objects.count() == 1
+    assert not HubSkillModelCall.objects.exists()
+    provider_stub[0].assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("already_applied", [False, True])
+def test_disabled_assistance_blocks_apply_but_preserves_receipt_replay(
+    accept_proposal,
+    assist_request,
+    assist_principal,
+    hub_skill,
+    provider_stub,
+    settings,
+    already_applied,
+):
+    from asgiref.sync import async_to_sync
+
+    from model_hub.services.skills_hub.v11.assist import (
+        apply_assist_proposal,
+        generate_assist_proposal,
+    )
+
+    proposal, _, _ = accept_proposal(assist_request)
+    async_to_sync(generate_assist_proposal)(
+        scope=assist_principal.scope, proposal_id=proposal.pk
+    )
+    args = {
+        "principal": assist_principal,
+        "proposal_id": proposal.pk,
+        "revision": proposal.base_revision,
+        "expected_digest": proposal.base_digest,
+    }
+    if already_applied:
+        receipt = apply_assist_proposal(**args)
+    before = hub_skill.drafts.get(user_id=assist_principal.user_id)
+    settings.SKILLS_ASSIST_ENABLED = False
+    if already_applied:
+        assert apply_assist_proposal(**args).revision == receipt.revision
+    else:
+        with pytest.raises(SkillsHubError) as denied:
+            apply_assist_proposal(**args)
+        assert denied.value.code == "skills_unavailable"
+    after = hub_skill.drafts.get(user_id=assist_principal.user_id)
+    assert (after.revision, after.files) == (before.revision, before.files)
+    assert provider_stub[0].call_count == 1

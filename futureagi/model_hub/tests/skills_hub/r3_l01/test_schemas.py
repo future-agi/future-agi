@@ -151,3 +151,125 @@ def test_metadata_omission_preserves_explicit_empty_distinction():
     assert absent.is_valid() and empty.is_valid()
     assert "tags" not in absent.validated_data
     assert empty.validated_data["tags"] == []
+
+
+def context_run_config():
+    return {
+        "candidate": {"kind": "version", "version": 4, "digest": DIGEST},
+        "cases": {
+            "kind": "ad_hoc",
+            "cases": [
+                {
+                    "id": str(uuid4()),
+                    "title": "Synthetic context case",
+                    "source_group_id": "synthetic",
+                    "prompt": "Return the approved amount.",
+                    "fixtures": [],
+                    "expected_trigger": None,
+                    "reviewed": True,
+                    "checks": [
+                        {
+                            "id": str(uuid4()),
+                            "kind": "contains",
+                            "critical": True,
+                            "config": {"text": "20", "case_sensitive": True},
+                        }
+                    ],
+                }
+            ],
+        },
+        "baselines": [{"kind": "version", "version": 2}],
+        "competitors": [],
+        "model": {"model_id": "synthetic", "temperature": 0, "max_output_tokens": 100},
+        "judge": None,
+        "profile": "quick",
+        "repetitions": 1,
+        "limits": {"max_total_tokens": 150000, "max_estimated_cost_usd": "1.00000000"},
+        "purpose": "regression",
+        "parent_run_id": None,
+        "harness": "contexts-text-v1.2",
+    }
+
+
+def test_context_reference_contract_keeps_historical_identity():
+    body = context_run_config()
+    serializer = v12.ContextRunConfig(data=body)
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["baselines"] == [{"kind": "version", "version": 2}]
+    body.update(
+        profile="repeated",
+        repetitions=3,
+        baselines=[{"kind": "production"}, {"kind": "version", "version": 2}],
+    )
+    serializer = v12.ContextRunConfig(data=body)
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["harness"] == "contexts-text-v1.2"
+
+
+def test_context_contract_rejects_root_activation_competitors_and_ambiguous_arms():
+    for change in (
+        {"baselines": [{"kind": "version"}]},
+        {"baselines": [{"kind": "production", "version": 1}]},
+        {
+            "baselines": [
+                {"kind": "version", "version": 1},
+                {"kind": "version", "version": 2},
+            ]
+        },
+        {"competitors": [{"skill_id": str(uuid4()), "version": 1}]},
+        {"harness": "skills-text-v1.1"},
+    ):
+        assert not v12.ContextRunConfig(
+            data={**context_run_config(), **change}
+        ).is_valid()
+    body = context_run_config()
+    for trigger in (True, False, "null"):
+        body["cases"]["cases"][0]["expected_trigger"] = trigger
+        assert not v12.ContextRunConfig(data=body).is_valid()
+    del body["cases"]["cases"][0]["expected_trigger"]
+    assert not v12.ContextRunConfig(data=body).is_valid()
+
+
+def test_lifecycle_outputs_have_explicit_identities_and_no_credentials():
+    schemas = [
+        v12.ContextSummary,
+        v12.ContextDraftOut,
+        v12.HeadReview,
+        v12.ContextReleaseState,
+        v12.ContextSafetyOut,
+        v12.SessionOut,
+        v12.ReceiptAccepted,
+    ]
+    for schema in schemas:
+        assert "secret" not in schema().fields
+        assert not schema(data={"unexpected": True}).is_valid()
+    assert {
+        "resolution_id",
+        "resolution_expires_at",
+        "history_mode",
+        "binding_revision",
+    } <= set(v12.SessionOut().fields)
+    assert {
+        "base_version",
+        "expected_head_version",
+        "candidate_digest",
+        "review_fingerprint",
+    } <= set(v12.HeadReview().fields)
+
+
+def test_reference_arm_outputs_are_distinct_from_legacy_root_routing():
+    from model_hub.serializers import skills_hub_v11 as legacy
+
+    assert "reference" not in legacy.VariantResult().fields["variant"].choices
+    assert "reference" in v12.ContextVariantResult().fields["variant"].choices
+    assert "reference" in v12.ContextSnapshotFileQuery().fields["variant"].choices
+    assert set(v12.ContextAttemptDetail().fields["routing_verdict"].choices) == {
+        "not_applicable"
+    }
+    for schema in (
+        v12.ContextRunSummary,
+        v12.ContextCaseResult,
+        v12.ContextAttemptDetail,
+    ):
+        assert schema().fields["reference"].required
+    assert "source_version_id" in v12.ContextDeliveryReceipt().fields

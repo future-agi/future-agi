@@ -124,7 +124,7 @@ test('Skills harness: real ZIP preview, copied-recipe install and paged UTF-8 MC
   await expect(dialog.getByRole('checkbox', { name: `Select ${invalid}`, exact: true })).toBeDisabled({ timeout: UI_READY });
   await testInfo.attach('upload-sha256', { body: sha256(archive), contentType: 'text/plain' });
   const seeded = await actor.api.post<{ result: { skill: { id: string }; version: { id: string } } }>(`${SKILLS}publish/`, {
-    files, labels: ['production'], acknowledge_warnings: true,
+    files, labels: ['production'], acknowledge_warnings: true, expected_release_revision: 0,
   });
   await testInfo.attach('seeded-skill', { body: JSON.stringify(seeded.result), contentType: 'application/json' });
   const { result: manifest } = await actor.api.get<{ result: SkillManifest }>(`${SKILLS}resolve/`, { name });
