@@ -353,6 +353,19 @@ def _tool_routing(evidence: Evidence) -> Reading:
             targets("action", failed, "failed"),
             seen,
         )
+    elsewhere = sorted(
+        str(item.get("tool") or "")
+        for item in evidence.routed
+        if item.get("routed") is False and item.get("tool")
+    )
+    if elsewhere:
+        return Reading(
+            "failed",
+            "tool_routed_elsewhere",
+            "Called outside the test world: " + ", ".join(elsewhere),
+            targets("tool", elsewhere, "routed_elsewhere"),
+            seen,
+        )
     # A refused probe is the agent declining a call it should decline: a pass. A tool
     # seen reaching the test world in the qualification conversation is routed there.
     routed = sorted(
