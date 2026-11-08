@@ -10,7 +10,18 @@ const TARGET = `${TARGETS}{binding_id}/`;
 // No uncontracted fallback. The disabled screen is safe before I lands the
 // serializer-owned routes and regenerates the shared API catalog.
 export const campaignsContractReady = () => [ROOT, DETAIL, TARGETS, `${DETAIL}authorize/`, `${DETAIL}pause/`, `${DETAIL}resume/`, `${DETAIL}cancel/`, `${DETAIL}rollback/preview/`, `${TARGET}observations/`].every(isContractedApiPath);
-const detailPath = (campaignId, suffix = '') => apiPath(`${DETAIL}${suffix}`, { campaign_id: campaignId });
+const campaignPaths = {
+  list: () => apiPath('/model-hub/skills/contexts/campaigns/'),
+  detail: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/', { campaign_id }),
+  targets: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/targets/', { campaign_id }),
+  authorize: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/authorize/', { campaign_id }),
+  pause: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/pause/', { campaign_id }),
+  resume: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/resume/', { campaign_id }),
+  cancel: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/cancel/', { campaign_id }),
+  rollback: (campaign_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/rollback/preview/', { campaign_id }),
+  observations: (campaign_id, binding_id) => apiPath('/model-hub/skills/contexts/campaigns/{campaign_id}/targets/{binding_id}/observations/', { campaign_id, binding_id }),
+  capabilities: () => apiPath('/model-hub/skills/contexts/capabilities/'),
+};
 
 export function mapCampaign(value) {
   return {
@@ -70,32 +81,32 @@ const mapPage = (value, mapper) => ({ results: value.results.map(mapper), count:
 
 export function useContextCampaignAvailability() {
   const path = '/model-hub/skills/contexts/capabilities/';
-  return useSkillV11Query({ parts: ['contexts', 'capabilities'], url: () => apiPath(path),
+  return useSkillV11Query({ parts: ['contexts', 'capabilities'], url: campaignPaths.capabilities,
     mapper: (value) => ({ enabled: value.campaigns_enabled === true }),
     enabled: campaignsContractReady() && isContractedApiPath(path) });
 }
 
 export function useContextCampaigns(params = {}) {
-  return useSkillV11Query({ parts: ['contexts', 'campaigns', params], url: () => apiPath(ROOT),
+  return useSkillV11Query({ parts: ['contexts', 'campaigns', params], url: () => campaignPaths.list(),
     params: v11PageParams(params), mapper: (value) => mapPage(value, mapCampaign), enabled: campaignsContractReady() });
 }
 export function useContextCampaign(campaignId) {
-  return useSkillV11Query({ parts: ['contexts', 'campaign', campaignId], url: () => detailPath(campaignId),
+  return useSkillV11Query({ parts: ['contexts', 'campaign', campaignId], url: () => campaignPaths.detail(campaignId),
     mapper: mapCampaignDetail, enabled: Boolean(campaignId) && campaignsContractReady() });
 }
 export function useContextCampaignTargets(campaignId, params = {}) {
   return useSkillV11Query({ parts: ['contexts', 'campaign', campaignId, 'targets', params],
-    url: () => detailPath(campaignId, 'targets/'), params: v11PageParams(params),
+    url: () => campaignPaths.targets(campaignId), params: v11PageParams(params),
     mapper: (value) => mapPage(value, mapCampaignTarget), enabled: Boolean(campaignId) && campaignsContractReady() });
 }
 export function useContextCampaignObservations(campaignId, bindingId) {
   return useSkillV11Query({ parts: ['contexts', 'campaign', campaignId, 'observations', bindingId],
-    url: () => apiPath(`${TARGET}observations/`, { campaign_id: campaignId, binding_id: bindingId }),
+    url: () => campaignPaths.observations(campaignId, bindingId),
     mapper: mapCampaignObservations, enabled: Boolean(campaignId && bindingId) && campaignsContractReady() });
 }
 export function useCreateContextCampaign() {
   return useSkillV11Mutation({
-    send: async ({ name, targets, parentCampaignId = null, idempotencyKey }, config) => mapCampaign(skillV11Result(await axios.post(apiPath(ROOT), {
+    send: async ({ name, targets, parentCampaignId = null, idempotencyKey }, config) => mapCampaign(skillV11Result(await axios.post(campaignPaths.list(), {
       name, targets: targets.map(({ bindingId, version }) => ({ binding_id: bindingId, version })), parent_campaign_id: parentCampaignId,
     }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } }))),
     invalidate: () => [['contexts', 'campaigns']],
@@ -108,7 +119,7 @@ export function campaignAuthorizationInput({ revision, expectedManifestDigest, d
 }
 export function useAuthorizeContextCampaign(campaignId) {
   return useSkillV11Mutation({
-    send: async (input, config) => mapCampaign(skillV11Result(await axios.post(detailPath(campaignId, 'authorize/'), campaignAuthorizationInput(input), config))),
+    send: async (input, config) => mapCampaign(skillV11Result(await axios.post(campaignPaths.authorize(campaignId), campaignAuthorizationInput(input), config))),
     invalidate: () => [['contexts', 'campaign', campaignId], ['contexts', 'campaigns']],
     refreshOnError: () => [['contexts', 'campaign', campaignId]],
   });
@@ -117,7 +128,7 @@ export function useChangeContextCampaignStatus(campaignId) {
   return useSkillV11Mutation({
     send: async ({ action, revision, reason }, config) => {
       if (!['pause', 'resume', 'cancel'].includes(action)) throw new Error('Unknown campaign action.');
-      return mapCampaign(skillV11Result(await axios.post(detailPath(campaignId, `${action}/`), { revision, reason }, config)));
+      return mapCampaign(skillV11Result(await axios.post(campaignPaths[action](campaignId), { revision, reason }, config)));
     },
     invalidate: () => [['contexts', 'campaign', campaignId], ['contexts', 'campaigns']],
     refreshOnError: () => [['contexts', 'campaign', campaignId]],
@@ -125,7 +136,7 @@ export function useChangeContextCampaignStatus(campaignId) {
 }
 export function usePreviewContextCampaignRollback(campaignId) {
   return useSkillV11Mutation({ send: async ({ revision }, config) => {
-    const value = skillV11Result(await axios.post(detailPath(campaignId, 'rollback/preview/'), { revision }, config));
+    const value = skillV11Result(await axios.post(campaignPaths.rollback(campaignId), { revision }, config));
     return { parentCampaignId: value.parent_campaign_id, revision: value.revision, executable: value.executable,
       targets: value.targets.map((row) => ({ bindingId: row.binding_id, previousLockDigest: row.previous_lock_digest,
         baseCommit: row.base_commit, state: row.state, blockers: row.blockers,
