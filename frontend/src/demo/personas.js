@@ -46,13 +46,20 @@ export const DEMO_PERSONAS = [
     chat({ gender: ["female"], age_group: ["18-25"], occupation: ["Designer"], location: ["United States"], personality: ["Playful"], communication_style: ["Casual"], slang_usage: ["Heavy"], emoji_usage: ["Frequent"], tone: ["Warm"] })),
   P(12, "text", "The Angry Escalator", "Opens upset, threatens to cancel, and asks for a manager early.",
     chat({ gender: ["male"], age_group: ["50-65"], occupation: ["Accountant"], location: ["United Kingdom"], personality: ["Angry"], communication_style: ["Confrontational"], tone: ["Hostile"] })),
+  /* Two the workspace made itself, for the Custom tab. */
+  P(13, "voice", "Gold-tier frequent flyer", "Expects priority handling and knows the fare rules better than most agents.",
+    voice({ persona_type: "workspace", persona_type_display: "Custom", is_default: false, updated_at: "2026-11-03T14:00:00Z", gender: ["female"], age_group: ["40-50"], occupation: ["Executive"], location: ["United States"], personality: ["Demanding"], communication_style: ["Direct"], additional_instruction: "Mention your status early and ask for a waiver." })),
+  P(14, "text", "Returning customer with a damaged item", "Has photos ready, wants a replacement rather than a refund.",
+    chat({ persona_type: "workspace", persona_type_display: "Custom", is_default: false, updated_at: "2026-11-05T11:00:00Z", gender: ["male"], age_group: ["25-32"], occupation: ["Teacher"], location: ["Canada"], personality: ["Calm"], communication_style: ["Friendly"] })),
 ];
 
 /* The list endpoint's answer: page, limit, search, type and simulation_type, as the API takes them. */
 export const personasPage = (q = {}) => {
   const search = (q.search || "").toLowerCase();
+  /* The list asks for "prebuilt" (Future AGI Built) or "custom"; all the demo's are prebuilt. */
+  const prebuilt = q.type === "prebuilt" || q.type === "system";
   const rows = DEMO_PERSONAS.filter((p) =>
-    (!q.type || p.persona_type === q.type) &&
+    (!q.type || (prebuilt ? p.persona_type === "system" : p.persona_type !== "system")) &&
     (!q.simulation_type || p.simulation_type === q.simulation_type) &&
     (!search || `${p.name} ${p.description}`.toLowerCase().includes(search)));
   const limit = Number(q.limit || q.page_size) || 25;
