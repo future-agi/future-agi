@@ -173,14 +173,17 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
     if certified(bundle):
         files = _certification_files(bundle.object_key)
         checks = (bundle.certificate or {}).get("checks")
+        kept = (bundle.certificate or {}).get("tool_routing")
+        kept = kept if isinstance(kept, Mapping) else {}
         return Evidence(
             source="pair_certificate",
             checks=checks if isinstance(checks, Mapping) else {},
             tools=files["tools"],
             actions=files["actions"],
             checked_at=bundle.updated_at.isoformat(),
-            routed=files.get("routed", []),
-            unobserved=files.get("unobserved", []),
+            # Kept on the bundle by the check, else sealed in its archive.
+            routed=kept.get("tools") or files.get("routed", []),
+            unobserved=kept.get("unobserved") or files.get("unobserved", []),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None

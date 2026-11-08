@@ -4793,6 +4793,38 @@ class HostedHarnessGateway:
             return None
         return bundle_cache.failure_record(sandbox)
 
+    def _keep_tool_routing(self, attempt: HostedHarnessAttempt) -> None:
+        """Keep on the certified bundle the tools its qualification saw reaching the
+        test world, read before the sandbox is deleted. Never raises."""
+        from simulate.models import HarnessAssembledBundle
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            observed = bundle_cache.tool_routing_observations(sandbox)
+            if observed is None:
+                return
+            with transaction.atomic():
+                bundle = (
+                    HarnessAssembledBundle._base_manager.select_for_update()
+                    .filter(id=attempt.job.assembled_bundle_id)
+                    .first()
+                )
+                if bundle is None:
+                    return
+                bundle.certificate = {
+                    **(bundle.certificate or {}),
+                    "tool_routing": observed,
+                }
+                bundle.save(update_fields=["certificate", "updated_at"])
+        except Exception:  # noqa: BLE001 - routing stays unobserved
+            logger.warning(
+                "harness tool routing not kept attempt=%s", attempt.id, exc_info=True
+            )
+
     def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
         """Store the tools a validation read for its agent version, before its sandbox
         is deleted. Never raises: an unread version stays unread."""
@@ -4832,6 +4864,7 @@ class HostedHarnessGateway:
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         if bundle_cache.assembled_bundle_ready(attempt.job):
+            self._keep_tool_routing(attempt)
             attempt.terminal_stage = "completed"
             attempt.terminal_failure = None
         else:

@@ -2054,3 +2054,47 @@ class TestFailureRecord:
         row = _row(environment)
         assert row.state == "failed"
         assert row.error["excerpt"] == "spawn/spawn_failed (agent): exited 1"
+
+
+class TestToolRoutingKept:
+    def test_a_completed_check_keeps_the_observed_routing_on_its_bundle(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-routing")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        observed = {
+            "tools": [{"tool": "lookup_order", "routed": True, "calls": 1}],
+            "unobserved": [{"tool": "issue_refund", "reason": "changes_state"}],
+        }
+        _exit(
+            gateway,
+            monkeypatch,
+            0,
+            {assembly.TOOL_ROUTING_PATH: json.dumps(observed).encode()},
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert _row(environment).certificate["tool_routing"] == observed
+
+    def test_without_observations_the_certificate_is_unchanged(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        environment = _pending(user, workspace, storage, "pv-routing-none")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0)
+
+        gateway.reconcile_completed(attempt)
+
+        assert "tool_routing" not in (_row(environment).certificate or {})

@@ -2460,3 +2460,26 @@ class TestReportCache:
         _report(environment)
 
         assert len(computed) == 2
+
+
+def test_routing_kept_on_the_bundle_is_read(user, workspace, storage):
+    environment = _environment(user, workspace, storage, "tr-kept")
+    _certify(
+        environment,
+        storage,
+        checks={**PASSED, "action_behavior": "0/0"},
+        actions=NOT_PROBED,
+    )
+    HarnessAssembledBundle._base_manager.filter(job_id=environment.id).update(
+        certificate={
+            "checks": {**PASSED, "action_behavior": "0/0"},
+            "tool_routing": {
+                "tools": [
+                    {"tool": "lookup_order", "routed": True},
+                    {"tool": "issue_refund", "routed": True},
+                ]
+            },
+        }
+    )
+
+    assert _rows(_report(environment))["tool_routing"]["status"] == "supported"

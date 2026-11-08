@@ -866,6 +866,29 @@ def failure_record(sandbox: Any) -> dict[str, Any] | None:
     }
 
 
+TOOL_ROUTING_PATH = "/work/authoring/generic-harness/tool-routing-observations.json"
+
+
+def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
+    """The tools a check's qualification saw reaching the test world, as ALK wrote
+    them; ``None`` when absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(TOOL_ROUTING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS)
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write none
+        logger.info("harness_tool_routing_unread", error=type(exc).__name__)
+        return None
+    if not document or not isinstance(document.get("tools"), list):
+        return None
+    return {
+        "tools": [one for one in document["tools"] if isinstance(one, dict)][:500],
+        "unobserved": [
+            one for one in document.get("unobserved") or [] if isinstance(one, dict)
+        ][:500],
+    }
+
+
 AGENT_READING_PATH = "/work/reading/agent.json"
 
 
