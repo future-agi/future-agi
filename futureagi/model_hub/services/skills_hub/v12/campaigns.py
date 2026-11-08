@@ -313,6 +313,12 @@ def _summary(campaign: models.Model) -> dict:
 def _target_out(target: models.Model) -> dict:
     attempts = target.attempts
     latest = attempts[-1] if attempts else None
+    confirmed = [row for row in attempts if row["state"] in {"pr_open", "merged"}]
+    git_state = (
+        confirmed[-1]["state"]
+        if confirmed
+        else latest["state"] if latest else "not_started"
+    )
     return {
         "binding_id": str(target.binding_id),
         "name": target.binding.name,
@@ -327,10 +333,8 @@ def _target_out(target: models.Model) -> dict:
         "decision": target.decision,
         "reason": target.reason,
         "attempt": latest,
-        "pr_state": latest["state"] if latest else "not_started",
-        "merge_state": (
-            "merged" if latest and latest["state"] == "merged" else "unknown"
-        ),
+        "pr_state": git_state,
+        "merge_state": "merged" if git_state == "merged" else "unknown",
         "provenance": "client_reported",
     }
 
@@ -741,8 +745,8 @@ def claim_campaign_target(
             _fail("target_plan_changed", "Claim the exact authorized plan.")
         attempts = copy.deepcopy(target.attempts)
         previous = attempts[-1] if attempts else None
-        if previous and previous["state"] in {"pr_open", "merged"}:
-            _fail("campaign_conflict", "This target already has a pull request.")
+        if previous and previous["state"] == "merged":
+            _fail("campaign_conflict", "This target already has a merged pull request.")
         if (
             previous
             and timezone.datetime.fromisoformat(previous["expires_at"]) > timezone.now()
@@ -857,6 +861,19 @@ def record_campaign_attempt(
         ):
             _fail(
                 "receipt_conflict", "A newer reconciliation claim fences this attempt."
+            )
+        prior_prs = {
+            row["receipt"]["pull_request_number"]
+            for row in attempts
+            if row["receipt"] and row["receipt"]["pull_request_number"] is not None
+        }
+        if (
+            request["pull_request_number"] is not None
+            and prior_prs
+            and prior_prs != {request["pull_request_number"]}
+        ):
+            _fail(
+                "receipt_conflict", "Reconciliation must retain the same pull request."
             )
         attempt["state"], attempt["receipt"] = request["state"], copy.deepcopy(request)
         target.attempts = attempts

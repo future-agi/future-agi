@@ -11,12 +11,16 @@ from django.db import models
 
 from model_hub.models.skills_hub_v12 import ContextRecord
 
-try:
-    HubSkillContextCampaign = apps.get_model("model_hub", "HubSkillContextCampaign")
-    HubSkillContextCampaignTarget = apps.get_model(
-        "model_hub", "HubSkillContextCampaignTarget"
-    )
-except LookupError:
+
+def register_contract_models():
+    """Register only during the module fixture, never at test collection."""
+    try:
+        return (
+            apps.get_model("model_hub", "HubSkillContextCampaign"),
+            apps.get_model("model_hub", "HubSkillContextCampaignTarget"),
+        ), False
+    except LookupError:
+        pass
 
     class HubSkillContextCampaign(ContextRecord):
         name = models.CharField(max_length=120)
@@ -83,3 +87,5 @@ except LookupError:
                     fields=["campaign", "binding"], name="hub_ctx_campaign_binding"
                 )
             ]
+
+    return (HubSkillContextCampaign, HubSkillContextCampaignTarget), True

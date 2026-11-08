@@ -7,6 +7,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from django.apps import apps
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
@@ -22,19 +23,23 @@ from model_hub.services.skills_hub.types import Actor
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 from model_hub.services.skills_hub.v12 import campaigns as service
 from model_hub.services.skills_hub.versions import persist_immutable_version_locked
-from model_hub.tests.skills_hub.r3_l12.model_contract import (
-    HubSkillContextCampaign,
-    HubSkillContextCampaignTarget,
-)
+from model_hub.tests.skills_hub.r3_l12.model_contract import register_contract_models
 from tfc.constants.levels import Level
 
 pytestmark = pytest.mark.django_db(transaction=True)
 DIGEST = "sha256:" + "a" * 64
 
 
-@pytest.fixture(scope="session", autouse=True)
+HubSkillContextCampaign = None
+HubSkillContextCampaignTarget = None
+
+
+@pytest.fixture(scope="module", autouse=True)
 def campaign_tables(django_db_setup, django_db_blocker):
     # Test-only contract tables: existing migrations are not changed or bypassed.
+    global HubSkillContextCampaign, HubSkillContextCampaignTarget
+    records, registered = register_contract_models()
+    HubSkillContextCampaign, HubSkillContextCampaignTarget = records
     with django_db_blocker.unblock():
         existing = connection.introspection.table_names()
         created = []
@@ -47,6 +52,18 @@ def campaign_tables(django_db_setup, django_db_blocker):
     with django_db_blocker.unblock(), connection.schema_editor() as schema:
         for model in reversed(created):
             schema.delete_model(model)
+    if registered:
+        for model in reversed(records):
+            for field in model._meta.local_fields:
+                if field.is_relation:
+                    related = field.remote_field
+                    accessor = related.get_accessor_name()
+                    if hasattr(related.model, accessor):
+                        delattr(related.model, accessor)
+            apps.all_models["model_hub"].pop(model._meta.model_name)
+        apps.clear_cache()
+        for model in apps.get_models():
+            model._meta._expire_cache()
 
 
 @pytest.fixture
@@ -429,6 +446,29 @@ def test_fixed_40_target_fixture_and_independent_stages(
         reconcile["branch"] == sent["branch"] and reconcile["marker"] == sent["marker"]
     )
     report(actor, campaign, last, reconcile, "pr_open")
+    merge_check = claim(actor, campaign, last, plans[last.pk])
+    assert merge_check["mode"] == "reconcile_only"
+    pending = service.list_campaign_targets(
+        principal=actor, campaign_id=campaign["id"], page_size=100
+    )
+    row = next(row for row in pending["results"] if row["binding_id"] == str(last.pk))
+    assert row["pr_state"] == "pr_open" and row["merge_state"] == "unknown"
+    with pytest.raises(SkillsHubError) as mismatch:
+        service.record_campaign_attempt(
+            principal=actor,
+            campaign_id=campaign["id"],
+            binding_id=last.pk,
+            request={
+                "attempt_id": merge_check["attempt_id"],
+                "claim_generation": merge_check["claim_generation"],
+                "state": "merged",
+                "repository_commit": "b" * 40,
+                "pull_request_number": 99,
+                "reason": "Wrong PR identity",
+            },
+        )
+    assert mismatch.value.code == "receipt_conflict"
+    report(actor, campaign, last, merge_check, "merged")
     with pytest.raises(SkillsHubError):
         claim(actor, campaign, last, plans[last.pk])
 
