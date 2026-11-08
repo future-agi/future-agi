@@ -75255,6 +75255,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "guardrail",
             "evaluator",
             "conversation",
+            "internal",
           ],
         },
         start_time: {
