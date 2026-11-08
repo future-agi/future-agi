@@ -72,7 +72,7 @@ export function useSkillFile(id, number, path) {
     queryKey: skillsKeys.v11(access.scope, 'legacy', ...skillsKeys.file(id, number, path).slice(1)),
     queryFn: async ({ signal }) => {
       const file = await readSkillFile(id, number, path, signal, access.headers);
-      if (signal.aborted || access.current.current !== access.identity) throw new Error('The Skills scope changed.');
+      if (signal.aborted || access.queryIdentity.current !== access.identity) throw new Error('The Skills scope changed.');
       return file;
     },
     enabled: access.enabled && Boolean(id && number && path), meta: { errorHandled: true },
@@ -95,10 +95,10 @@ export function useSkillDraft(id) {
     queryFn: async ({ signal }) => {
       try {
         const response = await axios.get(endpoints.draft(id), { signal, headers: access.headers });
-        if (signal.aborted || access.current.current !== access.identity) throw new Error('The Skills scope changed.');
+        if (signal.aborted || access.queryIdentity.current !== access.identity) throw new Error('The Skills scope changed.');
         return mapDraft(result(response));
       } catch (error) {
-        if (!signal.aborted && access.current.current === access.identity && getSkillErrorCode(error) === 'draft_not_found') return null;
+        if (!signal.aborted && access.queryIdentity.current === access.identity && getSkillErrorCode(error) === 'draft_not_found') return null;
         throw error;
       }
     },
