@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "protocol_id": "context-hub-complete-jobs-r3.1",
+  "status": "template_requires_customer_preregistration",
+  "primary_product_metric": "human_active_time_failure_to_verified_release_and_load",
+  "scripted_claim": "10x fewer operator actions",
+  "scripted_criterion": "10 * A_ours <= A_best_applicable_competitor",
+  "dimensions": {
+    "A": "Meaningful operator primitives, including configuration, commands, field edits, reviews, approvals, failed attempts, retries and recovery decisions",
+    "S": "Screen or working-context transitions",
+    "H": "Handoffs requiring another actor or manual information transfer",
+    "R": "Manual identity or evidence reconciliation"
+  },
+  "cohorts": ["cold", "configured"],
+  "rules": [
+    "Do not count a grouped workflow step as one action; instrument every primitive inside it.",
+    "Record every reviewed item and exception and retain human review time separately from click counts.",
+    "Count custom wrapper and integration code construction in cold setup.",
+    "Use the customer's strongest competent configured route, including combined products, scripts, batching and CI.",
+    "Never sum documentation bullets into a measured complete-job denominator.",
+    "No ratio from a zero action denominator, self-test ledger or missing observation.",
+    "Keep failed and slow runs, cold/configured cohorts and each of J1-J6 separate; no weighted score or aggregate win.",
+    "Fault acceptance requires zero wrong-version deliveries, lost edits, unauthorized effects, duplicate business actions or false-green decisions over the explicit scenario set.",
+    "A synthetic fixture establishes mechanics only, not customer qualification or competitive superiority."
+  ],
+  "required_preregistration": ["customer_input_hash", "initial_conditions_hash", "safety_requirements_hash", "supported_versions", "cohort", "population", "complete_job_boundary", "expected_observations", "fault_ids", "independent_comparator_reviewer", "strongest_configured_route_hash"],
+  "required_provenance": ["product_base", "product_head", "product_tree", "sdk_commit", "package_hashes", "runtime_digest", "fixture_hash", "lockfile_hashes", "environment", "dirty"],
+  "human_study": {
+    "status": "not_conducted",
+    "design": "Counterbalanced within-capability study, with engineer, policy-owner and reviewer roles; separate cold/configured cohorts and approval waits.",
+    "preregister_before_collection": ["sampling_and_recruitment", "counterbalance_assignment", "failure_and_dropout_handling", "active_time_measurement", "comparison_and_statistical_method", "comprehension_rubric", "success_and_quality_non_deterioration_rules", "spend_reporting"],
+    "sample_size": null,
+    "confidence_interval": null,
+    "active_time_results": null,
+    "elapsed_time_results": null,
+    "comprehension_results": null,
+    "success_results": null,
+    "known_spend": null,
+    "unknown_spend": null
+  },
+  "checkpoint_P": "Blocked until technical qualification, measured applicable action comparisons, human time/comprehension/success and cost/support review are complete. J5 campaigns remain E-only."
+}
