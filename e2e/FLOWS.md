@@ -814,6 +814,27 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — a text-to-speech preview explains why it cannot use an audio column
+
+**Goal:** Understand why a text-to-speech Run Prompt cannot read an audio column aloud, even when its recording URL is unavailable
+
+**Spec:** `flows/datasets/tts-media-preview.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed Text and Recording columns and convert the unavailable recording to audio
+2. open the dataset and name a Run Prompt with Text-to-Speech selected
+3. select openai/tts-1 and the alloy voice
+4. enter {{Recording}} and choose Test on the first row
+5. Run the preview and read the actionable rejection in Prompt Test Raw
+
+**Backend state verified:**
+
+- the actor-scoped dataset has a completed audio Recording column and its exact seeded row retains the URL with cell status error
+- the browser preview POST targets that dataset and audio-column variable with TTS/alloy, returns HTTP 200 and exactly the rejection displayed in Raw
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
