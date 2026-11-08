@@ -83,6 +83,9 @@ export const observeEnvsOf = (state) => {
     const agent = state?.byEnv?.[e.id]?.agent;
     const project = agent?.values?.observeProject;
     if (project?.id) add(project.id, project.name, e);
+    /* A hosted agent watched from the start keeps its project on observability. */
+    const watched = agent?.values?.observability?.project;
+    if (watched) add(watched, observeProjectById(watched)?.name, e);
     /* The link Connect traces saves (project → agent): every environment
        that tests that agent takes the project's traces. */
     const key = envAgentKey(agent, e.id);

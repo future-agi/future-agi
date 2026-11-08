@@ -7,6 +7,7 @@
 import { OBSERVE_PROJECTS } from "src/sections/simulate-v2/_mock/connectAgent";
 import { DEMO_PERSONAS, personasPage, savePersona, deletePersona } from "./personas";
 import { evalsPage, evalDetail } from "./evals";
+import { traceList, sessionList, graph, projectDetail, traceDetail } from "./tracing";
 
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -99,11 +100,18 @@ const ROUTES = [
   [/\/accounts\/organizations\/$/, () => ({ status: true, result: { organizations: [{ ...ORG, role: "Owner", level: 15, is_selected: true }] } })],
   [/\/accounts\/organizations\/current\/$/, () => ({ status: true, result: { ...ORG, role: "Owner", level: 15 } })],
   [/\/accounts\/workspace\/list\/$/, () => ({ status: true, result: { workspaces: [{ ...WS, role: "Owner", is_default: true }], ...page([{ ...WS, role: "Owner" }]) } })],
+  /* Tracing inside a project: traces, sessions, charts and one trace opened. */
+  [/\/tracer\/trace\/list_traces_of_session\/$/, (q) => traceList(q)],
+  [/\/tracer\/trace-session\/list_sessions\/$/, (q) => sessionList(q)],
+  [/\/(get_graph_methods|get_session_graph_data)\/$/, (q) => graph(q)],
+  [/\/tracer\/trace\/[^/]+-tr-\d+\/$/, (q, path) => traceDetail(path)],
+  [/\/tracer\/project\/list_project_ids\/$/, () => ({ status: true, result: { projects: PROJECTS.map((p) => ({ id: p.id, name: p.name })) } })],
   [/\/tracer\/project\/list_projects\/$/, (q) => ({ status: true, result: page(PROJECTS, q) })],
   [/\/tracer\/feed\/issues\/$/, () => ({ status: true, result: { data: [], total: 0, limit: 25, offset: 0 } })],
   [/\/integrations\/connections\/$/, () => ({ status: true, result: { metadata: { total_count: CONNECTIONS.length, current_page: 1, page_size: 10, total_pages: 1, next_page: null }, connections: CONNECTIONS } })],
   [/\/model-hub\/organizations\/[^/]+\/users\/$/, () => drfPage(TEAM)],
   [/\/accounts\/key\/get_secret_keys\/$/, (q) => ({ status: true, result: page(KEYS, q) })],
+  [/\/tracer\/project\/(?!list_)[^/]+\/$/, (q, path) => projectDetail(path, PROJECTS)],
   [/\/accounts\/first-checks\/$/, () => ({ status: true, result: { completed: true } })],
   /* Product screens beside the prototype: the empty shapes their lists read, so they show their own empty states. */
   [/\/model-hub\/eval-templates\/list\/$/, (q) => ({ status: true, result: evalsPage(q) })],
@@ -112,6 +120,9 @@ const ROUTES = [
   [/\/tracer\/eval-task\/list_eval_tasks(_with_project_name)?\/$/, (q) => ({ status: true, result: page([], q) })],
   [/\/agentcc\/gateways\/$/, () => ({ status: true, result: [{ id: "demo-gateway", name: "Default gateway", status: "healthy", is_active: true, created_at: "2026-10-01T09:00:00Z" }] })],
 ];
+
+/* Readable in the console, to try a new answer before it is written here. */
+if (DEMO_MODE && typeof window !== "undefined") window.__demoRoutes = ROUTES;
 
 const answer = (method, url, params = {}, body = {}) => {
   const u = new URL(url, "https://demo.invalid");
