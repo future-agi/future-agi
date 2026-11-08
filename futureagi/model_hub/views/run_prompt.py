@@ -38,12 +38,6 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
-from agentic_eval.core_evals.run_prompt.runprompt_handlers.factory import (
-    uses_tts_handler,
-)
-from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
-    speaks_text_literally,
-)
 from model_hub.models.api_key import ApiKey
 from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.models.choices import (
@@ -546,6 +540,13 @@ def is_literal_speech_run(model_name, output_format, organization_id) -> bool:
     sub-handler. A completion-audio model (gpt-4o-audio-preview, Vertex Gemini
     TTS) is not literal speech: it receives the whole prompt, media included.
     """
+    from agentic_eval.core_evals.run_prompt.runprompt_handlers.factory import (
+        uses_tts_handler,
+    )
+    from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
+        speaks_text_literally,
+    )
+
     if not model_name or not uses_tts_handler(model_name, output_format):
         return False
     try:

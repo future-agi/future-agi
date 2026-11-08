@@ -14,7 +14,6 @@ Features:
 """
 
 import time
-from typing import Optional
 
 import structlog
 
@@ -63,7 +62,7 @@ def requires_completion_audio(model: str) -> bool:
     return False
 
 
-def tts_lane(model: str, provider: Optional[str]) -> str:
+def tts_lane(model: str, provider: str | None) -> str:
     """
     Name the sub-handler TTSHandler routes a model and resolved provider to.
 
@@ -81,7 +80,7 @@ def tts_lane(model: str, provider: Optional[str]) -> str:
     return TTS_LANE_SPEECH
 
 
-def speaks_text_literally(model: str, provider: Optional[str]) -> bool:
+def speaks_text_literally(model: str, provider: str | None) -> bool:
     """
     Check if TTSHandler sends the prompt's text to a speech API to be read aloud.
 

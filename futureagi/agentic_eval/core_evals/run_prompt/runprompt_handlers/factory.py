@@ -5,7 +5,7 @@ This implements the Strategy Pattern by routing to the correct handler
 based on model type, output format, and other context attributes.
 """
 
-from typing import Optional, Type
+from typing import Type
 
 import structlog
 
@@ -17,7 +17,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 logger = structlog.get_logger(__name__)
 
 
-def _get_model_mode(model: str) -> Optional[str]:
+def _get_model_mode(model: str) -> str | None:
     """Catalog mode of a model, or None when it cannot be determined."""
     from model_hub.utils.utils import get_model_mode
 
@@ -28,7 +28,7 @@ def _get_model_mode(model: str) -> Optional[str]:
         return None
 
 
-def uses_tts_handler(model: str, output_format: Optional[str]) -> bool:
+def uses_tts_handler(model: str, output_format: str | None) -> bool:
     """
     Whether ModelHandlerFactory.create_handler routes a run to TTSHandler.
 
