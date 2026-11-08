@@ -211,6 +211,9 @@ def columns(dataset, row):
         ("My Recording", DataTypeChoices.AUDIO.value, MY_RECORDING_URL),
         ("clip.audio", DataTypeChoices.AUDIO.value, CLIP_URL),
         ("default", DataTypeChoices.AUDIO.value, RECORDING_URL),
+        # Shadows the Jinja2 global range().
+        ("range", DataTypeChoices.AUDIO.value, RECORDING_URL),
+        ("Flag", DataTypeChoices.TEXT.value, ""),
         ("Cover", DataTypeChoices.IMAGE.value, COVER_URL),
         ("Photos", DataTypeChoices.IMAGES.value, json.dumps(PHOTO_URLS)),
         ("Doc", DataTypeChoices.DOCUMENT.value, DOC_URL),
@@ -283,6 +286,8 @@ PREVIEW_REJECTED = [
     ("{% if Recording %}yes{% endif %}", "Recording", "audio"),
     ("{{ Recording.split('/')[-1] }}", "Recording", "audio"),
     ("{% set r = Recording %}{{ r }}", "Recording", "audio"),
+    ("{{ range }}", "range", "audio"),
+    ("{{ range|upper }} {{ Missing.value }}", "range", "audio"),
     ("{{ My Recording }}", "My Recording", "audio"),
     ("{{ Say This }}", "Recording", "audio"),
     ("{{clip.audio}}", "clip.audio", "audio"),
@@ -410,6 +415,40 @@ class TestPreviewRejectsMediaColumns:
             media_error("Recording", "audio")
         ]
 
+    def test_media_read_through_a_json_parent_column_id_is_rejected(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        # A JSON text column "take" holds the dotted media column take.audio,
+        # so the media value is also reachable as <id of take>.audio.
+        take = add_column(
+            dataset, row, "take", DataTypeChoices.TEXT.value, '{"title": "Intro"}'
+        )
+        add_column(dataset, row, "take.audio", DataTypeChoices.AUDIO.value, CLIP_URL)
+        alias = "_" * str(take.id)[0].isdigit() + str(take.id).replace("-", "_")
+
+        rejected = preview(
+            auth_client,
+            dataset,
+            tts_config(user_prompt("{{ " + alias + ".audio }}")),
+        )
+        speech_boundary.assert_not_called()
+        assert rejected.json()["result"]["responses"] == [
+            media_error("take.audio", "audio")
+        ]
+
+        spoken = preview(
+            auth_client, dataset, tts_config(user_prompt("{{ take.title }}"))
+        )
+        assert spoken.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == "Intro"
+        media_fetch.audio.assert_not_called()
+
     def test_several_media_columns_are_named(
         self,
         auth_client,
@@ -463,6 +502,8 @@ PREVIEW_SPOKEN = [
     ('{{ "Recording" }} is a word', "Recording is a word"),
     ("{% raw %}{{ Recording }}{% endraw %}", "{{ Recording }}"),
     ("{{ clip.title }}", "Intro"),
+    ("{{ clip['caption'] | default('Hello') }}", "Hello"),
+    ("{{ clip.subtitle | default('Hi') }}", "Hi"),
     ('{{ Script | default("Hello") }}', "Hello there"),
     ("record audio with script", "record audio with script"),
 ]
@@ -598,6 +639,7 @@ SAVED_REJECTED = [
     ("mustache", "{{clip.audio}}", "clip.audio", "audio"),
     ("mustache", "{{#clip}}{{audio}}{{/clip}}", "clip.audio", "audio"),
     ("mustache", "Hello {{.}}", "Recording", "audio"),
+    ("mustache", "{{^Flag}}{{.}}{{/Flag}}", "Recording", "audio"),
     ("f-string", "{Recording}", "Recording", "audio"),
     ("f-string", "{Recording[0]}", "Recording", "audio"),
     ("f-string", "{Recording!r}", "Recording", "audio"),
@@ -640,7 +682,7 @@ class TestSavedColumnRejectsMediaColumns:
         cell = rerun_saved_column(run_prompter, column, row)
 
         speech_boundary.assert_not_called()
-        if template == "Hello {{.}}":
+        if "{{.}}" in template:
             # The whole context is read: every media column is named.
             assert cell.value.startswith(
                 f'Text-to-speech model "{TTS_MODEL}" reads the prompt aloud as '

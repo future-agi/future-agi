@@ -440,6 +440,10 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 _jinja2_env = SandboxedEnvironment()
 
 
+# A {{ ... }} tag, for variables whose names contain spaces.
+_JINJA2_VARIABLE_TAG = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+
 def _inline_spaced_jinja2_variables(template_str: str, context: dict):
     """
     Inline variables whose names contain spaces, which Jinja2 cannot parse.
@@ -450,7 +454,7 @@ def _inline_spaced_jinja2_variables(template_str: str, context: dict):
     processed = template_str
     safe_ctx = dict(context)
     inlined = []
-    raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
+    raw_vars = _JINJA2_VARIABLE_TAG.findall(processed)
     for var_name in raw_vars:
         stripped = var_name.strip()
         if " " in stripped and stripped in safe_ctx:
@@ -555,21 +559,45 @@ def is_literal_speech_run(model_name, output_format, organization_id) -> bool:
     return speaks_text_literally(model_name, provider)
 
 
+def _literal_speech_media_columns(media_columns, column_paths) -> list:
+    """
+    Render-context paths at which each media column would be read.
+
+    A column is read by its dotted name and by its sanitized id. A JSON text
+    column whose name is a prefix of a media column's name also carries that
+    media value under its own id, e.g. <id of clip>.audio for clip.audio.
+    """
+    result = []
+    for column in media_columns:
+        parts = column.name.split(".")
+        paths = {tuple(parts), (sanitize_uuid_for_jinja(str(column.id)),)}
+        for parent_parts, parent_id in column_paths:
+            size = len(parent_parts)
+            if size < len(parts) and parts[:size] == parent_parts:
+                paths.add((parent_id, *parts[size:]))
+        result.append(
+            LiteralSpeechMediaColumn(
+                name=column.name, data_type=column.data_type, paths=tuple(paths)
+            )
+        )
+    return result
+
+
 def _context_path(root, keys, context) -> tuple:
     """
     Render-context path that a variable lookup reads.
 
-    Dotted column names are grouped in plain dicts. A key that is not one of a
-    group's columns (e.g. .get or .items) uses the group itself, so the path
-    stops at the group.
+    Dotted column names are grouped in plain dicts. A dict attribute that is
+    not one of the group's columns (e.g. .get or .items) reads the group
+    itself, so the path stops at the group.
     """
     path = [root]
     value = context.get(root)
     for key in keys:
         if type(value) is dict:
-            if key not in value:
+            if key not in value and hasattr(dict, key):
                 break
-            value = value[key]
+            value = value.get(key)
         else:
             value = None
         path.append(key)
@@ -589,10 +617,29 @@ def _jinja2_lookup_key(node):
     return None
 
 
+class _Jinja2ContextNames(jinja2_meta.TrackingCodeGenerator):
+    """
+    Names a Jinja2 template resolves from its render context.
+
+    jinja2.meta.find_undeclared_variables leaves out names of environment
+    globals (range, dict, ...), but a column of that name shadows the global.
+    """
+
+    def enter_frame(self, frame):
+        super().enter_frame(frame)
+        self.undeclared_identifiers.update(
+            param
+            for action, param in frame.symbols.loads.values()
+            if action == "resolve"
+        )
+
+
 def _jinja2_variable_paths(source, context) -> list:
     """Context paths read by a Jinja2 template, from its parsed syntax tree."""
     tree = _jinja2_env.parse(source)
-    roots = jinja2_meta.find_undeclared_variables(tree)
+    tracker = _Jinja2ContextNames(tree.environment)
+    tracker.visit(tree)
+    roots = tracker.undeclared_identifiers
     lookups = (jinja2_nodes.Getattr, jinja2_nodes.Getitem)
     inner = {
         id(node.node)
@@ -619,24 +666,30 @@ def _jinja2_variable_paths(source, context) -> list:
 def _mustache_variable_paths(text, context) -> list:
     """Context paths read by a Mustache template, from chevron's tokens."""
     paths = []
-    depth = 0
+    sections = []
     for tag, key in chevron_tokenize(text):
         if tag == "end":
-            depth -= 1
+            sections.pop()
         elif tag == "partial":
             # A partial's content is unknown: treat it as reading everything.
             paths.append(())
-        elif tag in ("variable", "no escape", "section", "inverted section"):
+        elif tag in (
+            "variable",
+            "no escape",
+            "no escape?",
+            "section",
+            "inverted section",
+        ):
             if key == ".":
-                # At the top level "." is the whole context; inside a section
-                # it is the section's value, already checked.
-                if depth == 0:
+                # "." is the innermost (non-inverted) section's value, already
+                # checked; outside one it is the whole context.
+                if "section" not in sections:
                     paths.append(())
             else:
                 root, *keys = key.split(".")
                 paths.append(_context_path(root, keys, context))
             if tag in ("section", "inverted section"):
-                depth += 1
+                sections.append(tag)
     return paths
 
 
@@ -663,11 +716,24 @@ def _media_columns_used(text, template_format, context, media_columns) -> list:
         paths = _mustache_variable_paths(text, context)
     elif template_format in (None, TEMPLATE_FORMAT_JINJA2):
         source, _, inlined = _inline_spaced_jinja2_variables(text, context)
-        paths = [(name,) for name in inlined]
-        paths += _jinja2_variable_paths(source, context)
+        # A media column whose name has a space is not in the context, so it
+        # is not inlined; its {{ name }} tag would not parse.
+        spaced = {
+            name.strip()
+            for name in _JINJA2_VARIABLE_TAG.findall(source)
+            if " " in name.strip()
+        }
+        paths = [(name,) for name in (*inlined, *sorted(spaced))]
+        if not _media_columns_at(paths, media_columns):
+            paths += _jinja2_variable_paths(source, context)
     else:
         # render_template rejects an unknown format.
         return []
+    return _media_columns_at(paths, media_columns)
+
+
+def _media_columns_at(paths, media_columns) -> list:
+    """Media columns whose render-context paths overlap any of the paths."""
 
     def overlaps(path, media_path):
         size = min(len(path), len(media_path))
@@ -737,12 +803,14 @@ def populate_placeholders(
 
         # Literal text-to-speech reads the prompt's text aloud, and today it
         # reads every message. A media column could only reach it as a
-        # generated label or a URL, so on that lane media columns are never
-        # fetched and a prompt that uses one is rejected.
+        # generated label or a URL, so on that lane media columns are left out
+        # of the render context (never fetched) and a prompt that uses one is
+        # rejected.
         literal_speech = is_literal_speech_run(
             model_name, output_format, dataset.organization_id
         )
         literal_speech_media = []
+        column_paths = []  # (name parts, sanitized id) of every column
 
         # Create context for Handlebars with proper nesting
         context: dict[str, Any] = {}
@@ -754,19 +822,16 @@ def populate_placeholders(
             try:
                 if column_id != str(col_id):
                     column = Column.objects.get(id=column_id)
-                    if literal_speech and column.data_type in MEDIA_COLUMN_TYPES:
-                        # Recorded before the cell lookup: an empty or missing
-                        # cell is still a media column.
-                        literal_speech_media.append(
-                            LiteralSpeechMediaColumn(
-                                name=column.name,
-                                data_type=column.data_type,
-                                paths=(
-                                    tuple(column.name.split(".")),
-                                    (sanitize_uuid_for_jinja(column_id),),
-                                ),
-                            )
+                    if literal_speech:
+                        column_paths.append(
+                            (column.name.split("."), sanitize_uuid_for_jinja(column_id))
                         )
+                    if literal_speech and column.data_type in MEDIA_COLUMN_TYPES:
+                        # Never fetched and never in the render context, so no
+                        # template can turn it into speech. An empty or missing
+                        # cell is still a media column.
+                        literal_speech_media.append(column)
+                        continue
                     cell = Cell.objects.filter(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
@@ -846,11 +911,9 @@ def populate_placeholders(
                 )
 
         if literal_speech_media:
-            column_info = {
-                column_id: info
-                for column_id, info in column_info.items()
-                if info["data_type"] not in MEDIA_COLUMN_TYPES
-            }
+            literal_speech_media = _literal_speech_media_columns(
+                literal_speech_media, column_paths
+            )
 
         # Process messages
         image_counter = 0
