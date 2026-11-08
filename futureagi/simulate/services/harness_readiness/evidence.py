@@ -21,7 +21,10 @@ from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
     HarnessSuiteVersion,
+    HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
 )
 from simulate.models.harness_versioning import ArchiveLayout
 from simulate.services.harness_readiness.catalogue import (
@@ -467,4 +470,174 @@ def readings(pairing: Pairing, evidence: Evidence) -> dict[str, Reading]:
         "tool_routing": _tool_routing(evidence),
         "state": _single(checks, "schema_and_seed", "state_failed"),
         "reset": _reset(evidence, pairing.runtime),
+    }
+
+
+# --- rows read from this agent's runs, never from a check -------------------------------
+
+_RUNS_READ = 20
+# A connection that answers each message whole: the generated chat ingress (ALK
+# ``RuntimeInterface``). SSE and WebSocket are not one of them until qualified.
+_WHOLE_REPLY_KINDS = frozenset({"http", "callable", "command"})
+
+
+def _runs(pairing: Pairing) -> list[Any]:
+    """The newest runs of the pairing's agent and environment version."""
+    if pairing.agent_version is None:
+        return []
+    return list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=pairing.environment.id,
+            agent_version_id=pairing.agent_version.id,
+            environment_version_id=pairing.environment_version.id,
+            test_execution_id__isnull=False,
+            # A validation job never ran the agent's cases; its key is set only on them.
+            payload__metadata__certify_only__isnull=True,
+        )
+        .order_by("-created_at")
+        .values_list("id", flat=True)[:_RUNS_READ]
+    )
+
+
+def _contract(pairing: Pairing) -> Mapping[str, Any]:
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    return contract if isinstance(contract, Mapping) else {}
+
+
+def _continuity(runs: list[Any]) -> Reading:
+    receipt = (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id__in=runs, body__call__turns__gte=2
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if receipt is None:
+        return Reading(
+            "not_run",
+            "no_multi_turn_run",
+            "No run of this agent has gone past one turn yet",
+        )
+    turns = (receipt.body.get("call") or {}).get("turns")
+    return Reading(
+        "limited",
+        "turns_observed",
+        f"A run went {turns} turns; whether the agent kept the context is not checked",
+        evidence=[{"check": "turns", "result": str(turns)}],
+        checked_at=receipt.created_at.isoformat(),
+    )
+
+
+def _streaming(pairing: Pairing) -> Reading:
+    contract = _contract(pairing)
+    interface = (contract.get("runtime") or {}).get("interface") or {}
+    kind = str(interface.get("kind") or "") if isinstance(interface, Mapping) else ""
+    if str(contract.get("modality") or "").lower() == "voice":
+        return Reading(
+            "not_applicable",
+            "voice_call",
+            "A voice agent is heard over its call, not over a chat stream",
+        )
+    if kind in _WHOLE_REPLY_KINDS:
+        return Reading(
+            "not_applicable",
+            "whole_replies",
+            "This connection answers each message whole; a reply ends when it returns",
+            evidence=[{"check": "interface", "result": kind}],
+        )
+    if kind:
+        return Reading(
+            "not_applicable",
+            "transport_not_qualified",
+            f"A {kind} connection is not supported until it passes qualification",
+            evidence=[{"check": "interface", "result": kind}],
+        )
+    return Reading(
+        "not_run",
+        "interface_not_recorded",
+        "The connection's interface is not recorded",
+    )
+
+
+def _audio(pairing: Pairing, runs: list[Any]) -> Reading:
+    if str(_contract(pairing).get("modality") or "").lower() != "voice":
+        return Reading(
+            "not_applicable", "not_voice", "A chat connection carries no audio"
+        )
+    recording = (
+        HostedHarnessArtifact.no_workspace_objects.filter(
+            job_id__in=runs, kind__startswith="recording"
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if recording is None:
+        return Reading(
+            "not_run", "no_recording", "No run of this agent has a call recording yet"
+        )
+    return Reading(
+        "passed",
+        evidence=[{"check": "recording", "result": recording.kind}],
+        checked_at=recording.created_at.isoformat(),
+    )
+
+
+def _resume(runs: list[Any]) -> Reading:
+    resumed = (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id__in=runs, attempt_number__gt=1
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if (
+        resumed is None
+        or not HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id=resumed.job_id, attempt_number__lt=resumed.attempt_number
+        ).exists()
+    ):
+        return Reading(
+            "not_run",
+            "no_interrupted_run",
+            "No run of this agent was interrupted and finished on a new attempt",
+        )
+    return Reading(
+        "passed",
+        evidence=[{"check": "attempt", "result": str(resumed.attempt_number)}],
+        checked_at=resumed.created_at.isoformat(),
+    )
+
+
+def _cost(runs: list[Any]) -> Reading:
+    from simulate.services.harness_usage import harness_consumption
+
+    for run in HostedHarnessJob.no_workspace_objects.filter(id__in=runs[:1]):
+        if harness_consumption(run) is not None:
+            return Reading(
+                "limited",
+                "agent_model_cost_unmeasured",
+                "Our side of the last run was measured; the agent's own model spend"
+                " is not",
+                checked_at=run.updated_at.isoformat(),
+            )
+    return Reading(
+        "not_run", "no_run_measured", "No run of this agent was measured yet"
+    )
+
+
+def observed(pairing: Pairing) -> dict[str, Reading]:
+    """What this agent's runs on this environment version show for the rows no check
+    measures; they hold no case and never lower the answer."""
+    runs = _runs(pairing)
+    return {
+        "continuity": _continuity(runs),
+        "streaming": _streaming(pairing),
+        "audio": _audio(pairing, runs),
+        "files": Reading(
+            "not_run",
+            "files_not_recorded",
+            "No run records the files an agent produces yet",
+        ),
+        "resume": _resume(runs),
+        "cost": _cost(runs),
     }

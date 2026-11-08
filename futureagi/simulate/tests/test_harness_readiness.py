@@ -242,7 +242,7 @@ class TestRows:
         }
         assert (statuses["continuity"], _rows(report)["continuity"]["reason_code"]) == (
             "untested",
-            "no_check_yet",
+            "no_multi_turn_run",
         )
 
     def test_refused_probe_counts_as_passed(self, user, workspace, storage):
@@ -786,9 +786,9 @@ class TestApi:
         assert body["counts"] == {
             "blocked": 0,
             "stale": 0,
-            "untested": 10,
+            "untested": 9,
             "partial": 0,
-            "unavailable": 0,
+            "unavailable": 1,
             "supported": 6,
         }
         assert body["validation"]["state"] == "ready"
@@ -969,9 +969,9 @@ class TestDoneWhen:
         assert body["counts"] == {
             "blocked": 1,
             "stale": 0,
-            "untested": 10,
+            "untested": 9,
             "partial": 0,
-            "unavailable": 0,
+            "unavailable": 1,
             "supported": 5,
         }
 
@@ -1253,8 +1253,11 @@ class TestConsequence:
         assert rows["reset"]["consequence"] == (
             "Every trial starts from the same seed, agent included"
         )
-        assert rows["audio"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "7"
+        assert rows["audio"]["consequence"] == (
+            "Audio checks do not apply to a chat connection"
+        )
+        assert rows["browser"]["consequence"].startswith("No check measures this yet")
+        assert report["rules_version"] == "8"
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(
@@ -1915,3 +1918,217 @@ class TestStaleVersions:
 
         assert report["pairing"]["evidence"] == "pair_certificate"
         assert not [row for row in report["rows"] if row["status"] == "stale"]
+
+
+def _ran(environment, *, key, turns=None, attempts=(1,), recording=None, agent=None):
+    """A run of the defaults whose receipts came on ``attempts``, each call ``turns``
+    long, with a ``recording`` artifact of that kind."""
+    from simulate.models import (
+        HostedHarnessArtifact,
+        HostedHarnessReceipt,
+        HostedHarnessScenario,
+    )
+    from simulate.services.hosted_harness import register_attempt
+
+    job = _run(environment, key=key)
+    if agent is not None:
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            agent_version=agent
+        )
+    scenarios = list(
+        HostedHarnessScenario.no_workspace_objects.filter(job=environment).order_by(
+            "number"
+        )
+    )
+    # One finished case per attempt: an attempt that resumes runs only what is left.
+    for scenario, number in zip(scenarios, attempts, strict=False):
+        attempt = register_attempt(
+            job.id, endpoint_base_url="https://platform.example"
+        ).attempt
+        HostedHarnessReceipt.no_workspace_objects.create(
+            job=job,
+            attempt=attempt,
+            scenario=scenario,
+            attempt_number=number,
+            digest="sha256:" + uuid.uuid4().hex * 2,
+            status="completed",
+            body={"call": {"turns": turns}} if turns is not None else {},
+        )
+    if recording is not None:
+        HostedHarnessArtifact.no_workspace_objects.create(
+            job=job,
+            sha256=uuid.uuid4().hex * 2,
+            kind=recording,
+            size=1,
+            content_type="audio/wav",
+            object_key=f"recordings/{key}.wav",
+        )
+    return job
+
+
+def _contract_runtime(environment, **contract):
+    version = environment.environment_version
+    documents = dict(version.documents or {})
+    documents["contract"] = {**(documents.get("contract") or {}), **contract}
+    HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+        documents=documents
+    )
+    environment.refresh_from_db()
+
+
+class TestObservedRows:
+    """Rows no check measures, read from this agent's runs; they hold nothing back."""
+
+    def test_nothing_observed_reads_untested_with_a_reason(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "ob-none")
+        _certify(environment, storage)
+
+        rows = _rows(_report(environment))
+
+        assert {
+            one: (rows[one]["status"], rows[one]["reason_code"])
+            for one in ("continuity", "resume", "cost", "files")
+        } == {
+            "continuity": ("untested", "no_multi_turn_run"),
+            "resume": ("untested", "no_interrupted_run"),
+            "cost": ("untested", "no_run_measured"),
+            "files": ("untested", "files_not_recorded"),
+        }
+
+    def test_a_multi_turn_run_reads_continuity_partial(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "ob-turns")
+        _certify(environment, storage)
+        _ran(environment, key="turns", turns=5)
+
+        report = _report(environment)
+        continuity = _rows(report)["continuity"]
+
+        assert (continuity["status"], continuity["reason_code"]) == (
+            "partial",
+            "turns_observed",
+        )
+        assert continuity["evidence"] == [{"check": "turns", "result": "5"}]
+        assert continuity["checked_at"]
+        assert report["answer"]["kind"] == "ready"
+
+    def test_one_turn_runs_and_another_agents_runs_show_nothing(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "ob-other")
+        _certify(environment, storage)
+        _ran(environment, key="one", turns=1)
+        _ran(environment, key="a2", turns=6, agent=a2)
+
+        assert _rows(_report(environment))["continuity"]["status"] == "untested"
+
+    @pytest.mark.parametrize(
+        ("contract", "expected"),
+        [
+            (
+                {"runtime": {"interface": {"kind": "http"}}},
+                ("unavailable", "whole_replies"),
+            ),
+            (
+                {"runtime": {"interface": {"kind": "websocket"}}},
+                ("unavailable", "transport_not_qualified"),
+            ),
+            ({"modality": "voice"}, ("unavailable", "voice_call")),
+            ({"runtime": {}}, ("untested", "interface_not_recorded")),
+        ],
+    )
+    def test_streaming_reads_the_connection(
+        self, user, workspace, storage, contract, expected
+    ):
+        environment = _environment(user, workspace, storage, f"ob-stream-{expected[1]}")
+        _certify(environment, storage)
+        _contract_runtime(environment, **contract)
+
+        streaming = _rows(_report(environment))["streaming"]
+
+        assert (streaming["status"], streaming["reason_code"]) == expected
+        assert not streaming["consequence"].startswith("No check measures")
+        if expected[1] == "voice_call":
+            assert streaming["consequence"].startswith("Voice cases are heard")
+
+    def test_audio_reads_voice_recordings_only(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "ob-audio")
+        _certify(environment, storage)
+        _contract_runtime(environment, modality="chat")
+        assert _rows(_report(environment))["audio"]["status"] == "unavailable"
+
+        _contract_runtime(environment, modality="voice")
+        _ran(environment, key="transcribed", turns=3, recording="transcript")
+        assert _rows(_report(environment))["audio"]["reason_code"] == "no_recording"
+
+        _ran(environment, key="call", turns=3, recording="recording_combined")
+        audio = _rows(_report(environment))["audio"]
+
+        assert (audio["status"], audio["evidence"]) == (
+            "supported",
+            [{"check": "recording", "result": "recording_combined"}],
+        )
+
+    def test_a_run_finished_on_a_new_attempt_reads_resume_supported(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "ob-resume")
+        _certify(environment, storage)
+        _ran(environment, key="first-try", attempts=(1,))
+        # A whole retry is not a resume: nothing finished on the first attempt.
+        _ran(environment, key="whole-retry", attempts=(2,))
+        assert _rows(_report(environment))["resume"]["status"] == "untested"
+
+        _ran(environment, key="resumed", attempts=(1, 2))
+        resume = _rows(_report(environment))["resume"]
+
+        assert (resume["status"], resume["evidence"]) == (
+            "supported",
+            [{"check": "attempt", "result": "2"}],
+        )
+
+    def test_a_run_nothing_measured_reads_no_cost(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "ob-cost-none")
+        _certify(environment, storage)
+        _ran(environment, key="unmeasured")
+
+        rows = _rows(_report(environment))
+        cost = rows["cost"]
+
+        assert (cost["status"], cost["reason_code"]) == ("untested", "no_run_measured")
+        assert rows["files"]["consequence"].startswith(
+            "No run records an agent's files"
+        )
+
+    def test_cost_says_measured_never_a_number(
+        self, user, workspace, storage, monkeypatch
+    ):
+        environment = _environment(user, workspace, storage, "ob-cost")
+        _certify(environment, storage)
+        _ran(environment, key="measured")
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.harness_consumption",
+            lambda job: {"text_sim_tokens": 120, "voice_sim_minutes": 0},
+        )
+
+        cost = _rows(_report(environment))["cost"]
+
+        assert (cost["status"], cost["reason_code"]) == (
+            "partial",
+            "agent_model_cost_unmeasured",
+        )
+        assert not any(character.isdigit() for character in cost["reason"])
+        assert "never the agent's own model spend" in cost["consequence"]
+
+    def test_observed_rows_hold_no_case(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "ob-holds")
+        _certify(environment, storage)
+        _contract_runtime(environment, runtime={"interface": {"kind": "websocket"}})
+
+        report = harness_readiness.selection_report(
+            _pairing(environment), keys=None, trials=1
+        )
+
+        assert _rows(report)["streaming"]["affected"]["count"] == 0
+        assert report["answer"]["kind"] == "ready"

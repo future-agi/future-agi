@@ -24,6 +24,7 @@ from simulate.services.harness_readiness.catalogue import (
 from simulate.services.harness_readiness.evidence import (
     Evidence,
     connection,
+    observed,
     readings,
 )
 from simulate.services.harness_readiness.findings import (
@@ -110,9 +111,22 @@ def rows(
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
     fresh: dict[str, Status] = {}
+    seen = observed(pairing)
     for capability in CATALOGUE:
         reading = measured.get(capability.id)
-        if not capability.measured or reading is None:
+        if not capability.measured and capability.id in seen:
+            # Read from the agent's runs: what they show, never gated or Stale.
+            found = seen[capability.id]
+            status, _, _ = _status(found)
+            row = _row(
+                capability,
+                status,
+                reading=found,
+                reason_code=found.reason_code,
+                reason=found.reason,
+                checked_at=found.checked_at,
+            )
+        elif not capability.measured or reading is None:
             row = _row(
                 capability,
                 "untested",
@@ -439,13 +453,57 @@ _CANCEL_CONFIRMED = (
 _UNMEASURED = (
     "No check measures this yet; results that depend on it are not verified either way"
 )
+# Rows read from the agent's runs: what each status means for the cases. They hold no
+# case back either way.
+_OBSERVED: dict[str, dict[str, str]] = {
+    "continuity": {
+        "partial": "Runs went past one turn; a case that depends on remembering an"
+        " earlier turn is not verified for it",
+        "untested": "No run has gone past one turn yet; multi-turn results are not"
+        " verified for it",
+    },
+    "streaming": {
+        "unavailable:whole_replies": "Each reply is read whole, so a case never ends"
+        " on an open stream",
+        "unavailable:voice_call": "Voice cases are heard over the call; no chat stream"
+        " applies",
+        "unavailable:transport_not_qualified": "This transport is not supported for"
+        " runs until it passes qualification",
+        "untested": "How this connection replies is not recorded, so where a case ends"
+        " is not verified",
+    },
+    "audio": {
+        "supported": "Calls of this agent were recorded, so audio checks have evidence",
+        "unavailable": "Audio checks do not apply to a chat connection",
+        "untested": "No call of this agent was recorded yet; audio checks have no"
+        " evidence until one is",
+    },
+    "files": {
+        "untested": "No run records an agent's files yet; file checks have no evidence",
+    },
+    "resume": {
+        "supported": "An interrupted run finished on a new attempt, keeping the cases"
+        " it had finished",
+        "untested": "No interrupted run of this agent has been resumed yet",
+    },
+    "cost": {
+        "partial": "Shown where measured: our side of a run, never the agent's own model"
+        " spend",
+        "untested": "Nothing is shown until a run is measured; no cost is estimated",
+    },
+}
 
 
 def consequence(row: RowView, where: str | None = None) -> str:
     """What ``row``'s status means for the cases, in plain words; ``where`` is the
     agent's connection, which decides where it starts and what a Stop can end."""
     if not row["measured"]:
-        return _UNMEASURED
+        own = _OBSERVED.get(row["id"], {})
+        return (
+            own.get(f"{row['status']}:{row['reason_code']}")
+            or own.get(row["status"])
+            or _UNMEASURED
+        )
     if (
         row["id"] == "start"
         and row["status"] == "supported"
