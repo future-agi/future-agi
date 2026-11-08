@@ -21,6 +21,13 @@ class HubSkill(BaseModel):
     workspace = models.ForeignKey(
         "accounts.Workspace", on_delete=models.CASCADE, related_name="hub_skills"
     )
+    class Kind(models.TextChoices):
+        SKILL = "skill"
+        AGENT_CONTEXT = "agent_context"
+
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.SKILL)
+    metadata_revision = models.PositiveBigIntegerField(default=0)
+    security_revision = models.PositiveBigIntegerField(default=0)
     name = models.CharField(max_length=64)
     description = models.CharField(max_length=1024)
     tags = models.JSONField(default=list)
@@ -86,6 +93,7 @@ class HubSkillVersion(models.Model):
     frontmatter = models.JSONField()
     checks = models.JSONField()
     parent_number = models.PositiveIntegerField(null=True)
+    origin_number = models.PositiveIntegerField(null=True)
     source = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -224,6 +232,10 @@ class HubSkillDraft(models.Model):
         related_name="hub_skill_drafts",
     )
     base_version = models.PositiveIntegerField(null=True)
+    expected_head_version = models.PositiveIntegerField(null=True)
+    head_review_fingerprint = models.CharField(max_length=71, blank=True, default="")
+    context_spec = models.JSONField(default=dict)
+    resolved_lock = models.JSONField(default=dict)
     files = models.JSONField(default=list)
     source = models.JSONField(default=dict)
     note = models.TextField(blank=True)
