@@ -16116,6 +16116,217 @@ export interface SkillsChecksResultResponseApi {
   result: SkillsHubChecksResultApi;
 }
 
+export type SkillsContextConsumptionManifestApiKind =
+  (typeof SkillsContextConsumptionManifestApiKind)[keyof typeof SkillsContextConsumptionManifestApiKind];
+
+export const SkillsContextConsumptionManifestApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextSelectorApi {
+  /** @minimum 1 */
+  version?: number;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label?: string;
+}
+
+export type SkillsContextFileOriginApiKind =
+  (typeof SkillsContextFileOriginApiKind)[keyof typeof SkillsContextFileOriginApiKind];
+
+export const SkillsContextFileOriginApiKind = {
+  owned: "owned",
+  linked: "linked",
+  generated: "generated",
+} as const;
+
+export interface SkillsContextFileOriginApi {
+  kind: SkillsContextFileOriginApiKind;
+  skill_id: string | null;
+  version_id: string | null;
+  /** @minLength 1 */
+  source_path: string | null;
+}
+
+export interface SkillsContextFileMetaApi {
+  /** @minLength 1 */
+  path: string;
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{64}$
+   */
+  sha256: string;
+  /** @minimum 0 */
+  size_bytes: number;
+  origin: SkillsContextFileOriginApi;
+}
+
+export interface SkillsContextConsumptionManifestApi {
+  resource_id: string;
+  kind: SkillsContextConsumptionManifestApiKind;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minimum 1 */
+  version: number;
+  version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  requested: SkillsContextSelectorApi;
+  /** @minLength 1 */
+  entrypoint: string;
+  /** @minLength 1 */
+  descriptor_path: string | null;
+  files: SkillsContextFileMetaApi[];
+  /** @minimum 1 */
+  file_count: number;
+  /** @minimum 0 */
+  file_offset: number;
+  next_file_offset: number | null;
+  created_at: string;
+  resolution_id: string;
+  resolution_expires_at: string;
+}
+
+export interface SkillsConsumptionManifestResponseApi {
+  status: boolean;
+  result: SkillsContextConsumptionManifestApi;
+}
+
+export interface SkillsContextEmptyInputApi {
+  [key: string]: unknown;
+}
+
+export interface SkillsContextAccessCheckApi {
+  allowed: boolean;
+  version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  checked_at: string;
+}
+
+export interface SkillsAccessCheckResponseApi {
+  status: boolean;
+  result: SkillsContextAccessCheckApi;
+}
+
+export interface SkillsContextConsumptionChunkApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+  total_chars: number;
+  offset: number;
+  next_offset: number | null;
+  eof: boolean;
+  text: string;
+  resource_id: string;
+  version_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+}
+
+export interface SkillsConsumptionChunkResponseApi {
+  status: boolean;
+  result: SkillsContextConsumptionChunkApi;
+}
+
+export type SkillsContextCredentialMetadataApiPurpose =
+  (typeof SkillsContextCredentialMetadataApiPurpose)[keyof typeof SkillsContextCredentialMetadataApiPurpose];
+
+export const SkillsContextCredentialMetadataApiPurpose = {
+  consume: "consume",
+  report: "report",
+} as const;
+
+export type SkillsContextConsumeGrantApiKind =
+  (typeof SkillsContextConsumeGrantApiKind)[keyof typeof SkillsContextConsumeGrantApiKind];
+
+export const SkillsContextConsumeGrantApiKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export interface SkillsContextConsumeGrantApi {
+  kind: SkillsContextConsumeGrantApiKind;
+  resource_id: string;
+  /** @maxItems 20 */
+  labels: string[];
+  /** @maxItems 100 */
+  version_ids: string[];
+}
+
+export interface SkillsContextCredentialMetadataApi {
+  purpose: SkillsContextCredentialMetadataApiPurpose;
+  grants: SkillsContextConsumeGrantApi[];
+  /** @maxItems 100 */
+  binding_ids: string[];
+  expires_at: string;
+  id: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface SkillsContextCredentialPageApi {
+  results: SkillsContextCredentialMetadataApi[];
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface SkillsCredentialPageResponseApi {
+  status: boolean;
+  result: SkillsContextCredentialPageApi;
+}
+
+export type SkillsContextCredentialInputApiPurpose =
+  (typeof SkillsContextCredentialInputApiPurpose)[keyof typeof SkillsContextCredentialInputApiPurpose];
+
+export const SkillsContextCredentialInputApiPurpose = {
+  consume: "consume",
+  report: "report",
+} as const;
+
+export interface SkillsContextCredentialInputApi {
+  purpose: SkillsContextCredentialInputApiPurpose;
+  grants: SkillsContextConsumeGrantApi[];
+  /** @maxItems 100 */
+  binding_ids: string[];
+  expires_at: string;
+}
+
+export interface SkillsContextCredentialIssuedApi {
+  id: string;
+  /**
+   * Returned once; never available on replay or list.
+   * @minLength 1
+   */
+  secret: string | null;
+  secret_available: boolean;
+  metadata: SkillsContextCredentialMetadataApi;
+}
+
+export interface SkillsCredentialIssuedResponseApi {
+  status: boolean;
+  result: SkillsContextCredentialIssuedApi;
+}
+
 export interface SkillsHubV11RightsReviewApi {
   confirmed: boolean;
   /** @maxLength 2000 */
@@ -41841,6 +42052,112 @@ export const ModelHubSkillsListOrder = {
   asc: "asc",
   desc: "desc",
 } as const;
+
+export type ModelHubSkillsConsumptionResolveListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z0-9]+(-[a-z0-9]+)*$
+   */
+  name: string;
+  /**
+   * @minimum 1
+   */
+  version?: number;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label?: string;
+};
+
+export type ModelHubSkillsConsumptionVersionsFilesListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+  /**
+   * @minimum 4
+   * @maximum 49152
+   */
+  max_bytes?: number;
+};
+
+export type ModelHubSkillsConsumptionVersionsManifestListParams = {
+  /**
+   * @minimum 0
+   */
+  file_offset?: number;
+  /**
+   * @minimum 1
+   * @maximum 25
+   */
+  file_limit?: number;
+};
+
+export type ModelHubSkillsContextsCredentialsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
+
+export type ModelHubSkillsContextsResolveListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[a-z0-9]+(-[a-z0-9]+)*$
+   */
+  name: string;
+  /**
+   * @minimum 1
+   */
+  version?: number;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label?: string;
+};
+
+export type ModelHubSkillsContextsVersionsFilesListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+  /**
+   * @minimum 4
+   * @maximum 49152
+   */
+  max_bytes?: number;
+};
+
+export type ModelHubSkillsContextsVersionsManifestListParams = {
+  /**
+   * @minimum 0
+   */
+  file_offset?: number;
+  /**
+   * @minimum 1
+   * @maximum 25
+   */
+  file_limit?: number;
+};
 
 export type ModelHubSkillsDownloadListParams = {
   /**

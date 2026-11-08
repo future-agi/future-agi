@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1172,
+  endpointCount: 1182,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -754,6 +754,25 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/secrets/{id}/": ["delete", "get", "patch", "put"],
       "/model-hub/skills/": ["get", "post"],
       "/model-hub/skills/checks/": ["post"],
+      "/model-hub/skills/consumption/resolve/": ["get"],
+      "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
+        ["post"],
+      "/model-hub/skills/consumption/{resource_id}/versions/{number}/files/": [
+        "get",
+      ],
+      "/model-hub/skills/consumption/{resource_id}/versions/{number}/manifest/":
+        ["get"],
+      "/model-hub/skills/contexts/credentials/": ["get", "post"],
+      "/model-hub/skills/contexts/credentials/{credential_id}/": ["delete"],
+      "/model-hub/skills/contexts/resolve/": ["get"],
+      "/model-hub/skills/contexts/{resource_id}/versions/{number}/access-check/":
+        ["post"],
+      "/model-hub/skills/contexts/{resource_id}/versions/{number}/files/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{resource_id}/versions/{number}/manifest/": [
+        "get",
+      ],
       "/model-hub/skills/download/": ["get"],
       "/model-hub/skills/github/import/": ["post"],
       "/model-hub/skills/github/previews/": ["post"],
@@ -2165,6 +2184,25 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/secrets/{id}/": ["delete", "get", "patch", "put"],
   "/model-hub/skills/": ["get", "post"],
   "/model-hub/skills/checks/": ["post"],
+  "/model-hub/skills/consumption/resolve/": ["get"],
+  "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
+    ["post"],
+  "/model-hub/skills/consumption/{resource_id}/versions/{number}/files/": [
+    "get",
+  ],
+  "/model-hub/skills/consumption/{resource_id}/versions/{number}/manifest/": [
+    "get",
+  ],
+  "/model-hub/skills/contexts/credentials/": ["get", "post"],
+  "/model-hub/skills/contexts/credentials/{credential_id}/": ["delete"],
+  "/model-hub/skills/contexts/resolve/": ["get"],
+  "/model-hub/skills/contexts/{resource_id}/versions/{number}/access-check/": [
+    "post",
+  ],
+  "/model-hub/skills/contexts/{resource_id}/versions/{number}/files/": ["get"],
+  "/model-hub/skills/contexts/{resource_id}/versions/{number}/manifest/": [
+    "get",
+  ],
   "/model-hub/skills/download/": ["get"],
   "/model-hub/skills/github/import/": ["post"],
   "/model-hub/skills/github/previews/": ["post"],

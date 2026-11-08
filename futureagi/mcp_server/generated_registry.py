@@ -13,6 +13,8 @@ from typing import Any
 from jsonschema import Draft7Validator
 from mcp.types import Tool, ToolAnnotations
 
+from mcp_server.request_headers import validate_header_mapping
+
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("catalog") / "tools.generated.json"
 
 
@@ -71,6 +73,17 @@ class GeneratedTool:
             raise GeneratedToolRegistryError(
                 f"Generated tool is missing fields: {', '.join(missing)}"
             )
+        try:
+            headers = validate_header_mapping(
+                value["request"]["parameters"].get("header", [])
+            )
+            if any(
+                name not in value["inputSchema"].get("properties", {})
+                for name in headers
+            ):
+                raise ValueError("Every mapped header must be an explicit input.")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GeneratedToolRegistryError("Invalid request header mapping.") from exc
         return cls(
             name=value["name"],
             description=value["description"],

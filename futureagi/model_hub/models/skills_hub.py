@@ -21,6 +21,7 @@ class HubSkill(BaseModel):
     workspace = models.ForeignKey(
         "accounts.Workspace", on_delete=models.CASCADE, related_name="hub_skills"
     )
+
     class Kind(models.TextChoices):
         SKILL = "skill"
         AGENT_CONTEXT = "agent_context"
