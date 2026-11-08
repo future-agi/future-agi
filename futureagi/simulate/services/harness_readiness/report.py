@@ -187,6 +187,9 @@ def _validation(
     shown: dict[str, Any] | None = None
     if state == "failed":
         shown = {"code": error.get("code"), "reason": validation.failed_reason(error)}
+        if error.get("excerpt"):
+            # ALK's own redacted line for the failed check, never the agent's output.
+            shown["excerpt"] = error["excerpt"]
         if "failed_actions" in error:
             shown["failed_actions"] = error["failed_actions"]
     elif state == "check_unavailable":

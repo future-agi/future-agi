@@ -121,6 +121,12 @@ def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
     anything else, is the agent's."""
     if failed_actions or not failure:
         return None
+    record = (failure.get("details") or {}).get("harness_failure")
+    if isinstance(record, dict) and record.get("domain"):
+        # ALK's own record of the ending; the log is read only from a template without it.
+        if record["domain"] in ("harness", "world"):
+            return str(record.get("code") or record["domain"])
+        return None
     ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
     if ending is None:
         return None
@@ -748,6 +754,11 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
                 "run_id": str(job.id),
                 "source": FAILURE_SOURCE,
             }
+            excerpt = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+                "message"
+            )
+            if excerpt:
+                bundle.error["excerpt"] = excerpt
             bundle.save(update_fields=["state", "error", "updated_at"])
         return "failed"
     if bundle.state == HarnessAssembledBundle.State.PENDING:

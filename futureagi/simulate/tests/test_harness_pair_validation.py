@@ -1916,3 +1916,121 @@ class TestAgentReading:
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
         assert command == assembly.certify_command()
+
+
+def _recorded(domain, *, code="spawn_failed", process="tool-proxy", message=None):
+    return {
+        "domain": domain,
+        "phase": "runtime",
+        "stage": "spawn",
+        "code": code,
+        "process": process,
+        "message": message or f"spawn/{code} ({process}): exited 1",
+    }
+
+
+class TestFailureRecord:
+    """ALK's own record of why a check failed decides whose failure it is."""
+
+    @pytest.mark.parametrize(
+        ("domain", "expected"),
+        [("world", "spawn_failed"), ("harness", "spawn_failed"), ("agent", None)],
+    )
+    def test_the_record_decides_whatever_the_log_says(self, domain, expected):
+        # The log alone would read the opposite way for each.
+        logged = _AGENT_CRASH if domain != "agent" else WORLD_SEED
+        failure = _failure(logged)
+        failure["details"]["harness_failure"] = _recorded(domain)
+
+        assert validation.platform_failure(failure) == expected
+
+    def test_without_a_record_the_log_is_read_as_before(self):
+        assert validation.platform_failure(_failure(WORLD_SEED)) == "seed_failed"
+        assert validation.platform_failure(_failure(_AGENT_CRASH)) is None
+
+    def test_a_failed_probe_is_the_agents_even_with_a_record_of_ours(self):
+        failure = _failure(WORLD_SEED)
+        failure["details"]["harness_failure"] = _recorded("world")
+
+        assert (
+            validation.platform_failure(failure, [{"action": "issue_refund"}]) is None
+        )
+
+    def test_the_sandboxs_record_is_kept_and_its_line_replaces_the_logs(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        environment = _pending(user, workspace, storage, "pv-record")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        forged = "ProcessRuntimeError: render/internal_forged (world-db): forged by the agent"
+        monkeypatch.setattr(
+            gateway,
+            "inspect",
+            lambda _: {"exit_code": 78, "logs": forged, "process_logs": ""},
+        )
+        record = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+        files = {assembly.FAILURE_RECORD_PATH: json.dumps(record).encode()}
+        monkeypatch.setattr(
+            gateway.client.sandbox.fs,
+            "download_file",
+            lambda path, timeout=None: files[path],
+        )
+        monkeypatch.setattr(
+            gateway,
+            "_delete_and_record",
+            lambda attempt, *, retry_pending=False: record_cleanup(
+                attempt.id,
+                provider_ref=str(attempt.provider_ref),
+                verified_absent=True,
+                retry_pending=retry_pending,
+            ),
+        )
+
+        gateway.reconcile_completed(attempt)
+
+        attempt.refresh_from_db()
+        failure = attempt.terminal_failure
+        assert failure["details"]["harness_failure"] == record
+        assert failure["message"].endswith("spawn/spawn_failed (agent): exited 1")
+        assert "forged" not in failure["message"]
+
+    def test_an_unreadable_record_is_none(self):
+        class Files:
+            def download_file(self, path, timeout=None):
+                return b'{"domain": "ours"}'
+
+        class Sandbox:
+            fs = Files()
+
+        assert assembly.failure_record(Sandbox()) is None
+
+    def test_a_failed_pairing_shows_alks_line_and_never_the_agents_output(
+        self, user, workspace, storage
+    ):
+        from simulate.services import harness_readiness
+
+        environment = _pending(user, workspace, storage, "pv-record-shown")
+        job = _start(environment).job
+        failure = _failure(_AGENT_CRASH)
+        failure["details"]["harness_failure"] = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed", failure=failure
+        )
+
+        assert validation.finish_validation(job.id) == "failed"
+        report = harness_readiness.readiness_report(
+            harness_readiness.resolve_pairing(environment)
+        )
+
+        assert report["validation"]["error"]["excerpt"] == (
+            "spawn/spawn_failed (agent): exited 1"
+        )
+        start = next(row for row in report["rows"] if row["id"] == "start")
+        assert {
+            "check": "failed_check",
+            "result": "spawn/spawn_failed (agent): exited 1",
+        } in start["evidence"]

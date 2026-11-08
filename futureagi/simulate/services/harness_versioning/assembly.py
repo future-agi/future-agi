@@ -837,6 +837,35 @@ def source_check_command(source_digest: str | None) -> str:
     return f'python -c "{code}" {source_digest} && '
 
 
+FAILURE_RECORD_PATH = "/work/failure.json"
+_FAILURE_DOMAINS = frozenset({"harness", "world", "agent"})
+_FAILURE_FIELDS = ("phase", "stage", "code", "process", "message")
+
+
+def failure_record(sandbox: Any) -> dict[str, Any] | None:
+    """ALK's record of why the guest failed, ``{domain, phase, stage, code, process,
+    message}`` with ``domain`` one of harness, world or agent; ``None`` when a template
+    writes none or it cannot be read."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                FAILURE_RECORD_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write no record
+        logger.info("harness_failure_record_unread", error=type(exc).__name__)
+        return None
+    if not document or document.get("domain") not in _FAILURE_DOMAINS:
+        return None
+    return {
+        "domain": document["domain"],
+        **{
+            name: str(document[name])[:300] if document.get(name) else None
+            for name in _FAILURE_FIELDS
+        },
+    }
+
+
 AGENT_READING_PATH = "/work/reading/agent.json"
 
 

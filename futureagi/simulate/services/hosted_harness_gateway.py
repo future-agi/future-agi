@@ -4681,7 +4681,10 @@ class HostedHarnessGateway:
                     else f"guest entrypoint exited {exit_code}"
                 )
             )
-            cause = guest_failure_cause(guest_logs)
+            record = self._failure_record(attempt)
+            # ALK's own redacted line when it wrote one; the log's last typed line can
+            # be the agent's printing.
+            cause = record["message"] if record else guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",
@@ -4699,6 +4702,7 @@ class HostedHarnessGateway:
                 "details": {
                     "guest_log_tail": guest_logs,
                     "process_logs": observation.get("process_logs", ""),
+                    **({"harness_failure": record} if record else {}),
                 },
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
@@ -4772,6 +4776,22 @@ class HostedHarnessGateway:
             )
             return None
         return bundle_cache.certify_failed_actions(sandbox)
+
+    def _failure_record(self, attempt: HostedHarnessAttempt) -> dict[str, Any] | None:
+        """ALK's record of why the guest failed, read before its sandbox is deleted."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 - the failure is recorded from the log instead
+            logger.warning(
+                "harness failure record unread attempt=%s", attempt.id, exc_info=True
+            )
+            return None
+        return bundle_cache.failure_record(sandbox)
 
     def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
         """Store the tools a validation read for its agent version, before its sandbox

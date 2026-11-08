@@ -104,6 +104,17 @@ def rows(
     Partial leaves the row Untested; (5-9) the row's own reading.
     """
     measured = _measured(pairing, evidence)
+    excerpt = _failed_check_excerpt(bundle)
+    if excerpt and "start" in measured:
+        start = measured["start"]
+        measured["start"] = Reading(
+            start.finding,
+            start.reason_code,
+            start.reason,
+            start.targets,
+            [*start.evidence, {"check": "failed_check", "result": excerpt}],
+            start.checked_at,
+        )
     preflight = preflight_findings(pairing.runtime)
     named = failed_actions(bundle)
     stale = _stale(pairing, evidence)
@@ -259,6 +270,14 @@ def _gated(
             return (*_status(reading), None)
         return "untested", "blocked_by", f"Waits on {gate}", gate
     return (*_status(reading), None)
+
+
+def _failed_check_excerpt(bundle: HarnessAssembledBundle | None) -> str | None:
+    """The redacted line ALK recorded for the check this pairing failed."""
+    if bundle is None or bundle.state != HarnessAssembledBundle.State.FAILED:
+        return None
+    excerpt = (bundle.error or {}).get("excerpt")
+    return str(excerpt) if excerpt else None
 
 
 def failed_actions(bundle: HarnessAssembledBundle | None) -> list[Mapping[str, Any]]:
