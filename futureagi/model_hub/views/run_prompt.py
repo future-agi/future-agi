@@ -816,6 +816,35 @@ def check_literal_speech_prompt(
         )
 
 
+def check_literal_speech_messages(
+    messages, context, media_columns, model_name, template_format
+):
+    """
+    Check each message's text the way process_text_with_media renders it.
+
+    On the literal speech lane no media column is in column_info, so the
+    rendered text is the template after quote fixing and UUID sanitizing.
+    """
+    if template_format == "jinja":
+        template_format = TEMPLATE_FORMAT_JINJA2
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            texts = [content]
+        elif isinstance(content, list):
+            texts = [item["text"] for item in content if "text" in item]
+        else:
+            texts = []
+        for text in texts:
+            check_literal_speech_prompt(
+                sanitize_uuids_in_template(fix_double_quotes(text)),
+                template_format,
+                context,
+                media_columns,
+                model_name,
+            )
+
+
 def populate_placeholders(
     messages: list[dict],
     dataset_id,
@@ -942,15 +971,20 @@ def populate_placeholders(
                     f"Context['{key}'] is a dict with keys: {list(value.keys())}"
                 )
 
-        if literal_speech_media:
-            literal_speech_media = _literal_speech_media_columns(
-                literal_speech_media, column_paths
-            )
-
         # Process messages
         image_counter = 0
         processed_messages = []
         try:
+            if literal_speech_media:
+                # Check every message before any content (inline media
+                # included) is processed.
+                check_literal_speech_messages(
+                    messages,
+                    context,
+                    _literal_speech_media_columns(literal_speech_media, column_paths),
+                    model_name,
+                    template_format,
+                )
             for message in messages:
                 content = message.get("content")
                 processed_content = []
@@ -963,7 +997,6 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
-                        literal_speech_media=literal_speech_media,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -973,7 +1006,6 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
-                        literal_speech_media=literal_speech_media,
                     )
 
                 # If no content was processed, keep original
@@ -1003,13 +1035,7 @@ def populate_placeholders(
 
 
 def process_list_content(
-    content,
-    column_info,
-    context,
-    image_counter,
-    model_name,
-    template_format=None,
-    literal_speech_media=None,
+    content, column_info, context, image_counter, model_name, template_format=None
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -1024,7 +1050,6 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
-                literal_speech_media=literal_speech_media,
             )
             processed_content.extend(text_segments)
         else:
@@ -1040,13 +1065,7 @@ def process_list_content(
 
 
 def process_string_content(
-    content,
-    column_info,
-    context,
-    image_counter,
-    model_name,
-    template_format=None,
-    literal_speech_media=None,
+    content, column_info, context, image_counter, model_name, template_format=None
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -1056,25 +1075,13 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
-        literal_speech_media=literal_speech_media,
     )
 
 
 def process_text_with_media(
-    text,
-    column_info,
-    context,
-    image_counter,
-    model_name,
-    template_format=None,
-    literal_speech_media=None,
+    text, column_info, context, image_counter, model_name, template_format=None
 ):
-    """
-    Process text content, handling both templates and media placeholders.
-
-    literal_speech_media lists the media columns of a literal text-to-speech
-    run; a template that uses one raises LiteralSpeechMediaError.
-    """
+    """Process text content, handling both templates and media placeholders"""
     try:
         # Get the text and fix doubled-up quotes
         text = fix_double_quotes(text)
@@ -1188,10 +1195,6 @@ def process_text_with_media(
         effective_format = template_format
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
-        if literal_speech_media:
-            check_literal_speech_prompt(
-                text, effective_format, context, literal_speech_media, model_name
-            )
         try:
             processed_text = render_template(
                 text, context, template_format=effective_format

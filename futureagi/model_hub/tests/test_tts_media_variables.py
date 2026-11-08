@@ -253,8 +253,12 @@ def media_fetch():
             "model_hub.views.run_prompt.convert_image_from_url_to_base64",
             return_value="data:image/png;base64,AAAA",
         ) as image,
+        patch(
+            "model_hub.views.run_prompt.handle_media",
+            side_effect=lambda item, model_name: item,
+        ) as inline,
     ):
-        yield SimpleNamespace(audio=fetch, image=image)
+        yield SimpleNamespace(audio=fetch, image=image, inline=inline)
 
 
 def preview(client, dataset, config):
@@ -348,6 +352,66 @@ class TestPreviewRejectsMediaColumns:
             media_error("Recording", "audio")
         ]
         media_fetch.audio.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "gpt-4o-mini-tts",
+            # A custom speech provider (CustomTTSHandler) reads the text too.
+            "neuphonic-tts",
+            # An organization chat-mode model with audio output uses TTSHandler.
+            "th9061-voice",
+        ],
+    )
+    def test_every_literal_speech_lane_rejects(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        dataset,
+        columns,
+        speech_boundary,
+        media_fetch,
+        model,
+    ):
+        if model == "th9061-voice":
+            add_custom_model(organization, workspace, user, model, "openai")
+
+        response = preview(
+            auth_client,
+            dataset,
+            tts_config(user_prompt("Play {{ Recording }}"), model=model),
+        )
+
+        speech_boundary.assert_not_called()
+        assert response.json()["result"]["responses"] == [
+            media_error("Recording", "audio", model=model)
+        ]
+        media_fetch.audio.assert_not_called()
+
+    def test_inline_media_is_not_processed_before_the_rejection(
+        self,
+        auth_client,
+        dataset,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        content = [
+            {"type": "audio_url", "audio_url": {"url": RECORDING_URL}},
+            {"type": "text", "text": "{{ Recording }}"},
+        ]
+        messages = [{"role": "user", "content": content}]
+
+        response = preview(auth_client, dataset, tts_config(messages))
+
+        speech_boundary.assert_not_called()
+        assert response.json()["result"]["responses"] == [
+            media_error("Recording", "audio")
+        ]
+        media_fetch.inline.assert_not_called()
 
     def test_system_message_reference_is_rejected(
         self,
@@ -852,6 +916,43 @@ class TestExperimentRowRejectsMediaColumns:
         assert json.loads(cell.value_infos)["reason"] == media_error(
             "Recording", "audio"
         )
+        media_fetch.audio.assert_not_called()
+
+    def test_runner_process_row_fails_the_cell(
+        self, dataset, row, columns, openai_provider_key, speech_boundary, media_fetch
+    ):
+        # ExperimentRunner.process_row, the instance-method row path.
+        from model_hub.views.experiment_runner import ExperimentRunner
+
+        output = Column.objects.create(
+            name="Experiment TTS",
+            dataset=dataset,
+            data_type=DataTypeChoices.AUDIO.value,
+            source=SourceChoices.EXPERIMENT.value,
+        )
+        experiment = ExperimentsTable.objects.create(
+            name="TH-9061 Runner Experiment",
+            dataset=dataset,
+            column=output,
+            status=StatusType.RUNNING.value,
+        )
+        runner = ExperimentRunner(experiment.id)
+        runner.load_experiment()
+        with patch("model_hub.views.experiment_runner.close_old_connections"):
+            runner.process_row(
+                row,
+                output,
+                user_prompt("{{ Recording|upper }}"),
+                TTS_MODEL,
+                {"template_format": "jinja"},
+                output_format="audio",
+                run_prompt_config=tts_config([])["run_prompt_config"],
+            )
+
+        cell = Cell.objects.get(column=output, row=row)
+        speech_boundary.assert_not_called()
+        assert cell.status == CellStatus.ERROR.value
+        assert cell.value == media_error("Recording", "audio")
         media_fetch.audio.assert_not_called()
 
     def test_text_prompt_is_spoken(
