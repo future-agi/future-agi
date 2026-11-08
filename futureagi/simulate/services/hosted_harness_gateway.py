@@ -849,6 +849,8 @@ def detect_source_connectors(archive: bytes) -> tuple[list[str], int]:
     return connectors, scanned
 
 
+# How much of the guest's entrypoint log a failure keeps, from its end.
+GUEST_LOG_CHARS = 8000
 _GUEST_CAUSE_LINE = re.compile(r"(?:ProcessRuntimeError|RuntimeValidationError): (.+)$")
 _GUEST_INNER_EXCEPTION = re.compile(
     r"(?:^|\\n)([A-Za-z_.]+(?:Error|Exception)): ([^\\\"\n]+)"
@@ -3571,7 +3573,7 @@ class HostedHarnessGateway:
             final=command.exit_code is not None,
         )
         if capture is not None:
-            observation["logs"] = capture.entrypoint_log[-8000:]
+            observation["logs"] = capture.entrypoint_log[-GUEST_LOG_CHARS:]
             observation["process_logs"] = capture.process_logs[-16000:]
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
@@ -4688,7 +4690,7 @@ class HostedHarnessGateway:
                 try:
                     bundle_cache.mark_failed(
                         attempt.job,
-                        attempt.terminal_failure["message"],
+                        attempt.terminal_failure,
                         failed_actions=self._certify_failed_actions(attempt),
                     )
                 except Exception:  # noqa: BLE001 - the cache never changes the outcome

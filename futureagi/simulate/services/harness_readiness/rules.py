@@ -406,9 +406,15 @@ _UNMEASURED = (
 
 def consequence(row: RowView, where: str | None = None) -> str:
     """What ``row``'s status means for the cases, in plain words; ``where`` is the
-    agent's connection, which decides what a Stop can end."""
+    agent's connection, which decides where it starts and what a Stop can end."""
     if not row["measured"]:
         return _UNMEASURED
+    if (
+        row["id"] == "start"
+        and row["status"] == "supported"
+        and where in ("remote", "provider")
+    ):
+        return "The agent runs on its own side and its start checks passed, so every case can begin"
     if row["id"] == "cancel":
         if row["status"] == "supported":
             return _CANCEL_CONFIRMED

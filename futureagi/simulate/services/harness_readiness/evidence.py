@@ -362,6 +362,8 @@ def _cancel(pairing: Pairing) -> Reading:
         HostedHarnessAttempt.no_workspace_objects.filter(
             job__agent_version_id=pairing.agent_version.id,
             job__cancel_requested_at__isnull=False,
+            # A run of an environment; a stopped build never ran the agent's cases.
+            job__environment_id__isnull=False,
             attempt_number=F("job__current_attempt_number"),
             # A validation job never started the agent; its key is set only on them.
             job__payload__metadata__certify_only__isnull=True,

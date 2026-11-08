@@ -243,6 +243,10 @@ function EvalWarnings({ warnings }) {
 }
 EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 
+// The held-back cases a fix needs to be called verified. The read does not
+// carry it: mirrors HELD_BACK_VERIFIED_MIN in simulate/pydantic_schemas/agent_fix.py.
+const HELD_BACK_VERIFIED_MIN = 4;
+
 // How many held-back scenarios the winner fixed, scenario by scenario as on
 // the Per scenario tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
@@ -261,9 +265,15 @@ function HeldBackTally({ fix, winner }) {
   const scenarios = failing === 1 ? "scenario" : "scenarios";
   return (
     <Typography
-      sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}
+      sx={{
+        px: 2,
+        mt: -0.75,
+        pb: 1,
+        typography: "s2",
+        color: "text.secondary",
+      }}
     >
-      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw`}
+      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw — it takes ${HELD_BACK_VERIFIED_MIN} or more to tell.`}
     </Typography>
   );
 }
@@ -294,7 +304,12 @@ export default function FixVerdict({ fix }) {
         overflow: "hidden",
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1 }}
+      >
         {limited && (
           <Box
             component="span"
@@ -312,7 +327,9 @@ export default function FixVerdict({ fix }) {
             Limited validation
           </Box>
         )}
-        <Typography sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}
+        >
           {text}
         </Typography>
       </Stack>

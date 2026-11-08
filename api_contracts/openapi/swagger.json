@@ -81565,7 +81565,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "",
+                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
                 "parameters": [
                     {
                         "name": "data",
@@ -136447,6 +136447,21 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "lost_models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 50
+                },
+                "last_error": {
+                    "title": "Last error",
+                    "type": "string",
+                    "x-nullable": true
                 }
             }
         },
@@ -154032,6 +154047,12 @@
                     "type": "boolean",
                     "default": false
                 },
+                "unfinished_only": {
+                    "title": "Unfinished only",
+                    "description": "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
+                    "type": "boolean",
+                    "default": false
+                },
                 "environment_values": {
                     "title": "Environment values",
                     "description": "Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted.",
@@ -154318,7 +154339,9 @@
                 "value": {
                     "title": "Value",
                     "type": "object",
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "score": {
                     "title": "Score",
@@ -156957,6 +156980,62 @@
             },
             "x-nullable": true
         },
+        "RunResumeEntry": {
+            "required": [
+                "at",
+                "by",
+                "calls"
+            ],
+            "type": "object",
+            "properties": {
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "by": {
+                    "title": "By",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "calls": {
+                    "title": "Calls",
+                    "type": "integer"
+                }
+            }
+        },
+        "RunResume": {
+            "required": [
+                "resumable",
+                "finished",
+                "unfinished",
+                "history"
+            ],
+            "type": "object",
+            "properties": {
+                "resumable": {
+                    "title": "Resumable",
+                    "type": "boolean"
+                },
+                "finished": {
+                    "title": "Finished",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "unfinished": {
+                    "title": "Unfinished",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunResumeEntry"
+                    }
+                }
+            }
+        },
         "RunSummary": {
             "required": [
                 "total",
@@ -157000,6 +157079,25 @@
                 }
             }
         },
+        "RunFixRun": {
+            "required": [
+                "id",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
         "RunExecution": {
             "required": [
                 "id",
@@ -157011,6 +157109,7 @@
                 "ordinal",
                 "agent_version",
                 "agent_type",
+                "resume",
                 "summary"
             ],
             "type": "object",
@@ -157097,8 +157196,14 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "resume": {
+                    "$ref": "#/definitions/RunResume"
+                },
                 "summary": {
                     "$ref": "#/definitions/RunSummary"
+                },
+                "fix_run": {
+                    "$ref": "#/definitions/RunFixRun"
                 }
             }
         },
@@ -157384,13 +157489,11 @@
                 "ended_reason": {
                     "title": "Ended reason",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "error_message": {
                     "title": "Error message",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "evaluations": {
@@ -169919,7 +170022,8 @@
                         "unknown",
                         "guardrail",
                         "evaluator",
-                        "conversation"
+                        "conversation",
+                        "internal"
                     ]
                 },
                 "start_time": {
@@ -180491,6 +180595,22 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
+                },
+                "autoreload_maxcharge": {
+                    "title": "Autoreload maxcharge",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "autoreload_consent": {
+                    "title": "Autoreload consent",
+                    "type": "boolean",
+                    "default": false
+                },
+                "autoreload_charge_now": {
+                    "title": "Autoreload charge now",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },

@@ -35992,6 +35992,11 @@ export const simulateApiAgentFixEngineReportBodyFailureCodeMax = 64;
 
 export const simulateApiAgentFixEngineReportBodyFailureMessageMax = 500;
 
+export const simulateApiAgentFixEngineReportBodyLostModelsItemMax = 200;
+
+export const simulateApiAgentFixEngineReportBodyLostModelsDefault = [];
+export const simulateApiAgentFixEngineReportBodyLostModelsMax = 50;
+
 export const SimulateApiAgentFixEngineReportBody = zod.object({
   stage: zod.string().min(1).max(simulateApiAgentFixEngineReportBodyStageMax),
   step: zod.enum(["reproduce", "search", "verify", "done"]).optional(),
@@ -36090,6 +36095,16 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
     })
     .optional(),
   winner_candidate_id: zod.string().uuid().optional(),
+  lost_models: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixEngineReportBodyLostModelsItemMax),
+    )
+    .max(simulateApiAgentFixEngineReportBodyLostModelsMax)
+    .default(simulateApiAgentFixEngineReportBodyLostModelsDefault),
+  last_error: zod.string().optional(),
 });
 
 export const SimulateApiAgentFixEngineReportResponse = zod.object({
@@ -53192,6 +53207,8 @@ export const SimulateTestExecutionsRerunCallsCreateParams = zod.object({
 });
 
 export const simulateTestExecutionsRerunCallsCreateBodySelectAllDefault = false;
+export const simulateTestExecutionsRerunCallsCreateBodyUnfinishedOnlyDefault =
+  false;
 export const simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesMaxOne = 65536;
 
 export const simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesDefault =
@@ -53209,6 +53226,12 @@ export const SimulateTestExecutionsRerunCallsCreateBody = zod.object({
     .boolean()
     .default(simulateTestExecutionsRerunCallsCreateBodySelectAllDefault)
     .describe("Whether to rerun all call executions in the test execution"),
+  unfinished_only: zod
+    .boolean()
+    .default(simulateTestExecutionsRerunCallsCreateBodyUnfinishedOnlyDefault)
+    .describe(
+      "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
+    ),
   environment_values: zod
     .record(
       zod.string(),
@@ -53590,7 +53613,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
       type: zod.string(),
-      value: zod.object({}).passthrough(),
+      value: zod.object({}).passthrough().describe("Any valid JSON value."),
       score: zod.number(),
       passed: zod.boolean(),
       reason: zod.string(),
@@ -54653,6 +54676,18 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .min(1)
       .default(simulateV3TestExecutionCallsResponseExecutionTrialsDefault),
     agent_type: zod.string().min(1),
+    resume: zod.object({
+      resumable: zod.boolean(),
+      finished: zod.number(),
+      unfinished: zod.number(),
+      history: zod.array(
+        zod.object({
+          at: zod.string().datetime({ offset: true }),
+          by: zod.string().uuid(),
+          calls: zod.number(),
+        }),
+      ),
+    }),
     summary: zod.object({
       total: zod.number(),
       outcomes: zod.object({
@@ -54708,6 +54743,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         total_value: zod.number(),
       }),
     }),
+    fix_run: zod
+      .object({
+        id: zod.string().uuid(),
+        label: zod.string(),
+      })
+      .optional(),
   }),
   summary: zod.object({
     total: zod.number(),
@@ -54845,14 +54886,14 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         customer: zod.number(),
       }),
       csat: zod.number(),
-      ended_reason: zod.string().min(1),
-      error_message: zod.string().min(1),
+      ended_reason: zod.string(),
+      error_message: zod.string(),
       evaluations: zod.array(
         zod.object({
           id: zod.string().min(1),
           name: zod.string().min(1),
           type: zod.string(),
-          value: zod.object({}).passthrough(),
+          value: zod.object({}).passthrough().describe("Any valid JSON value."),
           score: zod.number(),
           passed: zod.boolean(),
           reason: zod.string(),
@@ -66568,6 +66609,7 @@ export const TracerObservationSpanListResponse = zod.object({
         "guardrail",
         "evaluator",
         "conversation",
+        "internal",
       ]),
       start_time: zod.string().datetime({ offset: true }).optional(),
       end_time: zod.string().datetime({ offset: true }).optional(),
@@ -66687,6 +66729,7 @@ export const TracerObservationSpanCreateBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -66807,6 +66850,7 @@ export const TracerObservationSpanBulkCreateBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -66925,6 +66969,7 @@ export const TracerObservationSpanCreateOtelSpanBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -67118,6 +67163,7 @@ export const TracerObservationSpanGetEvaluationDetailsResponse = zod.object({
         "guardrail",
         "evaluator",
         "conversation",
+        "internal",
       ]),
       start_time: zod.string().datetime({ offset: true }).optional(),
       end_time: zod.string().datetime({ offset: true }).optional(),
@@ -67576,6 +67622,7 @@ export const TracerObservationSpanGetObservationSpanFieldsResponse = zod.object(
           "guardrail",
           "evaluator",
           "conversation",
+          "internal",
         ]),
         start_time: zod.string().datetime({ offset: true }).optional(),
         end_time: zod.string().datetime({ offset: true }).optional(),
@@ -68404,6 +68451,7 @@ export const TracerObservationSpanRetrieveLoadingResponse = zod.object({
         "guardrail",
         "evaluator",
         "conversation",
+        "internal",
       ]),
       start_time: zod.string().datetime({ offset: true }).optional(),
       end_time: zod.string().datetime({ offset: true }).optional(),
@@ -68573,6 +68621,7 @@ export const TracerObservationSpanSubmitFeedbackBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -68695,6 +68744,7 @@ export const TracerObservationSpanSubmitFeedbackActionTypeBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -68814,6 +68864,7 @@ export const TracerObservationSpanUpdateTagsBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -68981,6 +69032,7 @@ export const TracerObservationSpanUpdateBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -69095,6 +69147,7 @@ export const TracerObservationSpanUpdateResponse = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -69218,6 +69271,7 @@ export const TracerObservationSpanPartialUpdateBody = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -69341,6 +69395,7 @@ export const TracerObservationSpanPartialUpdateResponse = zod.object({
     "guardrail",
     "evaluator",
     "conversation",
+    "internal",
   ]),
   start_time: zod.string().datetime({ offset: true }).optional(),
   end_time: zod.string().datetime({ offset: true }).optional(),
@@ -80324,10 +80379,28 @@ export const UsageSubscriptionTierReadResponse = zod.object({
   ),
 });
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault =
+  false;
+export const usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault =
+  false;
+
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   autoreload_enabled: zod.boolean(),
   autoreload_walletamount: zod.string(),
   autoreload_walletthreshold: zod.string(),
+  autoreload_maxcharge: zod.string().optional(),
+  autoreload_consent: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadConsentDefault),
+  autoreload_charge_now: zod
+    .boolean()
+    .default(usageUpdateAutoReloadSettingsCreateBodyAutoreloadChargeNowDefault),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({

@@ -1254,13 +1254,69 @@ class TestConsequence:
         assert report["rules_version"] == "7"
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
+    @pytest.mark.parametrize(
+        ("where", "consequence"),
+        [
+            (
+                "sandbox",
+                "The agent starts in the test sandbox, so every case can begin",
+            ),
+            (
+                "remote",
+                "The agent runs on its own side and its start checks passed, so every"
+                " case can begin",
+            ),
+            (
+                "provider",
+                "The agent runs on its own side and its start checks passed, so every"
+                " case can begin",
+            ),
+        ],
+    )
+    def test_start_consequence_by_connection(
+        self, user, workspace, storage, where, consequence
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, f"rd-start-{where}")
+        runtimes = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=a2
+        )
+        if where == "provider":
+            runtimes.update(source_kind="provider")
+        elif where == "remote":
+            runtime = runtimes.get()
+            runtime.agent_payload = {
+                **(runtime.agent_payload or {}),
+                "source_access": {"kind": "remote"},
+            }
+            runtime.save(update_fields=["agent_payload"])
+        _certify(environment, storage, agent=a2)
+
+        start = _rows(_report(environment, a2))["start"]
+
+        assert start["status"] == "supported"
+        assert start["consequence"] == consequence
+
+    def test_an_agent_without_a_side_row_starts_in_our_sandbox(self):
+        from simulate.services.harness_readiness.rules import consequence
+
+        row = {
+            "id": "start",
+            "measured": True,
+            "status": "supported",
+            "reason_code": None,
+        }
+        assert consequence({**row, "targets": []}, None) == (
+            "The agent starts in the test sandbox, so every case can begin"
+        )
+
     def test_reset_consequence_by_connection(self, user, workspace, storage):
         environment, a2 = _with_a2(user, workspace, storage, "rd-consequence-reset")
         HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
             source_kind="provider"
         )
         _certify(environment, storage, agent=a2)
-        assert _rows(_report(environment, a2))["reset"]["consequence"] == (
+        rows = _rows(_report(environment, a2))
+        assert rows["reset"]["consequence"] == (
             "The world resets between trials; the agent may carry its own memory"
         )
 
@@ -1417,6 +1473,28 @@ class TestCancel:
         environment = _environment(user, workspace, storage, "rd-cancel-early")
         _certify(environment, storage)
         _stopped(environment, key="early", sandbox=False)
+
+        assert _rows(_report(environment))["cancel"]["status"] == "untested"
+
+    def test_a_stopped_build_of_the_agent_is_not_a_stop_of_a_run(
+        self, user, workspace, storage
+    ):
+        from django.utils import timezone
+
+        from simulate.models import HostedHarnessAttempt
+        from simulate.services.hosted_harness import register_attempt
+
+        environment = _environment(user, workspace, storage, "rd-cancel-build")
+        _certify(environment, storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            cancel_requested_at=timezone.now(), cancel_reason="user_canceled"
+        )
+        attempt = register_attempt(
+            environment.id, endpoint_base_url="https://platform.example"
+        ).attempt
+        HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+            provider_ref="sandbox-build", cleanup_verified_at=timezone.now()
+        )
 
         assert _rows(_report(environment))["cancel"]["status"] == "untested"
 

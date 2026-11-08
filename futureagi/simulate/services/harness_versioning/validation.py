@@ -62,33 +62,104 @@ UNAVAILABLE_REASON = (
     "the check could not prepare this environment's test world on our side; runs go"
     " ahead without it"
 )
-# The runtime failures of the test world itself, not of the agent (ALK's process
-# runtime codes whose failure domain is the environment or infrastructure).
-_PLATFORM_CODES = frozenset(
+# The processes ALK itself adds to a generated world (agent-learning-kit
+# bundle_author_v2: the managed world-db, the generated tool-proxy and mcp-toolbox). Any
+# other process is the agent's or one of its services, whatever it is called.
+_OWNED_PROCESSES = frozenset({"world-db", "tool-proxy", "mcp-toolbox"})
+# Codes ALK raises with an infrastructure domain at every raise site, whatever the process.
+_INFRASTRUCTURE_CODES = frozenset(
     {
-        "seed_failed",
         "store_statement_failed",
-        "depends_on_timeout",
         "resource_capacity_unknown",
         "resource_capacity_unavailable",
     }
 )
-_RUNTIME_CAUSE = re.compile(r"(?:^|: )([a-z_]+)/([a-z_]+)(?: \(([^)]+)\))?:")
+# A canonical seed that failed only for ALK's own fingerprint check; any other seed
+# failure is the agent's migration or seed content.
+_CANONICAL_SEED = "canonical World IR could not be compiled or applied: "
+_OWNED_SEED_DIAGNOSTICS = frozenset({"source_model_fingerprint_mismatch"})
+# ALK's typed failure: ``stage/code (process): detail``.
+_TYPED = re.compile(
+    r"(?:ProcessRuntimeError: )?[a-z_]+/([a-z_]+)(?: \(([^)]+)\))?: (.*)"
+)
+# The line ALK prints for a failed validation, before the error and the agent's output.
+_PHASE_LINE = re.compile(r"runtime validation: ([a-z_]+): (.*)")
+# Only a runtime phase ends the check at once; ALK repairs or retries any other.
+_ENDING_PHASE = "runtime"
+# ALK ends a failure's own text with this and prints the agent's output lines after it
+# (process_runtime ``_output_tail``).
+_AGENT_OUTPUT = "; last output:"
+# Causes that end every check of the same pairing on the same template the same way.
+_REPEATING_CAUSES = frozenset({"seed_failed"})
 
 
-def platform_failure(message: str, failed_actions: Any = None) -> str | None:
-    """The runtime code of a failed check that ended on our side, or ``None`` when the
-    agent failed it: a failed action probe, or anything but a test-world process
-    failing (``stage/code (process)`` as the guest reports it)."""
-    if failed_actions:
+def _ending(tail: str) -> tuple[str, str] | None:
+    """ALK's phase line for the check's ending, as ``(phase, error)``: the first phase
+    line, read only before any of the agent's output. ``None`` when that cannot be
+    told: the log's start was cut off, the agent's output comes first, or the first
+    phase line is one ALK repairs or retries (a later one may be the agent's)."""
+    from simulate.services.hosted_harness_gateway import GUEST_LOG_CHARS
+
+    if len(tail) >= GUEST_LOG_CHARS:
         return None
-    match = _RUNTIME_CAUSE.search(message or "")
-    if match is None:
-        return None
-    code, process = match.group(2), match.group(3) or ""
-    if code in _PLATFORM_CODES or process.startswith("world-"):
-        return code
+    for line in tail.splitlines():
+        phase = _PHASE_LINE.fullmatch(line)
+        if phase is not None:
+            return phase.groups() if phase.group(1) == _ENDING_PHASE else None
+        if _AGENT_OUTPUT in line:
+            return None
     return None
+
+
+def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
+    """Why a failed check ended on our side, or ``None`` when the agent failed it.
+
+    Read only from ALK's phase line for the ending (see ``_ending``), never from the
+    agent's output after it. Ours: ALK's typed failure on that line is an ``internal_*``
+    code (an ALK bug), an infrastructure-only code, or a failure of a process ALK owns
+    (a canonical seed only for ALK's own fingerprint check). A failed action probe, or
+    anything else, is the agent's."""
+    if failed_actions or not failure:
+        return None
+    ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
+    if ending is None:
+        return None
+    typed = _TYPED.fullmatch(ending[1])
+    if typed is None:
+        return None
+    code, process, detail = typed.groups()
+    if code.startswith("internal_") or code in _INFRASTRUCTURE_CODES:
+        return code
+    if process not in _OWNED_PROCESSES:
+        return None
+    if code != "seed_failed":
+        return code
+    if not detail.startswith(_CANONICAL_SEED):
+        return None
+    diagnostics = set(detail.removeprefix(_CANONICAL_SEED).split(", "))
+    return code if diagnostics <= _OWNED_SEED_DIAGNOSTICS else None
+
+
+def _template() -> str | None:
+    """The sandbox template checks run on now, or ``None`` when none is pinned."""
+    from simulate.services.hosted_sandbox.factory import sandbox_runtime_reference
+
+    name, build = sandbox_runtime_reference()
+    return f"{name}:{build}" if name else None
+
+
+def repeats_unavailable(bundle: HarnessAssembledBundle) -> bool:
+    """Whether this pending pairing's last check ended on our side for a cause that
+    would end a new check the same way: same versions (the bundle) and the template the
+    last check ran on."""
+    last = (bundle.error or {}).get("last_attempt") or {}
+    template = _template()
+    return (
+        bundle.state == HarnessAssembledBundle.State.PENDING
+        and last.get("code") == CHECK_UNAVAILABLE
+        and template is not None
+        and last.get("template") == template
+    )
 
 
 FAILURE_SOURCE = "validation"
@@ -130,24 +201,38 @@ class ValidationView(TypedDict):
 
 @dataclass(frozen=True)
 class Validation:
-    """A pairing's validation as started: already ``ready``, or ``validating`` by ``job``."""
+    """A pairing's validation as started: already ``ready``, ``validating`` by ``job``, or
+    ``check_unavailable`` when a new check would end on our side as the last one did."""
 
-    state: Literal["ready", "validating"]
+    state: Literal["ready", "validating", "check_unavailable"]
     bundle: HarnessAssembledBundle
     purpose: Purpose
     job: HostedHarnessJob | None = None
 
     @property
     def ready(self) -> bool:
-        return self.state == "ready"
+        """Nothing to wait for: a move or run goes ahead now."""
+        return self.state != "validating"
 
     def as_view(self) -> ValidationView:
+        unavailable = self.state == CHECK_UNAVAILABLE
+        last = (self.bundle.error or {}).get("last_attempt") or {}
         return {
             "state": self.state,
-            "job_id": str(self.job.id) if self.job is not None else None,
+            "job_id": (
+                str(self.job.id)
+                if self.job is not None
+                else last.get("job_id")
+                if unavailable
+                else None
+            ),
             "purpose": self.purpose,
             "finished_at": None,
-            "error": None,
+            "error": (
+                {"code": CHECK_UNAVAILABLE, "reason": UNAVAILABLE_REASON}
+                if unavailable
+                else None
+            ),
         }
 
 
@@ -244,7 +329,8 @@ def start_validation(
     purpose: Purpose,
     move: AgentMove | None = None,
 ) -> Validation | None:
-    """Validate this pairing, unless its bundle is already certified.
+    """Validate this pairing, unless its bundle is already certified or its last check
+    ended on our side for a cause that repeats on the same template.
 
     Returns ``None`` when it cannot be validated (see ``can_validate``). A failed bundle
     is reset to pending; a validation already certifying the bundle is returned, carrying
@@ -291,6 +377,17 @@ def start_validation(
                 caller=move["caller"] if move else None,
             )
             return Validation("ready", bundle, purpose)
+        if purpose != "recheck" and repeats_unavailable(bundle):
+            logger.info(
+                "harness_pair_check_unavailable_reused",
+                environment_id=str(locked.id),
+                agent_version_id=str(agent_version.id),
+                bundle_id=str(bundle.id),
+                cause=bundle.error["last_attempt"].get("cause"),
+                purpose=purpose,
+                caller=move["caller"] if move else None,
+            )
+            return Validation(CHECK_UNAVAILABLE, bundle, purpose)
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
         job = live_validation(bundle.id)
@@ -387,6 +484,7 @@ def _create_job(
             "environment_job_id": str(locked.id),
             "certify_only": True,
             "validation_purpose": purpose,
+            "check_template": _template(),
             "assembly": assembly.RunAssembly(
                 bundle=bundle, key=bundle.assembly_key, cached=False, defaults=False
             ).as_metadata(),
@@ -554,29 +652,25 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
         code
         if code == "certify_incomplete"
         else (
-            platform_failure(
-                str(failure.get("message") or ""),
-                (bundle.error or {}).get("failed_actions"),
-            )
+            platform_failure(failure, (bundle.error or {}).get("failed_actions"))
             if code == "authoring_runtime_validation_failed"
             else None
         )
     )
     if cause is not None:
-        mine = (bundle.error or {}).get("run_id") == str(job.id)
-        if bundle.state == HarnessAssembledBundle.State.PENDING or (
-            bundle.state == HarnessAssembledBundle.State.FAILED and mine
-        ):
-            bundle.state = HarnessAssembledBundle.State.PENDING
-            bundle.error = {
-                "last_attempt": {
-                    "code": CHECK_UNAVAILABLE,
-                    "cause": cause,
-                    "at": timezone.now().isoformat(),
-                    "job_id": str(job.id),
-                }
+        if bundle.state == HarnessAssembledBundle.State.PENDING:
+            last: dict[str, Any] = {
+                "code": CHECK_UNAVAILABLE,
+                "cause": cause,
+                "at": timezone.now().isoformat(),
+                "job_id": str(job.id),
             }
-            bundle.save(update_fields=["state", "error", "updated_at"])
+            if cause in _REPEATING_CAUSES or cause.startswith("internal_"):
+                last["template"] = (job.payload.get("metadata") or {}).get(
+                    "check_template"
+                )
+            bundle.error = {"last_attempt": last}
+            bundle.save(update_fields=["error", "updated_at"])
         logger.warning("harness_pair_check_unavailable", **_check_log(job), cause=cause)
         return "unavailable"
     if code in CHECK_FAILURES:
