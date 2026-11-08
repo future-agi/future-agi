@@ -109,17 +109,27 @@ def record_operation(
     response: dict,
 ) -> None:
     """Only small identity receipts: never another copy of draft or evidence text."""
-    HubSkillContextOperation.objects.create(
+    _, created = HubSkillContextOperation.objects.get_or_create(
         organization_id=principal.scope.organization_id,
         workspace_id=principal.scope.workspace_id,
         principal_key=f"{principal.kind}:{principal.user_id}:{principal.api_key_id}",
         operation=operation,
         idempotency_key=key,
-        request_digest=canonical_digest(request),
-        result_resource_id=resource_id,
-        response=response,
-        completed_at=timezone.now(),
+        defaults={
+            "request_digest": canonical_digest(request),
+            "result_resource_id": resource_id,
+            "response": response,
+            "completed_at": timezone.now(),
+        },
     )
+    if not created:
+        # Different resources have different row locks but share the operation-key
+        # namespace. Roll back this losing transaction, never leak IntegrityError.
+        raise SkillsHubError(
+            "idempotency_conflict",
+            "This operation key was completed by another request.",
+            status=409,
+        )
 
 
 def require_draft_revision(draft: HubSkillDraft | None, revision: int) -> HubSkillDraft:

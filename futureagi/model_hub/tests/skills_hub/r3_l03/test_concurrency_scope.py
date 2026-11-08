@@ -5,7 +5,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test.utils import CaptureQueriesContext
 
 from accounts.models.organization_membership import OrganizationMembership
@@ -18,6 +18,7 @@ from model_hub.services.skills_hub.v12.authoring import (
     get_compiled_draft,
     preview_dependencies,
     publish_context_draft,
+    record_operation,
     review_context_head,
 )
 from model_hub.services.skills_hub.v12.releases import (
@@ -26,6 +27,42 @@ from model_hub.services.skills_hub.v12.releases import (
 )
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def test_cross_resource_operation_key_race_is_a_conflict_and_rolls_back_loser(
+    principal, context_factory
+):
+    parents = [context_factory("left-context"), context_factory("right-context")]
+    barrier, key = Barrier(2), uuid4()
+
+    def worker(parent):
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                parent.tags = ["changed"]
+                parent.save(update_fields=["tags"])
+                barrier.wait(timeout=10)
+                record_operation(
+                    principal=principal,
+                    operation="context.publish",
+                    key=key,
+                    request={"context_id": str(parent.pk)},
+                    resource_id=parent.pk,
+                    response={"context_id": str(parent.pk)},
+                )
+            return "completed"
+        except SkillsHubError as error:
+            return error.code
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(worker, parent) for parent in parents]
+        outcomes = [future.result(timeout=30) for future in futures]
+    assert sorted(outcomes) == ["completed", "idempotency_conflict"]
+    for parent in parents:
+        parent.refresh_from_db()
+    assert sorted(len(parent.tags) for parent in parents) == [0, 1]
 
 
 def race(call):

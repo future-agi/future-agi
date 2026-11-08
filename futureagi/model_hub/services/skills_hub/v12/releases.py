@@ -508,7 +508,9 @@ def review_context_release(
         impact = release_impact(
             context=context,
             label=label,
-            target_version=target_version,
+            target_version=(
+                None if operation in {"remove", "archive"} else target_version
+            ),
             operation=operation,
         )
         identity = {

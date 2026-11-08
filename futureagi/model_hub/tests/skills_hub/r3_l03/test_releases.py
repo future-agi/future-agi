@@ -24,7 +24,6 @@ from model_hub.services.skills_hub.v12.releases import (
     context_dependents,
     context_release_state,
     move_context_label,
-    release_impact,
     remove_context_label,
     review_context_release,
 )
@@ -343,9 +342,14 @@ def test_removed_label_history_remains_and_protection_is_retained(
         idempotency_key=uuid4(),
     )
     context.refresh_from_db()
-    impact = release_impact(
-        context=context, label="production", target_version=None, operation="remove"
+    review = review_context_release(
+        principal=principal,
+        context_id=context.pk,
+        label="production",
+        target_version=version.number,
+        operation="remove",
     )
+    impact = review["impact"]
     remove_context_label(
         principal=principal,
         context_id=context.pk,
