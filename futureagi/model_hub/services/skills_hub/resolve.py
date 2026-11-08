@@ -57,6 +57,11 @@ def resolve(
             resolved = skill.versions.filter(pk=pointer.version_id).first()
     if resolved is None:
         raise SkillsHubError("version_not_found", "Version not found.", status=404)
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    require_distribution_eligibility(resolved)
     return ResolvedSkill(skill=skill, version=resolved, requested=requested)
 
 
@@ -115,7 +120,23 @@ def read_file_chunk(
     offset: int = 0,
     max_bytes: int = DEFAULT_CHUNK_BYTES,
 ) -> dict:
-    """Read character offsets with byte limits, leaving fetch counting to callers."""
+    """Legacy kind-checked read; context callers use the authorized snapshot seam."""
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    scoped_skill(version.skill)
+    require_distribution_eligibility(version)
+    return read_version_file_chunk(version, path, offset, max_bytes)
+
+
+def read_version_file_chunk(
+    version: HubSkillVersion,
+    path: str,
+    offset: int = 0,
+    max_bytes: int = DEFAULT_CHUNK_BYTES,
+) -> dict:
+    """Kind-neutral byte-bounded reader; caller authorizes the immutable version."""
     if (
         type(offset) is not int
         or offset < 0
@@ -125,12 +146,7 @@ def read_file_chunk(
         raise SkillsHubError(
             "invalid_selector", "Choose a valid offset and chunk size.", status=400
         )
-    skill = scoped_skill(version.skill)
-    row = (
-        version.files.filter(version__skill=skill, path=path)
-        .select_related("blob")
-        .first()
-    )
+    row = version.files.filter(path=path).select_related("blob").first()
     if row is None:
         raise SkillsHubError(
             "version_not_found", "File not found in this version.", status=404

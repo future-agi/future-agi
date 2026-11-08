@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosHeaders } from "axios";
 import { enqueueSnackbar } from "notistack";
 import {
   addToQueue,
@@ -82,9 +82,18 @@ const avoidRedirect = [
   "/shared/",
 ];
 
-axiosInstance.interceptors.request.use((config) =>
-  assertContractedRequestConfig(config),
-);
+const usesContextCredential = (config) =>
+  /^Context(?:\s|$)/i.test(String(AxiosHeaders.from(config?.headers).get("Authorization") ?? ""));
+
+axiosInstance.interceptors.request.use((config) => {
+  if (usesContextCredential(config)) {
+    const headers = AxiosHeaders.from(config.headers);
+    if (headers.has("X-Api-Key") || headers.has("X-Secret-Key")) {
+      throw new Error("Context credentials cannot be combined with API/secret headers.");
+    }
+  }
+  return assertContractedRequestConfig(config);
+});
 
 axiosInstance.interceptors.response.use(
   (res) => {
@@ -98,6 +107,10 @@ axiosInstance.interceptors.response.use(
         return Promise.reject(contractError);
       }
     }
+
+    // An expired/revoked isolated credential must never retry as the browser's
+    // human JWT, refresh that session, or log the human out as a side effect.
+    if (usesContextCredential(error?.config)) return Promise.reject(error);
 
     const currentPath = window.location.href;
     const avoid = avoidRedirect.some((item) => currentPath.includes(item));
