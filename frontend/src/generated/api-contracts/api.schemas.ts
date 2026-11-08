@@ -16917,6 +16917,7 @@ export interface SkillsHubV11LimitsApi {
 
 export interface SkillsHubV11TestingOptionsApi {
   enabled: boolean;
+  assist_enabled: boolean;
   github_enabled: boolean;
   models: SkillsHubV11ModelOptionApi[];
   limits: SkillsHubV11LimitsApi;

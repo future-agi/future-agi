@@ -121207,6 +121207,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     SkillsHubV11TestingOptions: {
       required: [
         "enabled",
+        "assist_enabled",
         "github_enabled",
         "models",
         "limits",
@@ -121217,6 +121218,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         enabled: {
           title: "Enabled",
+          type: "boolean",
+        },
+        assist_enabled: {
+          title: "Assist enabled",
           type: "boolean",
         },
         github_enabled: {

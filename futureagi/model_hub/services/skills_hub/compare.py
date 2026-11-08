@@ -28,6 +28,12 @@ def _snapshot(skill: HubSkill, ref: int | str, user: User) -> tuple[int | str, d
             "invalid_selector", "Choose a version number or your draft.", status=400
         )
     version = version_for_skill(skill, ref)
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    # Compare is an ordinary content-distribution route, not forensic inspection.
+    require_distribution_eligibility(version)
     return ref, {
         row.path: {"sha256": row.sha256, "text": row.blob.content}
         for row in version.files.select_related("blob")

@@ -190,6 +190,10 @@ class SkillTestingOptionsView(SkillsV11View):
             {
                 "enabled": getattr(settings, "SKILLS_TESTING_ENABLED", False),
                 "github_enabled": getattr(settings, "SKILLS_GITHUB_ENABLED", False),
+                "assist_enabled": bool(
+                    getattr(settings, "SKILLS_TESTING_ENABLED", False)
+                    and getattr(settings, "SKILLS_ASSIST_ENABLED", False)
+                ),
                 "models": model_calls.list_test_models(scope=self.principal.scope),
                 "limits": limits.effective_limits(),
                 "harness_version": limits.HARNESS_VERSION,

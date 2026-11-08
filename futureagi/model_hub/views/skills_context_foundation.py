@@ -43,6 +43,10 @@ def contract(*args, **kwargs):
     return skill_contract(*args, responses=responses, **kwargs)
 
 
+def consumption_contract(*args, **kwargs):
+    return contract(*args, security=[{"ContextCredential": []}], **kwargs)
+
+
 def header_uuid(request, name, *, required=True):
     value = request.headers.get(name)
     if value is None:
@@ -144,7 +148,7 @@ class ConsumptionView(APIView):
 
 
 class ConsumptionResolveView(ConsumptionView):
-    @contract(s.ConsumptionManifest, query=s.ResolveQuery)
+    @consumption_contract(s.ConsumptionManifest, query=s.ResolveQuery)
     def get(self, request):
         result = consumption.resolve_consumption(
             principal=request.auth,
@@ -159,7 +163,7 @@ class ConsumptionResolveView(ConsumptionView):
 
 
 class ConsumptionManifestView(ConsumptionView):
-    @contract(
+    @consumption_contract(
         s.ConsumptionManifest,
         query=s.ManifestQuery,
         manual_parameters=[RESOLUTION],
@@ -185,7 +189,9 @@ class ConsumptionManifestView(ConsumptionView):
 
 
 class ConsumptionFileView(ConsumptionView):
-    @contract(s.ConsumptionChunk, query=s.FileQuery, manual_parameters=[RESOLUTION])
+    @consumption_contract(
+        s.ConsumptionChunk, query=s.FileQuery, manual_parameters=[RESOLUTION]
+    )
     def get(self, request, resource_id, number):
         result = consumption.read_consumption_file(
             **self.continuation(request, resource_id, number),
@@ -197,7 +203,9 @@ class ConsumptionFileView(ConsumptionView):
 
 
 class ConsumptionAccessView(ConsumptionView):
-    @contract(s.AccessCheck, body=s.EmptyInput, manual_parameters=[RESOLUTION])
+    @consumption_contract(
+        s.AccessCheck, body=s.EmptyInput, manual_parameters=[RESOLUTION]
+    )
     def post(self, request, resource_id, number):
         return self.output(
             s.AccessCheck,

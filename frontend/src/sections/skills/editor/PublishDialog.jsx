@@ -5,6 +5,7 @@ import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Checkbox, FormControlLabel, List, ListItemButton, Stack, TextField, Typography } from "@mui/material";
 
 import { getSkillErrorCode, useSkill, usePublishSkillDraft, useSaveSkillDraft, useSkillCompare, useSkillDraft } from "src/api/skills";
+import { useSkillTestingOptions } from "src/api/skills/testing";
 import { skillFilesDigest, skillManifestDigest } from 'src/api/skills/digest';
 import TestEvidence from '../tests/TestEvidence';
 import AssistPanel from '../assist/AssistPanel';
@@ -27,6 +28,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const [release, setRelease] = useState(skill);
   const [releaseConflict, setReleaseConflict] = useState(false);
   const currentSkill = useSkill(skill.id);
+  const options = useSkillTestingOptions();
   useEffect(() => {
     let active = true;
     setDigest(null);
@@ -199,7 +201,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         </Section>
         <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} />
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
-        <Box><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></Box>
+        <Box><Button variant="outlined" size="small" disabled={!skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => setSummaryOpen((value) => !value)}>{summaryOpen ? 'Close summary assistance' : 'Summarize changes'}</Button></Box>
         {summaryOpen && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
         <Section title="After publishing, move label" description="Agents using a selected label will fetch this version on their next request. Pinned versions do not change.">
           <Stack>
