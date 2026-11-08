@@ -13,7 +13,6 @@ from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
 from simulate.models import HarnessAssembledBundle, HarnessEnvironmentVersion
-from simulate.services.harness_readiness.evidence import _build_certification
 
 Result = Literal["passed", "failed", "pending"]
 RELEASE_CHECKS = (
@@ -39,11 +38,27 @@ def _result(value: Any) -> Result:
 
 def release_checks(version: HarnessEnvironmentVersion) -> ReleaseChecks:
     """The five release checks of ``version``; ``ready`` only when all five passed."""
-    certificate = (_build_certification(version) or {}).get("certificate")
+    return release_checks_for(version.documents or {})
+
+
+def release_checks_for(documents: Mapping[str, Any]) -> ReleaseChecks:
+    """As ``release_checks``, from a version's ``stage_outputs`` and
+    ``release_checks`` documents."""
+    certification = next(
+        (
+            one.get("data")
+            for one in documents.get("stage_outputs") or []
+            if isinstance(one, Mapping) and one.get("kind") == "certification"
+        ),
+        None,
+    )
+    certificate = (
+        certification.get("certificate") if isinstance(certification, Mapping) else None
+    )
     checks = certificate.get("checks") if isinstance(certificate, Mapping) else None
     checks = checks if isinstance(checks, Mapping) else {}
     started = [checks.get("static"), checks.get("processes")]
-    recorded = (version.documents or {}).get("release_checks")
+    recorded = documents.get("release_checks")
     recorded = recorded if isinstance(recorded, Mapping) else {}
     results: dict[str, Result] = {
         "starts": (

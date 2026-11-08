@@ -188,14 +188,8 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
-        "release_checks": None if suite else _release_checks(version),
+        "release_checks": None,
     }
-
-
-def _release_checks(version: Any) -> dict[str, Any]:
-    from simulate.services.harness_readiness.release import release_checks
-
-    return dict(release_checks(version))
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
@@ -524,7 +518,19 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_readiness.release import release_checks_for
 
+    # Two documents of each environment version, read in one query; never the rest.
+    release = {
+        one: release_checks_for(
+            {"stage_outputs": outputs or [], "release_checks": recorded}
+        )
+        for one, outputs, recorded in HarnessEnvironmentVersion.no_workspace_objects.filter(
+            job=job
+        ).values_list(
+            "id", "documents__stage_outputs", "documents__release_checks"
+        )
+    }
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -542,7 +548,10 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             for version in agents
         ],
         "environment": [
-            _piece_item(version, job.environment_version_id, suite=False)
+            {
+                **_piece_item(version, job.environment_version_id, suite=False),
+                "release_checks": release.get(version.id),
+            }
             for version in environments
         ],
         "suite": [
