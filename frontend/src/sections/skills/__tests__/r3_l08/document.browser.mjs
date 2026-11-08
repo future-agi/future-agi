@@ -18,7 +18,7 @@ const content =
 const entry = `
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Box, Typography } from '@mui/material';
+import { Box, Button, Typography } from '@mui/material';
 import { SnackbarProvider } from 'notistack';
 import { loader } from '@monaco-editor/react';
 import ThemeProvider from 'src/theme';
@@ -33,13 +33,16 @@ localStorage.removeItem('settings');
 const original = params.has('unsupported') ? '---\\nname: refund-policy\\ndescription: |\\n  Use this preserved multiline value.\\n---\\nOriginal policy' : ${JSON.stringify(content)};
 function App() {
   const [value, setValue] = useState(original);
+  const [target, setTarget] = useState(null);
   window.l8Canonical = value;
+  loader.init().then((monaco) => { window.l8Monaco = monaco; });
   window.l8Changes ??= 0;
   return <Box sx={{ p: 2, minWidth: 0, minHeight: '100dvh', display: 'flex', flexDirection: 'column', gap: 2 }}>
     <Typography variant='m1'>Edit refund-policy</Typography>
     <Typography variant='s3' color='text.secondary'>Synthetic component fixture · no backend or publication</Typography>
+    <Button onClick={() => setTarget({ line: 11 })}>Open check line 11</Button>
     <Box sx={{ flex: 1, minHeight: 640, minWidth: 0, display: 'flex' }}>
-      <SkillDocumentEditor file={{ path: 'SKILL.md', content: value }} onChange={(next) => { window.l8Changes += 1; setValue(next); }} readOnly={params.has('readonly')} sampleContent />
+      <SkillDocumentEditor file={{ path: 'SKILL.md', content: value }} target={target} onChange={(next) => { window.l8Changes += 1; setValue(next); }} readOnly={params.has('readonly')} sampleContent />
     </Box>
   </Box>;
 }
@@ -218,6 +221,18 @@ try {
           .getAttribute("aria-selected"),
         "true",
       );
+      // UX-003: a retained Monaco pane must focus only after it is visible.
+      await page.getByRole("tab", { name: "Document", exact: true }).click();
+      await page.getByRole("button", { name: "Open check line 11" }).click();
+      await page.waitForFunction(() => {
+        const editor = window.l8Monaco?.editor.getEditors()[0];
+        return editor?.hasTextFocus() && editor.getPosition()?.lineNumber === 11;
+      });
+      await capture(`check-focus-${suffix}`);
+      await page.getByRole("button", { name: "Open check line 11" }).focus();
+      await page.setViewportSize({ width, height: 980 });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.getByRole("button", { name: "Open check line 11" }).evaluate((element) => document.activeElement === element), true, "Later layout does not steal keyboard focus");
       await page.goto(`${origin}/l8-document?theme=${theme}&unsupported=1`);
       await page
         .getByText(
