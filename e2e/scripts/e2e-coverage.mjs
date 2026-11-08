@@ -76,6 +76,7 @@ export const FE_AREA = {
   "project-detail": "prototype",
   evals: "evals",
   tasks: "tasks",
+  skills: "skills",
   develop: "datasets",
   "develop-detail": "datasets",
   "experiment-detail": "datasets",
@@ -147,6 +148,11 @@ export const BE_APP_AREA = {
   ai_tools: "datasets",
 };
 const BE_FILE_AREA = [
+  // Skills lives in model_hub, but is not the dataset surface. Keep these
+  // overrides ahead of the app fallback, including versioned Skills modules.
+  [/^model_hub\/(models|selectors|serializers|views)\/skills_hub(?:_[a-z0-9]+)?\.py$/, "skills"],
+  [/^model_hub\/services\/skills_hub\//, "skills"],
+  [/^model_hub\/urls_skills_hub(?:_[a-z0-9]+)?\.py$/, "skills"],
   [/^tracer\/views\/(eval_task|custom_eval_config)\.py$/, "evals"],
   [/^tracer\/services\/eval/, "evals"],
   [/^tracer\/views\/feed\//, "error-feed"],
@@ -189,6 +195,7 @@ export const AREA_OF_E2E_DIR = {
   evals: "EVAL",
   tasks: "TASK",
   datasets: "DATA",
+  skills: "SKILLS",
   prompts: "PROMPT",
   agents: "AGENT",
   prototype: "PROTO",
