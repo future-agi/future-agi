@@ -23,12 +23,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from jinja2.defaults import DEFAULT_TESTS
-from rest_framework import status
-from rest_framework.test import APIClient
-
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from jinja2.defaults import DEFAULT_TESTS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
@@ -40,6 +37,8 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentsTable
 from model_hub.models.run_prompt import RunPrompter
+from rest_framework import status
+from rest_framework.test import APIClient
 from tfc.middleware.workspace_context import set_workspace_context
 
 TTS_MODEL = "openai/tts-1"
@@ -1377,9 +1376,9 @@ class TestLiteralSpeechStructuralFilters:
 def test_all_jinja_tests_guard_json_media_arguments(name):
     from model_hub.views.run_prompt import (
         JsonStr,
+        _literal_speech_jinja2_env,
         _LiteralSpeechMediaRead,
         _LiteralSpeechMediaValue,
-        _literal_speech_jinja2_env,
     )
 
     media = _LiteralSpeechMediaValue(SimpleNamespace(name="clip.audio"))
@@ -1394,6 +1393,7 @@ def test_all_jinja_tests_guard_json_media_arguments(name):
 )
 def test_operation_result_is_guarded_before_template_comparison(shape):
     from collections.abc import Iterator
+
     from model_hub.views.run_prompt import (
         _guard_template_operation,
         _LiteralSpeechMediaRead,
@@ -1424,10 +1424,9 @@ def test_operation_result_is_guarded_before_template_comparison(shape):
 def test_sentry_local_capture_contains_the_media_tripwire():
     import sys
 
+    from model_hub.views.run_prompt import _LiteralSpeechMediaValue
     from sentry_sdk.client import get_options
     from sentry_sdk.utils import event_from_exception
-
-    from model_hub.views.run_prompt import _LiteralSpeechMediaValue
 
     media = _LiteralSpeechMediaValue(SimpleNamespace(name="Recording"))
     try:
