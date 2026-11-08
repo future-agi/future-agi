@@ -56,6 +56,22 @@ AUDIO_LABEL = "Audio Input_0 is given below:"
 PROVIDER_KEY = "sk-th9061-synthetic"
 
 
+def _silent_wav():
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x00\x00" * 800)
+    return buffer.getvalue()
+
+
+SILENT_WAV = _silent_wav()
+
+
 def media_error(column, data_type, model=TTS_MODEL):
     return (
         f'Text-to-speech model "{model}" reads the prompt aloud as text, '
@@ -226,7 +242,7 @@ def speech_boundary():
 @pytest.fixture
 def media_fetch():
     """Media fixture: the renderer's fetches are recorded, never sent."""
-    fetched = MagicMock(content=b"RIFF\x24\x00\x00\x00WAVEfmt ")
+    fetched = MagicMock(content=SILENT_WAV)
     fetched.raise_for_status.return_value = None
     with (
         patch("model_hub.views.run_prompt.safe_fetch", return_value=fetched) as fetch,
@@ -301,13 +317,13 @@ class TestPreviewRejectsMediaColumns:
     ):
         response = preview(auth_client, dataset, tts_config(user_prompt(template)))
 
+        speech_boundary.assert_not_called()
+        media_fetch.audio.assert_not_called()
+        media_fetch.image.assert_not_called()
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["responses"] == [
             media_error(column, data_type)
         ]
-        speech_boundary.assert_not_called()
-        media_fetch.audio.assert_not_called()
-        media_fetch.image.assert_not_called()
 
     def test_reference_by_column_id_is_rejected(
         self,
@@ -322,10 +338,10 @@ class TestPreviewRejectsMediaColumns:
 
         response = preview(auth_client, dataset, tts_config(user_prompt(template)))
 
+        speech_boundary.assert_not_called()
         assert response.json()["result"]["responses"] == [
             media_error("Recording", "audio")
         ]
-        speech_boundary.assert_not_called()
         media_fetch.audio.assert_not_called()
 
     def test_system_message_reference_is_rejected(
@@ -345,10 +361,10 @@ class TestPreviewRejectsMediaColumns:
 
         response = preview(auth_client, dataset, tts_config(messages))
 
+        speech_boundary.assert_not_called()
         assert response.json()["result"]["responses"] == [
             media_error("Recording", "audio")
         ]
-        speech_boundary.assert_not_called()
         media_fetch.audio.assert_not_called()
 
     def test_string_content_is_rejected(
@@ -364,10 +380,10 @@ class TestPreviewRejectsMediaColumns:
 
         response = preview(auth_client, dataset, tts_config(messages))
 
+        speech_boundary.assert_not_called()
         assert response.json()["result"]["responses"] == [
             media_error("Recording", "audio")
         ]
-        speech_boundary.assert_not_called()
 
     @pytest.mark.parametrize("cell_value", ["", None, _NO_CELL])
     def test_empty_or_missing_media_cell_is_rejected(
@@ -389,10 +405,10 @@ class TestPreviewRejectsMediaColumns:
             tts_config(user_prompt("Hello {{ Name }}, {{Recording}}")),
         )
 
+        speech_boundary.assert_not_called()
         assert response.json()["result"]["responses"] == [
             media_error("Recording", "audio")
         ]
-        speech_boundary.assert_not_called()
 
     def test_several_media_columns_are_named(
         self,
@@ -409,12 +425,12 @@ class TestPreviewRejectsMediaColumns:
             tts_config(user_prompt("{{ Recording }} and {{ Photos }}")),
         )
 
+        speech_boundary.assert_not_called()
         assert response.json()["result"]["responses"] == [
             f'Text-to-speech model "{TTS_MODEL}" reads the prompt aloud as text, '
             'so it cannot use the media columns "Recording" (audio), '
             '"Photos" (images). Remove these variables from the prompt.'
         ]
-        speech_boundary.assert_not_called()
 
     def test_unreadable_template_is_rejected_not_spoken_as_written(
         self,
@@ -495,7 +511,7 @@ class TestPreviewStillSpeaksText:
         assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
         assert speech_boundary.call_args.kwargs["input"] == "First Ada. Then Intro."
 
-    def test_completion_audio_model_keeps_media_input(
+    def test_completion_audio_model_keeps_its_media_handling(
         self,
         auth_client,
         organization,
@@ -507,13 +523,11 @@ class TestPreviewStillSpeaksText:
         speech_boundary,
         media_fetch,
     ):
-        # gpt-4o-audio-preview (an organization model) receives the prompt
-        # through litellm.completion and accepts audio, so its lane is unchanged.
+        # gpt-4o-audio-preview (an organization model) is a completion-audio
+        # model, not literal speech: the renderer's existing media handling
+        # applies unchanged, including its audio-input capability check.
         add_custom_model(organization, workspace, user, "gpt-4o-audio-preview", "openai")
-        with patch(
-            "litellm.completion",
-            side_effect=RuntimeError("completion boundary fixture"),
-        ) as completion:
+        with patch("litellm.completion") as completion:
             response = preview(
                 auth_client,
                 dataset,
@@ -523,14 +537,10 @@ class TestPreviewStillSpeaksText:
                 ),
             )
 
-        assert response.status_code == status.HTTP_200_OK
-        completion.assert_called()
-        sent = completion.call_args.kwargs["messages"]
-        parts = [part for message in sent for part in message["content"]]
-        assert {"type": "text", "text": AUDIO_LABEL} in parts
-        assert any(part.get("type") == "input_audio" for part in parts)
-        media_fetch.audio.assert_called_once()
-        assert media_fetch.audio.call_args.args[0] == RECORDING_URL
+        assert response.json()["result"]["responses"] == [
+            "Model gpt-4o-audio-preview does not support audio input."
+        ]
+        completion.assert_not_called()
         speech_boundary.assert_not_called()
 
 
@@ -629,6 +639,7 @@ class TestSavedColumnRejectsMediaColumns:
 
         cell = rerun_saved_column(run_prompter, column, row)
 
+        speech_boundary.assert_not_called()
         if template == "Hello {{.}}":
             # The whole context is read: every media column is named.
             assert cell.value.startswith(
@@ -638,7 +649,6 @@ class TestSavedColumnRejectsMediaColumns:
         else:
             assert cell.value == media_error(column_name, data_type)
         assert cell.status == CellStatus.ERROR.value
-        speech_boundary.assert_not_called()
         media_fetch.audio.assert_not_called()
         media_fetch.image.assert_not_called()
         run_prompter.refresh_from_db()
@@ -672,6 +682,7 @@ class TestSavedColumnRejectsMediaColumns:
 
         cell = rerun_saved_column(run_prompter, column, row)
 
+        speech_boundary.assert_not_called()
         assert cell.status == CellStatus.ERROR.value
         assert cell.value.startswith(
             f'Text-to-speech model "{TTS_MODEL}" cannot read this prompt: '
@@ -756,12 +767,12 @@ class TestExperimentRowRejectsMediaColumns:
     ):
         cell = self._run(dataset, row, "Narrate {{ Recording }}")
 
+        speech_boundary.assert_not_called()
         assert cell.status == CellStatus.ERROR.value
         assert cell.value == media_error("Recording", "audio")
         assert json.loads(cell.value_infos)["reason"] == media_error(
             "Recording", "audio"
         )
-        speech_boundary.assert_not_called()
         media_fetch.audio.assert_not_called()
 
     def test_text_prompt_is_spoken(
@@ -804,9 +815,9 @@ class TestConditionalBranchReportsTheRejection:
             row, [branch], org_id=organization.id
         )
 
+        speech_boundary.assert_not_called()
         assert value == media_error("Recording", "audio")
         assert value_infos == {"reason": media_error("Recording", "audio")}
-        speech_boundary.assert_not_called()
         media_fetch.audio.assert_not_called()
 
 
@@ -888,31 +899,26 @@ class TestLiteralSpeechRouting:
             assert handler._should_fallback_to_completion(Exception("404"))
             assert not speaks_text_literally(model, "openai")
 
-    @pytest.mark.parametrize(
-        "model", ["gpt-4o-audio-preview", "vertex_ai/gemini-2.5-flash-preview-tts"]
-    )
-    def test_completion_lane_renders_media_as_before(
-        self, organization, workspace, user, dataset, row, columns, media_fetch, model
+    def test_vertex_gemini_tts_renders_media_as_before(
+        self, organization, dataset, row, columns, media_fetch
     ):
         from model_hub.views.run_prompt import is_literal_speech_run, populate_placeholders
 
-        if model == "gpt-4o-audio-preview":
-            add_custom_model(organization, workspace, user, model, "openai")
+        model = "vertex_ai/gemini-2.5-flash-preview-tts"
         assert not is_literal_speech_run(model, "audio", organization.id)
-        with patch(
-            "model_hub.views.run_prompt.get_model_mode", return_value="tts"
-        ):
-            messages = populate_placeholders(
-                user_prompt("Describe {{Recording}}"),
-                dataset_id=dataset.id,
-                row_id=row.id,
-                col_id=None,
-                model_name=model,
-                output_format="audio",
-            )
+
+        messages = populate_placeholders(
+            user_prompt("Describe {{Recording}}"),
+            dataset_id=dataset.id,
+            row_id=row.id,
+            col_id=None,
+            model_name=model,
+            output_format="audio",
+        )
 
         parts = messages[0]["content"]
         assert parts[0] == {"type": "text", "text": "Describe "}
         assert parts[1] == {"type": "text", "text": AUDIO_LABEL}
         assert parts[2]["type"] == "input_audio"
         media_fetch.audio.assert_called_once()
+        assert media_fetch.audio.call_args.args[0] == RECORDING_URL
