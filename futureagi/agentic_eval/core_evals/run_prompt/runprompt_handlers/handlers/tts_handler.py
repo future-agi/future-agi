@@ -13,6 +13,7 @@ Features:
 - Support for voice configuration and audio formats
 """
 
+import re
 import time
 
 import structlog
@@ -80,15 +81,25 @@ def tts_lane(model: str, provider: str | None) -> str:
     return TTS_LANE_SPEECH
 
 
+# OpenAI's own provider-qualified audio-preview models. SpeechAPIHandler
+# retries them through completion after the speech endpoint rejects them.
+_OPENAI_AUDIO_PREVIEW = re.compile(r"openai/gpt-4o-audio-preview(-\d{4}-\d{2}-\d{2})?")
+
+
 def speaks_text_literally(model: str, provider: str | None) -> bool:
     """
     Check if TTSHandler sends the prompt's text to a speech API to be read aloud.
 
-    True for custom speech providers and every SpeechAPIHandler model: that
-    handler sends the text to the speech endpoint first, even for a name it
-    may later retry through completion. False for the completion-audio lane.
+    True for custom speech providers and SpeechAPIHandler models. False for the
+    completion-audio lane and for OpenAI's provider-qualified audio-preview
+    models, which SpeechAPIHandler hands to completion; any other name
+    (e.g. a deployment alias that merely contains "gpt-4o-audio-preview") is
+    read aloud by the speech endpoint.
     """
-    return tts_lane(model, provider) in (TTS_LANE_CUSTOM, TTS_LANE_SPEECH)
+    lane = tts_lane(model, provider)
+    if lane == TTS_LANE_CUSTOM:
+        return True
+    return lane == TTS_LANE_SPEECH and not _OPENAI_AUDIO_PREVIEW.fullmatch(model)
 
 
 class TTSHandler(BaseModelHandler):

@@ -18,6 +18,7 @@ Fixture boundaries (synthetic data only, no network):
 """
 
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -296,6 +297,8 @@ PREVIEW_REJECTED = [
     ("{{ range }}", "range", "audio"),
     ("{{ range|upper }} {{ Missing.value }}", "range", "audio"),
     ("{{ My Recording }}", "My Recording", "audio"),
+    ("{% set Recording = Recording %}{{ Recording is string }}", "Recording", "audio"),
+    ("{{ Recording is string }}{% set Recording = 'unused' %}", "Recording", "audio"),
     ("{{ Say This }}", "Recording", "audio"),
     ("{{clip.audio}}", "clip.audio", "audio"),
     ("{{ clip['audio'] }}", "clip.audio", "audio"),
@@ -371,8 +374,8 @@ class TestPreviewRejectsMediaColumns:
             "neuphonic-tts",
             # An organization chat-mode model with audio output uses TTSHandler.
             "th9061-voice",
-            # The speech endpoint is called first, before any completion retry.
-            "openai/gpt-4o-audio-preview",
+            # A speech deployment whose name merely contains the preview name.
+            "azure/gpt-4o-audio-preview-voice",
         ],
     )
     def test_every_literal_speech_lane_rejects(
@@ -387,8 +390,10 @@ class TestPreviewRejectsMediaColumns:
         media_fetch,
         model,
     ):
-        if model in ("th9061-voice", "openai/gpt-4o-audio-preview"):
+        if model == "th9061-voice":
             add_custom_model(organization, workspace, user, model, "openai")
+        if model == "azure/gpt-4o-audio-preview-voice":
+            add_custom_model(organization, workspace, user, model, "azure")
 
         response = preview(
             auth_client,
@@ -424,6 +429,59 @@ class TestPreviewRejectsMediaColumns:
             media_error("Recording", "audio")
         ]
         media_fetch.inline.assert_not_called()
+
+    def test_inline_media_waits_for_render_time_checks(
+        self,
+        auth_client,
+        dataset,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        # The parser check cannot see this read; rendering finds it before the
+        # earlier inline media part is processed.
+        content = [
+            {"type": "audio_url", "audio_url": {"url": RECORDING_URL}},
+            {"type": "text", "text": "{{ clip.get('audio') }}"},
+        ]
+
+        response = preview(
+            auth_client, dataset, tts_config([{"role": "user", "content": content}])
+        )
+
+        speech_boundary.assert_not_called()
+        assert response.json()["result"]["responses"] == [
+            media_error("clip.audio", "audio")
+        ]
+        media_fetch.inline.assert_not_called()
+
+    def test_text_columns_under_a_media_column_name_still_speak(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        # "lead" is audio, so lead.details.title cannot nest under it (as on
+        # dev, where it cannot nest under a string); kit.get is audio while
+        # {{ kit.get('title') }} calls dict.get and reads only the text title.
+        add_column(dataset, row, "lead", DataTypeChoices.AUDIO.value, CLIP_URL)
+        add_column(dataset, row, "lead.details.title", DataTypeChoices.TEXT.value, "x")
+        add_column(dataset, row, "kit.get", DataTypeChoices.AUDIO.value, CLIP_URL)
+        add_column(dataset, row, "kit.title", DataTypeChoices.TEXT.value, "Kit")
+
+        response = preview(
+            auth_client,
+            dataset,
+            tts_config(user_prompt("Hello {{ kit.get('title') }}")),
+        )
+
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == "Hello Kit"
+        media_fetch.audio.assert_not_called()
 
     def test_system_message_reference_is_rejected(
         self,
@@ -793,6 +851,12 @@ SAVED_REJECTED = [
     ("f-string", "{My Recording}", "My Recording", "audio"),
     ("f-string", "{clip[audio]}", "clip.audio", "audio"),
     ("f-string", "{clip.get.__self__[audio]}", "clip.audio", "audio"),
+    (
+        "f-string",
+        "{clip.get.__self__[audio].__class__.__name__}",
+        "clip.audio",
+        "audio",
+    ),
     ("mustache", "{{#Items}}{{Recording}}{{/Items}}", "Recording", "audio"),
     ("f-string", "{Doc}", "Doc", "document"),
 ]
@@ -883,6 +947,44 @@ class TestSavedColumnRejectsMediaColumns:
             f"its template is invalid ({error}:"
         )
         speech_boundary.assert_not_called()
+
+    def test_fstring_cannot_walk_from_a_media_value_to_python_internals(
+        self,
+        dataset,
+        organization,
+        workspace,
+        row,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        # str.format can walk attributes; it must not get from a media value to
+        # this module's globals and the process environment.
+        secret = "th9061-synthetic-secret-must-not-be-spoken"
+        template = (
+            "{clip.get.__self__[audio].__class__.__init__.__globals__[os]"
+            ".environ[TH9061_SYNTHETIC_SECRET]} "
+            "{clip.get.__self__[audio]._read.__func__.__globals__[os]"
+            ".environ[TH9061_SYNTHETIC_SECRET]}"
+        )
+        run_prompter, column = saved_tts_column(
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt(template),
+            "f-string",
+        )
+
+        with patch.dict(os.environ, {"TH9061_SYNTHETIC_SECRET": secret}):
+            cell = rerun_saved_column(run_prompter, column, row)
+
+        speech_boundary.assert_not_called()
+        assert cell.status == CellStatus.ERROR.value
+        assert cell.value == media_error("clip.audio", "audio")
+        assert secret not in cell.value
+        assert secret not in str(cell.value_infos)
 
     def test_mustache_section_scope_shadows_a_media_column(
         self,
@@ -1119,9 +1221,10 @@ class TestLiteralSpeechRouting:
         [
             ("gpt-4o-audio-preview", "openai", False),
             ("gpt-4o-audio-preview-2024-12-17", "openai", False),
-            # SpeechAPIHandler sends the text to the speech endpoint first and
-            # only retries through completion after an error.
-            ("openai/gpt-4o-audio-preview", "openai", True),
+            # OpenAI's own qualified preview names go on to completion.
+            ("openai/gpt-4o-audio-preview", "openai", False),
+            ("openai/gpt-4o-audio-preview-2024-12-17", "openai", False),
+            # Any other speech-lane name is read aloud by the speech endpoint.
             ("azure/gpt-4o-audio-preview-voice", "azure", True),
             # A custom speech provider wins over a completion-looking name.
             ("gpt-4o-audio-preview", "neuphonic", True),

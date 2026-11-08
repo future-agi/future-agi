@@ -585,6 +585,10 @@ def _literal_speech_media_columns(media_columns, column_paths) -> list:
     return result
 
 
+class _Attribute(str):
+    """A lookup key that the renderer resolves as an attribute first."""
+
+
 def _context_path(root, keys, context) -> tuple:
     """
     Render-context path that a variable lookup reads.
@@ -597,7 +601,8 @@ def _context_path(root, keys, context) -> tuple:
     value = context.get(root)
     for key in keys:
         if type(value) is dict:
-            if key not in value and hasattr(dict, key):
+            attribute_first = isinstance(key, _Attribute)
+            if hasattr(dict, key) and (attribute_first or key not in value):
                 break
             value = value.get(key)
         else:
@@ -609,7 +614,8 @@ def _context_path(root, keys, context) -> tuple:
 def _jinja2_lookup_key(node):
     """The constant key of a Jinja2 attribute or item lookup, else None."""
     if isinstance(node, jinja2_nodes.Getattr):
-        return node.attr
+        # Jinja reads an attribute (e.g. a dict method) before an item.
+        return _Attribute(node.attr)
     if (
         isinstance(node.arg, jinja2_nodes.Const)
         and isinstance(node.arg.value, (str, int))
@@ -666,30 +672,18 @@ def _jinja2_variable_paths(source, context) -> list:
     return paths
 
 
-def _context_value(path, context):
-    """The render-context value at a path, or None."""
-    value = context
-    for key in path:
-        value = value.get(key) if isinstance(value, dict) else None
-    return value
-
-
-def _mustache_scope_has(value, key) -> bool:
-    """Whether chevron finds a key in a section's value before outer scopes."""
-    items = value if isinstance(value, list) else [value]
-    return any(isinstance(item, dict) and key in item for item in items)
-
-
 def _mustache_variable_paths(text, context) -> list:
-    """Context paths read by a Mustache template, from chevron's tokens."""
+    """
+    Context paths read by a Mustache template, from chevron's tokens.
+
+    Inside an open section chevron looks keys up in the section's value first,
+    so those lookups are left to the render-time check.
+    """
     paths = []
-    sections = []  # (tag, path) of the open sections
+    sections = 0
     for tag, key in chevron_tokenize(text):
         if tag == "end":
-            sections.pop()
-        elif tag == "partial":
-            # A partial's content is unknown: treat it as reading everything.
-            paths.append(())
+            sections -= 1
         elif tag in (
             "variable",
             "no escape",
@@ -697,34 +691,14 @@ def _mustache_variable_paths(text, context) -> list:
             "section",
             "inverted section",
         ):
-            if key == ".":
-                # "." is the innermost (non-inverted) section's value, already
-                # checked; outside one it is the whole context.
-                opened = [path for open_tag, path in sections if open_tag == "section"]
-                path = opened[-1] if opened else ()
-                if not opened:
-                    paths.append(path)
-            else:
+            if not sections and key != ".":
                 root, *keys = key.split(".")
-                # chevron looks a key up in the open sections' values first.
-                scope = next(
-                    (
-                        section_path
-                        for open_tag, section_path in reversed(sections)
-                        if open_tag == "section"
-                        and _mustache_scope_has(
-                            _context_value(section_path, context), root
-                        )
-                    ),
-                    None,
-                )
-                if scope is None:
-                    path = _context_path(root, keys, context)
-                else:
-                    path = (*scope, root, *keys)
-                paths.append(path)
-            if tag in ("section", "inverted section"):
-                sections.append((tag, path))
+                paths.append(_context_path(root, keys, context))
+            if tag == "section":
+                sections += 1
+            elif tag == "inverted section":
+                # Opens no scope, but its end tag closes one.
+                sections += 1
     return paths
 
 
@@ -736,7 +710,10 @@ def _fstring_variable_paths(text, context) -> list:
             root, keys = _string.formatter_field_name_split(field_name)
             # Positional fields have no value in the render context.
             if isinstance(root, str) and root:
-                keys = [str(key) for _, key in keys]
+                keys = [
+                    _Attribute(key) if is_attribute else str(key)
+                    for is_attribute, key in keys
+                ]
                 paths.append(_context_path(root, keys, context))
         if format_spec:
             paths.extend(_fstring_variable_paths(format_spec, context))
@@ -781,6 +758,13 @@ def _media_columns_at(paths, media_columns) -> list:
 
 
 def _literal_speech_media_message(model_name, columns) -> str:
+    columns = [column for column in columns if column is not None]
+    if not columns:
+        return (
+            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
+            "so it cannot use media columns. Remove media column variables from "
+            "the prompt."
+        )
     if len(columns) == 1:
         return (
             f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
@@ -811,18 +795,35 @@ class _LiteralSpeechMediaRead(BaseException):
     to LiteralSpeechMediaError where the template is rendered.
     """
 
-    def __init__(self, column):
-        super().__init__(column.name)
+    def __init__(self, column=None):
+        super().__init__(getattr(column, "name", ""))
         self.column = column
 
 
-class _LiteralSpeechMediaValue:
+def _refuse_class_read(*args, **kwargs):
+    raise _LiteralSpeechMediaRead()
+
+
+class _LiteralSpeechMediaValueType(type):
+    """
+    Metaclass that refuses to show or expose the class.
+
+    str.format and chevron can walk attributes (`{x.__class__.__init__...}`);
+    the class's functions would reach this module's globals.
+    """
+
+    __getattribute__ = __str__ = __repr__ = __format__ = _refuse_class_read
+
+
+class _LiteralSpeechMediaValue(metaclass=_LiteralSpeechMediaValueType):
     """
     Stands for a media column's value while a literal speech prompt renders.
 
-    Turning it into text, or looking anything up in it, raises
-    _LiteralSpeechMediaRead, so a template expression the parser check did not
-    resolve still cannot speak a media value or silently drop it.
+    Reading any attribute (including __class__, so isinstance-based template
+    tests too), turning it into text, or looking anything up in it raises
+    _LiteralSpeechMediaRead. A template expression the parser check did not
+    resolve still cannot speak a media value, drop it silently, or walk to
+    Python internals.
     """
 
     __slots__ = ("_column",)
@@ -833,13 +834,11 @@ class _LiteralSpeechMediaValue:
     def _read(self, *args, **kwargs):
         raise _LiteralSpeechMediaRead(object.__getattribute__(self, "_column"))
 
+    __getattribute__ = __setattr__ = __delattr__ = _read
     __str__ = __repr__ = __format__ = __bytes__ = _read
     __iter__ = __reversed__ = __len__ = __contains__ = __getitem__ = _read
     __bool__ = __int__ = __float__ = __index__ = __call__ = _read
     __add__ = __radd__ = __mul__ = __rmul__ = __mod__ = __rmod__ = _read
-
-    def __getattr__(self, name):
-        self._read()
 
 
 def check_literal_speech_prompt(
@@ -878,22 +877,24 @@ def check_literal_speech_messages(
     """
     if template_format == "jinja":
         template_format = TEMPLATE_FORMAT_JINJA2
+    for text in _message_texts(messages):
+        check_literal_speech_prompt(
+            sanitize_uuids_in_template(fix_double_quotes(text)),
+            template_format,
+            context,
+            media_columns,
+            model_name,
+        )
+
+
+def _message_texts(messages):
+    """The text parts of messages, as process_list_content selects them."""
     for message in messages:
         content = message.get("content")
         if isinstance(content, str):
-            texts = [content]
+            yield content
         elif isinstance(content, list):
-            texts = [item["text"] for item in content if "text" in item]
-        else:
-            texts = []
-        for text in texts:
-            check_literal_speech_prompt(
-                sanitize_uuids_in_template(fix_double_quotes(text)),
-                template_format,
-                context,
-                media_columns,
-                model_name,
-            )
+            yield from (item["text"] for item in content if "text" in item)
 
 
 def populate_placeholders(
@@ -1007,6 +1008,11 @@ def populate_placeholders(
                             # Set the leaf value (parsed dict for JSON, string otherwise)
                             current[part] = cell_value
                         else:
+                            if type(current) is _LiteralSpeechMediaValue:
+                                # As for any non-dict value: skip the column.
+                                raise TypeError(
+                                    f"{column.name}: {part} is under a media column"
+                                )
                             # Create intermediate objects if they don't exist
                             if part not in current:
                                 current[part] = {}
@@ -1032,7 +1038,7 @@ def populate_placeholders(
         # Debug: Log final context structure
         logger.info(f"Final context keys: {list(context.keys())}")
         for key, value in context.items():
-            if isinstance(value, dict):
+            if type(value) is not _LiteralSpeechMediaValue and isinstance(value, dict):
                 logger.info(
                     f"Context['{key}'] is a dict with keys: {list(value.keys())}"
                 )
@@ -1042,8 +1048,8 @@ def populate_placeholders(
         processed_messages = []
         try:
             if literal_speech_media:
-                # Check every message before any content (inline media
-                # included) is processed.
+                # Check and render every message's text before any content
+                # (inline media included) is processed.
                 check_literal_speech_messages(
                     messages,
                     context,
@@ -1051,6 +1057,16 @@ def populate_placeholders(
                     model_name,
                     template_format,
                 )
+                for text in _message_texts(messages):
+                    process_text_with_media(
+                        text,
+                        column_info,
+                        context,
+                        0,
+                        model_name,
+                        template_format=template_format,
+                        literal_speech=True,
+                    )
             for message in messages:
                 content = message.get("content")
                 processed_content = []
