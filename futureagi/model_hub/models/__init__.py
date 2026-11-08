@@ -44,6 +44,21 @@ from .skills_hub import (
     HubSkillUsageDaily,
     HubSkillVersion,
 )
+from .skills_hub_r3 import (
+    HubSkillDraftCheckpoint,
+    HubSkillEvidenceAnnotation,
+    HubSkillIntakePlan,
+    HubSkillIntakeReceipt,
+    HubSkillMigrationReceipt,
+    HubSkillNativeEvidence,
+    HubSkillReleaseDecision,
+    HubSkillReleasePacket,
+    HubSkillReleaseRecipient,
+    HubSkillReleaseRequest,
+    HubSkillSpendPeriod,
+    HubSkillSpendPolicy,
+    HubSkillSpendReservation,
+)
 from .skills_hub_v11 import (
     HubSkillAssistProposal,
     HubSkillExecutionQuota,
@@ -56,5 +71,16 @@ from .skills_hub_v11 import (
     HubSkillTestEvidence,
     HubSkillTestRun,
     HubSkillTestSuite,
+)
+from .skills_hub_v12 import (
+    HubSkillContextBinding,
+    HubSkillContextCapture,
+    HubSkillContextCredential,
+    HubSkillContextDependency,
+    HubSkillContextOperation,
+    HubSkillContextQuarantine,
+    HubSkillContextReceipt,
+    HubSkillContextResolution,
+    HubSkillContextSession,
 )
 from .tts_voices import TTSVoice
