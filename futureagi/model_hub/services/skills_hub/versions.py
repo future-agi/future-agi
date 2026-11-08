@@ -326,6 +326,7 @@ def _publish_checked(
     frontmatter: dict,
     source: dict,
     force: bool,
+    origin_number: int | None = None,
     always_new: bool = False,
     expected_digest: str | None = None,
     expected_release_revision: object = MISSING,
@@ -356,7 +357,7 @@ def _publish_checked(
         files=files,
         note=note,
         parent_number=base_version,
-        origin_number=base_version,
+        origin_number=base_version if origin_number is None else origin_number,
         description=frontmatter["description"],
         frontmatter=frontmatter,
         checks=checks,
@@ -534,6 +535,7 @@ def restore_version(
             else {"type": "restore", "version": number}
         ),
         force=False,
+        origin_number=number,
         always_new=True,
     )
 

@@ -1013,3 +1013,58 @@ def test_cancel_during_call_retains_spend_but_not_proposal(
     assert proposal.proposal is None
     assert proposal.job.known_output_tokens == 200
     provider_stub[0].assert_awaited_once()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_independent_assist_gate_blocks_new_spend_but_preserves_operation_recovery(
+    accept_proposal,
+    assist_request,
+    assist_principal,
+    hub_skill,
+    provider_stub,
+    settings,
+):
+    from uuid import uuid4
+
+    from asgiref.sync import async_to_sync
+
+    from model_hub.models.skills_hub_v11 import HubSkillJob, HubSkillModelCall
+    from model_hub.services.skills_hub.v11.assist import (
+        create_assist_proposal,
+        generate_assist_proposal,
+        preview_assist_proposal,
+    )
+
+    proposal, submission, key = accept_proposal(assist_request)
+    settings.SKILLS_ASSIST_ENABLED = False
+    assert settings.SKILLS_TESTING_ENABLED is True
+    assert (
+        create_assist_proposal(
+            principal=assist_principal,
+            skill_id=hub_skill.pk,
+            idempotency_key=key,
+            request=submission,
+        ).pk
+        == proposal.pk
+    )
+    with pytest.raises(SkillsHubError) as denied:
+        preview_assist_proposal(
+            principal=assist_principal, skill_id=hub_skill.pk, request=assist_request
+        )
+    assert denied.value.code == "skills_unavailable"
+    with pytest.raises(SkillsHubError) as denied:
+        create_assist_proposal(
+            principal=assist_principal,
+            skill_id=hub_skill.pk,
+            idempotency_key=uuid4(),
+            request=submission,
+        )
+    assert denied.value.code == "skills_unavailable"
+    with pytest.raises(SkillsHubError) as denied:
+        async_to_sync(generate_assist_proposal)(
+            scope=assist_principal.scope, proposal_id=proposal.pk
+        )
+    assert denied.value.code == "skills_unavailable"
+    assert HubSkillJob.objects.count() == 1
+    assert not HubSkillModelCall.objects.exists()
+    provider_stub[0].assert_not_called()

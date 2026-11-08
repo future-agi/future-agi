@@ -2,7 +2,14 @@
 
 from rest_framework import serializers as s
 
-from model_hub.serializers.skills_hub import FileChunk, FileInput
+from model_hub.serializers import skills_hub_v11 as v11
+from model_hub.serializers.skills_hub import (
+    ChecksResult,
+    FileChunk,
+    FileInput,
+    LabelOut,
+    Person,
+)
 from model_hub.serializers.skills_hub_v11 import HubV11Serializer, Integer
 from model_hub.services.skills_hub.v12 import limits
 
@@ -331,3 +338,256 @@ class QuarantineInput(ContextSerializer):
 
 class EmptyInput(ContextSerializer):
     pass
+
+
+class ContextLabelSummary(ContextSerializer):
+    name = s.CharField()
+    version = Integer(min_value=1)
+    version_id = s.UUIDField()
+
+
+class ContextSummary(ContextSerializer):
+    id = s.UUIDField()
+    kind = s.ChoiceField(choices=["agent_context"])
+    name = s.CharField()
+    description = s.CharField()
+    tags = s.ListField(child=s.CharField())
+    metadata_revision = Integer(min_value=0)
+    latest_version = Integer(min_value=1, allow_null=True)
+    labels = ContextLabelSummary(many=True)
+    release_revision = Integer(min_value=0)
+    security_revision = Integer(min_value=0)
+    protected_label_names = s.ListField(child=s.CharField())
+    has_draft = s.BooleanField()
+    updated_at = s.DateTimeField()
+    updated_by = Person(allow_null=True)
+
+
+class ContextDraftOut(ContextSerializer):
+    base_version = Integer(min_value=1, allow_null=True)
+    expected_head_version = Integer(min_value=1, allow_null=True)
+    revision = Integer(min_value=1)
+    files = FileInput(many=True)
+    note = s.CharField(allow_blank=True)
+    context_spec = ContextSpec()
+    resolved_lock = ResolvedLock()
+    digest = Digest(allow_null=True)
+    checks = ChecksResult()
+    updated_at = s.DateTimeField()
+
+
+class HeadReview(ContextSerializer):
+    subject_id = s.UUIDField()
+    kind = s.ChoiceField(choices=["skill", "agent_context"])
+    draft_revision = Integer(min_value=1)
+    candidate_digest = Digest()
+    base_version = Integer(min_value=1, allow_null=True)
+    expected_head_version = Integer(min_value=1, allow_null=True)
+    head_digest = Digest(allow_null=True)
+    review_fingerprint = Digest()
+
+
+class ContextReleasePermissions(ContextSerializer):
+    can_publish = s.BooleanField()
+    can_promote = s.BooleanField()
+    can_manage_protection = s.BooleanField()
+    can_quarantine = s.BooleanField()
+    can_issue_credentials = s.BooleanField()
+
+
+class ContextReleaseState(ContextSerializer):
+    latest_version = Integer(min_value=1, allow_null=True)
+    release_revision = Integer(min_value=0)
+    security_revision = Integer(min_value=0)
+    protected_label_names = s.ListField(child=s.CharField())
+    labels = LabelOut(many=True)
+    permissions = ContextReleasePermissions()
+
+
+class ContextSafetyOut(QuarantineInput):
+    affected_context_count = Integer(min_value=0)
+
+
+class SessionOut(ContextSerializer):
+    session_id = s.UUIDField()
+    version_id = s.UUIDField()
+    version = Integer(min_value=1)
+    digest = Digest()
+    requested = Selector()
+    binding_revision = Integer(min_value=1)
+    label_event_id = s.UUIDField(allow_null=True)
+    manifest_url = s.CharField()
+    history_mode = s.ChoiceField(choices=["fresh", "resumed"])
+    access_check_url = s.CharField()
+    resolution_id = s.UUIDField()
+    resolution_expires_at = s.DateTimeField()
+
+
+class ReceiptAccepted(ContextSerializer):
+    id = s.UUIDField()
+    accepted = s.BooleanField()
+
+
+class ContextCaseInput(v11.CaseInput):
+    # A standing AGENTS root has no routing/activation expectation.
+    expected_trigger = v11.Boolean(
+        allow_null=True, help_text="Must be null for a standing context."
+    )
+
+    def validate_expected_trigger(self, value):
+        if value is not None:
+            raise s.ValidationError(
+                "Standing context routing is not applicable; use null."
+            )
+        return value
+
+    class Meta:
+        ref_name = "SkillsContextCaseInput"
+
+
+class ContextCaseSelection(v11.CaseSelection):
+    cases = ContextCaseInput(many=True, min_length=1, max_length=20, required=False)
+
+    class Meta:
+        ref_name = "SkillsContextCaseSelection"
+
+
+class ContextBaseline(ContextSerializer):
+    kind = s.ChoiceField(choices=["production", "version", "without_context"])
+    version = Integer(min_value=1, required=False)
+
+    def validate(self, attrs):
+        expected = {"kind", "version"} if attrs["kind"] == "version" else {"kind"}
+        if set(attrs) != expected:
+            raise s.ValidationError("Supply exactly the selected baseline fields.")
+        return attrs
+
+
+class ContextRunConfig(v11.RunConfig):
+    cases = ContextCaseSelection()
+    baselines = s.ListField(child=ContextBaseline(), min_length=1, max_length=2)
+    competitors = v11.CompetitorRef(many=True, max_length=0)
+    harness = s.ChoiceField(choices=["contexts-text-v1.2"])
+
+    class Meta:
+        ref_name = "SkillsContextRunConfig"
+
+    def validate(self, attrs):
+        kinds = [baseline["kind"] for baseline in attrs["baselines"]]
+        if len(kinds) != len(set(kinds)):
+            raise s.ValidationError("Use each baseline kind at most once.")
+        # Reuse v1.1's token/cost/profile limits without passing context arms to
+        # its leaf-only execution dispatcher. Resolution must additionally reject
+        # production/reference aliases of the same immutable release.
+        normalized = {
+            **attrs,
+            "baselines": [
+                "production" if kind != "without_context" else "without_target"
+                for kind in kinds
+            ],
+        }
+        # Production + historical reference is a valid repeated comparison. The
+        # common limit validator only needs distinct arm slots and their count.
+        if len(normalized["baselines"]) == 2:
+            normalized["baselines"] = ["production", "without_target"]
+        super().validate(normalized)
+        return attrs
+
+
+class ContextAnswerComparison(v11.AnswerComparison):
+    baseline = s.ChoiceField(choices=["production", "reference", "without_target"])
+
+    class Meta:
+        ref_name = "SkillsContextAnswerComparison"
+
+
+class ContextAttemptSummary(v11.AttemptSummary):
+    routing_verdict = s.ChoiceField(choices=["not_applicable"])
+
+    class Meta:
+        ref_name = "SkillsContextAttemptSummary"
+
+
+class ContextVariantResult(v11.VariantResult):
+    variant = s.ChoiceField(
+        choices=["candidate", "production", "reference", "without_target"]
+    )
+    attempts = ContextAttemptSummary(many=True)
+
+    class Meta:
+        ref_name = "SkillsContextVariantResult"
+
+
+class ContextCaseResult(v11.CaseResult):
+    expected_trigger = v11.Boolean(
+        allow_null=True, help_text="Must be null for a standing context."
+    )
+
+    def validate_expected_trigger(self, value):
+        if value is not None:
+            raise s.ValidationError(
+                "Standing context routing is not applicable; use null."
+            )
+        return value
+
+    variants = ContextVariantResult(many=True)
+    answer_comparisons = ContextAnswerComparison(many=True)
+    reference = v11.SnapshotIdentity(allow_null=True)
+
+    class Meta:
+        ref_name = "SkillsContextCaseResult"
+
+
+class ContextRunSummary(v11.RunSummary):
+    subject_kind = s.ChoiceField(choices=["agent_context"])
+    reference = v11.SnapshotIdentity(allow_null=True)
+    competitors = v11.SnapshotIdentity(many=True, max_length=0)
+    answer_comparisons = ContextAnswerComparison(many=True)
+
+    class Meta:
+        ref_name = "SkillsContextRunSummary"
+
+
+class ContextCaseOut(v11.CaseOut):
+    expected_trigger = v11.Boolean(
+        allow_null=True, help_text="Must be null for a standing context."
+    )
+
+    def validate_expected_trigger(self, value):
+        if value is not None:
+            raise s.ValidationError(
+                "Standing context routing is not applicable; use null."
+            )
+        return value
+
+    class Meta:
+        ref_name = "SkillsContextCaseOut"
+
+
+class ContextDeliveryReceipt(v11.Receipt):
+    source_version_id = s.UUIDField(allow_null=True)
+
+    class Meta:
+        ref_name = "SkillsContextDeliveryReceipt"
+
+
+class ContextAttemptDetail(v11.AttemptDetail):
+    case = ContextCaseOut()
+    variant = s.ChoiceField(
+        choices=["candidate", "production", "reference", "without_target"]
+    )
+    routing_verdict = s.ChoiceField(choices=["not_applicable"])
+    reference = v11.SnapshotIdentity(allow_null=True)
+    receipts = ContextDeliveryReceipt(many=True)
+
+    class Meta:
+        ref_name = "SkillsContextAttemptDetail"
+
+
+class ContextSnapshotFileQuery(v11.SnapshotFileQuery):
+    variant = s.ChoiceField(
+        choices=["candidate", "production", "reference", "without_target"]
+    )
+
+    class Meta:
+        ref_name = "SkillsContextSnapshotFileQuery"

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SkillEditorView from "./SkillEditorView";
 
-const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, scope: "org:ws:user" }));
+const api = vi.hoisted(() => ({ skill: {}, draft: {}, version: {}, file: vi.fn(), save: vi.fn(), discard: vi.fn(), refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user" }));
 vi.mock("src/api/skills", () => ({
   useSkill: () => api.skill,
   useSkillDraft: () => ({ ...api.draft, refetch: api.refetch }),
@@ -44,7 +44,7 @@ const mount = (entry = "/dashboard/skills/skill-id/edit") => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.tests = null; api.assist = null; api.testSnapshot = null; api.scope = "org:ws:user";
+  api.assistEnabled = true; api.tests = null; api.assist = null; api.testSnapshot = null; api.scope = "org:ws:user";
   api.skill = { data: { id: "skill-id", name: "sample-skill", latestVersion: 1, permissions: { canRunTests: true } } };
   api.draft = { data: initial };
   api.version = { data: { files: [{ path: "SKILL.md" }, { path: "references/policy.md" }] } };
@@ -56,6 +56,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("skill editor", () => {
+  it("edits description and instructions through the real route's canonical session", async () => {
+    const content = '---\nname: sample-skill\ndescription: Use when reviewing a support request.\nlicense: MIT\n---\nOriginal policy.\n';
+    api.draft = { data: { ...initial, files: [{ path: 'SKILL.md', content }] } };
+    mount();
+    fireEvent.change(await screen.findByLabelText('When should the agent use this skill?'), { target: { value: 'Use when reviewing refunds.' } });
+    fireEvent.change(screen.getByLabelText('Instructions'), { target: { value: 'Reviewed policy.\n' } });
+    fireEvent.click(screen.getByRole('tab', { name: 'Source' }));
+    const expected = '---\nname: sample-skill\ndescription: "Use when reviewing refunds."\nlicense: MIT\n---\nReviewed policy.\n';
+    expect(screen.getByLabelText('File content')).toHaveValue(expected);
+    fireEvent.click(screen.getByRole('button', { name: 'Publish', exact: true }));
+    await screen.findByRole('dialog', { name: 'Publish review' });
+    expect(api.save).toHaveBeenCalledExactlyOnceWith({ ...initial, files: [{ path: 'SKILL.md', content: expected }] });
+    expect(api.tests.draft.files[0].content).toBe(expected);
+  });
+
   it("waits for stale cached draft revalidation before latching the editing snapshot", async () => {
     api.draft = { data: initial, isFetching: true };
     const view = mount();
@@ -170,7 +185,7 @@ describe("skill editor", () => {
 
   it("does not allow editing a partially loaded version", async () => {
     api.draft = { data: null };
-    api.file.mockImplementation((_id, _number, path) => path === "SKILL.md" ? { data: { text: "Published instructions" } } : { isError: true, refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, scope: "org:ws:user" });
+    api.file.mockImplementation((_id, _number, path) => path === "SKILL.md" ? { data: { text: "Published instructions" } } : { isError: true, refetch: vi.fn(), tests: null, assist: null, testSnapshot: null, assistEnabled: true, scope: "org:ws:user" });
     mount();
     await screen.findByText("Couldn't load references/policy.md");
     expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
@@ -194,10 +209,10 @@ describe("skill editor", () => {
     mount();
     await screen.findByLabelText("File content");
     fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-    expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("File content")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Open check" }));
     expect(screen.getByLabelText("File content")).toHaveAttribute("data-line", "3");
-    expect(screen.getByRole("tab", { name: "Edit" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("blocks navigation and document unload for unsaved edits", async () => {
@@ -276,7 +291,7 @@ vi.mock("src/sections/skills/assist/AssistPanel", () => ({ default: (props) => {
   api.assist = props;
   return <div>Draft assistance: {props.kind}<button onClick={() => props.onApplied({ ...props.draft, revision: 12, files: [{ path: 'SKILL.md', content: 'Reviewed proposal' }] })}>Apply reviewed proposal</button></div>;
 } }));
-vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: api.scope }) }));
+vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: api.scope }), useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 
  it('composes live dirty state and flushes an older save before Tests consumes a snapshot', async () => {
    let finish;

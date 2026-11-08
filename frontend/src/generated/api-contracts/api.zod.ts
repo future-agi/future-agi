@@ -33713,6 +33713,7 @@ export const ModelHubSkillsTestingOptionsListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     enabled: zod.boolean(),
+    assist_enabled: zod.boolean(),
     github_enabled: zod.boolean(),
     models: zod.array(
       zod.object({
