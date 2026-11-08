@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useContext, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -14,6 +14,11 @@ import { fmtMs } from "src/utils/utils";
 import { seriesColor } from "src/theme/data-colors";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 import { fmtWpm } from "./formatters";
+import AcousticMetricsSection from "./AcousticMetricsSection";
+import {
+  AcousticMetricsLoadContext,
+  isAcousticMetricsVisible,
+} from "./acousticMetricsLabels";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -673,6 +678,8 @@ const CallAnalyticsView = ({
   costBreakdown,
   isLiveKit,
   apiMetrics,
+  audioMetrics,
+  isStale = false,
 }) => {
   const metrics = useMemo(() => {
     const turns = enrichTurns(transcript);
@@ -682,12 +689,18 @@ const CallAnalyticsView = ({
   const hasApiMetrics =
     apiMetrics && Object.values(apiMetrics).some((v) => v != null);
 
+  const audioLoadState = useContext(AcousticMetricsLoadContext);
+  const hasAcousticMetrics =
+    isAcousticMetricsVisible(audioMetrics) ||
+    (audioMetrics === undefined &&
+      (audioLoadState?.isLoading || audioLoadState?.isError));
   const hasAny =
     (transcript && transcript.length > 0) ||
     latencies ||
     costBreakdown ||
     analysisSummary ||
-    hasApiMetrics;
+    hasApiMetrics ||
+    hasAcousticMetrics;
 
   if (!hasAny) {
     return (
@@ -711,6 +724,10 @@ const CallAnalyticsView = ({
       {/* KPI strip — always render if we have transcript or API metrics */}
       {(transcript?.length > 0 || hasApiMetrics) && (
         <KpiStrip metrics={metrics} apiMetrics={apiMetrics} />
+      )}
+
+      {hasAcousticMetrics && (
+        <AcousticMetricsSection data={audioMetrics} isStale={isStale} />
       )}
 
       {/* Latency pipeline */}
@@ -755,6 +772,8 @@ CallAnalyticsView.propTypes = {
   analysisSummary: PropTypes.string,
   costBreakdown: PropTypes.object,
   isLiveKit: PropTypes.bool,
+  audioMetrics: PropTypes.object,
+  isStale: PropTypes.bool,
   apiMetrics: PropTypes.shape({
     turnCount: PropTypes.number,
     talkRatio: PropTypes.number,

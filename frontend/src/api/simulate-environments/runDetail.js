@@ -10,6 +10,11 @@ import {
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import {
+  callDetailRefetchInterval,
+  callDetailRetry,
+  isCallDetailAccessError,
+} from "./callDetailPolling";
 import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
@@ -639,29 +644,32 @@ export function mapCallDetail(raw) {
  * @param {Object} [options]  Extra react-query options (e.g. `retry`, `meta`).
  */
 export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
+  const queryClient = useQueryClient();
+  const queryKey = ["simulation-call-detail-v3", callExecId];
+  const retry =
+    options?.retry ??
+    queryClient.getQueryDefaults(queryKey).retry ??
+    queryClient.getDefaultOptions().queries?.retry;
   return useQuery({
     ...options,
-    queryKey: ["simulation-call-detail-v3", callExecId],
+    queryKey,
     queryFn: () =>
       axios
         .get(endpoints.runResultsV3.callDetail(callExecId))
         .then((response) => response.data),
     enabled: enabled && !!callExecId,
-    staleTime: 1000 * 60 * 5,
+    // A reopen must retry access even when the retained data is still fresh.
+    staleTime: (query) =>
+      isCallDetailAccessError(query.state.error) ? 0 : 1000 * 60 * 5,
+    retry: callDetailRetry(retry),
     refetchInterval: (query) => {
-      const data = query.state.data;
+      const { data, error } = query.state;
       // An eval still being scored lands while the drawer is open.
       const isScoring = (data?.evaluations ?? []).some(
         (evaluation) => evaluation?.status === SCORING_STATUS.PENDING,
       );
-      const evalMetrics = data?.eval_metrics;
-      const isLocalizing =
-        !!evalMetrics &&
-        typeof evalMetrics === "object" &&
-        Object.values(evalMetrics).some((metric) =>
-          ["pending", "running"].includes(metric?.error_localizer_status),
-        );
-      return isScoring || isLocalizing ? 3000 : false;
+      if (isScoring && !isCallDetailAccessError(error)) return 3000;
+      return callDetailRefetchInterval(data, error);
     },
   });
 }

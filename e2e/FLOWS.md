@@ -2464,3 +2464,34 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — A completed voice call shows the tested agent's acoustic metrics, an uncalibrated VQI and the same envelope in the raw export
+
+**Goal:** A developer reviewing a completed voice call from an Environments run reads the tested agent's average pitch and estimated SNR in Call Analytics, sees the voice quality index marked as not calibrated with its reason rather than a number, can open the capture/version details and measurement limits, and downloads the same metrics in the raw JSON; a call that was never analyzed says so instead of showing numbers. The stored analysis result is seeded (no recording, provider call or analysis worker runs in this harness — see seedAcousticMetricsCalls in e2e/lib/simulate-seed.ts)
+
+**Spec:** `flows/simulate/call-acoustic-metrics.spec.ts:182`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed Environments run with two voice calls through the backend: one with a stored acoustic-metrics result, one never analyzed
+2. open the analyzed call's drawer from its run page and switch to Call Analytics
+3. read the pitch, SNR and voice quality index rows and the status badge
+4. open Capture & version details and Measurement limits
+5. download the raw data
+6. open the never-analyzed call's drawer and switch to Call Analytics
+
+**Backend state verified:**
+
+- PG simulate_call_execution holds the seeded result, with its private storage key, on the analyzed call and NULL on the other, both in the actor's organization at analysis generation 0
+- GET /simulate/v3/call-executions/{id}/ returns the analyzed call's audio_metrics exactly: pitch and SNR available with their values, versions and coverage, the voice quality index unavailable with reason not_validated and no value, model or calibration, the derived state partial, and no private storage key
+- the same endpoint returns state not_requested with every metric unavailable and reason not_analyzed for the never-analyzed call
+- the call-detail response the drawer received carries the same envelope as the API read
+
+**Browser observations:**
+
+- the acoustic metrics region shows exactly 187.4 for pitch, 23.6 for SNR and "Calibration not validated — Unavailable" for the voice quality index, under a Partial badge
+- Capture & version details shows the pipeline version, no calibration, and the not_validated reason code; Measurement limits states VQI is not MOS
+- the downloaded raw JSON carries the same audio_metrics as the API, without the private storage key
+- the never-analyzed call shows "Not analyzed — Unavailable" on all three rows under an Unavailable badge

@@ -730,7 +730,17 @@ class LivekitService(VoiceServiceBlueprint):
             stream_egress_to_s3,
         )
 
-        result = RecordingUrls()
+        from ee.voice.services.audio_provenance import unsupported_provenance
+        from ee.voice.services.recording_provenance import recording_artifacts
+
+        result = RecordingUrls(
+            provenance=unsupported_provenance(
+                "unknown_agent_track",
+                system_engine="livekit",
+                capture_origin="livekit_egress",
+                transport="livekit_room",
+            )
+        )
         call_id_str = str(call_execution_id)
 
         call = await CallExecution.objects.aget(id=call_execution_id)
@@ -894,6 +904,7 @@ class LivekitService(VoiceServiceBlueprint):
             customer_recording_url=bool(result.customer_recording_url),
         )
 
+        result.provenance.artifacts = await recording_artifacts(result)
         return result
 
     async def extract_costs(self, call_execution_id: str) -> CostBreakdown:

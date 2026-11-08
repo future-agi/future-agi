@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ee.voice.services.audio_provenance import AudioProvenance
+
 # ---------------------------------------------------------------------------
 # Call Retrieval
 # ---------------------------------------------------------------------------
@@ -213,3 +215,4 @@ class RecordingUrls:
     assistant_recording_url: str | None = None
     customer_recording_url: str | None = None
     provider_call_data: dict[str, Any] | None = None
+    provenance: AudioProvenance | None = None

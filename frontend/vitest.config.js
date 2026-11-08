@@ -3,7 +3,14 @@ import { mergeConfig } from 'vite';
 import viteConfig from './vite.config.js';
 
 export default mergeConfig(
-  viteConfig,
+  {
+    ...viteConfig,
+    // Vitest runs assertions; the dev checker starts a whole-source lint
+    // watcher that can interrupt the run. Lint remains a separate command.
+    plugins: viteConfig.plugins.filter(
+      (plugin) => plugin.name !== 'vite-plugin-checker',
+    ),
+  },
   defineConfig({
     test: {
       globals: true,
