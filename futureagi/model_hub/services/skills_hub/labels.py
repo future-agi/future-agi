@@ -100,6 +100,11 @@ def _set_label_locked(
     version = skill.versions.filter(number=version_number).first()
     if version is None:
         raise SkillsHubError("version_not_found", "Version not found.", status=404)
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    require_distribution_eligibility(version)
     if expected_digest is not None and expected_digest != version.digest:
         raise SkillsHubError(
             "candidate_changed", "The reviewed content changed.", status=409

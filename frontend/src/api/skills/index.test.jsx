@@ -5,6 +5,7 @@ import PropTypes from 'prop-types';
 import axios from 'src/utils/axios';
 import { saveAs } from 'file-saver';
 import * as api from './index';
+import useLabelHistoryPage from 'src/sections/skills/versions/useLabelHistoryPage';
 
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
 vi.mock('file-saver', () => ({ saveAs: vi.fn() }));
@@ -125,6 +126,74 @@ it('reads normalized and raw Axios error codes', () => {
   expect(api.getSkillErrorCode({ code: 'ERR_BAD_REQUEST', response: { status: 409, data: { code: 'draft_conflict' } } })).toBe('draft_conflict');
 });
 
+describe('paginated label history scope and refresh', () => {
+  const historyPage = (page, note) => envelope({
+    results: [{ label: 'production', from_version: 1, to_version: 2, note }],
+    count: 26, page, page_size: 25, total_pages: 2,
+  });
+
+  it('sends explicit scope and stores each page beneath the release invalidation prefix', async () => {
+    axios.get.mockImplementation((url, config) => Promise.resolve(historyPage(config.params.page, 'Reviewed move')));
+    const first = renderHook(() => useLabelHistoryPage('id', 'production', 1), { wrapper });
+    const second = renderHook(() => useLabelHistoryPage('id', 'production', 2), { wrapper });
+    await waitFor(() => expect(first.result.current.isSuccess && second.result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith('/model-hub/skills/id/labels/history/', {
+      params: { label: 'production', page: 2, page_size: 25 }, signal: expect.any(AbortSignal), headers,
+    });
+    expect(client.getQueriesData({ queryKey: scoped('id', 'labelHistory') }).map(([, data]) => data.page).sort()).toEqual([1, 2]);
+    expect(client.getQueriesData({ queryKey: api.skillsKeys.labelHistory('id', 'production') })).toEqual([]);
+  });
+
+  it.each([
+    ['move', api.useSetSkillLabel, { label: 'production', version: 2, expectedVersion: 1, expectedReleaseRevision: 4 }],
+    ['remove', api.useRemoveSkillLabel, { label: 'production', expectedVersion: 1, expectedReleaseRevision: 4 }],
+    ['publish', api.usePublishSkillDraft, { revision: 7, labels: ['production'], expectedReleaseRevision: 4 }],
+    ['restore', api.useRestoreSkillVersion, { number: 1 }],
+  ])('refreshes every active history page after %s', async (_, useReleaseMutation, input) => {
+    let note = 'Before release';
+    axios.get.mockImplementation((url, config) => Promise.resolve(historyPage(config.params.page, note)));
+    axios.put.mockResolvedValue(envelope({ name: 'production', version: 2 }));
+    axios.post.mockResolvedValue(envelope({ version: { number: 3 } }));
+    axios.delete.mockResolvedValue({});
+    const { result } = renderHook(() => ({
+      first: useLabelHistoryPage('id', undefined, 1),
+      second: useLabelHistoryPage('id', undefined, 2),
+      release: useReleaseMutation('id'),
+    }), { wrapper });
+    await waitFor(() => expect(result.current.first.data?.results[0].note).toBe('Before release'));
+    await waitFor(() => expect(result.current.second.data?.results[0].note).toBe('Before release'));
+    note = 'After release';
+    await act(() => result.current.release.mutateAsync(input));
+    await waitFor(() => expect(result.current.first.data?.results[0].note).toBe('After release'));
+    await waitFor(() => expect(result.current.second.data?.results[0].note).toBe('After release'));
+    expect(axios.get).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['organizationId', 'workspaceId', 'userId'])('discards a late history response when %s changes', async (field) => {
+    let finish;
+    const oldScope = { ...context };
+    axios.get.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const { result, rerender } = renderHook(() => useLabelHistoryPage('id', undefined, 2), { wrapper });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    const oldSignal = axios.get.mock.calls[0][1].signal;
+    context[field] = 'scope-b';
+    axios.get.mockResolvedValue(historyPage(2, 'Current scope'));
+    rerender();
+    await waitFor(() => expect(result.current.data?.results[0].note).toBe('Current scope'));
+    await act(async () => { finish(historyPage(2, 'Old scope')); });
+    expect(oldSignal.aborted).toBe(true);
+    expect(result.current.data.results.map((event) => event.note)).toEqual(['Current scope']);
+    expect(client.getQueriesData({ queryKey: api.skillsKeys.v11(oldScope, 'legacy', 'id', 'labelHistory') })).toEqual([]);
+  });
+
+  it('does not fetch history until the scope and skill are available', () => {
+    renderHook(() => useLabelHistoryPage(null, undefined, 1), { wrapper });
+    context.workspaceId = null;
+    renderHook(() => useLabelHistoryPage('id', undefined, 1), { wrapper });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
 describe('v1.1 release and scope integration', () => {
   it('sends digest, evidence and aggregate CAS without renaming draft revision', async () => {
     axios.post.mockResolvedValue(envelope({ version: { number: 2 }, release_revision: 9, evidence: null }));
@@ -157,7 +226,11 @@ describe('v1.1 release and scope integration', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: scoped('id', 'draft') });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: scoped('id', 'detail') });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: api.skillsKeys.v11(context, 'id', 'evidence') });
+    // mutateAsync settles before React Query's scheduled observer notification.
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toMatchObject({ code });
     expect(result.current.variables).toBe(input);
+    expect(axios.post.mock.calls[0][1].evidence_run_id).toBe('keep-this-run');
     expect(input.evidenceRunId).toBe('keep-this-run');
     expect(axios.post).toHaveBeenCalledTimes(1);
   });

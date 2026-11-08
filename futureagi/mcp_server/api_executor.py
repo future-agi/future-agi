@@ -5,8 +5,9 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlencode
+from uuid import UUID
 
 from asgiref.sync import async_to_sync, sync_to_async
 from django.urls import Resolver404, get_resolver, resolve
@@ -17,6 +18,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import APIKeyAuthentication
 from mcp_server.generated_registry import GeneratedTool
+from mcp_server.request_headers import validate_header_mapping
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -134,12 +136,22 @@ class DjangoAPIExecutor:
         if query:
             request_path = f"{path}?{urlencode(query, doseq=True)}"
 
-        request_kwargs = {
+        request_kwargs: dict[str, Any] = {
             "HTTP_X_ORGANIZATION_ID": str(context.organization.id),
             "HTTP_X_WORKSPACE_ID": (
                 str(context.workspace.id) if context.workspace is not None else ""
             ),
         }
+        try:
+            for name in validate_header_mapping(parameter_map.get("header", [])):
+                if name in arguments:
+                    value = arguments[name]
+                    UUID(value)
+                    request_kwargs["HTTP_" + name.upper().replace("-", "_")] = value
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise APIExecutionError(
+                "Invalid caller header mapping or UUID.", status_code=400
+            ) from exc
         if body:
             request = self._request_factory.generic(
                 method,
@@ -165,7 +177,7 @@ class DjangoAPIExecutor:
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.
         if context.api_key is not None:
-            request.org_api_key = context.api_key
+            cast(Any, request).org_api_key = context.api_key
         try:
             self._require_tenant_access(context)
             authentication = APIKeyAuthentication()
@@ -208,7 +220,7 @@ class DjangoAPIExecutor:
             if not tool.annotations["readOnlyHint"]:
                 # The API has already committed this write. Preserve its receipt
                 # so clients do not retry a successful mutation after a size error.
-                receipt = {
+                receipt: dict[str, Any] = {
                     "_mcp": {
                         "truncated": True,
                         "message": (

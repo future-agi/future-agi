@@ -171,6 +171,14 @@ class APIKeyAuthentication(BaseAuthentication):
             )
 
     def authenticate(self, request):
+        scheme = request.META.get("HTTP_AUTHORIZATION", "").split()
+        if scheme and scheme[0].lower() == "context":
+            # Only explicitly opted-in purpose views accept isolated credentials.
+            # Do not fall back to a broad key or select an organization's user.
+            raise AuthenticationFailed(
+                "Context credentials are not accepted on this endpoint.",
+                code="credential_operation_forbidden",
+            )
         # Check for JWT token first
         auth_token = (
             request.META.get("HTTP_AUTHORIZATION", "")
@@ -1150,9 +1158,9 @@ def _database_unavailable_metadata(exc):
     cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
     metadata = {
         "error_class": bounded_name(type(exc).__name__),
-        "cause_class": bounded_name(type(cause).__name__)
-        if cause is not None
-        else None,
+        "cause_class": (
+            bounded_name(type(cause).__name__) if cause is not None else None
+        ),
         "sqlstate": None,
         "source_module": None,
         "source_function": None,
