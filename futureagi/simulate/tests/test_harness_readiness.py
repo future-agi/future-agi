@@ -126,9 +126,15 @@ def _certify(
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
-    per-action files, the tools ``routed`` to the world in qualification and these
-    warnings."""
+    per-action files, the tools ``routed`` to the world in qualification (by default
+    each tool whose probe passed or was refused) and these warnings."""
     pairing = pairing or _pairing(environment, agent)
+    if routed is None:
+        routed = [
+            one["action"]
+            for one in (ACTIONS if actions is None else actions)
+            if one["status"] in ("passed", "refused")
+        ]
     key = assembly.bundle_key(
         pairing.runtime, pairing.environment_version, pairing.suite_version
     )
@@ -153,7 +159,7 @@ def _certify(
                         }
                     ).encode()
                 }
-                if routed is not None
+                if routed
                 else {}
             ),
         }
@@ -523,7 +529,8 @@ class TestPairs:
 
         report = _report(environment)
 
-        assert _rows(report)["tool_routing"]["status"] == "supported"
+        # A build certificate holds no record of the agent's calls reaching the world.
+        assert _rows(report)["tool_routing"]["status"] == "partial"
         assert report["answer"]["kind"] == "blocked"
         assert report["answer"]["reason_code"] == "pair_failed"
 
@@ -537,7 +544,7 @@ class TestPairs:
         routing = _rows(stale)["tool_routing"]
         assert (routing["status"], routing["was"], routing["stale_because"]) == (
             "stale",
-            "supported",
+            "partial",
             "agent_version",
         )
         assert stale["answer"]["kind"] == "stale"
@@ -2245,19 +2252,117 @@ class TestObservedRouting:
             "production_only",
         )
 
-    def test_a_call_not_marked_routed_is_not_counted(self):
+    def test_a_tool_the_world_never_received_blocks_its_cases(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-not-received")
+        _certify(environment, storage)
+        HarnessAssembledBundle._base_manager.filter(job_id=environment.id).update(
+            certificate={
+                "checks": PASSED,
+                "tool_routing": {
+                    "tools": [
+                        {"tool": "lookup_order", "routed": True},
+                        {
+                            "tool": "issue_refund",
+                            "routed": False,
+                            "reason": "not_received",
+                        },
+                    ]
+                },
+            }
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "tool_not_routed",
+        )
+        assert routing["reason"] == (
+            "Called, but the test world never received it: issue_refund"
+        )
+        assert [one["name"] for one in routing["targets"]] == ["issue_refund"]
+        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+
+    def test_a_passed_probe_alone_is_never_routed(self, user, workspace, storage):
+        # The harness calling a tool is not the agent's call reaching the world.
+        environment = _environment(user, workspace, storage, "tr-probe-only")
+        _certify(environment, storage, routed=())
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "partial",
+            "probe_not_run",
+        )
+        assert routing["reason"] == (
+            "Not yet shown reaching the test world: issue_refund (no call of it was"
+            " recorded), lookup_order (no call of it was recorded)"
+        )
+
+    def test_a_tool_the_agent_runs_itself_reads_partial_with_why(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-in-agent")
+        _certify(
+            environment,
+            storage,
+            routed=["lookup_order"],
+            unobserved=[{"tool": "issue_refund", "reason": "no_world_record"}],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "partial"
+        assert routing["reason"] == (
+            "Not yet shown reaching the test world: issue_refund (the agent runs it"
+            " itself, so the test world keeps no record of the call)"
+        )
+
+    def test_probes_counted_without_names_are_never_routed(self):
         reading = evidence_module._tool_routing(
             evidence_module.Evidence(
                 source="pair_certificate",
-                checks={"action_behavior": "0/0"},
+                checks={"action_behavior": "2/2"},
                 tools=[],
-                actions=NOT_PROBED,
+                actions=[],
                 checked_at=None,
-                routed=[{"tool": "lookup_order", "routed": False}],
             )
         )
 
-        assert reading.finding == "not_run"
+        assert (reading.finding, reading.reason_code) == ("limited", "probe_not_run")
+
+    def test_tools_the_provider_runs_read_unavailable(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "tr-provider")
+        _certify(
+            environment,
+            storage,
+            tools=[
+                {
+                    "tool": "lookup_order",
+                    "availability": "runtime_only",
+                    "entrypoint_mode": "provider",
+                },
+                {
+                    "tool": "issue_refund",
+                    "availability": "runtime_only",
+                    "entrypoint_mode": "provider",
+                },
+            ],
+            actions=NOT_PROBED,
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "unavailable",
+            "tools_in_provider",
+        )
+        assert routing["reason"] == (
+            "The provider runs these tools in its own systems, so their calls never"
+            " reach the test world"
+        )
 
     def test_an_unobserved_tool_names_why_it_was_not_shown(
         self, user, workspace, storage

@@ -45,8 +45,8 @@ def _status(reading: Reading) -> tuple[Status, str | None, str | None]:
     if reading.finding == "not_applicable":
         return (
             "unavailable",
-            "not_applicable",
-            "This agent's lane cannot have this check",
+            reading.reason_code or "not_applicable",
+            reading.reason or "This agent's lane cannot have this check",
         )
     if reading.finding == "limited":
         return "partial", reading.reason_code, reading.reason
@@ -426,9 +426,13 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
     "tool_routing": {
         "blocked:tool_signature_changed": "Cases that use {target} cannot run: the"
         " agent calls it with other arguments than the test world takes",
+        "blocked:tool_not_routed": "Cases that use {target} cannot run: the agent's"
+        " call to it never reached the test world, so it may reach a real system",
         "supported": "Every tool call lands in the test world, never in a real system",
-        "partial": "Some tools were not probed, so a case may still reach a real system"
-        " through them",
+        "partial": "Some tools were not shown reaching the test world, so a case may"
+        " still reach a real system through them",
+        "unavailable": "The agent's tools run outside the test world, so their effects"
+        " are not graded from it",
         "blocked": "Cases that use {target} cannot run until it is routed to the test"
         " world",
     },

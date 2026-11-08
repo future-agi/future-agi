@@ -353,30 +353,69 @@ def _tool_routing(evidence: Evidence) -> Reading:
             targets("action", failed, "failed"),
             seen,
         )
-    # A refused probe is the agent declining a call it should decline: a pass. A tool
-    # seen reaching the test world in the qualification conversation is routed there.
-    routed = sorted(
-        str(item.get("tool") or "")
-        for item in evidence.routed
-        if item.get("routed") is True and item.get("tool")
-    )
-    passed = sorted({*_actions(evidence, "passed", "refused"), *routed})
-    not_run = [one for one in _actions(evidence, "not_run") if one not in routed]
+    # Routing is read only from what the test world itself received in qualification. A
+    # probe that passed is the harness calling the tool, not the agent's call reaching it.
+    routed = _routed(evidence, True)
+    not_received = _routed(evidence, False)
+    if not_received:
+        return Reading(
+            "failed",
+            "tool_not_routed",
+            "Called, but the test world never received it: " + ", ".join(not_received),
+            targets("tool", not_received, "not_routed"),
+            seen,
+        )
     if routed:
         seen = [*seen, {"check": "tools_routed", "result": ", ".join(routed)}]
-    if passed and not_run:
+    named = {str(item.get("tool") or "") for item in evidence.tools}
+    by_provider = {
+        str(item.get("tool") or "")
+        for item in evidence.tools
+        if item.get("entrypoint_mode") == "provider"
+    }
+    if named and by_provider == named and not routed:
+        return Reading(
+            "not_applicable",
+            "tools_in_provider",
+            "The provider runs these tools in its own systems, so their calls never"
+            " reach the test world",
+            evidence=seen,
+        )
+    unobserved = {str(item.get("tool") or "") for item in evidence.unobserved}
+    unseen = sorted(
+        {*_actions(evidence, "passed", "refused", "not_run"), *unobserved}
+        - {"", *routed}
+    )
+    probed = bool(_actions(evidence, "passed", "refused") or (ratio and ratio[0]))
+    if unseen and (routed or unobserved or probed):
         return Reading(
             "limited",
             "probe_not_run",
             "Not yet shown reaching the test world: "
-            + ", ".join(_why_unobserved(one, evidence) for one in not_run),
-            targets("action", not_run, "not_run"),
+            + ", ".join(_why_unobserved(one, evidence) for one in unseen),
+            targets("action", unseen, "not_run"),
             seen,
         )
-    if passed or (ratio and ratio[1] > 0 and not not_run):
+    if routed:
         return Reading("passed", evidence=seen)
+    if probed:
+        return Reading(
+            "limited",
+            "probe_not_run",
+            "Its tools work when the harness calls them; no call of the agent's was"
+            " recorded reaching the test world",
+            evidence=seen,
+        )
     return Reading(
-        "not_run", targets=targets("action", not_run, "not_run"), evidence=seen
+        "not_run", targets=targets("action", unseen, "not_run"), evidence=seen
+    )
+
+
+def _routed(evidence: Evidence, routed: bool) -> list[str]:
+    return sorted(
+        str(item.get("tool") or "")
+        for item in evidence.routed
+        if item.get("routed") is routed and item.get("tool")
     )
 
 
@@ -384,6 +423,8 @@ _UNOBSERVED_REASONS = {
     "reaches_outside": "its contract says it leaves the test world, so it was not asked",
     "not_called": "asked, but not called",
     "request_failed": "asked, but the agent did not answer",
+    "no_world_record": "the agent runs it itself, so the test world keeps no record of"
+    " the call",
 }
 
 
@@ -396,7 +437,9 @@ def _why_unobserved(tool: str, evidence: Evidence) -> str:
         ),
         "",
     )
-    shown = _UNOBSERVED_REASONS.get(reason)
+    shown = _UNOBSERVED_REASONS.get(reason) or (
+        "" if evidence.routed or evidence.unobserved else "no call of it was recorded"
+    )
     return f"{tool} ({shown})" if shown else tool
 
 
