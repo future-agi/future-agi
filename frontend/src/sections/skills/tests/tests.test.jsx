@@ -164,6 +164,7 @@ const profile = {
 };
 const options = {
   enabled: true,
+  assistEnabled: true,
   models: [
     {
       modelId: "fixture-task",

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSkillV11Scope } from "src/api/skills/testing";
+import { useSkillV11Scope, useSkillTestingOptions } from "src/api/skills/testing";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import { Alert, Button, MenuItem, Stack, TextField } from "@mui/material";
@@ -13,6 +13,7 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
   const navigate = useNavigate();
   const templates = useSkillTemplates();
   const create = useCreateSkill();
+  const options = useSkillTestingOptions();
   const [created, setCreated] = useState(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -36,10 +37,10 @@ function NewSkillDialogContent({ open, onClose, initialTemplate = "blank" }) {
   };
 
   if (created) return (
-    <ModalWrapper open={open} onClose={onClose} title="Skill draft created" subTitle="Nothing is published. Continue writing, or ask for a private AI proposal to review."
+    <ModalWrapper open={open} onClose={onClose} title="Skill draft created" subTitle={options.data?.assistEnabled ? "Nothing is published. Continue writing, or ask for a private AI proposal to review." : "Nothing is published. Open the editor to continue writing."}
       actionBtnTitle="Open editor" isValid onSubmit={() => { onClose(); navigate(paths.dashboard.skills.edit(created.id)); }}>
       <Stack spacing={2}><Alert severity="info">Provide your policy. Missing facts will be questions, not invented rules.</Alert>
-        <Button variant="outlined" disabled={created.permissions?.canRunTests !== true} onClick={() => { onClose(); navigate(`${paths.dashboard.skills.edit(created.id)}?assist=draft`); }}>Draft with AI</Button>
+        <Button variant="outlined" disabled={created.permissions?.canRunTests !== true || !options.data?.assistEnabled} onClick={() => { onClose(); navigate(`${paths.dashboard.skills.edit(created.id)}?assist=draft`); }}>Draft with AI</Button>
       </Stack>
     </ModalWrapper>
   );
