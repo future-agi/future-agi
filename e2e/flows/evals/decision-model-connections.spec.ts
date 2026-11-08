@@ -55,12 +55,6 @@ async function saveSyntheticKey(page: Page, provider: 'OpenAI' | 'OpenRouter') {
 }
 
 async function runFromUI(page: Page, input: string, model: string, connection: string, actualModel: string) {
-  // The normal success toast overlaps the fixed footer and pauses its expiry
-  // on hover. Dismiss it through its real close button before running again.
-  const notices = page.getByRole('alert').filter({ hasText: /Evaluation saved successfully|API Key (created|updated) successfully/ });
-  for (const notice of await notices.all()) {
-    if (await notice.isVisible()) await notice.getByRole('button').click();
-  }
   // CodeEditor.jsx mounts Monaco. Use native paste: insertText is interpreted
   // as typing and can auto-close braces in a multiline JSON document.
   const editor = page.locator('.monaco-editor textarea.inputarea').first();
@@ -72,12 +66,18 @@ async function runFromUI(page: Page, input: string, model: string, connection: s
   await editor.press('ControlOrMeta+v');
   await ui(page.locator('.monaco-editor .view-lines').first()).toContainText(input);
   await ui(page.getByText('Invalid JSON', { exact: true })).toBeHidden();
-  const responsePromise = page.waitForResponse(r => new URL(r.url()).pathname === PLAYGROUND && r.request().method() === 'POST', { timeout: UI_READY });
-  // TestPlayground has a header-tab button with the same text. The actual
-  // execution action is EvalDetailPage's MUI Button in the fixed footer.
-  await page.getByRole('button', { name: 'Test Evaluation', exact: true })
-    .and(page.locator('button.MuiButton-root')).click();
-  const response = await responsePromise;
+  // Use normal keyboard activation: a late nonmodal success toast can cover
+  // the footer and pause on hover. Do not force-click through that overlay.
+  const runButton = page.getByRole('button', { name: 'Test Evaluation', exact: true })
+    .and(page.locator('button.MuiButton-root'));
+  await ui(runButton).toBeVisible();
+  await ui(runButton).toBeEnabled();
+  await runButton.focus();
+  await ui(runButton).toBeFocused();
+  const [response] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === PLAYGROUND && r.request().method() === 'POST', { timeout: UI_READY }),
+    runButton.press('Enter'),
+  ]);
   expect(response.request().postDataJSON().config.mapping).toEqual({ input });
   const body = await response.json() as Result;
   expect(response.status(), JSON.stringify(body)).toBe(200);
