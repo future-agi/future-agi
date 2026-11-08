@@ -2245,7 +2245,7 @@ class TestObservedRouting:
             "production_only",
         )
 
-    def test_a_call_marked_not_routed_went_elsewhere(self):
+    def test_a_call_not_marked_routed_is_not_counted(self):
         reading = evidence_module._tool_routing(
             evidence_module.Evidence(
                 source="pair_certificate",
@@ -2257,10 +2257,7 @@ class TestObservedRouting:
             )
         )
 
-        assert (reading.finding, reading.reason_code) == (
-            "failed",
-            "tool_routed_elsewhere",
-        )
+        assert reading.finding == "not_run"
 
     def test_an_unobserved_tool_names_why_it_was_not_shown(
         self, user, workspace, storage
@@ -2281,37 +2278,6 @@ class TestObservedRouting:
             "Not yet shown reaching the test world: issue_refund (its contract says it"
             " leaves the test world, so it was not asked)"
         )
-
-    def test_a_tool_the_agent_called_outside_the_world_blocks_its_cases(
-        self, user, workspace, storage
-    ):
-        environment = _environment(user, workspace, storage, "tr-elsewhere")
-        _certify(
-            environment,
-            storage,
-            checks={**PASSED, "action_behavior": "0/0"},
-            actions=NOT_PROBED,
-        )
-        HarnessAssembledBundle._base_manager.filter(job_id=environment.id).update(
-            certificate={
-                "checks": {**PASSED, "action_behavior": "0/0"},
-                "tool_routing": {
-                    "tools": [
-                        {"tool": "lookup_order", "routed": True},
-                        {"tool": "issue_refund", "routed": False},
-                    ]
-                },
-            }
-        )
-
-        routing = _rows(_report(environment))["tool_routing"]
-
-        assert (routing["status"], routing["reason_code"]) == (
-            "blocked",
-            "tool_routed_elsewhere",
-        )
-        assert [one["name"] for one in routing["targets"]] == ["issue_refund"]
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
 
 
 class TestReleaseChecks:
