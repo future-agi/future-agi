@@ -12,7 +12,7 @@ const target = {
   selector: { label: 'production' }, desiredVersion: 4, desiredVersionId: 'version', desiredDigest: 'sha256:release',
   repository: { repositoryId: '100', defaultBranch: 'main', projectScope: '' },
   planDigest: 'sha256:plan', decision: 'pending', reason: '', prState: 'not_started', mergeState: 'unknown', attempt: null,
-  plan: { baseCommit: 'a'.repeat(40), previousLockDigest: null, materializationDigest: 'sha256:materialization', localReviewRequired: true, blockers: [],
+  plan: { repositoryId: '100', baseCommit: 'a'.repeat(40), previousLockDigest: null, materializationDigest: 'sha256:materialization', localReviewRequired: true, blockers: [],
     changes: [{ path: 'AGENTS.md', action: 'replace', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), ownership: 'adopted', diffPreview: 'Keep local instructions. Add managed policy.' }] },
 };
 const observations = { data: { installed: null, discovered: null, delivered: null } };
@@ -67,7 +67,7 @@ describe('exact repository review', () => {
     expect(screen.getByRole('button', { name: 'Authorize reviewed PR plans' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Review changed state' }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
-    expect(screen.getByText('pending')).toBeInTheDocument();
+    expect(screen.getByText('pending', { exact: true })).toBeInTheDocument();
   });
   it('cannot include a deliberate pin that would change its version', async () => {
     render(<Harness targets={[{ ...target, selector: { version: 2 } }]} />);
@@ -96,6 +96,11 @@ describe('independent observations and availability', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, prState: 'merged', mergeState: 'merged' }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     expect(screen.getAllByText('Not observed')).toHaveLength(3);
     expect(screen.getByText(/Merged does not mean installed or delivered/)).toBeInTheDocument();
+  });
+  it('retains the planned identity when a binding no longer names a repository', () => {
+    render(<ContextCampaignTargetDrawer target={{ ...target, repository: null }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
+    expect(screen.getByText(/binding no longer names a repository/)).toBeInTheDocument();
+    expect(screen.getByText(/Planned repository ID 100/)).toBeInTheDocument();
   });
   it('renders remote diff text literally', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, plan: { ...target.plan, changes: [{ ...target.plan.changes[0], diffPreview: '<img src=x onerror=alert(1)>' }] } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);

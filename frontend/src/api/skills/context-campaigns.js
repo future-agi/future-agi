@@ -41,7 +41,7 @@ export function mapCampaignTarget(value) {
     bindingId: value.binding_id, name: value.name, bindingRevision: value.binding_revision,
     selector: value.selector, desiredVersion: value.desired_version,
     desiredVersionId: value.desired_version_id, desiredDigest: value.desired_digest,
-    repository: { provider: value.repository.provider, repositoryId: value.repository.repository_id,
+    repository: value.repository === null ? null : { provider: value.repository.provider, repositoryId: value.repository.repository_id,
       defaultBranch: value.repository.default_branch, projectScope: value.repository.project_scope },
     plan: mapCampaignPlan(value.plan), planDigest: value.plan_digest,
     decision: value.decision, reason: value.reason, prState: value.pr_state, mergeState: value.merge_state,

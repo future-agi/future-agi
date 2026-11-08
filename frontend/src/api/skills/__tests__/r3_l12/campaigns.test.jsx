@@ -30,6 +30,13 @@ afterEach(() => { cleanup(); client.clear(); });
 it('keeps the exact fixed count and provenance in mapped output', () => {
   expect(api.mapCampaign(wire)).toMatchObject({ targetCount: 40, manifestDigest: 'sha256:plan', provenance: 'client_reported' });
 });
+it('preserves an explicitly absent repository on a changed binding', () => {
+  const target = { binding_id: 'binding', name: 'Changed binding', binding_revision: 1,
+    selector: { label: 'production' }, desired_version: 1, desired_version_id: 'version', desired_digest: 'sha256:release',
+    repository: null, plan: null, plan_digest: null, decision: 'exclude', reason: 'No repository',
+    pr_state: 'not_started', merge_state: 'unknown', provenance: 'client_reported', attempt: null };
+  expect(api.mapCampaignTarget(target)).toMatchObject({ repository: null, bindingId: 'binding', decision: 'exclude' });
+});
 it('does not query missing generated campaign contracts', async () => {
   state.ready = false;
   const { result } = renderHook(() => api.useContextCampaigns(), { wrapper });

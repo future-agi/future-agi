@@ -28,7 +28,7 @@ const targets = Array.from({length:40}, (_, index) => ({
   desiredVersion: 4, desiredVersionId: 'fixture-version', desiredDigest: 'sha256:' + 'b'.repeat(64),
   repository: {repositoryId:String(100+index), defaultBranch:'main', projectScope:''},
   planDigest: 'sha256:' + 'c'.repeat(64), decision:'pending', reason:'', prState:index === 39 ? 'unknown' : 'not_started', mergeState:'unknown', attempt:null,
-  plan: {baseCommit:'a'.repeat(40), previousLockDigest:null, materializationDigest:'sha256:' + 'd'.repeat(64),
+  plan: {repositoryId:String(100+index),baseCommit:'a'.repeat(40), previousLockDigest:null, materializationDigest:'sha256:' + 'd'.repeat(64),
     localReviewRequired:index === 0, blockers:index >= 36 && index <= 38 ? [index === 38 ? 'repository_unavailable' : 'local_modifications'] : [],
     changes:[{path:'AGENTS.md',action:'replace',ownership:'adopted',beforeSha256:'a'.repeat(64),afterSha256:'b'.repeat(64),diffPreview:' Local policy: escalate privileged changes.\\n+ Reviewed managed context: use approved support instructions.'}]}
 }));
@@ -72,6 +72,8 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `review-${theme}-${width}.png`) });
       const open = page.getByRole('button', { name: 'Review target synthetic-repository-00', exact: true });
+      const bounds = await open.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, 'Inspect target remains visible without horizontal scrolling');
       await open.focus();
       await page.keyboard.press('Enter');
       const dialog = page.getByRole('dialog', { name: 'synthetic-repository-00' });
@@ -81,7 +83,9 @@ try {
       await page.getByRole('option', { name: 'Include exact plan' }).click();
       await dialog.getByLabel('Review or exclusion reason').fill('Reviewed and preserved the local instruction segment.');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.screenshot({ path: path.join(output, `target-${theme}-${width}.png`) });
+      const closeBounds = await dialog.getByRole('button', { name: 'Close target' }).boundingBox();
+      assert.ok(closeBounds.y >= 0 && closeBounds.y + closeBounds.height <= 900, 'Close target stays reachable after scrolling');
+      await page.screenshot({ animations: 'disabled', path: path.join(output, `target-${theme}-${width}.png`) });
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'hidden' });
       assert.equal(await open.evaluate((element) => document.activeElement === element), true);

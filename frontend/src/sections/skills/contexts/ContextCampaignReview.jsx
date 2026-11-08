@@ -23,7 +23,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     const decision = chosen(target);
     if (decision.planDigest !== target.planDigest) return false;
     if (decision.decision === 'exclude') return Boolean(decision.reason.trim());
-    return decision.decision === 'include' && target.plan && !target.plan.blockers.length && (!target.selector.version || target.selector.version === target.desiredVersion) && (!target.plan.localReviewRequired || Boolean(decision.reason.trim()));
+    return decision.decision === 'include' && target.repository && target.plan && !target.plan.blockers.length && (!target.selector.version || target.selector.version === target.desiredVersion) && (!target.plan.localReviewRequired || Boolean(decision.reason.trim()));
   });
   const selected = targets.find((target) => target.bindingId === selectedTarget);
   const run = async (operation) => {
@@ -44,12 +44,12 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     {stale && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={reset}>Review changed state</Button>}>This review is stale. No preconditions were refreshed automatically.</Alert>}
     {error && <Alert severity="error" role="alert">{error}</Alert>}
     <TableContainer><Table size="small" aria-label="Fixed rollout targets">
-      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Repository / target</TableCell><TableCell>Plan / exception</TableCell><TableCell>Git</TableCell><TableCell>Decision</TableCell><TableCell>Inspect</TableCell></TableRow></TableHead>
+      <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Repository / target</TableCell><TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Plan / exception</TableCell><TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Git</TableCell><TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Decision</TableCell><TableCell>Inspect</TableCell></TableRow></TableHead>
       <TableBody>{targets.map((target) => <TableRow key={target.bindingId} hover sx={{ height: ROW_HEIGHT.default }}>
-        <TableCell><Typography variant="s1">{target.name}</Typography><Typography component="div" variant="s3" color="text.secondary">v{target.desiredVersion} · {target.selector.version ? `Pin v${target.selector.version}` : `Follow ${target.selector.label}`}</Typography></TableCell>
-        <TableCell><Typography variant="s3">{target.plan ? `${target.plan.changes.length} file changes` : 'No plan'}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Local instructions need review</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</TableCell>
-        <TableCell><StatusBadge status={target.prState} /></TableCell>
-        <TableCell><Typography variant="s1">{campaign.status === 'draft' ? chosen(target).decision : target.decision}</Typography></TableCell>
+        <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="s1">{target.name}</Typography><Typography component="div" variant="s3" color="text.secondary">v{target.desiredVersion} · {target.selector.version ? `Pin v${target.selector.version}` : `Follow ${target.selector.label}`}</Typography><Box sx={{ display: { xs: 'block', md: 'none' }, mt: 0.5 }}><StatusBadge status={target.prState} /><Typography component="div" variant="s3">{campaign.status === 'draft' ? chosen(target).decision : target.decision} · {target.plan ? `${target.plan.changes.length} file changes` : 'No plan'}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Review local instructions</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</Box></TableCell>
+        <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Typography variant="s3">{target.plan ? `${target.plan.changes.length} file changes` : 'No plan'}</Typography>{target.plan?.localReviewRequired && <Typography component="div" variant="s3">Local instructions need review</Typography>}{target.plan?.blockers.map((blocker) => <Typography component="div" variant="s3" key={blocker}>{blocker}</Typography>)}</TableCell>
+        <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><StatusBadge status={target.prState} /></TableCell>
+        <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Typography variant="s1">{campaign.status === 'draft' ? chosen(target).decision : target.decision}</Typography></TableCell>
         <TableCell><Button size="small" onClick={() => onSelectTarget(target.bindingId)} aria-label={`Review target ${target.name}`}>Inspect target</Button></TableCell>
       </TableRow>)}</TableBody>
     </Table></TableContainer>
