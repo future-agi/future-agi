@@ -6,6 +6,9 @@ import { useSkillLabels } from "src/api/skills";
 import VersionsTab from "./VersionsTab";
 
 vi.mock("src/utils/axios", () => ({ default: { get: vi.fn() } }));
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ authenticated: true, user: { id: "reviewer" } }) }));
+vi.mock("src/contexts/OrganizationContext", () => ({ useOrganization: () => ({ currentOrganizationId: "org-a", isReady: true }) }));
+vi.mock("src/contexts/WorkspaceContext", () => ({ useWorkspace: () => ({ currentWorkspaceId: "ws-a", isReady: true }) }));
 vi.mock("src/api/skills", () => ({
   useSkillLabels: vi.fn(),
   useSkillVersions: () => ({ data: { results: [{ id: "v1", number: 1, note: "Initial version", labels: [], createdAt: "2026-11-01T12:00:00Z", fileCount: 1, digest: "sha256:abc" }], count: 1 } }),

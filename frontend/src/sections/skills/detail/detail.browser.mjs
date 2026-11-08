@@ -7,6 +7,7 @@ import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { DETAIL_BOUNDARY_TAG } from "./detail.browser-fixtures.js";
 
 const harness = process.env.CTXHUB_E2E_DIR;
 assert(harness, "Set CTXHUB_E2E_DIR to the cloud E2E harness directory.");
@@ -21,7 +22,7 @@ const content = `---\nname: ${name}\ndescription: Use when reviewing a synthetic
 const first = await actor.api("/model-hub/skills/publish/", { method: "POST", body: { files: [{ path: "SKILL.md", content }, { path: "references/policy.md", content: "# Refund policy\nReview the purchase date and eligibility.\n" }], labels: [] } });
 const id = first.skill.id;
 const skillUrl = `/model-hub/skills/${id}/`;
-await actor.api(skillUrl, { method: "PATCH", body: { tags: [`support-${"b".repeat(40)}`] } });
+await actor.api(skillUrl, { method: "PATCH", body: { tags: [DETAIL_BOUNDARY_TAG] } });
 const browser = await chromium.launch();
 const context = await browser.newContext({ baseURL: APP, viewport: { width: 1440, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
 await context.addInitScript(({ tokens, organizationId, workspaceId }) => {
