@@ -1681,9 +1681,9 @@ class TestAgentGap:
         environment, a2 = _with_a2(
             user, workspace, storage, "rd-gap-unread-provider", tools=None
         )
-        HarnessAgentVersionRuntime.no_workspace_objects.filter(
-            agent_version=a2
-        ).update(source_kind="provider")
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
+            source_kind="provider"
+        )
         _built(environment, contract=WORLD)
         _certify(environment, storage, agent=a2)
 

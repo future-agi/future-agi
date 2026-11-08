@@ -4,8 +4,8 @@ from rest_framework import serializers
 
 from simulate.models import HarnessNudge
 from simulate.serializers.harness_job import (
-    HarnessCapabilityScopeSerializer,
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
+    HarnessCapabilityScopeSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
     phone_number_error,

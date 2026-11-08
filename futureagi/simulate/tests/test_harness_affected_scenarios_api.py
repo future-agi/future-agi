@@ -23,14 +23,14 @@ from simulate.tests.test_harness_readiness import (
     _environment,
     _rows,
 )
-from simulate.tests.test_harness_readiness import (
-    readiness_on as readiness_on,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    readiness_on as readiness_on,
 )
-from simulate.tests.test_harness_readiness import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
-from simulate.tests.test_harness_readiness import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
 )
 
 pytestmark = pytest.mark.django_db
@@ -293,7 +293,10 @@ class TestRunHoldBackApi:
         HarnessRunCreateResponseSerializer(data=body).is_valid(raise_exception=True)
         assert body["selection"]["held_back"]["keys"] == REFUND_KEYS
         assert (body["selection"]["running"], body["total_calls"]) == (6, 6)
-        assert (body["selection"]["suite_total"], body["selection"]["excluded"]["count"]) == (10, 0)
+        assert (
+            body["selection"]["suite_total"],
+            body["selection"]["excluded"]["count"],
+        ) == (10, 0)
         header = auth_client.get(
             f"/simulate/v3/test-executions/{body['test_execution_id']}/calls/"
         ).json()["execution"]

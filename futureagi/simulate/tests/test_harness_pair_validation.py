@@ -28,14 +28,17 @@ from simulate.services.hosted_harness import (
     record_cleanup,
 )
 from simulate.tests.harness_validation import running_validations, settle_validations
-from simulate.tests.test_harness_agent_versions import _a1, _create
-from simulate.tests.test_harness_agent_versions import _environment as _agent_env
 from simulate.tests.test_harness_agent_versions import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+    _a1,
+    _create,
+)
+from simulate.tests.test_harness_agent_versions import _environment as _agent_env
+from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
 from simulate.tests.test_harness_amend_archive import NAMES, _key
-from simulate.tests.test_harness_nudges import (
-    started as started,  # noqa: F401 - fixture
+from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
+    started as started,
 )
 from simulate.tests.test_harness_versioning_assembly import (
     _environment,
@@ -43,11 +46,11 @@ from simulate.tests.test_harness_versioning_assembly import (
     _row,
     _uncache,
 )
-from simulate.tests.test_harness_versioning_assembly import (
-    gateway as gateway,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_assembly import (  # noqa: F401 - fixture
+    gateway as gateway,
 )
-from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
+    storage as storage,
 )
 
 pytestmark = pytest.mark.django_db
@@ -1775,7 +1778,9 @@ class TestAgentReading:
     def test_a_recheck_of_an_unread_version_reads_it_before_certifying(
         self, user, workspace, storage, gateway
     ):
-        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-first"))
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-read-first")
+        )
         job = _start(environment).job
 
         _launch(gateway, job)
@@ -1785,7 +1790,9 @@ class TestAgentReading:
         assert command == assembly.agent_reading_command() + assembly.certify_command()
 
     def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
-        environment = _not_built_with(_pending(user, workspace, storage, "pv-move-no-read"))
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-move-no-read")
+        )
         move = validation.agent_move(
             "hand", environment, environment.agent_version, user=None
         )
@@ -1800,7 +1807,9 @@ class TestAgentReading:
     def test_a_certified_unread_pairing_starts_a_reading_only_check(
         self, user, workspace, storage, gateway
     ):
-        environment = _not_built_with(_environment(user, workspace, "pv-read-only", storage))
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-read-only", storage)
+        )
         assert _row(environment).state == "ready"
 
         started = _start(environment)
@@ -1823,7 +1832,9 @@ class TestAgentReading:
     ):
         from simulate.services.agent_setup import stored_agent
 
-        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-store"))
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-read-store")
+        )
         job = _start(environment).job
         attempt = _launch(gateway, job)
         _ready(_row(environment))
@@ -1844,9 +1855,7 @@ class TestAgentReading:
         environment = _not_built_with(_pending(user, workspace, storage, "pv-read-78"))
         job = _start(environment).job
         attempt = _launch(gateway, job)
-        _exit(
-            gateway, monkeypatch, 78, {assembly.AGENT_READING_PATH: _reading(_EMAIL)}
-        )
+        _exit(gateway, monkeypatch, 78, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
 
         gateway.reconcile_completed(attempt)
 
@@ -1861,7 +1870,9 @@ class TestAgentReading:
         monkeypatch,
         django_capture_on_commit_callbacks,
     ):
-        environment = _not_built_with(_environment(user, workspace, "pv-read-none", storage))
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-read-none", storage)
+        )
         started = _start(environment)
         attempt = _launch(gateway, started.job)
         _exit(gateway, monkeypatch, 0)
@@ -1879,7 +1890,9 @@ class TestAgentReading:
     ):
         from simulate.services.agent_setup import stored_agent
 
-        environment = _not_built_with(_pending(user, workspace, storage, "pv-no-read-store"))
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-no-read-store")
+        )
         move = validation.agent_move(
             "hand", environment, environment.agent_version, user=None
         )

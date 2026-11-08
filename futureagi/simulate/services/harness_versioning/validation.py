@@ -222,9 +222,7 @@ class Validation:
             "job_id": (
                 str(self.job.id)
                 if self.job is not None
-                else last.get("job_id")
-                if unavailable
-                else None
+                else last.get("job_id") if unavailable else None
             ),
             "purpose": self.purpose,
             "finished_at": None,

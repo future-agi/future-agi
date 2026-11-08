@@ -309,13 +309,13 @@ def case_page(
     }
 
 
-def _scope(
-    pairing: Pairing, placement: _Placement, keys: list[str] | None
-) -> Scope:
+def _scope(pairing: Pairing, placement: _Placement, keys: list[str] | None) -> Scope:
     """The suite's size, the cases not selected and the selected cases changed since
     this agent and environment version last ran."""
     wanted = set(keys) if keys is not None else None
-    excluded = [key for key in placement.suite if wanted is not None and key not in wanted]
+    excluded = [
+        key for key in placement.suite if wanted is not None and key not in wanted
+    ]
     selected = [key for key in placement.suite if wanted is None or key in wanted]
     since, changed = changed_since_last_run(pairing, selected)
     return {

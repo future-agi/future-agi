@@ -720,9 +720,7 @@ def _earlier_suite(environment, *, edited=(), missing=()):
     suite = HarnessSuiteVersion.no_workspace_objects.get(
         id=environment.suite_version_id
     )
-    members = list(
-        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite)
-    )
+    members = list(HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite))
     suite.pk = uuid.uuid4()
     suite.id = suite.pk
     suite.status = "discarded"
@@ -756,7 +754,11 @@ class TestScope:
         assert chosen["requested"] == 2
         assert chosen["excluded"] == {
             "count": 8,
-            "keys": [key for key in REFUND_KEYS + LOOKUP_KEYS if key not in (LOOKUP_KEYS[0], REFUND_KEYS[1])],
+            "keys": [
+                key
+                for key in REFUND_KEYS + LOOKUP_KEYS
+                if key not in (LOOKUP_KEYS[0], REFUND_KEYS[1])
+            ],
             "truncated": False,
             "reason": "not_selected",
         }
@@ -827,9 +829,7 @@ class TestScope:
         assert chosen["excluded"]["keys"] == REFUND_KEYS
         assert chosen["changed"]["since"] is None
 
-    def test_another_agent_versions_run_is_not_compared(
-        self, user, workspace, storage
-    ):
+    def test_another_agent_versions_run_is_not_compared(self, user, workspace, storage):
         environment, a2 = _with_a2(user, workspace, storage, "sc-other-agent")
         _suite(environment, _ten())
         _certify(environment, storage)
