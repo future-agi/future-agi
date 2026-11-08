@@ -8,7 +8,7 @@ import ImportSkillsDialog from "./ImportSkillsDialog";
 
 const api = vi.hoisted(() => ({
   list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
-  canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
+  assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
 }));
 vi.mock("src/api/skills", () => ({
   useSkillsList: api.list,
@@ -45,7 +45,7 @@ const bundle = (key, status = "new", warnings = 0, errors = 0) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.canMove = true;
+  api.canMove = true; api.assistEnabled = true;
   api.list.mockReturnValue(listResult());
   api.templates.mockReturnValue({ data: templates, isPending: false, isError: false, refetch: vi.fn() });
   api.create.mockResolvedValue({ id: "created-1", permissions: { canRunTests: true } });
@@ -417,7 +417,7 @@ it('gives the GitHub panel its own draft action without the upload submit', () =
   expect(api.importSkills).not.toHaveBeenCalled();
 });
 
-vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));
+vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }), useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 
 it('sends reviewed aggregate release revisions for existing upload destinations', async () => {
   api.preview.mockResolvedValueOnce({ bundles: [{ ...bundle('existing', 'changed'), skillId: 'skill-1' }], rejected: [], skipped: [] });
@@ -441,4 +441,13 @@ it('does not block ordinary uploads when the selected production move is forbidd
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Also label as' }));
   fireEvent.click(screen.getByRole('option', { name: 'None' }));
   expect(screen.getByRole('button', { name: 'Import', exact: true })).toBeEnabled();
+});
+
+it('keeps the new-skill paid entry disabled when assistance is unavailable', async () => {
+  api.assistEnabled = false;
+  renderCreate();
+  fillCreate();
+  fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
+  expect(await screen.findByRole('button', { name: 'Draft with AI' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Open editor' })).toBeEnabled();
 });

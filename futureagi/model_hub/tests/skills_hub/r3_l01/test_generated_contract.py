@@ -13,7 +13,22 @@ def test_manifest_view_declares_conditional_response():
 def test_generated_foundation_manifest_contract_matches_runtime():
     root = Path(__file__).resolve().parents[5]
     document = json.loads((root / "api_contracts/openapi/swagger.json").read_text())
+    scheme = document["securityDefinitions"]["ContextCredential"]
+    assert scheme["type"] == "apiKey" and scheme["name"] == "Authorization"
+    assert all(
+        "ContextCredential" not in requirement for requirement in document["security"]
+    )
     for prefix in ("consumption", "contexts"):
+        for suffix, method in (
+            ("resolve/", "get"),
+            ("{resource_id}/versions/{number}/manifest/", "get"),
+            ("{resource_id}/versions/{number}/files/", "get"),
+            ("{resource_id}/versions/{number}/access-check/", "post"),
+        ):
+            operation = document["paths"][f"/model-hub/skills/{prefix}/{suffix}"][
+                method
+            ]
+            assert operation["security"] == [{"ContextCredential": []}]
         route = (
             f"/model-hub/skills/{prefix}/{{resource_id}}/versions/{{number}}/manifest/"
         )

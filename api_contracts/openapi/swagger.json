@@ -25,6 +25,12 @@
         "application/json"
     ],
     "securityDefinitions": {
+        "ContextCredential": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Context <credential-id>.<secret>; never combine with API/secret keys."
+        },
         "X-Api-Key": {
             "type": "apiKey",
             "in": "header",
@@ -46985,6 +46991,11 @@
                 "tags": [
                     "Skills"
                 ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
+                ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
@@ -47101,6 +47112,11 @@
                 },
                 "tags": [
                     "Skills"
+                ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
@@ -47249,6 +47265,11 @@
                 "tags": [
                     "Skills"
                 ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
+                ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
@@ -47390,6 +47411,11 @@
                 },
                 "tags": [
                     "Skills"
+                ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
@@ -47825,6 +47851,11 @@
                 "tags": [
                     "Skills"
                 ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
+                ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
@@ -47941,6 +47972,11 @@
                 },
                 "tags": [
                     "Skills"
+                ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
@@ -48089,6 +48125,11 @@
                 "tags": [
                     "Skills"
                 ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
+                ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
@@ -48230,6 +48271,11 @@
                 },
                 "tags": [
                     "Skills"
+                ],
+                "security": [
+                    {
+                        "ContextCredential": []
+                    }
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
@@ -142407,6 +142453,7 @@
         "SkillsHubV11TestingOptions": {
             "required": [
                 "enabled",
+                "assist_enabled",
                 "github_enabled",
                 "models",
                 "limits",
@@ -142417,6 +142464,10 @@
             "properties": {
                 "enabled": {
                     "title": "Enabled",
+                    "type": "boolean"
+                },
+                "assist_enabled": {
+                    "title": "Assist enabled",
                     "type": "boolean"
                 },
                 "github_enabled": {

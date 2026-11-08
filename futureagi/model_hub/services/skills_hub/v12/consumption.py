@@ -11,7 +11,10 @@ from model_hub.selectors.skills_hub_v12 import resources_for_scope
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.resolve import read_version_file_chunk
 from model_hub.services.skills_hub.snapshots import immutable_manifest
-from model_hub.services.skills_hub.v12.credentials import require_active_credential
+from model_hub.services.skills_hub.v12.credentials import (
+    record_credential_use,
+    require_active_credential,
+)
 from model_hub.services.skills_hub.v12.resolution_leases import (
     issue_resolution,
     validate_resolution,
@@ -77,11 +80,13 @@ def resolve_consumption(
     resolution = issue_resolution(
         principal=principal, version=target, requested=requested
     )
-    return {
+    result = {
         **immutable_manifest(version=target, requested=requested),
         "resolution_id": str(resolution.pk),
         "resolution_expires_at": resolution.expires_at,
     }
+    record_credential_use(principal=principal)
+    return result
 
 
 def read_consumption_manifest(
@@ -105,7 +110,7 @@ def read_consumption_manifest(
     resolution = HubSkillContextResolution.objects.get(
         pk=resolution_id, credential_id=principal.credential_id
     )
-    return {
+    result = {
         **immutable_manifest(
             version=version,
             requested=resolution.requested,
@@ -115,6 +120,8 @@ def read_consumption_manifest(
         "resolution_id": str(resolution.pk),
         "resolution_expires_at": resolution.expires_at,
     }
+    record_credential_use(principal=principal)
+    return result
 
 
 def read_consumption_file(
@@ -135,12 +142,14 @@ def read_consumption_file(
         kind=kind,
         number=number,
     )
-    return {
+    result = {
         **read_version_file_chunk(version, path, offset, max_bytes),
         "resource_id": str(resource_id),
         "version_id": str(version.pk),
         "digest": version.digest,
     }
+    record_credential_use(principal=principal)
+    return result
 
 
 def check_consumption_access(
@@ -158,6 +167,7 @@ def check_consumption_access(
         kind=kind,
         number=number,
     )
+    record_credential_use(principal=principal)
     return {
         "allowed": True,
         "version_id": str(version.pk),

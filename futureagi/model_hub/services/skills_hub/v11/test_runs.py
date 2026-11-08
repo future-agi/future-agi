@@ -239,6 +239,11 @@ def _version_bundle(skill: HubSkill, number: int) -> dict:
         raise SkillsHubError(
             "version_not_found", "Published version not found.", status=404
         )
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    require_distribution_eligibility(version)
     files: list[FileInput] = [
         {"path": item.path, "content": item.blob.content}
         for item in version.files.select_related("blob").order_by("path")

@@ -31,6 +31,7 @@ import {
 import { getSkillErrorCode, useSkillDraft } from "src/api/skills";
 import {
   useSaveSkillTestSuite,
+  useSkillTestingOptions,
   useSkillTestRuns,
   useSkillTestSuite,
   useSkillV11Scope,
@@ -244,6 +245,7 @@ function TestsContent({ skill }) {
   const runId = params.get("run");
   const currentView = view ?? (runId ? "results" : "cases");
   const canWrite = skill.permissions?.canRunTests === true;
+  const options = useSkillTestingOptions();
   const caseIds =
     selected === null
       ? suite?.cases.map((item) => item.id) ?? []
@@ -331,7 +333,7 @@ function TestsContent({ skill }) {
               setParams(next);
             }}
             onImproveSelection={
-              canWrite
+              canWrite && options.data?.assistEnabled
                 ? (caseId) =>
                     navigate(
                       `${paths.dashboard.skills.edit(skill.id)}?${new URLSearchParams({ assist: "description", run: runId, case: caseId })}`,

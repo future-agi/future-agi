@@ -87,6 +87,8 @@ def enable_test_slice(settings):
     # Synthetic provider fixtures exercise the enabled service path explicitly.
     # Tests of the operational disabled state override this setting themselves.
     settings.SKILLS_TESTING_ENABLED = True
+    # Synthetic qualification tests opt in independently of the production default.
+    settings.SKILLS_ASSIST_ENABLED = True
 
 
 @pytest.fixture

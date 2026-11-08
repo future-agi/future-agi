@@ -551,6 +551,108 @@ def test_system_key_cannot_list_or_issue_credentials(user, organization, workspa
     assert response.data["code"] == "principal_not_supported"
 
 
+def test_successful_use_is_observable_and_monotonic(consumer, human, published):
+    from model_hub.services.skills_hub.v12.credentials import record_credential_use
+
+    client, issued = consumer
+    credential = HubSkillContextCredential.objects.get(pk=issued["id"])
+    assert credential.last_used_at is None
+    result = _resolved(client)
+    credential.refresh_from_db()
+    first = credential.last_used_at
+    assert first is not None
+    principal = authenticate_credential(token=issued["secret"])
+    record_credential_use(principal=principal, observed_at=first - timedelta(seconds=1))
+    credential.refresh_from_db()
+    assert credential.last_used_at == first
+    response = client.get(
+        BASE + f"consumption/{published.skill_id}/versions/1/files/",
+        {"path": "SKILL.md"},
+        HTTP_X_CONTEXT_RESOLUTION=result["resolution_id"],
+    )
+    assert response.status_code == 200
+    credential.refresh_from_db()
+    assert credential.last_used_at >= first
+    listing = human.get(BASE + "contexts/credentials/").data["result"]["results"]
+    assert listing[0]["last_used_at"] is not None
+    last = credential.last_used_at
+    response = client.get(
+        BASE + f"consumption/{published.skill_id}/versions/1/files/",
+        {"path": "not-in-snapshot.md"},
+        HTTP_X_CONTEXT_RESOLUTION=result["resolution_id"],
+    )
+    assert response.status_code == 404
+    credential.refresh_from_db()
+    assert credential.last_used_at == last
+    client.credentials(HTTP_AUTHORIZATION=f"Context {issued['id']}.{'z' * 43}")
+    assert (
+        client.get(BASE + "consumption/resolve/", {"name": "help-desk"}).status_code
+        == 401
+    )
+    credential.refresh_from_db()
+    assert credential.last_used_at == last
+
+
+def test_browser_preflight_allows_immutable_continuation(consumer, settings):
+    settings.CORS_ALLOWED_ORIGINS = ["https://synthetic.example"]
+    settings.MIDDLEWARE = [
+        "corsheaders.middleware.CorsMiddleware",
+        *settings.MIDDLEWARE,
+    ]
+    client, _ = consumer
+    result = _resolved(client)
+    url = _manifest_url(result)
+    response = client.options(
+        url,
+        HTTP_ORIGIN="https://synthetic.example",
+        HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET",
+        HTTP_ACCESS_CONTROL_REQUEST_HEADERS="authorization,x-context-resolution",
+    )
+    assert response.status_code == 200
+    allowed = response["Access-Control-Allow-Headers"].lower()
+    assert "authorization" in allowed and "x-context-resolution" in allowed
+    response = client.get(
+        url,
+        HTTP_ORIGIN="https://synthetic.example",
+        HTTP_X_CONTEXT_RESOLUTION=result["resolution_id"],
+    )
+    assert response.status_code == 200
+    assert response.data["result"]["version_id"] == result["version_id"]
+
+
+def test_system_key_cannot_compare_quarantined_text(
+    published, publish_skill, hub_skill, make_skill_files, organization, workspace
+):
+    newer = publish_skill(
+        hub_skill, files=make_skill_files(body="Sanitized replacement.")
+    ).version
+    key = OrgApiKey.objects.create(
+        name="Synthetic compare reader",
+        api_key=f"test-{uuid4()}",
+        secret_key=f"test-{uuid4()}",
+        type="system",
+        organization=organization,
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+    url = BASE + f"{hub_skill.pk}/compare/"
+    query = {"from": published.number, "to": newer.number}
+    assert client.get(url, query).status_code == 200
+    HubSkillContextQuarantine.objects.create(
+        organization=organization,
+        workspace=workspace,
+        version=published,
+        revision=1,
+        active=True,
+        reason="Synthetic quarantine",
+    )
+    response = client.get(url, query)
+    assert response.status_code == 422
+    assert response.data["code"] == "context_quarantined"
+    assert "from_text" not in json.dumps(response.data)
+
+
 def test_disabled_slice_fails_closed_but_revocation_still_works(
     consumer, principal, settings
 ):
