@@ -258,3 +258,37 @@ def test_external_reasoning_is_never_a_segment(principal, trace):
     assert "never copy" not in serialized
     assert "Wrong answer" not in serialized
     assert "Private reasoning" not in serialized
+
+
+@pytest.mark.parametrize("field", ["prompt", "title", "fixture_name", "check"])
+def test_capture_scans_every_disclosed_text_field(principal, context, trace, field):
+    ref, _, _, _, _ = trace
+    result = preview(principal, context, ref)
+    case = case_input()
+    synthetic_secret = "ghp_" + "a" * 36
+    if field == "fixture_name":
+        case["fixtures"] = [
+            {"id": str(uuid4()), "name": synthetic_secret, "text": "Synthetic fixture"}
+        ]
+    elif field == "check":
+        case["checks"][0]["config"]["text"] = synthetic_secret
+    else:
+        case[field] = synthetic_secret
+    with pytest.raises(SkillsHubError) as exc:
+        accept_trace_case(
+            principal=principal,
+            context_id=context.pk,
+            capture_id=result["capture_id"],
+            idempotency_key=uuid4(),
+            request={
+                "source_fingerprint": result["source_fingerprint"],
+                "suite_revision": 0,
+                "case": case,
+                "acknowledge_workspace_sharing": True,
+            },
+        )
+    assert exc.value.code == "capture_unsafe"
+    assert (
+        HubSkillContextCapture.objects.get(pk=result["capture_id"]).accepted_receipt
+        is None
+    )

@@ -23,6 +23,7 @@ from model_hub.services.skills_hub.v11.principals import (
     require_scope_access,
 )
 from model_hub.services.skills_hub.v11.suites import (
+    canonical_json,
     get_suite,
     save_suite,
     validate_cases,
@@ -48,22 +49,8 @@ CASE_FIELDS = {
 
 
 def _findings(case: dict) -> list[dict]:
-    items = secret_findings(case["prompt"], location={"case_id": case["id"]})
-    items += secret_findings(case["title"], location={"case_id": case["id"]})
-    for fixture in case["fixtures"]:
-        items += secret_findings(
-            fixture["text"],
-            location={"case_id": case["id"], "fixture_id": fixture["id"]},
-        )
-    # Checks are also sent to an explicitly selected judge and become workspace-visible.
-    for check in case["checks"]:
-        from model_hub.services.skills_hub.v11.suites import canonical_json
-
-        items += secret_findings(
-            canonical_json(check["config"]),
-            location={"case_id": case["id"], "check_id": check["id"]},
-        )
-    return items
+    # Fixture names, titles and check configuration are disclosed too, not just bodies.
+    return secret_findings(canonical_json(case), location={"case_id": case["id"]})
 
 
 def preview_trace_capture(
