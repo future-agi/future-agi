@@ -5,7 +5,21 @@ import { canonical, digest, requireValue, token } from './canonical.mjs';
 export const ACTIONS = Object.freeze(['click', 'field_edit', 'command', 'review', 'approve', 'recovery_decision', 'configuration_edit']);
 export const DIMENSIONS = Object.freeze(['A', 'S', 'H', 'R']);
 const PHASES = ['cold', 'recurring', 'recovery', 'exit'];
-const EVENT_TYPES = ['start', 'end', 'observation', 'fault', 'outcome'];
+const EVENT_TYPES = ['registration', 'start', 'end', 'observation', 'fault', 'outcome', 'stage'];
+export const STAGE_SOURCES = Object.freeze(['api', 'pg', 'filesystem', 'git', 'model_boundary', 'guest', 'external_trace', 'external_pipeline', 'external_github']);
+
+function validateStageReceipt(receipt, preceding) {
+  token(receipt.step, 'stage');
+  requireValue(PHASES.includes(receipt.phase), 'Invalid stage phase');
+  requireValue(STAGE_SOURCES.includes(receipt.source) && /^[a-f0-9]{64}$/.test(receipt.artifact_hash), 'Independent stage evidence required');
+  requireValue(Array.isArray(receipt.action_sequences) && new Set(receipt.action_sequences).size === receipt.action_sequences.length, 'Unique action references required');
+  for (const sequence of receipt.action_sequences) {
+    const action = preceding.find((event) => event.sequence === sequence);
+    requireValue(action?.type === 'start' && action.dimension === 'A' && action.phase === receipt.phase, 'Stage must reference a same-phase operator action');
+    requireValue(preceding.some((event) => event.type === 'end' && event.start_sequence === sequence && event.status === 'completed'), 'Stage action must have completed');
+  }
+  requireValue(!preceding.some((event) => event.type === 'stage' && event.step === receipt.step), 'Duplicate stage receipt');
+}
 
 /** Append-only, payload-free measurement journal. Events survive a failed journey. */
 export class ActionLedger {
@@ -45,6 +59,12 @@ export class ActionLedger {
     return event;
   }
 
+  registration({ comparisonIdentity, preregistrationHash }) {
+    requireValue(this.#events.length === 0, 'Registration must precede measurement');
+    requireValue([comparisonIdentity, preregistrationHash].every((hash) => /^[a-f0-9]{64}$/.test(hash)), 'Registration hashes required');
+    this.#append({ type: 'registration', comparison_identity: comparisonIdentity, preregistration_hash: preregistrationHash });
+  }
+
   async measure({ dimension, primitive, actor, step, phase, target, items = [], exceptionItems = [] }, effect) {
     requireValue(DIMENSIONS.includes(dimension), 'Invalid dimension');
     requireValue(dimension !== 'A' || ACTIONS.includes(primitive), 'A must be a meaningful primitive');
@@ -67,6 +87,15 @@ export class ActionLedger {
       this.#append({ type: 'end', start_sequence: start.sequence, status: 'failed' });
       throw error;
     }
+  }
+
+  /** Evidence that a mechanical stage completed. The same completed action can support
+   * several stages without being counted again. Empty references mean automatic work,
+   * never an implicit human review/authorization. Cross-phase attribution is forbidden. */
+  stage({ step, phase, source, artifactHash, actionSequences = [] }) {
+    const receipt = { type: 'stage', step, phase, source, artifact_hash: artifactHash, action_sequences: actionSequences };
+    validateStageReceipt(receipt, this.#events);
+    this.#append(receipt);
   }
 
   observation({ step, id, artifactHash }) {
@@ -103,11 +132,19 @@ export function verifyLedger(events) {
     requireValue(event.schema === 1 && event.sequence === index + 1 && event.previous === previous && digest(body) === hash, 'Ledger chain mismatch');
     requireValue(event.run_id === first.run_id && event.mode === first.mode && event.job === first.job, 'Ledger mixed runs');
     requireValue(EVENT_TYPES.includes(event.type) && Number.isFinite(event.elapsed_ms) && event.elapsed_ms >= elapsed, 'Invalid ledger event');
+    if (event.type === 'registration') requireValue(index === 0 && [event.comparison_identity, event.preregistration_hash].every((value) => /^[a-f0-9]{64}$/.test(value)), 'Invalid registration event');
     if (event.type === 'start') {
       requireValue(DIMENSIONS.includes(event.dimension) && PHASES.includes(event.phase), 'Invalid measurement');
       requireValue(event.dimension !== 'A' || ACTIONS.includes(event.primitive), 'Invalid action');
+      requireValue(event.dimension === 'A' || ({ S: 'transition', H: 'handoff', R: 'reconcile' })[event.dimension] === event.primitive, 'Invalid dimension primitive');
+      [event.actor, event.step, event.target].forEach((value) => token(value, 'action identity'));
+      requireValue(Array.isArray(event.items) && Array.isArray(event.exception_items), 'Missing review exposure');
+      event.items.forEach((value) => token(value, 'review item'));
+      requireValue(new Set(event.items).size === event.items.length && event.exception_items.every((value) => event.items.includes(value)), 'Invalid review exposure');
+      requireValue(!['review', 'approve'].includes(event.primitive) || event.items.length > 0, 'Review must name exposed items');
       open.add(event.sequence);
     }
+    if (event.type === 'stage') validateStageReceipt(event, events.slice(0, index));
     if (event.type === 'end') {
       requireValue(open.delete(event.start_sequence), 'Orphan or duplicate completion');
       requireValue(['completed', 'failed'].includes(event.status), 'Invalid completion');

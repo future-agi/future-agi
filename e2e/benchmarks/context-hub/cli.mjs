@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { baselineReport, runJourney } from './runner.mjs';
+import { baselineReport, compareActionRuns, runJourney } from './runner.mjs';
 import { requireValue } from '../../lib/skills-r3/canonical.mjs';
 
 // Explicit driver path is executable trusted test code, never read from an audit/fixture/response.
@@ -25,7 +25,15 @@ export async function main(args) {
     const result = await runJourney({ jobId, runId, registration, driver, outputDir });
     return result.status === 'completed' ? 0 : 1;
   }
-  throw new Error('Choose baseline or run; documentation counts never become measured comparisons');
+  if (command === 'compare') {
+    requireValue(rest.length === 4, 'Usage: cli.mjs compare OURS.json COMPETITOR.json REVIEW.json OUTPUT.json');
+    const [ours, competitor, review] = await Promise.all(rest.slice(0, 3).map(async (path) => JSON.parse(await readFile(path, 'utf8'))));
+    const result = compareActionRuns(ours, competitor, review);
+    await writeFile(rest[3], `${JSON.stringify({ schema: 1, job: ours.job, cohort: ours.cohort, ...result }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    // Valid but below-threshold, incomplete, and unmeasured comparisons are not green gates.
+    return result.ten_x_actions === true ? 0 : 1;
+  }
+  throw new Error('Choose baseline, run or compare; documentation counts never become measured comparisons');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

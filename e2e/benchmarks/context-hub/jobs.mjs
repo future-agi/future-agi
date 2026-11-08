@@ -125,7 +125,19 @@ const jobs = [
       check('revoked-quarantined-denied', 'equal', ['api'])],
   },
 ];
-export const JOBS = Object.freeze(jobs.map((job) => Object.freeze(job)));
+// Only explicitly human decisions require an operator primitive. Mechanical stages may
+// share a command/receipt or be automatic, so competent native batching receives credit.
+const HUMAN_ACTIONS = {
+  J1: { 'choose-subset': ['review'], 'migration-preview': ['review'], 'preserve-draft': ['recovery_decision'] },
+  J2: { 'capture-and-redact': ['review'], 'inspect-and-annotate': ['review'] },
+  J3: { 'review-publish-parents': ['review'], 'authorize-label-moves': ['approve'] },
+  J4: { 'review-packet': ['review'], 'record-decision': ['approve'], 'renewed-review': ['review'], 'authorized-release': ['approve'] },
+  J5: { 'establish-ownership': ['review'], 'review-plans': ['review'], 'authorize-exact-patches': ['approve'], 'reverse-plan': ['review'] },
+  J6: { 'choose-eligible-release': ['review'], 'cas-rollback': ['approve'], 'resume-or-clean-thread': ['recovery_decision'] },
+};
+export const JOBS = Object.freeze(jobs.map((job) => Object.freeze({ ...job,
+  steps: Object.freeze(job.steps.map((stage) => Object.freeze({ ...stage, human_actions: Object.freeze(HUMAN_ACTIONS[job.id]?.[stage.id] ?? []) }))),
+})));
 export function getJob(id) {
   const job = JOBS.find((candidate) => candidate.id === id);
   if (!job) throw new Error(`Unknown benchmark job: ${id}`);
