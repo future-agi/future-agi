@@ -3,7 +3,14 @@ export const mapContextSelector = (value) => {
   if (Object.hasOwn(value, 'version') === Object.hasOwn(value, 'label')) {
     throw new Error('Choose exactly one context label or version.');
   }
-  return Object.hasOwn(value, 'version') ? { version: value.version } : { label: value.label };
+  if (Object.hasOwn(value, 'version')) {
+    if (!Number.isSafeInteger(value.version) || value.version < 1) throw new Error('Choose a positive integer version.');
+    return { version: value.version };
+  }
+  if (typeof value.label !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(value.label)) {
+    throw new Error('Choose an explicit valid context label.');
+  }
+  return { label: value.label };
 };
 export const contextSelectorInput = mapContextSelector;
 export const mapContextLink = (value) => ({ skillId: value.skill_id, selector: mapContextSelector(value.selector) });
@@ -44,6 +51,9 @@ export const contextHeadAcknowledgmentInput = (value) => ({
 export const contextPublishInput = (value) => {
   if (Object.hasOwn(value, 'force') || Object.hasOwn(value, 'labels')) {
     throw new Error('Context publication does not accept force or label moves.');
+  }
+  if (Object.hasOwn(value, 'evidenceRefs') || Object.hasOwn(value, 'evidenceRunId')) {
+    throw new Error('Publication evidence requires the integrated typed-evidence contract; it cannot be dropped.');
   }
   return {
     ...contextHeadAcknowledgmentInput(value), base_version: value.baseVersion,

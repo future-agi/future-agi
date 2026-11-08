@@ -62,6 +62,7 @@ function requireSnapshot(snapshot) {
 }
 function requireIdentity(value, snapshot) {
   if (value.versionId !== snapshot.versionId || value.digest !== snapshot.digest ||
+      (Object.hasOwn(value, 'version') && value.version !== snapshot.version) ||
       (Object.hasOwn(value, 'resourceId') && value.resourceId !== snapshot.resourceId)) {
     throw new Error('The immutable context response does not match the resolved snapshot.');
   }

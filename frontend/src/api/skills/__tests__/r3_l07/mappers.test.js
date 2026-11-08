@@ -54,6 +54,8 @@ describe('frozen r3.2 wire mappings', () => {
     expect(context.contextPublishInput({ ...head, baseVersion: 4, note: 'repair', acknowledgeWarnings: true })).toEqual(wire.ContextPublish);
     expect(() => context.contextPublishInput({ ...head, force: false })).toThrow('does not accept');
     expect(() => context.contextPublishInput({ ...head, labels: [] })).toThrow('does not accept');
+    expect(() => context.contextPublishInput({ ...head, evidenceRefs: [] })).toThrow('cannot be dropped');
+    expect(() => context.contextPublishInput({ ...head, evidenceRunId: null })).toThrow('cannot be dropped');
   });
   it('does not silently convert an ambiguous selector into a pin or production', () => {
     expect(context.contextSelectorInput({ version: 3 })).toEqual({ version: 3 });

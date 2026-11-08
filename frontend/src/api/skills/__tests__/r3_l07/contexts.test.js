@@ -141,6 +141,10 @@ describe('bounded Context-credential reads', () => {
     expect(config.headers).toEqual({ Authorization: `Context ${credential}`, 'X-Organization-Id': null, 'X-Workspace-Id': null });
     expect(result).not.toHaveProperty('credential');
   });
+  it.each([{ label: null }, { label: '' }, { version: null }, { version: 0 }, { version: true }])('rejects invalid explicit selectors before they can become default production: %j', async (selector) => {
+    await expect(api.resolveContext({ credential, name: 'synthetic-agent', selector })).rejects.toThrow();
+    expect(axios.get).not.toHaveBeenCalled();
+  });
   it('continues the exact version and lease, not a newly moved label', async () => {
     axios.get.mockResolvedValue(envelope({ ...wire.ConsumptionManifest, file_offset: 25, next_file_offset: null }));
     const result = await api.readContextManifestPage({ credential, snapshot: snapshot(), fileOffset: 25 });
@@ -170,6 +174,10 @@ describe('bounded Context-credential reads', () => {
     await expect(api.readContextFileChunk({ credential, snapshot: snapshot(), path: 'AGENTS.md' })).rejects.toThrow('does not match');
     await expect(api.readContextManifestPage({ credential, snapshot: snapshot() })).rejects.toThrow('resolution changed');
     await expect(api.resolveContext({ credential, name: 'synthetic-agent' })).rejects.toThrow('exact resolved agent context');
+  });
+  it('rejects an inconsistent immutable version number even with the same version ID', async () => {
+    axios.get.mockResolvedValue(envelope({ ...wire.ConsumptionManifest, version: 2 }));
+    await expect(api.readContextManifestPage({ credential, snapshot: snapshot() })).rejects.toThrow('does not match');
   });
   it('fails closed for missing leases, denial and aborted late replies without retry', async () => {
     await expect(api.readContextManifestPage({ credential, snapshot: { ...snapshot(), resolutionId: undefined } })).rejects.toThrow('exact resolved');
