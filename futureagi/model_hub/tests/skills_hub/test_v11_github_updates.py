@@ -731,3 +731,38 @@ def test_staged_source_publish_edit_restore_and_unchanged_adoption(
     assert source.associated_version_id == restored.version.pk
     assert skill.versions.count() == 3
     assert not skill.drafts.filter(user=user).exists()
+
+
+def test_github_staging_and_publication_preserve_original_metadata(
+    principal, hub_actor, user
+):
+    from model_hub.services.skills_hub import drafts
+    from model_hub.services.skills_hub.v11.repository_zip import parse_repository_zip
+
+    name = "sk-" + "a" * 24
+    description = "Use when reviewing the synthetic token sk-" + "b" * 24
+    content = f"---\nname: {name}\ndescription: {description}\n---\nFollow the supplied policy.\n"
+    parsed = parse_repository_zip(archive([("SKILL.md", content)]), path="")
+    assert parsed["bundle"]["name"] == name
+    assert parsed["bundle"]["checks"]["frontmatter"]["name"] != name
+    preview = make_preview(principal, bundle=parsed["bundle"])
+    staged = github.stage_github_preview(
+        principal=principal,
+        preview_id=preview.pk,
+        request={"rights": {"confirmed": True, "review_note": "Synthetic fixture"}},
+    )
+    skill, draft = staged["skill"], staged["draft"]
+    assert skill.name == name and skill.description == description
+    result = drafts.publish_draft(
+        skill=skill,
+        user=user,
+        actor=hub_actor,
+        revision=draft.revision,
+        labels=[],
+        acknowledge_warnings=True,
+    )
+    assert result.version.frontmatter["name"] == name
+    assert result.version.frontmatter["description"] == description
+    assert result.version.source["provider"] == "github"
+    assert not skill.drafts.exists()
+    assert HubSkillDraft.all_objects.get(pk=draft.pk).source == {}

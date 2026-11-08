@@ -69,7 +69,9 @@ def _model_spec(model_id: str) -> dict:
         (
             entry
             for entry in OSS_AVAILABLE_MODELS
-            if entry["model_name"] == model_id and entry.get("mode") == "chat"
+            if isinstance(entry, dict)
+            and entry["model_name"] == model_id
+            and entry.get("mode") == "chat"
         ),
         None,
     )

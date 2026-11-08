@@ -92,7 +92,7 @@ def test_unverified_models_fail_closed(configured, settings):
 
 
 def test_normalizer_preserves_empty_tool_messages_and_strips_reasoning():
-    raw = {
+    raw: dict = {
         "content": None,
         "reasoning_content": "private reasoning",
         "tool_calls": [
@@ -176,6 +176,8 @@ def test_raw_completion_explicit_key_no_retries(configured, monkeypatch):
         result.assistant_message["content"] is None
         and result.assistant_message["tool_calls"][0]["id"] == "tool-1"
     )
+    assert result.usage is not None
+    assert result.estimated_cost_usd is not None
     assert (
         result.returned_model == "gpt-4o-mini-2024-07-18"
         and result.usage["total_tokens"] == 15
@@ -224,7 +226,7 @@ def test_missing_usage_is_not_reported_as_free(configured, monkeypatch):
             }
         ],
     )
-    response.usage = None
+    monkeypatch.setattr(response, "usage", None, raising=False)
     monkeypatch.setattr(litellm, "acompletion", AsyncMock(return_value=response))
     result = asyncio.run(
         complete_skill_turn(

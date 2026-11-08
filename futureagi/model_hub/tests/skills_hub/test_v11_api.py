@@ -818,7 +818,11 @@ def test_openapi_exposes_all_new_routes_and_preflight_without_paid_header():
     # JSONField is emitted as object-only and rejects scalar JSON assertions
     # or the standard string authentication detail before the hook sees it.
     detail = schema.definitions["SkillsHubV11Error"]["properties"]["detail"]
-    assert detail.get("x-string-or-object") or detail.get("x-json-value"), detail
+    assert detail["x-anyOf"] == [
+        {"type": "string"},
+        {"$ref": "#/definitions/SkillsHubConflictDetail"},
+        {"$ref": "#/definitions/SkillsHubChecksResult"},
+    ]
     for definition, field in (
         ("SkillsHubV11CheckConfig", "value"),
         ("SkillsHubV11CheckResult", "expected"),
@@ -857,6 +861,7 @@ def test_every_handler_has_success_errors_and_runtime_validation_annotations():
 
     assert len(urlpatterns) == 25
     for route in urlpatterns:
+        assert hasattr(route.callback, "view_class")
         cls = route.callback.view_class
         for method in ("get", "post", "put"):
             if not hasattr(cls, method):

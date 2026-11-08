@@ -172,7 +172,7 @@ def adoption_summary(
     if not exists:
         raise SkillsHubError("resource_not_found", "Skill not found.", status=404)
     # Django's PostgreSQL JSON decoder is applied by ORM fields, not raw cursors.
-    result = json.loads(payload) if isinstance(payload, str) else payload
+    result: dict = json.loads(payload) if isinstance(payload, str) else payload
     for consumer in result["results"]:
         key = consumer.pop("consumer_key")
         consumer["consumer_id"] = salted_hmac(

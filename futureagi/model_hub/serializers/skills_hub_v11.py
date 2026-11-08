@@ -34,7 +34,7 @@ from model_hub.services.skills_hub.v11.types import (
     ACTIVE_JOB_STATUSES,
     TERMINAL_JOB_STATUSES,
 )
-from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
+from tfc.utils.serializer_fields import JsonValueField
 
 JOB_STATUSES = sorted(ACTIVE_JOB_STATUSES | TERMINAL_JOB_STATUSES)
 VARIANTS = ["candidate", "production", "without_target"]
@@ -78,12 +78,6 @@ class SkillsError(V1SkillsError):
 
     class Meta:
         ref_name = "SkillsHubV11Error"
-
-    def get_fields(self):
-        return {
-            **super().get_fields(),
-            "detail": StringOrObjectField(required=False, allow_null=True),
-        }
 
 
 class Integer(s.IntegerField):

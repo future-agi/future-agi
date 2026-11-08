@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models.user import OrgApiKey
-from model_hub.models.skills_hub import HubSkill
+from model_hub.models.skills_hub import HubSkill, HubSkillDraft
 from model_hub.models.skills_hub_v11 import HubSkillJob
 from model_hub.services.skills_hub import drafts, labels, versions
 from model_hub.services.skills_hub.errors import SkillsHubError
@@ -219,6 +219,75 @@ def test_system_key_cannot_publish_another_users_draft(
         )
     assert error.value.code == "principal_not_supported"
     assert hub_skill.drafts.exists()
+
+
+@pytest.mark.parametrize("base_version", [None, 1])
+def test_recreated_draft_keeps_cas_sequence_but_rebases_source(
+    hub_skill, hub_actor, user, make_skill_files, publish_skill, base_version
+):
+    version = publish_skill(hub_skill).version
+    source = {"type": "import", "provider": "github", "commit_sha": "a" * 40}
+    # A published provenance basis is trusted server state, never request input.
+    version.source = source
+    version.save(update_fields=["source"])
+    original = hub_skill.drafts.get(user=user)
+    original.source = {**source, "commit_sha": "b" * 40}
+    original.save(update_fields=["source"])
+    drafts.discard_draft(skill=hub_skill, user=user)
+    tombstone = HubSkillDraft.all_objects.get(pk=original.pk)
+    assert tombstone.source == {} and tombstone.files == []
+    assert tombstone.revision == original.revision + 1
+    replacement = drafts.save_draft(
+        skill=hub_skill,
+        user=user,
+        files=make_skill_files(),
+        note="New authoring session",
+        base_version=base_version,
+        revision=0,
+    )
+    assert replacement.pk == original.pk
+    assert replacement.revision == original.revision + 2
+    assert replacement.source == (source if base_version else {})
+    with pytest.raises(SkillsHubError) as error:
+        drafts.publish_draft(
+            skill=hub_skill,
+            user=user,
+            actor=hub_actor,
+            revision=original.revision,
+            labels=[],
+            acknowledge_warnings=True,
+        )
+    assert error.value.code == "draft_conflict"
+    assert hub_skill.versions.count() == 1
+
+
+def test_publication_tombstone_erases_source_after_release(
+    hub_skill, hub_actor, user, make_skill_files
+):
+    original = hub_skill.drafts.get(user=user)
+    original.source = {"type": "draft", "operation": "reviewed_edit"}
+    original.save(update_fields=["source"])
+    saved = drafts.save_draft(
+        skill=hub_skill,
+        user=user,
+        files=make_skill_files(),
+        note="Reviewed",
+        base_version=None,
+        revision=original.revision,
+    )
+    result = drafts.publish_draft(
+        skill=hub_skill,
+        user=user,
+        actor=hub_actor,
+        revision=saved.revision,
+        labels=[],
+        acknowledge_warnings=True,
+    )
+    assert result.version.source == original.source
+    tombstone = HubSkillDraft.all_objects.get(pk=saved.pk)
+    assert tombstone.source == {} and tombstone.files == []
+    assert tombstone.revision == saved.revision + 1
+    assert not hub_skill.drafts.exists()
 
 
 def test_github_live_sender_retains_capacity_until_settlement(

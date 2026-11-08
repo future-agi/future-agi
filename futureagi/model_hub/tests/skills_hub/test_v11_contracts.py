@@ -1010,3 +1010,35 @@ def test_domain_error_schema_retains_the_existing_envelope_and_structured_detail
     assert serializer.validated_data["detail"] == {"revision": 7, "updated_at": None}
     assert serializer.validated_data["code"] == "test_suite_conflict"
     assert serializer.validated_data["status"] is False
+
+
+def test_typed_conflict_and_check_details_survive_generic_error_extension():
+    from model_hub.serializers import skills_hub as v1
+
+    conflict = v1.SkillsConflictError().fields["detail"]
+    checks = v1.SkillsChecksError().fields["detail"]
+    assert isinstance(conflict, v1.ConflictDetail)
+    assert "release_revision" in conflict.fields
+    assert isinstance(checks, v1.ChecksResult)
+    assert {"summary", "items"} <= checks.fields.keys()
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Read the current release.",
+        {"release_revision": 7},
+        {"retry_at": None},
+        {"reason": "archive_invalid"},
+    ],
+)
+def test_error_details_retain_typed_text_conflict_and_rate_limit_payloads(detail):
+    serializer = s.SkillsError(data={"status": False, "detail": detail})
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["detail"] == detail
+
+
+def test_error_detail_rejects_undocumented_or_wrongly_typed_payloads():
+    for detail in [{"revision": []}, {"undocumented": True}, ["not-an-error-object"]]:
+        serializer = s.SkillsError(data={"status": False, "detail": detail})
+        assert not serializer.is_valid()

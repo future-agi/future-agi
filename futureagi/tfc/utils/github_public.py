@@ -13,10 +13,11 @@ import logging
 import math
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import TypeVar
 from urllib.parse import quote, urlsplit
 
 from django.conf import settings
@@ -25,6 +26,8 @@ from redis.exceptions import RedisError
 
 from model_hub.services.skills_hub.errors import SkillsHubError
 from tfc.utils.ssrf_guard import SsrfResponse, safe_fetch
+
+CachedValue = TypeVar("CachedValue")
 
 logger = logging.getLogger(__name__)
 RATE_RESET_KEY = "harness:gh-rate-reset"
@@ -140,13 +143,18 @@ def _unavailable() -> SkillsHubError:
 
 def _cache_ready() -> None:
     backend = settings.CACHES["default"]["BACKEND"]
-    if "redis" not in backend.lower() and "memcached" not in backend.lower():
+    if not isinstance(backend, str) or (
+        "redis" not in backend.lower() and "memcached" not in backend.lower()
+    ):
         raise _unavailable()
 
 
-def _cache_get(key: str) -> object:
+def _cache_get(key: str, expected_type: type[CachedValue]) -> CachedValue | None:
     try:
-        return cache.get(key)
+        value = cache.get(key)
+        if value is not None and not isinstance(value, expected_type):
+            raise _unavailable()
+        return value
     except (OSError, ValueError, RuntimeError, RedisError) as exc:
         logger.warning("github_cache_unavailable", exc_info=True)
         raise _unavailable() from exc
@@ -182,7 +190,7 @@ def _admit(organization_id: str) -> None:
         raise _unavailable() from exc
 
 
-def _retry_at(headers: dict) -> float:
+def _retry_at(headers: Mapping[str, str]) -> float:
     now = time.time()
     values = [now + 60]
     for name, relative in (("Retry-After", True), ("X-RateLimit-Reset", False)):
@@ -348,7 +356,7 @@ def resolve_ref_kind(
         return "branch"
     key = _key("ref-kind", repo.lower() + ":" + ref)
     with _single_flight(key, deadline):
-        cached = _cache_get(key)
+        cached = _cache_get(key, str)
         if cached:
             return cached
         response = _fetch(
@@ -387,7 +395,7 @@ def repository_metadata(*, repo: str, organization_id: str, deadline: float) -> 
         )
     key = _key("metadata", repo.lower())
     with _single_flight(key, deadline):
-        cached = _cache_get(key)
+        cached = _cache_get(key, dict)
         if cached:
             return cached
         response = _fetch(
@@ -462,7 +470,9 @@ def sha_response(
             "GitHub returned an invalid commit identity.",
             status=404,
         )
-    paired_etag = etag if status_code == 200 else etag or cached["etag"]
+    paired_etag = (
+        etag if status_code == 200 else etag or (cached["etag"] if cached else None)
+    )
     return {"sha": sha, "etag": paired_etag}
 
 
@@ -474,7 +484,7 @@ def resolve_sha(*, repo: str, ref: str, organization_id: str, deadline: float) -
         )
     key = _key("sha", repo.lower() + ":" + ref)
     with _single_flight(key, deadline):
-        cached = _cache_get(key)
+        cached = _cache_get(key, dict)
         if cached and cached["fresh_until"] > time.time():
             return cached
         response = _fetch(
@@ -506,7 +516,7 @@ def download_archive(
         )
     key = _key("archive", repo.lower() + ":" + sha)
     with _single_flight(key, deadline):
-        cached = _cache_get(key)
+        cached = _cache_get(key, bytes)
         if cached is not None:
             return cached
         response = _fetch(
@@ -525,4 +535,5 @@ def download_archive(
                 status=404,
             )
         _cache_set(key, response.content, 24 * _HOUR)
-        return response.content
+        content: bytes = response.content
+        return content

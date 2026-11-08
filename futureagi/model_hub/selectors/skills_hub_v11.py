@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import ceil
+from typing import NoReturn
 from uuid import UUID
 
 from django.db.models import Q, QuerySet
@@ -24,7 +26,7 @@ from model_hub.services.skills_hub.v11.principals import (
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 
 
-def _not_found() -> None:
+def _not_found() -> NoReturn:
     raise SkillsHubError("resource_not_found", "Resource not found.", status=404)
 
 
@@ -213,6 +215,7 @@ def get_attempt_detail(
         principal=principal, scope=scope, skill_id=skill_id, run_id=run_id
     )
     require_run_payload(run)
+    assert run.snapshot is not None
     attempt = (
         HubSkillTestAttempt.objects.filter(pk=attempt_id, run=run)
         .select_related("run", "run__job")
@@ -280,13 +283,15 @@ def _case_comparisons(row: dict, *, diagnostic: bool) -> list[dict]:
                 "baseline": baseline,
                 "matched_cases": int(matched),
                 "expected_cases": 1,
-                "delta_percentage_points": 100
-                * (
-                    candidate["answer_passed"] / candidate["planned"]
-                    - variant["answer_passed"] / variant["planned"]
-                )
-                if matched and not diagnostic
-                else None,
+                "delta_percentage_points": (
+                    100
+                    * (
+                        candidate["answer_passed"] / candidate["planned"]
+                        - variant["answer_passed"] / variant["planned"]
+                    )
+                    if matched and not diagnostic
+                    else None
+                ),
             }
         )
     return comparisons
@@ -306,6 +311,7 @@ def list_case_results(
         principal=principal, scope=scope, skill_id=skill_id, run_id=run_id
     )
     require_run_payload(run)
+    assert run.snapshot is not None
     if (
         type(page) is not int
         or type(page_size) is not int
@@ -343,7 +349,7 @@ def list_case_results(
     )
     rows = reduce_results(
         cases=run.snapshot["cases"],
-        attempts=attempts,
+        attempts=[dict(attempt) for attempt in attempts],
         baselines=run.snapshot["configuration"]["baselines"],
         repetitions=run.repetitions,
         diagnostic=run.validity == "diagnostic",
@@ -549,7 +555,7 @@ def _calls_for(
     return list(queryset.order_by("sequence").values(*columns))
 
 
-def _summary_context(runs: list[HubSkillTestRun]) -> dict:
+def _summary_context(runs: Sequence[HubSkillTestRun]) -> dict:
     """Batch compact projections; never fetch run snapshots or call transcripts."""
     from django.contrib.postgres.aggregates import ArrayAgg
     from django.db.models import BigIntegerField, Count, Sum
@@ -712,6 +718,7 @@ def run_summary(*, principal: SkillPrincipal, run: HubSkillTestRun) -> dict:
     if (
         run.job.organization_id != principal.scope.organization_id
         or run.job.workspace_id != principal.scope.workspace_id
+        or run.job.skill is None
         or run.job.skill.deleted
         or (
             run.visibility != "workspace" and run.job.owner_user_id != principal.user_id
@@ -736,19 +743,25 @@ def _run_summary(run: HubSkillTestRun, context: dict) -> dict:
     )
     freshness = {
         "content": digest == run.candidate_digest,
-        "baseline": None
-        if run.baseline_version_id is None
-        else context["labels"].get(skill_id) == run.baseline_version_id
-        and context["events"].get(skill_id) == run.baseline_event_id,
-        "suite": None
-        if run.suite_revision is None
-        else context["suites"].get(skill_id) == run.suite_revision,
-        "competitors": None
-        if not run.competitors
-        else all(
-            context["competitors"].get(str(item["version_id"]))
-            == (job.organization_id, job.workspace_id)
-            for item in run.competitors
+        "baseline": (
+            None
+            if run.baseline_version_id is None
+            else context["labels"].get(skill_id) == run.baseline_version_id
+            and context["events"].get(skill_id) == run.baseline_event_id
+        ),
+        "suite": (
+            None
+            if run.suite_revision is None
+            else context["suites"].get(skill_id) == run.suite_revision
+        ),
+        "competitors": (
+            None
+            if not run.competitors
+            else all(
+                context["competitors"].get(str(item["version_id"]))
+                == (job.organization_id, job.workspace_id)
+                for item in run.competitors
+            )
         ),
         "payload_available": present
         and run.payload_purged_at is None
@@ -837,13 +850,15 @@ def _call_summary(call: dict) -> dict:
                 "error",
             )
         },
-        "assistant_message": {
-            key: message[key]
-            for key in ("role", "content", "tool_calls")
-            if key in message
-        }
-        if message
-        else None,
+        "assistant_message": (
+            {
+                key: message[key]
+                for key in ("role", "content", "tool_calls")
+                if key in message
+            }
+            if message
+            else None
+        ),
         "usage": usage,
         "cost": cost,
     }
@@ -862,6 +877,7 @@ def get_snapshot_file(
 ) -> dict:
     run = get_visible_run(principal=principal, skill_id=skill_id, run_id=run_id)
     require_run_payload(run)
+    assert run.snapshot is not None
     from model_hub.services.skills_hub.v11.runner import read_snapshot_chunk
 
     if variant not in {"candidate", *run.snapshot["configuration"]["baselines"]}:
@@ -945,14 +961,16 @@ def preview_summary(*, preview: HubSkillGitHubPreview) -> dict:
         "outcome": preview.outcome,
         "roots": preview.roots,
         "bundle": None if expired else preview.bundle,
-        "license": {
-            "status": "unknown",
-            "declared": None,
-            "files": [],
-            "requires_admin_review": True,
-        }
-        if expired or not preview.license
-        else preview.license,
+        "license": (
+            {
+                "status": "unknown",
+                "declared": None,
+                "files": [],
+                "requires_admin_review": True,
+            }
+            if expired or not preview.license
+            else preview.license
+        ),
         "diff": None if expired else preview.diff,
         "local_diverged": preview.local_diverged,
         "source_revision": preview.source_revision,

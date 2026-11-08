@@ -119,7 +119,9 @@ describe("publish review", () => {
     expect(screen.queryByTestId("diff")).not.toBeInTheDocument();
     fireEvent.click(publish);
     expect(api.publish).not.toHaveBeenCalled();
-    await act(async () => finish({ data: { files: [{ path: "SKILL.md", status: "modified", fromText: "Instructions", toText: saved.files[0].content, toSha256: createHash("sha256").update(saved.files[0].content).digest("hex") }] }, isError: false }));
+    const refreshed = { data: { files: [{ path: "SKILL.md", status: "modified", fromText: "Instructions", toText: saved.files[0].content, toSha256: createHash("sha256").update(saved.files[0].content).digest("hex") }] }, isError: false, isFetching: false };
+    api.compare.mockReturnValue(refreshed);
+    await act(async () => finish(refreshed));
     expect(await screen.findByTestId("diff")).toHaveTextContent("Instructions → New reviewed instructions");
     expect(publish).toBeEnabled();
     fireEvent.click(publish);

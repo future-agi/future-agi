@@ -32,10 +32,13 @@ def json_schema(value):
     if value.get("x-json-value"):
         return {}
     if "x-oneOf" in value:
-        return {"oneOf": json_schema(value["x-oneOf"])}
-    result = {
-        key: json_schema(item) for key, item in value.items() if key != "x-nullable"
-    }
+        result = {"oneOf": json_schema(value["x-oneOf"])}
+    elif "x-anyOf" in value:
+        result = {"anyOf": json_schema(value["x-anyOf"])}
+    else:
+        result = {
+            key: json_schema(item) for key, item in value.items() if key != "x-nullable"
+        }
     return {"anyOf": [result, {"type": "null"}]} if value.get("x-nullable") else result
 
 
@@ -162,3 +165,19 @@ def test_oversized_notes_keep_the_service_error_code(
     assert response.status_code == 413
     assert response.data["code"] == "payload_too_large"
     assert_contract(response)
+
+
+def test_generated_error_union_validates_structured_details_without_broad_fallback():
+    contract = swagger_contract()
+    validator = Draft7Validator(
+        json_schema(
+            {
+                "$ref": "#/definitions/SkillsHubV11Error",
+                "definitions": contract["definitions"],
+            }
+        )
+    )
+    for detail in ["Select a workspace.", {"revision": 7}, {"retry_at": None}]:
+        validator.validate({"status": False, "detail": detail})
+    for invalid_detail in [{"revision": "wrong"}, {"undocumented": True}, []]:
+        assert not validator.is_valid({"status": False, "detail": invalid_detail})

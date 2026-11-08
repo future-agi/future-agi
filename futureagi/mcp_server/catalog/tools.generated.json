@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "dd77ad77a1a976d3792797da69c3694e12c1760f674e19508ea572a97b2c18ac",
+  "source_contract_sha256": "a31eadf2b9fe676659f36d91c6f2a1002874acaf1990d2c13f703720f577e6bf",
   "tool_count": 113,
   "tools": [
     {
@@ -11026,7 +11026,7 @@
     },
     {
       "name": "list_skills",
-      "description": "List versioned skills in the authenticated workspace. Call get_skill to resolve a label or version before reading instructions.",
+      "description": "List versioned skills in the authenticated workspace. Read release_revision, protected_label_names and current label targets here before a protected release; submit that revision as expected_release_revision and the target as expected_version. Call get_skill to resolve a label or version before reading instructions.",
       "group": "skills",
       "inputSchema": {
         "type": "object",
@@ -11241,11 +11241,27 @@
     },
     {
       "name": "publish_skill",
-      "description": "Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied.",
+      "description": "Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied. Protected labels require a current admin and expected_release_revision read from list_skills (0 for a new identity); publish without labels otherwise. Optional expected_digest binds reviewed content and evidence_run_id attaches already shared exact-content evidence.",
       "group": "skills",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "expected_digest": {
+            "title": "Expected digest",
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "expected_release_revision": {
+            "title": "Expected release revision",
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence_run_id": {
+            "title": "Evidence run id",
+            "type": "string",
+            "format": "uuid"
+          },
           "files": {
             "type": "array",
             "items": {
@@ -11321,6 +11337,9 @@
           "path": [],
           "query": [],
           "body": [
+            "expected_digest",
+            "expected_release_revision",
+            "evidence_run_id",
             "files",
             "note",
             "labels",
@@ -11338,7 +11357,7 @@
     },
     {
       "name": "set_skill_label",
-      "description": "Move a skill label to a published version. Use expected_version for compare-and-swap; null requires that the label does not exist. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.",
+      "description": "Move a skill label to a published version. Read list_skills first and send expected_release_revision plus expected_version for compare-and-swap; null requires that the label does not exist. Both preconditions and current admin access are mandatory for protected labels, even on a no-op. Optional expected_digest and evidence_run_id bind the reviewed target and shared evidence. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.",
       "group": "skills",
       "inputSchema": {
         "type": "object",
@@ -11349,6 +11368,11 @@
           },
           "label": {
             "type": "string"
+          },
+          "expected_release_revision": {
+            "title": "Expected release revision",
+            "type": "integer",
+            "minimum": 0
           },
           "expected_version": {
             "anyOf": [
@@ -11361,6 +11385,17 @@
                 "type": "null"
               }
             ]
+          },
+          "expected_digest": {
+            "title": "Expected digest",
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "evidence_run_id": {
+            "title": "Evidence run id",
+            "type": "string",
+            "format": "uuid"
           },
           "version": {
             "title": "Version",
@@ -11397,7 +11432,10 @@
           ],
           "query": [],
           "body": [
+            "expected_release_revision",
             "expected_version",
+            "expected_digest",
+            "evidence_run_id",
             "version",
             "note"
           ]

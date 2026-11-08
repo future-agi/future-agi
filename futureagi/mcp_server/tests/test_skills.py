@@ -288,6 +288,7 @@ def test_get_skill_pages_maximum_manifest_through_executor(
         labels=["production"],
         tags=[],
         acknowledge_warnings=True,
+        expected_release_revision=0,
     ).version
     arguments = {"name": "many-files"}
     received: list[dict[str, str | int]] = []

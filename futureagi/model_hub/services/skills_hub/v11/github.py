@@ -25,7 +25,7 @@ from model_hub.models.skills_hub_v11 import (
     HubSkillGitHubSource,
     HubSkillJob,
 )
-from model_hub.services.skills_hub.checks import run_checks
+from model_hub.services.skills_hub.checks import parse_frontmatter, run_checks
 from model_hub.services.skills_hub.drafts import save_draft
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import file_sha256, manifest_digest
@@ -785,6 +785,12 @@ def stage_github_preview(
             raise _error(
                 "github_bundle_invalid", "The reviewed bundle is invalid.", 422
             )
+        # Diagnostic checks deliberately redact secrets; identity comes from files.
+        root_text = next(
+            file["content"] for file in files if file["path"] == "SKILL.md"
+        )
+        frontmatter, _, _ = parse_frontmatter(root_text)
+        assert frontmatter is not None  # Structural checks validated this mapping.
         user = User.objects.get(pk=principal.user_id)
         if skill:
             source = _source(principal.scope, skill)
@@ -840,7 +846,7 @@ def stage_github_preview(
                 ),
                 actor=Actor(user=user, api_key=None),
                 name=preview.bundle["name"],
-                description=checks["frontmatter"]["description"],
+                description=frontmatter["description"],
                 tags=[],
             )
             revision = HubSkillDraft.objects.get(skill=skill, user=user).revision

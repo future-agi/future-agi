@@ -161,8 +161,8 @@ def test_no_target_has_no_access_and_competitors_remain():
 
 def test_tools_require_activation_and_exact_paths():
     item = bundle(extra=[{"path": "empty.txt", "content": ""}])
-    active = set()
-    read = {
+    active: set[str] = set()
+    read: dict = {
         "id": "t1",
         "function": {
             "name": "read_skill_file",
@@ -204,9 +204,9 @@ def test_tools_require_activation_and_exact_paths():
         remaining_bytes=100,
     )
     assert output["eof"] and record["delivered_bytes"] == 0
-    read["function"]["arguments"] = (
-        '{"skill_id":"x","path":"../secret","offset":0,"max_bytes":100}'
-    )
+    read["function"][
+        "arguments"
+    ] = '{"skill_id":"x","path":"../secret","offset":0,"max_bytes":100}'
     output, record, _ = process_tool(
         call=read,
         call_id="c",

@@ -2,27 +2,33 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import NoReturn, Protocol
+
+from django.contrib.auth.models import AnonymousUser
 
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.skills_hub import HubSkill
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
+from model_hub.services.skills_hub.v11.types import (
+    PrincipalKind,
+    SkillPrincipal,
+    SkillScope,
+)
 from tfc.constants.levels import Level
 
 
 class AuthenticatedRequest(Protocol):
     organization: object
     workspace: Workspace
-    user: User
+    user: User | AnonymousUser
 
 
 def _deny(
     code: str = "access_revoked",
     message: str = "Current access to this workspace is required.",
-) -> None:
+) -> NoReturn:
     raise SkillsHubError(code, message, status=403)
 
 
@@ -40,6 +46,8 @@ def require_valid_scope(*, scope: SkillScope) -> None:
 
 
 def _current_key(*, principal: SkillPrincipal) -> OrgApiKey:
+    if principal.api_key_id is None:
+        _deny()
     key = (
         OrgApiKey.no_workspace_objects.filter(
             pk=principal.api_key_id,
@@ -76,9 +84,12 @@ def principal_from_request(request: AuthenticatedRequest) -> SkillPrincipal:
     scope = SkillScope(organization_id=organization.pk, workspace_id=workspace.pk)
     key = getattr(request, "org_api_key", None)
     if key is not None:
-        kind = {"system": "system_key", "user": "user_key", "mcp": "mcp_key"}.get(
-            key.type
-        )
+        kinds: dict[str, PrincipalKind] = {
+            "system": "system_key",
+            "user": "user_key",
+            "mcp": "mcp_key",
+        }
+        kind = kinds.get(key.type)
         if kind is None:
             _deny("principal_not_supported", "This key cannot use Skills.")
         principal = SkillPrincipal(
@@ -117,27 +128,29 @@ def effective_scope_level(*, principal: SkillPrincipal) -> int:
     """Match central RBAC without ambient organization or synthetic-user fallback."""
     require_valid_scope(scope=principal.scope)
     require_private_principal(principal=principal)
+    user_id = principal.user_id
+    assert user_id is not None
     if principal.kind == "human":
         if principal.api_key_id is not None:
             _deny()
     else:
         _current_key(principal=principal)
-    if not User.objects.filter(pk=principal.user_id, is_active=True).exists():
+    if not User.objects.filter(pk=user_id, is_active=True).exists():
         _deny()
     membership = OrganizationMembership.no_workspace_objects.filter(
         organization_id=principal.scope.organization_id,
-        user_id=principal.user_id,
+        user_id=user_id,
         is_active=True,
     ).first()
     if membership is None:
         _deny()
-    org_level = membership.level_or_legacy
+    org_level = int(membership.level_or_legacy)
     if org_level >= Level.ADMIN:
         return org_level
     workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
         workspace_id=principal.scope.workspace_id,
         workspace__organization_id=principal.scope.organization_id,
-        user_id=principal.user_id,
+        user_id=user_id,
         is_active=True,
     ).first()
     if workspace_membership is None or (
@@ -145,7 +158,7 @@ def effective_scope_level(*, principal: SkillPrincipal) -> int:
         and workspace_membership.organization_membership_id != membership.pk
     ):
         _deny()
-    return max(org_level, workspace_membership.level_or_legacy)
+    return max(org_level, int(workspace_membership.level_or_legacy))
 
 
 def require_scope_access(*, principal: SkillPrincipal, write: bool) -> None:

@@ -19,7 +19,6 @@ from model_hub.services.skills_hub.v11.principals import (
     require_skill_admin,
 )
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
-from tfc.utils.serializer_fields import StringOrObjectField
 
 
 class HubSerializer(s.Serializer):
@@ -498,7 +497,7 @@ class DraftSummary(HubSerializer):
 
     def get_is_mine(self, obj) -> bool:
         principal = _principal(self.context)
-        return principal.kind != "system_key" and obj.user_id == principal.user_id
+        return bool(principal.kind != "system_key" and obj.user_id == principal.user_id)
 
 
 class SkillPermissions(HubSerializer):
@@ -816,16 +815,54 @@ class SkillsError(ManagementAPIErrorResponseSerializer):
     """Retain standard aliases and structured domain detail for release failures."""
 
     def get_fields(self):
-        return {**super().get_fields(), "detail": StringOrObjectField(required=False)}
+        fields = super().get_fields()
+        if type(fields["detail"]) is s.CharField:
+            fields["detail"] = SkillsErrorDetail(required=False, allow_null=True)
+        return fields
 
 
 class ConflictDetail(HubSerializer):
+    class Meta:
+        ref_name = "SkillsHubConflictDetail"
+        swagger_schema_fields = {"additionalProperties": False}
+
     base_version = s.IntegerField(required=False, allow_null=True)
     latest_version = s.IntegerField(required=False, allow_null=True)
     current_version = s.IntegerField(required=False, allow_null=True)
     revision = s.IntegerField(required=False)
     updated_at = s.DateTimeField(required=False, allow_null=True)
     release_revision = s.IntegerField(required=False)
+    retry_at = s.DateTimeField(required=False, allow_null=True)
+    reason = s.CharField(required=False)
+
+
+class SkillsErrorDetail(s.JSONField):
+    """Standard text errors or the explicitly documented Skills domain payloads."""
+
+    class Meta:
+        # Swagger 2's text fallback plus the existing typed-union extension.
+        swagger_schema_fields = {
+            "type": "string",
+            "x-anyOf": [
+                {"type": "string"},
+                {"$ref": "#/definitions/SkillsHubConflictDetail"},
+                {"$ref": "#/definitions/SkillsHubChecksResult"},
+            ],
+        }
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            return data
+        if not isinstance(data, dict):
+            raise s.ValidationError("Expected text or a Skills error detail object.")
+        serializer = (
+            ChecksResult if "items" in data or "summary" in data else ConflictDetail
+        )
+        detail = serializer(data=data)
+        if set(data) - set(detail.fields):
+            raise s.ValidationError("Unknown Skills error detail fields.")
+        detail.is_valid(raise_exception=True)
+        return data
 
 
 class SkillsConflictError(SkillsError):

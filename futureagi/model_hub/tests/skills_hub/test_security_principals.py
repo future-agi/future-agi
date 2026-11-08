@@ -169,7 +169,8 @@ def test_system_keys_keep_public_consumption_and_push_without_private_identity(
     assert not library["results"][0]["has_draft"]
     detail = result(client.get(url))
     assert not detail["has_draft"]
-    assert detail["drafts"] and not any(row["is_mine"] for row in detail["drafts"])
+    # v1.1 removes private author metadata entirely for system principals.
+    assert detail["drafts"] == []
     assert (
         result(client.get(url + "compare/", {"from": 1, "to": 1}))["summary"][
             "unchanged"

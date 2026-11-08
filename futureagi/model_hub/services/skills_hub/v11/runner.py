@@ -93,9 +93,7 @@ def variant_bundles(*, snapshot: dict, variant: str) -> dict[str, dict]:
     target = (
         snapshot["candidate"]
         if variant == "candidate"
-        else snapshot["production"]
-        if variant == "production"
-        else None
+        else snapshot["production"] if variant == "production" else None
     )
     if variant not in {"candidate", "production", "without_target"} or (
         variant == "production" and target is None
@@ -324,7 +322,9 @@ def process_tool(
         if not isinstance(args, dict):
             raise ValueError
         handle = args.get("skill_id")
-        bundle = bundles.get(handle) if isinstance(handle, str) else None
+        if not isinstance(handle, str):
+            raise ValueError
+        bundle = bundles.get(handle)
         requested = bool(
             bundle
             and bundle["skill_id"] == target_id
@@ -391,11 +391,13 @@ def process_tool(
         "skill_id": bundle["skill_id"] if bundle else target_id,
         "version_id": bundle["version_id"] if bundle else None,
         "digest": bundle["digest"] if bundle else "",
-        "path": path
-        if bundle
-        and isinstance(path, str)
-        and any(item["path"] == path for item in bundle["files"])
-        else "",
+        "path": (
+            path
+            if bundle
+            and isinstance(path, str)
+            and any(item["path"] == path for item in bundle["files"])
+            else ""
+        ),
         "sha256": None,
         "offset": offset if type(offset) is int and offset >= 0 else 0,
         "next_offset": None,
@@ -428,8 +430,10 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
     tools = tool_definitions() if bundles else []
     profile = snapshot["limits"]["profiles"][run.profile]
     target_id = snapshot["candidate"]["skill_id"]
-    receipts, pending_receipts, activated = [], [], set()
-    seen_tool_ids = set()
+    receipts: list[dict] = []
+    pending_receipts: list[dict] = []
+    activated: set[str] = set()
+    seen_tool_ids: set[str] = set()
     requested, answer, finish_reason = False, None, None
     tool_count, delivered_bytes = 0, 0
     task_deadline = time.monotonic() + profile["task_phase_seconds"]
@@ -543,6 +547,7 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
                         "Attempt tool-call allowance reached.",
                         status=422,
                     )
+                assert last_call is not None
                 output, receipt, target_requested = process_tool(
                     call=tool,
                     call_id=str(last_call.id),
@@ -590,11 +595,11 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
     routing = (
         "not_applicable"
         if attempt.variant == "without_target" or case["expected_trigger"] is None
-        else "unverifiable"
-        if target_loaded is None
-        else "pass"
-        if target_loaded == case["expected_trigger"]
-        else "fail"
+        else (
+            "unverifiable"
+            if target_loaded is None
+            else "pass" if target_loaded == case["expected_trigger"] else "fail"
+        )
     )
     checks = grade_deterministic(
         case=case,
@@ -630,14 +635,20 @@ async def execute_test_attempt(*, scope: SkillScope, attempt_id: UUID) -> dict:
     status = (
         "completed"
         if failure is None
-        else "cancelled"
-        if failure["code"] == "execution_cancelled"
-        else "unknown"
-        if failure["code"] == "execution_unknown"
-        else "incomplete"
-        if failure["code"]
-        in {"task_incomplete", "budget_exhausted", "provider_timeout"}
-        else "error"
+        else (
+            "cancelled"
+            if failure["code"] == "execution_cancelled"
+            else (
+                "unknown"
+                if failure["code"] == "execution_unknown"
+                else (
+                    "incomplete"
+                    if failure["code"]
+                    in {"task_incomplete", "budget_exhausted", "provider_timeout"}
+                    else "error"
+                )
+            )
+        )
     )
     await sync_to_async(_persist)(
         attempt_id=attempt_id,

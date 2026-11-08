@@ -65,6 +65,7 @@ def test_batch_download_packages_and_counts_each_resolved_skill(
     hub_actor,
     publish_skill,
     make_skill_files,
+    actor_for_workspace,
     selection,
     tenant,
 ):
@@ -86,6 +87,7 @@ def test_batch_download_packages_and_counts_each_resolved_skill(
             skill,
             files=files,
             labels=[] if name == "unlabelled-skill" else ["production"],
+            expected_release_revision=0,
         ).version
         # Latest must not silently replace the production pointer in the ZIP.
         if name == "alpha-skill":
@@ -94,15 +96,18 @@ def test_batch_download_packages_and_counts_each_resolved_skill(
     foreign_workspace = request.getfixturevalue(
         "hub_other_workspace" if tenant == "workspace" else "hub_other_org_workspace"
     )
+    foreign_actor = actor_for_workspace(foreign_workspace)
     foreign = create_skill(
         organization=foreign_workspace.organization,
         workspace=foreign_workspace,
-        actor=hub_actor,
+        actor=foreign_actor,
         name="foreign-skill",
         description="Use when a foreign tenant has the same discovery tag.",
         tags=["batch"],
     )
-    publish_skill(foreign, labels=["production"])
+    publish_skill(
+        foreign, actor=foreign_actor, labels=["production"], expected_release_revision=0
+    )
     query = {
         "label": "production",
         **(

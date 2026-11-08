@@ -6,6 +6,7 @@ from copy import deepcopy
 import pytest
 
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v11.assist import (
     MAX_INPUT_BYTES,
     MAX_OUTPUT_BYTES,
@@ -61,7 +62,7 @@ def test_description_multiline_and_quoted_scalars(scalar):
 
 
 def test_description_alias_cannot_change_unrelated_yaml():
-    files = [
+    files: list[FileInput] = [
         {
             "path": "SKILL.md",
             "content": "---\nname: help-desk\ndescription: &shared Use when support needs help with a request.\nlicense: *shared\n---\nBody\n",
@@ -230,7 +231,7 @@ def test_findings_are_plan_bound_and_redacted():
 def test_review_rejects_missing_fabricated_duplicate_and_changed_findings():
     findings = [{"finding_id": "known"}]
     plan = {"input_fingerprint": "plan", "outbound_findings": findings}
-    request = {
+    request: dict = {
         "expected_input_fingerprint": "plan",
         "acknowledge_provider_processing": True,
         "outbound_review": {
@@ -268,7 +269,7 @@ def test_review_rejects_missing_fabricated_duplicate_and_changed_findings():
 
 
 def test_assist_input_rejects_publication_and_unbounded_output():
-    request = {
+    request: dict = {
         "kind": "draft",
         "revision": 1,
         "expected_digest": "digest",
@@ -282,11 +283,12 @@ def test_assist_input_rejects_publication_and_unbounded_output():
         "max_estimated_cost_usd": "1.00",
     }
     assert _request_input(request) == request
-    for change in [
+    changes: list[dict] = [
         {"labels": ["production"]},
         {"instruction": "x" * (MAX_INPUT_BYTES + 1)},
         {"model": {**request["model"], "max_output_tokens": 8193}},
-    ]:
+    ]
+    for change in changes:
         with pytest.raises(SkillsHubError) as error:
             _request_input({**request, **change})
         assert error.value.code == "invalid_test_config"
@@ -761,6 +763,7 @@ def test_description_requires_reviewed_positive_and_negative(
     assert plan["input_fingerprint"]
     run = HubSkillTestRun.objects.get(pk=description_request["source_run_id"])
     for change in [{"reviewed": False}, {"expected_trigger": True}]:
+        assert run.snapshot is not None
         snapshot = deepcopy(run.snapshot)
         snapshot["cases"][1].update(change)
         HubSkillTestRun.objects.filter(pk=run.pk).update(snapshot=snapshot)
@@ -888,7 +891,10 @@ def test_secret_review_is_accepted_without_changing_plan(
         preview_assist_proposal,
     )
 
-    request = {**assist_request, "context_text": "ghp_" + "syntheticfixture0123456789"}
+    request: dict = {
+        **assist_request,
+        "context_text": "ghp_" + "syntheticfixture0123456789",
+    }
     plan = preview_assist_proposal(
         principal=assist_principal, skill_id=hub_skill.pk, request=request
     )
@@ -916,6 +922,7 @@ def test_secret_review_is_accepted_without_changing_plan(
         request=submission,
     )
     assert proposal.input_fingerprint == plan["input_fingerprint"]
+    assert proposal.input is not None
     assert proposal.input["accepted_input_fingerprint"] != plan["input_fingerprint"]
 
 

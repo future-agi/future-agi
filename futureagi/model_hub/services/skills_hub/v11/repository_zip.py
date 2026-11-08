@@ -16,7 +16,11 @@ import zlib
 from collections import Counter
 
 from model_hub.services.skills_hub import limits
-from model_hub.services.skills_hub.checks import path_is_valid, run_checks
+from model_hub.services.skills_hub.checks import (
+    parse_frontmatter,
+    path_is_valid,
+    run_checks,
+)
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import (
     archive_member_rejection,
@@ -308,6 +312,11 @@ def parse_repository_zip(raw: bytes, *, path: str) -> dict:
                     status=422,
                     detail=checks,
                 )
+            root_text = next(
+                file["content"] for file in files if file["path"] == "SKILL.md"
+            )
+            frontmatter, _, _ = parse_frontmatter(root_text)
+            assert frontmatter is not None  # Structural checks validated this mapping.
             license_evidence = _license(notices, checks)
             return {
                 "roots": roots,
@@ -315,7 +324,7 @@ def parse_repository_zip(raw: bytes, *, path: str) -> dict:
                     "blocked" if license_evidence["status"] == "restricted" else "ready"
                 ),
                 "bundle": {
-                    "name": checks["frontmatter"]["name"],
+                    "name": frontmatter["name"],
                     "root": root,
                     "digest": manifest_digest(files),
                     "files": files,

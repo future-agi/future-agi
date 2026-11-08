@@ -390,6 +390,7 @@ def test_late_fenced_settlement_keeps_usage_without_rewriting_verdict(execution)
     call.refresh_from_db()
     attempt.refresh_from_db()
     run.job.refresh_from_db()
+    assert call.usage is not None
     assert call.assistant_message is None and call.usage["total_tokens"] == 8
     assert attempt.status == "unknown" and attempt.answer is None
     assert run.job.known_input_tokens == 5 and run.job.reserved_tokens == 0
@@ -422,6 +423,7 @@ def test_prepared_unsent_request_recovers_capacity_after_worker_loss(execution):
     assert (
         call.state == "failed"
         and call.started_at is None
+        and call.usage is not None
         and call.usage["total_tokens"] == 0
     )
     with pytest.raises(SkillsHubError):

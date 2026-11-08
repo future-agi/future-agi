@@ -172,11 +172,16 @@ class SkillsView(APIView):
             api_key=getattr(request, "org_api_key", None),
         )
 
-    def output(self, request, serializer, value, *, status=200, many=False, **context):
+    def output(
+        self, request, serializer, value, *, status=200, many=False, **context
+    ) -> Response:
         data = serializer(
             value, many=many, context={"request": request, **context}
         ).data
-        return GeneralMethods(request).success_response(data, status=status)
+        response: Response = GeneralMethods(request).success_response(
+            data, status=status
+        )
+        return response
 
     def published(self, request, result):
         return self.output(

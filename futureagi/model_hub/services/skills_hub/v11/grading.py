@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from model_hub.services.skills_hub.errors import SkillsHubError
@@ -47,11 +47,11 @@ def parse_json(text: str) -> object:
 def strict_equal(left: object, right: object) -> bool:
     if type(left) is not type(right):
         return False
-    if isinstance(left, dict):
+    if isinstance(left, dict) and isinstance(right, dict):
         return left.keys() == right.keys() and all(
             strict_equal(left[key], right[key]) for key in left
         )
-    if isinstance(left, list):
+    if isinstance(left, list) and isinstance(right, list):
         return len(left) == len(right) and all(
             strict_equal(a, b) for a, b in zip(left, right, strict=False)
         )
@@ -87,12 +87,13 @@ def _schema_worker(schema: dict, value: object, sender) -> None:
     from referencing.exceptions import NoSuchResource, Unresolvable
 
     def no_external(uri: str):
-        raise NoSuchResource(ref=uri)
+        raise NoSuchResource(uri)
 
     try:
+        # The installed referencing stubs omit its attrs-generated initializer.
         sender.send(
             jsonschema.Draft202012Validator(
-                schema, registry=Registry(retrieve=no_external)
+                schema, registry=cast(Any, Registry)(retrieve=no_external)
             ).is_valid(value)
         )
     except (ValueError, RecursionError, Unresolvable, re.error):
@@ -114,7 +115,8 @@ def bounded_schema_matches(schema: dict, value: object) -> bool | None:
         sender.close()
         if receiver.poll(1.0):
             try:
-                return receiver.recv()
+                result = receiver.recv()
+                return result if isinstance(result, bool) else None
             except EOFError:
                 return None
         return None
@@ -173,7 +175,7 @@ def grade_deterministic(
             "evidence": None,
             "reason": None,
         }
-        passed = False
+        passed: bool | None = False
         if kind == "file_delivered":
             if variant == "without_target":
                 result["verdict"] = "not_applicable"
@@ -376,7 +378,7 @@ def reduce_results(
 ) -> dict:
     """Mixed-baseline outcomes count as regressions; a missing arm is unmatched."""
     rows, comparisons = [], []
-    deltas = {baseline: [] for baseline in baselines}
+    deltas: dict[str, list[float]] = {baseline: [] for baseline in baselines}
     candidate_failure, candidate_incomplete, has_answers = False, False, False
     counts = {
         "planned": len(cases) * (1 + len(baselines)) * repetitions,
@@ -518,21 +520,25 @@ def reduce_results(
                 "baseline": baseline,
                 "matched_cases": len(values),
                 "expected_cases": len(cases),
-                "delta_percentage_points": None
-                if diagnostic or not values
-                else 100 * sum(values) / len(values),
+                "delta_percentage_points": (
+                    None
+                    if diagnostic or not values
+                    else 100 * sum(values) / len(values)
+                ),
             }
         )
     state = (
         "diagnostic"
         if diagnostic
-        else "needs_changes"
-        if candidate_failure
-        else "inconclusive"
-        if candidate_incomplete or not cases
-        else "works_on_examples"
-        if has_answers
-        else "routing_only"
+        else (
+            "needs_changes"
+            if candidate_failure
+            else (
+                "inconclusive"
+                if candidate_incomplete or not cases
+                else "works_on_examples" if has_answers else "routing_only"
+            )
+        )
     )
     decision = {
         "state": state,
@@ -567,8 +573,8 @@ def aggregate_test_run(*, scope: SkillScope, run_id: UUID) -> dict:
         if run is None:
             raise SkillsHubError("resource_not_found", "Run not found.", status=404)
         if run.snapshot is None:
-            return run.summary
-        attempts = list(run.hub_skill_attempts.values())
+            return dict(run.summary)
+        attempts = [dict(attempt) for attempt in run.hub_skill_attempts.values()]
         for attempt in attempts:
             attempt["id"] = str(attempt["id"])
         result = reduce_results(

@@ -10,6 +10,7 @@ from drf_yasg import openapi
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from model_hub.models.skills_hub_v11 import HubSkillJob
 from model_hub.selectors import skills_hub_v11 as selectors
@@ -39,9 +40,10 @@ from tfc.utils.general_methods import GeneralMethods
 
 
 def invalid_request(errors: dict) -> Response:
-    return GeneralMethods().custom_error_response(
+    response: Response = GeneralMethods().custom_error_response(
         400, errors, code="invalid_test_config"
     )
+    return response
 
 
 def contract(
@@ -99,7 +101,9 @@ def contract(
 
 
 class SkillsV11Permission(BasePermission):
-    def has_permission(self, request: Request, view: SkillsV11View) -> bool:
+    def has_permission(self, request: Request, view: APIView) -> bool:
+        if not isinstance(view, SkillsV11View):
+            return False
         principal = principals.principal_from_request(request)
         # Classify keys before any child/owner lookup. Synthetic system users
         # never inherit private access, even to deliberately shared test jobs.

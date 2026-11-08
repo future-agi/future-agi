@@ -49,16 +49,20 @@ def currentness(
     ).count()
     return {
         "content": run.candidate_digest == candidate_digest,
-        "baseline": None
-        if run.baseline_version_id is None
-        else bool(
-            label
-            and label.version_id == run.baseline_version_id
-            and (event.id if event else None) == run.baseline_event_id
+        "baseline": (
+            None
+            if run.baseline_version_id is None
+            else bool(
+                label
+                and label.version_id == run.baseline_version_id
+                and (event.id if event else None) == run.baseline_event_id
+            )
         ),
-        "suite": None
-        if run.suite_revision is None
-        else bool(suite and suite.revision == run.suite_revision),
+        "suite": (
+            None
+            if run.suite_revision is None
+            else bool(suite and suite.revision == run.suite_revision)
+        ),
         "competitors": None if not competitors else available == len(competitors),
         "payload_available": run.snapshot is not None
         and run.payload_purged_at is None
@@ -81,17 +85,24 @@ def list_test_evidence(
     *, principal: SkillPrincipal, skill_id: UUID, candidate: dict
 ) -> dict:
     require_private_principal(principal=principal)
+    user_id = principal.user_id
+    assert user_id is not None
     require_scope_access(principal=principal, write=False)
     skill = _skill(principal, skill_id)
     if candidate.get("kind") == "draft":
-        draft = skill.drafts.filter(user_id=principal.user_id).first()
+        draft = skill.drafts.filter(user_id=user_id).first()
         if draft is None or draft.revision != candidate.get("revision"):
             raise SkillsHubError(
                 "draft_conflict", "Choose the current saved draft revision.", status=409
             )
         digest = manifest_digest(draft.files)
     elif candidate.get("kind") == "version":
-        version = skill.versions.filter(number=candidate.get("version")).first()
+        number = candidate.get("version")
+        if type(number) is not int or number < 1:
+            raise SkillsHubError(
+                "invalid_selector", "Choose a positive version.", status=400
+            )
+        version = skill.versions.filter(number=number).first()
         if version is None:
             raise SkillsHubError("version_not_found", "Version not found.", status=404)
         digest = version.digest
@@ -126,9 +137,11 @@ def list_test_evidence(
                 "currentness": freshness,
                 "validity": run.validity,
                 "selected_cases": len(run.selected_case_ids),
-                "suite_cases": run.snapshot.get("suite_case_count")
-                if run.snapshot
-                else run.summary.get("suite_case_count"),
+                "suite_cases": (
+                    run.snapshot.get("suite_case_count")
+                    if run.snapshot
+                    else run.summary.get("suite_case_count")
+                ),
                 "repetitions": run.repetitions,
                 "answer_regressions": run.summary.get("decision", {}).get(
                     "regressed_cases", 0

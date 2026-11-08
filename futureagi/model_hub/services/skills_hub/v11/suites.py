@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from copy import deepcopy
+from typing import NoReturn
 from uuid import UUID
 
 import jsonschema
@@ -35,7 +36,7 @@ def canonical_json(value: object) -> str:
     )
 
 
-def _invalid(message: str, *, code: str = "invalid_test_config") -> None:
+def _invalid(message: str, *, code: str = "invalid_test_config") -> NoReturn:
     raise SkillsHubError(code, message, status=400)
 
 
@@ -70,6 +71,7 @@ def _uuid(value: object) -> str:
 
 def validate_file_path(path: object) -> None:
     _text(path, "file path", maximum=255)
+    assert isinstance(path, str)
     segments = path.split("/")
     if (
         len(segments) > 8
@@ -92,7 +94,7 @@ def validate_json_schema(schema: object) -> None:
         _invalid("JSON schema must contain finite JSON values.")
     if len(encoded) > limits.MAX_SCHEMA_BYTES:
         _invalid("JSON schema exceeds 16 KiB.")
-    stack = [(schema, 0)]
+    stack: list[tuple[object, int]] = [(schema, 0)]
     while stack:
         node, depth = stack.pop()
         if depth > limits.MAX_SCHEMA_DEPTH:
@@ -279,9 +281,11 @@ def get_suite(*, scope: SkillScope, skill_id: UUID) -> dict:
         "digest": suite.digest,
         "cases": suite.cases,
         "updated_at": suite.updated_at,
-        "updated_by": {"id": str(suite.updated_by_id), "name": suite.updated_by.name}
-        if suite.updated_by_id
-        else None,
+        "updated_by": (
+            {"id": str(suite.updated_by_id), "name": suite.updated_by.name}
+            if suite.updated_by is not None
+            else None
+        ),
         "visibility": "workspace",
     }
 
@@ -290,6 +294,8 @@ def save_suite(
     *, principal: SkillPrincipal, skill_id: UUID, revision: int, cases: list[dict]
 ) -> HubSkillTestSuite:
     require_private_principal(principal=principal)
+    user_id = principal.user_id
+    assert user_id is not None
     require_scope_access(principal=principal, write=True)
     if type(revision) is not int or revision < 0:
         _invalid("Use a nonnegative suite revision.")
@@ -317,7 +323,7 @@ def save_suite(
             )
         old_cases = {case["id"]: case for case in suite.cases} if suite else {}
         now = timezone.now().isoformat()
-        user = User.objects.only("id", "name").get(pk=principal.user_id)
+        user = User.objects.only("id", "name").get(pk=user_id)
         exposed_groups = set()
         # Lineage is retained independently of expired proposal text.
         for groups in HubSkillAssistProposal.objects.filter(
@@ -341,11 +347,13 @@ def save_suite(
             if case["reviewed"]:
                 case["reviewed_by"] = (
                     old["reviewed_by"]
-                    if unchanged and old.get("reviewed")
+                    if unchanged and old is not None and old.get("reviewed")
                     else {"id": str(user.pk), "name": user.name}
                 )
                 case["reviewed_at"] = (
-                    old["reviewed_at"] if unchanged and old.get("reviewed") else now
+                    old["reviewed_at"]
+                    if unchanged and old is not None and old.get("reviewed")
+                    else now
                 )
             else:
                 case["reviewed_by"] = None

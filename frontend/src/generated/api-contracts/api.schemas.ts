@@ -15785,6 +15785,8 @@ export type SkillsHubSkillSummaryApiUpdatedBy = {
 } | null;
 
 export interface SkillsHubSkillSummaryApi {
+  release_revision: number;
+  protected_label_names: string[];
   id: string;
   /** @minLength 1 */
   name: string;
@@ -15844,81 +15846,17 @@ export const SkillsErrorApiType = {
 
 export type SkillsErrorApiDetails = { [key: string]: string[] };
 
-export interface SkillsErrorApi {
-  status?: boolean;
-  type?: SkillsErrorApiType;
-  code?: string | null;
-  detail?: string | null;
-  result?: string | null;
-  message?: string | null;
-  error?: string | null;
-  attr?: string | null;
-  details?: SkillsErrorApiDetails;
-}
-
-export type SkillsConflictErrorApiType =
-  | (typeof SkillsConflictErrorApiType)[keyof typeof SkillsConflictErrorApiType]
-  | null;
-
-export const SkillsConflictErrorApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type SkillsConflictErrorApiDetails = { [key: string]: string[] };
-
 export interface SkillsHubConflictDetailApi {
   base_version?: number | null;
   latest_version?: number | null;
   current_version?: number | null;
   revision?: number;
   updated_at?: string | null;
+  release_revision?: number;
+  retry_at?: string | null;
+  /** @minLength 1 */
+  reason?: string;
 }
-
-export interface SkillsConflictErrorApi {
-  status?: boolean;
-  type?: SkillsConflictErrorApiType;
-  code?: string | null;
-  detail: SkillsHubConflictDetailApi;
-  result?: string | null;
-  message?: string | null;
-  error?: string | null;
-  attr?: string | null;
-  details?: SkillsConflictErrorApiDetails;
-}
-
-export type SkillsChecksErrorApiType =
-  | (typeof SkillsChecksErrorApiType)[keyof typeof SkillsChecksErrorApiType]
-  | null;
-
-export const SkillsChecksErrorApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type SkillsChecksErrorApiDetails = { [key: string]: string[] };
 
 export type SkillsHubCheckApiSeverity =
   (typeof SkillsHubCheckApiSeverity)[keyof typeof SkillsHubCheckApiSeverity];
@@ -15966,6 +15904,78 @@ export interface SkillsHubChecksResultApi {
   frontmatter: SkillsHubChecksResultApiFrontmatter;
 }
 
+export interface SkillsErrorApi {
+  status?: boolean;
+  type?: SkillsErrorApiType;
+  code?: string | null;
+  detail?:
+    | string
+    | SkillsHubConflictDetailApi
+    | SkillsHubChecksResultApi
+    | null;
+  result?: string | null;
+  message?: string | null;
+  error?: string | null;
+  attr?: string | null;
+  details?: SkillsErrorApiDetails;
+}
+
+export type SkillsConflictErrorApiType =
+  | (typeof SkillsConflictErrorApiType)[keyof typeof SkillsConflictErrorApiType]
+  | null;
+
+export const SkillsConflictErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsConflictErrorApiDetails = { [key: string]: string[] };
+
+export interface SkillsConflictErrorApi {
+  status?: boolean;
+  type?: SkillsConflictErrorApiType;
+  code?: string | null;
+  detail: SkillsHubConflictDetailApi;
+  result?: string | null;
+  message?: string | null;
+  error?: string | null;
+  attr?: string | null;
+  details?: SkillsConflictErrorApiDetails;
+}
+
+export type SkillsChecksErrorApiType =
+  | (typeof SkillsChecksErrorApiType)[keyof typeof SkillsChecksErrorApiType]
+  | null;
+
+export const SkillsChecksErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsChecksErrorApiDetails = { [key: string]: string[] };
+
 export interface SkillsChecksErrorApi {
   status?: boolean;
   type?: SkillsChecksErrorApiType;
@@ -16008,6 +16018,10 @@ export interface SkillsHubLabelOutApi {
   version_id: string;
   updated_at: string;
   updated_by: SkillsHubLabelOutApiUpdatedBy;
+  readonly is_protected?: boolean;
+  readonly can_move?: boolean;
+  readonly can_remove?: boolean;
+  release_revision: number;
 }
 
 export type SkillsHubDraftSummaryApiUser = {
@@ -16020,6 +16034,12 @@ export interface SkillsHubDraftSummaryApi {
   updated_at: string;
   base_version: number | null;
   readonly is_mine?: boolean;
+}
+
+export interface SkillsHubSkillPermissionsApi {
+  can_manage_label_protection: boolean;
+  can_archive: boolean;
+  can_run_tests: boolean;
 }
 
 export type SkillsHubSkillDetailApiUpdatedBy = {
@@ -16052,6 +16072,8 @@ export type SkillsHubSkillDetailApiLatest = {
 } | null;
 
 export interface SkillsHubSkillDetailApi {
+  release_revision: number;
+  protected_label_names: string[];
   id: string;
   /** @minLength 1 */
   name: string;
@@ -16069,7 +16091,8 @@ export interface SkillsHubSkillDetailApi {
   source: SkillsHubSkillDetailApiSource;
   created_by: SkillsHubSkillDetailApiCreatedBy;
   readonly latest?: SkillsHubSkillDetailApiLatest;
-  drafts: SkillsHubDraftSummaryApi[];
+  readonly drafts?: readonly SkillsHubDraftSummaryApi[];
+  permissions?: SkillsHubSkillPermissionsApi;
 }
 
 export interface SkillsSkillDetailResponseApi {
@@ -16091,6 +16114,319 @@ export interface SkillsHubChecksRequestApi {
 export interface SkillsChecksResultResponseApi {
   status: boolean;
   result: SkillsHubChecksResultApi;
+}
+
+export interface SkillsHubV11RightsReviewApi {
+  confirmed: boolean;
+  /** @maxLength 2000 */
+  review_note: string;
+}
+
+export interface SkillsHubV11StageGitHubImportRequestApi {
+  preview_id: string;
+  rights: SkillsHubV11RightsReviewApi;
+}
+
+export interface SkillsHubV11SourceAcceptanceReceiptApi {
+  skill_id: string;
+  /** @minimum 1 */
+  draft_revision: number;
+}
+
+export type SkillsHubV11SourceDraftOutApi = {
+  base_version: number | null;
+  files: SkillsHubFileInputApi[];
+  note: string;
+  revision: number;
+  updated_at: string;
+  /** Server-verified provenance; not accepted by draft PUT. */
+  source: { [key: string]: string | null };
+} | null;
+
+export interface SkillsHubV11StageGitHubImportOutApi {
+  consumed: SkillsHubV11SourceAcceptanceReceiptApi;
+  draft: SkillsHubV11SourceDraftOutApi | null;
+  published: false;
+  skill: SkillsHubSkillSummaryApi;
+}
+
+export interface SkillsStageGitHubImportOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11StageGitHubImportOutApi;
+}
+
+export type SkillsHubV11ErrorApiType =
+  | (typeof SkillsHubV11ErrorApiType)[keyof typeof SkillsHubV11ErrorApiType]
+  | null;
+
+export const SkillsHubV11ErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SkillsHubV11ErrorApiDetails = { [key: string]: string[] };
+
+export interface SkillsHubV11ErrorApi {
+  status?: boolean;
+  type?: SkillsHubV11ErrorApiType;
+  code?: string | null;
+  detail?:
+    | string
+    | SkillsHubConflictDetailApi
+    | SkillsHubChecksResultApi
+    | null;
+  result?: string | null;
+  message?: string | null;
+  error?: string | null;
+  attr?: string | null;
+  details?: SkillsHubV11ErrorApiDetails;
+}
+
+export interface SkillsHubV11GitHubPreviewRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  url?: string;
+  /** @maxLength 1024 */
+  path?: string | null;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  ref?: string | null;
+  parent_preview_id?: string;
+}
+
+export type SkillsHubV11JobAckApiStatus =
+  (typeof SkillsHubV11JobAckApiStatus)[keyof typeof SkillsHubV11JobAckApiStatus];
+
+export const SkillsHubV11JobAckApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11JobAckApiPollAfterMs =
+  (typeof SkillsHubV11JobAckApiPollAfterMs)[keyof typeof SkillsHubV11JobAckApiPollAfterMs];
+
+export const SkillsHubV11JobAckApiPollAfterMs = {
+  NUMBER_2000: 2000,
+} as const;
+
+export interface SkillsHubV11JobAckApi {
+  id: string;
+  status: SkillsHubV11JobAckApiStatus;
+  poll_after_ms: SkillsHubV11JobAckApiPollAfterMs;
+  deadline_at: string;
+}
+
+export interface SkillsJobAckResponseApi {
+  status: boolean;
+  result: SkillsHubV11JobAckApi;
+}
+
+export type SkillsHubV11GitHubPreviewOutApiStatus =
+  (typeof SkillsHubV11GitHubPreviewOutApiStatus)[keyof typeof SkillsHubV11GitHubPreviewOutApiStatus];
+
+export const SkillsHubV11GitHubPreviewOutApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11GitHubPreviewOutApiOperation =
+  (typeof SkillsHubV11GitHubPreviewOutApiOperation)[keyof typeof SkillsHubV11GitHubPreviewOutApiOperation];
+
+export const SkillsHubV11GitHubPreviewOutApiOperation = {
+  import: "import",
+  update: "update",
+} as const;
+
+export type SkillsHubV11GitHubPreviewOutApiOutcome =
+  (typeof SkillsHubV11GitHubPreviewOutApiOutcome)[keyof typeof SkillsHubV11GitHubPreviewOutApiOutcome];
+
+export const SkillsHubV11GitHubPreviewOutApiOutcome = {
+  pending: "pending",
+  needs_path: "needs_path",
+  ready: "ready",
+  unchanged_commit: "unchanged_commit",
+  unchanged_content: "unchanged_content",
+  changed: "changed",
+  pinned: "pinned",
+  source_missing: "source_missing",
+  blocked: "blocked",
+  error: "error",
+} as const;
+
+export interface SkillsHubV11GitHubBundleFileApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+}
+
+export type SkillsHubV11GitHubBundleApi = {
+  /** @minLength 1 */
+  name: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  files: SkillsHubV11GitHubBundleFileApi[];
+  checks: SkillsHubChecksResultApi;
+} | null;
+
+export type SkillsHubV11LicenseEvidenceApiStatus =
+  (typeof SkillsHubV11LicenseEvidenceApiStatus)[keyof typeof SkillsHubV11LicenseEvidenceApiStatus];
+
+export const SkillsHubV11LicenseEvidenceApiStatus = {
+  identified: "identified",
+  unknown: "unknown",
+  custom: "custom",
+  restricted: "restricted",
+} as const;
+
+export interface SkillsHubV11LicenseFileApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  /** @minLength 1 */
+  url_at_commit: string;
+  text: string;
+}
+
+export interface SkillsHubV11LicenseEvidenceApi {
+  status: SkillsHubV11LicenseEvidenceApiStatus;
+  /** @minLength 1 */
+  declared: string | null;
+  files: SkillsHubV11LicenseFileApi[];
+  requires_admin_review: boolean;
+}
+
+export type SkillsHubCompareFileApiStatus =
+  (typeof SkillsHubCompareFileApiStatus)[keyof typeof SkillsHubCompareFileApiStatus];
+
+export const SkillsHubCompareFileApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+  unchanged: "unchanged",
+} as const;
+
+export interface SkillsHubCompareFileApi {
+  /** @minLength 1 */
+  path: string;
+  status: SkillsHubCompareFileApiStatus;
+  /** @minLength 1 */
+  from_sha256: string | null;
+  /** @minLength 1 */
+  to_sha256: string | null;
+  from_text?: string | null;
+  to_text?: string | null;
+}
+
+export interface SkillsHubCompareSummaryApi {
+  added: number;
+  removed: number;
+  modified: number;
+  unchanged: number;
+}
+
+export type SkillsHubCompareResultApi = {
+  /** Positive version number or the literal draft. */
+  from: number | "draft";
+  /** Positive version number or the literal draft. */
+  to: number | "draft";
+  files: SkillsHubCompareFileApi[];
+  summary: SkillsHubCompareSummaryApi;
+} | null;
+
+export type SkillsHubV11ErrorOutApi = {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  detail: { [key: string]: string | null };
+} | null;
+
+export type SkillsHubV11ConsumedPreviewApi = {
+  skill_id: string;
+  draft_revision: number;
+} | null;
+
+export type SkillsHubV11GitHubSourceIdentityApiRefKind =
+  (typeof SkillsHubV11GitHubSourceIdentityApiRefKind)[keyof typeof SkillsHubV11GitHubSourceIdentityApiRefKind];
+
+export const SkillsHubV11GitHubSourceIdentityApiRefKind = {
+  branch: "branch",
+  tag: "tag",
+  commit: "commit",
+  default: "default",
+} as const;
+
+export interface SkillsHubV11GitHubSourceIdentityApi {
+  repo: string;
+  repository_id: number | null;
+  path: string;
+  ref: string;
+  ref_kind: SkillsHubV11GitHubSourceIdentityApiRefKind;
+  /** @minLength 1 */
+  commit_sha: string | null;
+}
+
+export interface SkillsHubV11GitHubPreviewOutApi {
+  id: string;
+  status: SkillsHubV11GitHubPreviewOutApiStatus;
+  operation: SkillsHubV11GitHubPreviewOutApiOperation;
+  expires_at: string | null;
+  outcome: SkillsHubV11GitHubPreviewOutApiOutcome;
+  roots: string[];
+  bundle: SkillsHubV11GitHubBundleApi | null;
+  license: SkillsHubV11LicenseEvidenceApi;
+  diff: SkillsHubCompareResultApi | null;
+  local_diverged: boolean;
+  source_revision: number | null;
+  expected_latest_version: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_latest_digest: string | null;
+  can_stage: boolean;
+  error: SkillsHubV11ErrorOutApi | null;
+  retry_at: string | null;
+  consumed: SkillsHubV11ConsumedPreviewApi | null;
+  source: SkillsHubV11GitHubSourceIdentityApi;
+}
+
+export interface SkillsGitHubPreviewOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11GitHubPreviewOutApi;
 }
 
 export interface SkillsHubImportedApi {
@@ -16171,6 +16507,14 @@ export interface SkillsImportPreviewResponseApi {
 }
 
 export interface SkillsHubPushRequestApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  expected_digest?: string;
+  /** @minimum 0 */
+  expected_release_revision?: number;
+  evidence_run_id?: string;
   files: SkillsHubFileInputApi[];
   /** @maxLength 2000 */
   note?: string;
@@ -16180,6 +16524,20 @@ export interface SkillsHubPushRequestApi {
   tags?: string[];
   acknowledge_warnings?: boolean;
 }
+
+export interface SkillsHubEvidenceCurrentnessApi {
+  content: boolean;
+  baseline: boolean | null;
+  suite: boolean | null;
+  competitors: boolean | null;
+  payload_available: boolean;
+}
+
+export type SkillsHubPushResultApiEvidence = {
+  run_id: string;
+  currentness: SkillsHubEvidenceCurrentnessApi;
+  validity: "reviewed" | "diagnostic";
+} | null;
 
 export type SkillsHubPushResultApiVersionCreatedBy = {
   id: string;
@@ -16203,6 +16561,8 @@ export type SkillsHubPushResultApiVersion = {
 };
 
 export interface SkillsHubPushResultApi {
+  release_revision: number;
+  evidence: SkillsHubPushResultApiEvidence;
   skill: SkillsHubSkillSummaryApi;
   version: SkillsHubPushResultApiVersion;
   unchanged: boolean;
@@ -16282,57 +16642,600 @@ export interface SkillsTemplateListResponseApi {
   result: SkillsHubTemplateApi[];
 }
 
+export type SkillsHubV11ModelOptionApiToolSupport =
+  (typeof SkillsHubV11ModelOptionApiToolSupport)[keyof typeof SkillsHubV11ModelOptionApiToolSupport];
+
+export const SkillsHubV11ModelOptionApiToolSupport = {
+  supported: "supported",
+  unsupported: "unsupported",
+} as const;
+
+export type SkillsHubV11ModelOptionApiPricingStatus =
+  (typeof SkillsHubV11ModelOptionApiPricingStatus)[keyof typeof SkillsHubV11ModelOptionApiPricingStatus];
+
+export const SkillsHubV11ModelOptionApiPricingStatus = {
+  known: "known",
+  unknown: "unknown",
+} as const;
+
+export interface SkillsHubV11ModelOptionApi {
+  /** @minLength 1 */
+  model_id: string;
+  /** @minLength 1 */
+  provider: string;
+  configured: boolean;
+  tool_support: SkillsHubV11ModelOptionApiToolSupport;
+  context_limit: number;
+  pricing_status: SkillsHubV11ModelOptionApiPricingStatus;
+  can_run: boolean;
+  /** @minLength 1 */
+  disabled_reason: string | null;
+}
+
+export interface SkillsHubV11ProfileLimitsApi {
+  max_cases: number;
+  max_variants: number;
+  repetitions: number;
+  max_attempts: number;
+  deadline_seconds: number;
+  max_task_turns_per_attempt: number;
+  max_tool_calls_per_attempt: number;
+  task_phase_seconds: number;
+  judge_phase_seconds: number;
+  provider_call_seconds: number;
+  max_task_output_tokens: number;
+  max_judge_output_tokens: number;
+  max_delivered_bytes_per_attempt: number;
+  max_total_tokens: number;
+}
+
+export interface SkillsHubV11ProfilesApi {
+  quick: SkillsHubV11ProfileLimitsApi;
+  repeated: SkillsHubV11ProfileLimitsApi;
+}
+
+export interface SkillsHubV11LimitsApi {
+  profiles: SkillsHubV11ProfilesApi;
+  max_competitors: number;
+  max_active_attempts_per_run: number;
+  max_active_provider_calls_per_organization: number;
+  max_active_model_jobs_per_organization: number;
+  max_queue_wait_seconds: number;
+  max_estimated_cost_usd: string;
+}
+
+export interface SkillsHubV11TestingOptionsApi {
+  enabled: boolean;
+  github_enabled: boolean;
+  models: SkillsHubV11ModelOptionApi[];
+  limits: SkillsHubV11LimitsApi;
+  /** @minLength 1 */
+  harness_version: string;
+  /** @minLength 1 */
+  evaluator_version: string;
+}
+
+export interface SkillsTestingOptionsResponseApi {
+  status: boolean;
+  result: SkillsHubV11TestingOptionsApi;
+}
+
 export interface SkillsHubTagsRequestApi {
   /** @maxItems 20 */
   tags: string[];
 }
 
-export interface SkillsHubEmptyRequestApi {
+export interface SkillsHubArchiveRequestApi {
+  /** @minimum 0 */
+  expected_release_revision?: number;
+}
+
+export type SkillsHubV11AdoptionTargetApi = {
+  version: number;
+  version_id: string;
+  promotion_event_id: string | null;
+  promoted_at: string | null;
+  /** @minLength 1 */
+  label: string;
+} | null;
+
+export interface SkillsHubV11AdoptionWindowApi {
+  start: string;
+  end: string;
+  as_of: string;
+}
+
+export type SkillsHubV11AdoptionOutApiCoverage =
+  (typeof SkillsHubV11AdoptionOutApiCoverage)[keyof typeof SkillsHubV11AdoptionOutApiCoverage];
+
+export const SkillsHubV11AdoptionOutApiCoverage = {
+  observed_fetches_only: "observed_fetches_only",
+} as const;
+
+export type SkillsHubV11AdoptionOutApiHistoricalTimestampQuality =
+  (typeof SkillsHubV11AdoptionOutApiHistoricalTimestampQuality)[keyof typeof SkillsHubV11AdoptionOutApiHistoricalTimestampQuality];
+
+export const SkillsHubV11AdoptionOutApiHistoricalTimestampQuality = {
+  best_effort: "best_effort",
+} as const;
+
+export interface SkillsHubV11AdoptionCountsApi {
+  current_only: number;
+  other_only: number;
+  mixed: number;
+  not_seen: number;
+  ambiguous: number;
+}
+
+export type SkillsHubV11ObservedConsumerApiChannel =
+  (typeof SkillsHubV11ObservedConsumerApiChannel)[keyof typeof SkillsHubV11ObservedConsumerApiChannel];
+
+export const SkillsHubV11ObservedConsumerApiChannel = {
+  api: "api",
+  download: "download",
+  mcp: "mcp",
+} as const;
+
+export type SkillsHubV11ObservedConsumerApiState =
+  (typeof SkillsHubV11ObservedConsumerApiState)[keyof typeof SkillsHubV11ObservedConsumerApiState];
+
+export const SkillsHubV11ObservedConsumerApiState = {
+  current_only: "current_only",
+  other_only: "other_only",
+  mixed: "mixed",
+  not_seen: "not_seen",
+  ambiguous: "ambiguous",
+} as const;
+
+export interface SkillsHubV11ObservedVersionApi {
+  version: number;
+  version_id: string;
+  last_at: string;
+}
+
+export interface SkillsHubV11ObservedConsumerApi {
+  /** @minLength 1 */
+  consumer_id: string;
+  /** @minLength 1 */
+  consumer_label: string;
+  channel: SkillsHubV11ObservedConsumerApiChannel;
+  state: SkillsHubV11ObservedConsumerApiState;
+  versions: SkillsHubV11ObservedVersionApi[];
+  last_at: string;
+}
+
+export interface SkillsHubV11AdoptionOutApi {
+  target: SkillsHubV11AdoptionTargetApi | null;
+  window: SkillsHubV11AdoptionWindowApi;
+  coverage: SkillsHubV11AdoptionOutApiCoverage;
+  historical_timestamp_quality: SkillsHubV11AdoptionOutApiHistoricalTimestampQuality;
+  summary: SkillsHubV11AdoptionCountsApi;
+  results: SkillsHubV11ObservedConsumerApi[];
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface SkillsAdoptionOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11AdoptionOutApi;
+}
+
+export type SkillsHubV11CreateAssistRequestApiKind =
+  (typeof SkillsHubV11CreateAssistRequestApiKind)[keyof typeof SkillsHubV11CreateAssistRequestApiKind];
+
+export const SkillsHubV11CreateAssistRequestApiKind = {
+  draft: "draft",
+  description: "description",
+  summary: "summary",
+} as const;
+
+export type SkillsHubV11CandidateRefApiKind =
+  (typeof SkillsHubV11CandidateRefApiKind)[keyof typeof SkillsHubV11CandidateRefApiKind];
+
+export const SkillsHubV11CandidateRefApiKind = {
+  draft: "draft",
+  version: "version",
+} as const;
+
+export interface SkillsHubV11CandidateRefApi {
+  kind: SkillsHubV11CandidateRefApiKind;
+  /** @minimum 1 */
+  revision?: number;
+  /** @minimum 1 */
+  version?: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+}
+
+export interface SkillsHubV11ModelConfigApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model_id: string;
+  temperature: number;
+  /**
+   * @minimum 1
+   * @maximum 8192
+   */
+  max_output_tokens: number;
+}
+
+export interface SkillsHubV11SecretFindingReviewApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  finding_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+}
+
+export interface SkillsHubV11SecretReviewApi {
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  false_positive_secret_findings: SkillsHubV11SecretFindingReviewApi[];
+}
+
+export interface SkillsHubV11CreateAssistRequestApi {
+  kind: SkillsHubV11CreateAssistRequestApiKind;
+  /** @minimum 1 */
+  revision?: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_digest?: string;
+  /** @minLength 1 */
+  instruction?: string;
+  context_text?: string;
+  source_run_id?: string;
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids?: string[];
+  /** @minimum 1 */
+  from_version?: number | null;
+  to?: SkillsHubV11CandidateRefApi;
+  model: SkillsHubV11ModelConfigApi;
+  max_estimated_cost_usd: string;
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  expected_input_fingerprint: string;
+  acknowledge_provider_processing: boolean;
+  outbound_review: SkillsHubV11SecretReviewApi;
+}
+
+export type SkillsHubV11AssistAckApiStatus =
+  (typeof SkillsHubV11AssistAckApiStatus)[keyof typeof SkillsHubV11AssistAckApiStatus];
+
+export const SkillsHubV11AssistAckApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11AssistAckApiPollAfterMs =
+  (typeof SkillsHubV11AssistAckApiPollAfterMs)[keyof typeof SkillsHubV11AssistAckApiPollAfterMs];
+
+export const SkillsHubV11AssistAckApiPollAfterMs = {
+  NUMBER_2000: 2000,
+} as const;
+
+export type SkillsHubV11AssistAckApiKind =
+  (typeof SkillsHubV11AssistAckApiKind)[keyof typeof SkillsHubV11AssistAckApiKind];
+
+export const SkillsHubV11AssistAckApiKind = {
+  draft: "draft",
+  description: "description",
+  summary: "summary",
+} as const;
+
+export interface SkillsHubV11AssistAckApi {
+  id: string;
+  status: SkillsHubV11AssistAckApiStatus;
+  poll_after_ms: SkillsHubV11AssistAckApiPollAfterMs;
+  deadline_at: string;
+  kind: SkillsHubV11AssistAckApiKind;
+  base_revision: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  base_digest: string;
+}
+
+export interface SkillsAssistAckResponseApi {
+  status: boolean;
+  result: SkillsHubV11AssistAckApi;
+}
+
+export type SkillsHubV11AssistInputApiKind =
+  (typeof SkillsHubV11AssistInputApiKind)[keyof typeof SkillsHubV11AssistInputApiKind];
+
+export const SkillsHubV11AssistInputApiKind = {
+  draft: "draft",
+  description: "description",
+  summary: "summary",
+} as const;
+
+export interface SkillsHubV11AssistInputApi {
+  kind: SkillsHubV11AssistInputApiKind;
+  /** @minimum 1 */
+  revision?: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_digest?: string;
+  /** @minLength 1 */
+  instruction?: string;
+  context_text?: string;
+  source_run_id?: string;
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids?: string[];
+  /** @minimum 1 */
+  from_version?: number | null;
+  to?: SkillsHubV11CandidateRefApi;
+  model: SkillsHubV11ModelConfigApi;
+  max_estimated_cost_usd: string;
+}
+
+export interface SkillsHubV11AssistProviderDisclosureApi {
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface SkillsHubV11AssistAllowanceApi {
+  input_bytes: number;
+  max_input_bytes: number;
+  max_total_tokens: number;
+  max_output_tokens: number;
+  max_output_bytes: number;
+  max_files: number;
+  deadline_seconds: number;
+}
+
+export interface SkillsHubV11EstimateApi {
+  upper_bound_usd: string;
+  /** @minLength 1 */
+  pricing_source: string;
+}
+
+export type SkillsHubV11FindingLocationApiKind =
+  (typeof SkillsHubV11FindingLocationApiKind)[keyof typeof SkillsHubV11FindingLocationApiKind];
+
+export const SkillsHubV11FindingLocationApiKind = {
+  bundle_file: "bundle_file",
+  case_prompt: "case_prompt",
+  fixture: "fixture",
+  check: "check",
+  assist_input: "assist_input",
+} as const;
+
+export interface SkillsHubV11FindingLocationApi {
+  kind: SkillsHubV11FindingLocationApiKind;
+  skill_id?: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest?: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  path?: string;
+  case_id?: string;
+  fixture_id?: string;
+  check_id?: string;
+  /**
+   * RFC6901 pointer distinguishes instruction, context, source cases and version diff within assistance input.
+   * @minLength 1
+   * @maxLength 2000
+   */
+  pointer?: string;
+  /** @minimum 1 */
+  line: number | null;
+}
+
+export interface SkillsHubV11OutboundFindingApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  finding_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  code: string;
+  location: SkillsHubV11FindingLocationApi;
+  /**
+   * Redacted explanation; never the detected secret.
+   * @minLength 1
+   * @maxLength 500
+   */
+  explanation: string;
+}
+
+export interface SkillsHubV11AssistPreviewApi {
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  input_fingerprint: string;
+  provider_disclosure: SkillsHubV11AssistProviderDisclosureApi;
+  allowance: SkillsHubV11AssistAllowanceApi;
+  estimate: SkillsHubV11EstimateApi;
+  outbound_findings: SkillsHubV11OutboundFindingApi[];
+}
+
+export interface SkillsAssistPreviewResponseApi {
+  status: boolean;
+  result: SkillsHubV11AssistPreviewApi;
+}
+
+export type SkillsHubV11AssistProposalOutApiStatus =
+  (typeof SkillsHubV11AssistProposalOutApiStatus)[keyof typeof SkillsHubV11AssistProposalOutApiStatus];
+
+export const SkillsHubV11AssistProposalOutApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11AssistProposalOutApiKind =
+  (typeof SkillsHubV11AssistProposalOutApiKind)[keyof typeof SkillsHubV11AssistProposalOutApiKind];
+
+export const SkillsHubV11AssistProposalOutApiKind = {
+  draft: "draft",
+  description: "description",
+  summary: "summary",
+} as const;
+
+export type SkillsHubV11AssistProposedContentApi = {
+  /** @maxLength 2000 */
+  reason?: string;
+  /** @maxItems 20 */
+  tradeoffs?: string[];
+  files: SkillsHubFileInputApi[] | null;
+  /** @minLength 1 */
+  description: string | null;
+  /** @minLength 1 */
+  summary: string | null;
+} | null;
+
+export interface SkillsHubV11UsageOutApi {
+  known_input_tokens: number | null;
+  known_output_tokens: number | null;
+  known_total_tokens: number | null;
+  unknown_calls: number;
+  complete: boolean;
+}
+
+export interface SkillsHubV11CostOutApi {
+  known_estimate_usd: string | null;
+  reserved_estimate_usd: string;
+  unknown_calls: number;
+  complete: boolean;
+  pricing_source: string;
+}
+
+export interface SkillsHubV11MetricsApi {
+  task_usage: SkillsHubV11UsageOutApi;
+  judge_usage: SkillsHubV11UsageOutApi;
+  task_cost: SkillsHubV11CostOutApi;
+  judge_cost: SkillsHubV11CostOutApi;
+  elapsed_ms: number | null;
+  provider_duration_ms: number | null;
+}
+
+export interface SkillsHubV11AssistProposalOutApi {
+  id: string;
+  status: SkillsHubV11AssistProposalOutApiStatus;
+  kind: SkillsHubV11AssistProposalOutApiKind;
+  base_revision: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  base_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  input_fingerprint: string;
+  proposal: SkillsHubV11AssistProposedContentApi | null;
+  missing_information: string[];
+  checks: SkillsHubChecksResultApi;
+  exposed_case_ids: string[];
+  metrics: SkillsHubV11MetricsApi;
+  error: SkillsHubV11ErrorOutApi | null;
+  payload_expired: boolean;
+}
+
+export interface SkillsAssistProposalOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11AssistProposalOutApi;
+}
+
+export interface SkillsHubV11ApplyAssistRequestApi {
+  /** @minimum 1 */
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_digest: string;
+}
+
+export interface SkillsSourceDraftOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11SourceDraftOutApi | null;
+}
+
+export interface SkillsHubV11EmptyRequestApi {
   [key: string]: unknown;
 }
 
-export type SkillsHubCompareFileApiStatus =
-  (typeof SkillsHubCompareFileApiStatus)[keyof typeof SkillsHubCompareFileApiStatus];
+export type SkillsHubV11CancelAckApiStatus =
+  (typeof SkillsHubV11CancelAckApiStatus)[keyof typeof SkillsHubV11CancelAckApiStatus];
 
-export const SkillsHubCompareFileApiStatus = {
-  added: "added",
-  removed: "removed",
-  modified: "modified",
-  unchanged: "unchanged",
+export const SkillsHubV11CancelAckApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
 } as const;
 
-export interface SkillsHubCompareFileApi {
-  /** @minLength 1 */
-  path: string;
-  status: SkillsHubCompareFileApiStatus;
-  /** @minLength 1 */
-  from_sha256: string | null;
-  /** @minLength 1 */
-  to_sha256: string | null;
-  from_text?: string | null;
-  to_text?: string | null;
+export interface SkillsHubV11CancelAckApi {
+  id: string;
+  status: SkillsHubV11CancelAckApiStatus;
 }
 
-export interface SkillsHubCompareSummaryApi {
-  added: number;
-  removed: number;
-  modified: number;
-  unchanged: number;
-}
-
-export interface SkillsHubCompareResultApi {
-  /** Positive version number or the literal draft. */
-  from: number | "draft";
-  /** Positive version number or the literal draft. */
-  to: number | "draft";
-  files: SkillsHubCompareFileApi[];
-  summary: SkillsHubCompareSummaryApi;
+export interface SkillsCancelAckResponseApi {
+  status: boolean;
+  result: SkillsHubV11CancelAckApi;
 }
 
 export interface SkillsCompareResultResponseApi {
   status: boolean;
-  result: SkillsHubCompareResultApi;
+  result: SkillsHubCompareResultApi | null;
 }
+
+export type SkillsHubDraftOutApiSource = { [key: string]: unknown };
 
 export interface SkillsHubDraftOutApi {
   base_version: number | null;
@@ -16340,6 +17243,7 @@ export interface SkillsHubDraftOutApi {
   note: string;
   revision: number;
   updated_at: string;
+  source: SkillsHubDraftOutApiSource;
 }
 
 export interface SkillsDraftOutResponseApi {
@@ -16357,7 +17261,19 @@ export interface SkillsHubDraftRequestApi {
   revision: number;
 }
 
+export interface SkillsHubEmptyRequestApi {
+  [key: string]: unknown;
+}
+
 export interface SkillsHubPublishOptionsApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  expected_digest?: string;
+  /** @minimum 0 */
+  expected_release_revision?: number;
+  evidence_run_id?: string;
   /** @maxLength 2000 */
   note?: string;
   /** @maxItems 20 */
@@ -16366,6 +17282,12 @@ export interface SkillsHubPublishOptionsApi {
   force?: boolean;
   revision?: number;
 }
+
+export type SkillsHubPublishResultApiEvidence = {
+  run_id: string;
+  currentness: SkillsHubEvidenceCurrentnessApi;
+  validity: "reviewed" | "diagnostic";
+} | null;
 
 export type SkillsHubPublishResultApiVersionCreatedBy = {
   id: string;
@@ -16389,6 +17311,8 @@ export type SkillsHubPublishResultApiVersion = {
 };
 
 export interface SkillsHubPublishResultApi {
+  release_revision: number;
+  evidence: SkillsHubPublishResultApiEvidence;
   version: SkillsHubPublishResultApiVersion;
   unchanged: boolean;
   checks: SkillsHubChecksResultApi;
@@ -16397,6 +17321,52 @@ export interface SkillsHubPublishResultApi {
 export interface SkillsPublishResultResponseApi {
   status: boolean;
   result: SkillsHubPublishResultApi;
+}
+
+export interface SkillsHubV11ProtectionOutApi {
+  protected_label_names: string[];
+  release_revision: number;
+  can_manage: boolean;
+}
+
+export interface SkillsProtectionOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11ProtectionOutApi;
+}
+
+export interface SkillsHubV11ProtectionRequestApi {
+  /** @maxItems 20 */
+  protected_label_names: string[];
+  /** @minimum 0 */
+  expected_release_revision: number;
+}
+
+export type SkillsHubV11PolicyEventOutApiActor = {
+  id: string;
+  name: string;
+  kind: "user" | "api_key";
+} | null;
+
+export interface SkillsHubV11PolicyEventOutApi {
+  old_names: string[];
+  new_names: string[];
+  from_revision: number;
+  to_revision: number;
+  actor: SkillsHubV11PolicyEventOutApiActor;
+  created_at: string;
+}
+
+export interface SkillsHubV11PolicyEventOutPageApi {
+  results: SkillsHubV11PolicyEventOutApi[];
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface SkillsPolicyEventOutPageResponseApi {
+  status: boolean;
+  result: SkillsHubV11PolicyEventOutPageApi;
 }
 
 export interface SkillsLabelOutListResponseApi {
@@ -16411,6 +17381,7 @@ export type SkillsHubLabelEventApiActor = {
 } | null;
 
 export interface SkillsHubLabelEventApi {
+  release_revision: number | null;
   /** @minLength 1 */
   label: string;
   from_version: number | null;
@@ -16434,8 +17405,16 @@ export interface SkillsHistoryPageResponseApi {
 }
 
 export interface SkillsHubSetLabelRequestApi {
+  /** @minimum 0 */
+  expected_release_revision?: number;
   /** @minimum 1 */
   expected_version?: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  expected_digest?: string;
+  evidence_run_id?: string;
   /** @minimum 1 */
   version: number;
   /** @maxLength 500 */
@@ -16448,8 +17427,1092 @@ export interface SkillsLabelOutResponseApi {
 }
 
 export interface SkillsHubRemoveLabelRequestApi {
+  /** @minimum 0 */
+  expected_release_revision?: number;
   /** @minimum 1 */
   expected_version?: number | null;
+}
+
+export type SkillsHubV11GitHubSourceOutApiProvider =
+  (typeof SkillsHubV11GitHubSourceOutApiProvider)[keyof typeof SkillsHubV11GitHubSourceOutApiProvider];
+
+export const SkillsHubV11GitHubSourceOutApiProvider = {
+  github: "github",
+} as const;
+
+export type SkillsHubV11GitHubSourceOutApiRefKind =
+  (typeof SkillsHubV11GitHubSourceOutApiRefKind)[keyof typeof SkillsHubV11GitHubSourceOutApiRefKind];
+
+export const SkillsHubV11GitHubSourceOutApiRefKind = {
+  branch: "branch",
+  tag: "tag",
+  commit: "commit",
+  default: "default",
+} as const;
+
+export interface SkillsHubV11GitHubSourceOutApi {
+  provider: SkillsHubV11GitHubSourceOutApiProvider;
+  revision: number;
+  /** @minLength 1 */
+  repo: string;
+  repository_id: number;
+  path: string;
+  /** @minLength 1 */
+  ref: string;
+  ref_kind: SkillsHubV11GitHubSourceOutApiRefKind;
+  /** @minLength 1 */
+  imported_sha: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  upstream_digest: string;
+  associated_version: number;
+  /** @minLength 1 */
+  checked_sha: string | null;
+  checked_at: string | null;
+  /** @minLength 1 */
+  check_status: string | null;
+}
+
+export interface SkillsGitHubSourceOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11GitHubSourceOutApi;
+}
+
+export interface SkillsHubV11SourceCheckRequestApi {
+  /** @minimum 1 */
+  expected_source_revision: number;
+}
+
+export type SkillsHubV11StageSourceUpdateRequestApiRevision =
+  (typeof SkillsHubV11StageSourceUpdateRequestApiRevision)[keyof typeof SkillsHubV11StageSourceUpdateRequestApiRevision];
+
+export const SkillsHubV11StageSourceUpdateRequestApiRevision = {
+  NUMBER_0: 0,
+} as const;
+
+export interface SkillsHubV11StageSourceUpdateRequestApi {
+  preview_id: string;
+  rights: SkillsHubV11RightsReviewApi;
+  revision: SkillsHubV11StageSourceUpdateRequestApiRevision;
+  /** @minimum 1 */
+  expected_source_revision: number;
+  /** @minimum 1 */
+  expected_latest_version: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  expected_latest_digest: string;
+  accept_replacement: boolean;
+}
+
+export interface SkillsHubV11StageSourceOutApi {
+  consumed: SkillsHubV11SourceAcceptanceReceiptApi;
+  draft: SkillsHubV11SourceDraftOutApi | null;
+  published: false;
+}
+
+export interface SkillsStageSourceOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11StageSourceOutApi;
+}
+
+export type SkillsHubV11EvidenceRunApiStatus =
+  (typeof SkillsHubV11EvidenceRunApiStatus)[keyof typeof SkillsHubV11EvidenceRunApiStatus];
+
+export const SkillsHubV11EvidenceRunApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11EvidenceRunApiVisibility =
+  (typeof SkillsHubV11EvidenceRunApiVisibility)[keyof typeof SkillsHubV11EvidenceRunApiVisibility];
+
+export const SkillsHubV11EvidenceRunApiVisibility = {
+  private: "private",
+  workspace: "workspace",
+} as const;
+
+export interface SkillsHubV11CurrentnessApi {
+  content: boolean;
+  baseline: boolean | null;
+  suite: boolean | null;
+  competitors: boolean | null;
+  payload_available: boolean;
+}
+
+export type SkillsHubV11EvidenceRunApiValidity =
+  (typeof SkillsHubV11EvidenceRunApiValidity)[keyof typeof SkillsHubV11EvidenceRunApiValidity];
+
+export const SkillsHubV11EvidenceRunApiValidity = {
+  reviewed: "reviewed",
+  diagnostic: "diagnostic",
+} as const;
+
+export interface SkillsHubV11EvidenceRunApi {
+  run_id: string;
+  status: SkillsHubV11EvidenceRunApiStatus;
+  visibility: SkillsHubV11EvidenceRunApiVisibility;
+  currentness: SkillsHubV11CurrentnessApi;
+  validity: SkillsHubV11EvidenceRunApiValidity;
+  selected_cases: number;
+  suite_cases: number | null;
+  repetitions: number;
+  answer_regressions: number;
+  routing_failures: number;
+  delivery_failures: number;
+  error_attempts: number;
+  created_at: string;
+  can_attach: boolean;
+}
+
+export interface SkillsHubV11TestEvidenceOutApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  candidate_digest: string;
+  current_release_revision: number;
+  runs: SkillsHubV11EvidenceRunApi[];
+  /** @minLength 1 */
+  reason_if_none: string | null;
+}
+
+export interface SkillsTestEvidenceOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11TestEvidenceOutApi;
+}
+
+export type SkillsHubV11RunSummaryApiStatus =
+  (typeof SkillsHubV11RunSummaryApiStatus)[keyof typeof SkillsHubV11RunSummaryApiStatus];
+
+export const SkillsHubV11RunSummaryApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11RunSummaryApiProfile =
+  (typeof SkillsHubV11RunSummaryApiProfile)[keyof typeof SkillsHubV11RunSummaryApiProfile];
+
+export const SkillsHubV11RunSummaryApiProfile = {
+  quick: "quick",
+  repeated: "repeated",
+} as const;
+
+export type SkillsHubV11RunSummaryApiVisibility =
+  (typeof SkillsHubV11RunSummaryApiVisibility)[keyof typeof SkillsHubV11RunSummaryApiVisibility];
+
+export const SkillsHubV11RunSummaryApiVisibility = {
+  private: "private",
+  workspace: "workspace",
+} as const;
+
+export interface SkillsHubV11ExecutionConfigurationApi {
+  model: SkillsHubV11ModelConfigApi;
+  judge: SkillsHubV11ModelConfigApi;
+  /** @minLength 1 */
+  harness_version: string;
+  /** @minLength 1 */
+  adapter_version: string;
+  /** @minLength 1 */
+  evaluator_version: string;
+}
+
+export interface SkillsHubV11SnapshotIdentityApi {
+  skill_id: string;
+  version_id: string | null;
+  version: number | null;
+  draft_revision: number | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  execution_manifest_digest: string;
+}
+
+export interface SkillsHubV11RunCountsApi {
+  planned: number;
+  finished: number;
+  answered: number;
+  graded: number;
+  incomplete: number;
+  not_started: number;
+  errors: number;
+}
+
+export type SkillsHubV11DecisionApiState =
+  (typeof SkillsHubV11DecisionApiState)[keyof typeof SkillsHubV11DecisionApiState];
+
+export const SkillsHubV11DecisionApiState = {
+  works_on_examples: "works_on_examples",
+  needs_changes: "needs_changes",
+  inconclusive: "inconclusive",
+  routing_only: "routing_only",
+  diagnostic: "diagnostic",
+} as const;
+
+export interface SkillsHubV11DecisionApi {
+  state: SkillsHubV11DecisionApiState;
+  improved_cases: number;
+  /** Includes mixed cases (positive and negative deltas across selected baselines). */
+  regressed_cases: number;
+  unchanged_cases: number;
+  unmatched_cases: number;
+}
+
+export type SkillsHubV11AnswerComparisonApiBaseline =
+  (typeof SkillsHubV11AnswerComparisonApiBaseline)[keyof typeof SkillsHubV11AnswerComparisonApiBaseline];
+
+export const SkillsHubV11AnswerComparisonApiBaseline = {
+  production: "production",
+  without_target: "without_target",
+} as const;
+
+export interface SkillsHubV11AnswerComparisonApi {
+  baseline: SkillsHubV11AnswerComparisonApiBaseline;
+  matched_cases: number;
+  expected_cases: number;
+  delta_percentage_points: number | null;
+}
+
+export type SkillsHubV11RunSummaryApiValidity =
+  (typeof SkillsHubV11RunSummaryApiValidity)[keyof typeof SkillsHubV11RunSummaryApiValidity];
+
+export const SkillsHubV11RunSummaryApiValidity = {
+  reviewed: "reviewed",
+  diagnostic: "diagnostic",
+} as const;
+
+export interface SkillsHubV11RunSummaryApi {
+  id: string;
+  status: SkillsHubV11RunSummaryApiStatus;
+  profile: SkillsHubV11RunSummaryApiProfile;
+  visibility: SkillsHubV11RunSummaryApiVisibility;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  deadline_at: string;
+  parent_run_id: string | null;
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  execution_fingerprint: string;
+  execution_configuration: SkillsHubV11ExecutionConfigurationApi;
+  candidate: SkillsHubV11SnapshotIdentityApi;
+  production: SkillsHubV11SnapshotIdentityApi;
+  competitors: SkillsHubV11SnapshotIdentityApi[];
+  suite_revision: number | null;
+  selected_case_ids: string[];
+  full_suite: boolean;
+  repetitions: number;
+  counts: SkillsHubV11RunCountsApi;
+  decision: SkillsHubV11DecisionApi;
+  answer_comparisons: SkillsHubV11AnswerComparisonApi[];
+  validity: SkillsHubV11RunSummaryApiValidity;
+  validity_reasons: string[];
+  currentness: SkillsHubV11CurrentnessApi;
+  metrics: SkillsHubV11MetricsApi;
+  error: SkillsHubV11ErrorOutApi | null;
+  payload_expires_at: string | null;
+  payload_expired: boolean;
+}
+
+export interface SkillsHubV11RunSummaryPageApi {
+  results: SkillsHubV11RunSummaryApi[];
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface SkillsRunSummaryPageResponseApi {
+  status: boolean;
+  result: SkillsHubV11RunSummaryPageApi;
+}
+
+export type SkillsHubV11CaseSelectionApiKind =
+  (typeof SkillsHubV11CaseSelectionApiKind)[keyof typeof SkillsHubV11CaseSelectionApiKind];
+
+export const SkillsHubV11CaseSelectionApiKind = {
+  saved: "saved",
+  ad_hoc: "ad_hoc",
+} as const;
+
+export interface SkillsHubV11FixtureApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  text: string;
+}
+
+export type SkillsHubV11CheckApiKind =
+  (typeof SkillsHubV11CheckApiKind)[keyof typeof SkillsHubV11CheckApiKind];
+
+export const SkillsHubV11CheckApiKind = {
+  contains: "contains",
+  not_contains: "not_contains",
+  json_valid: "json_valid",
+  json_equals: "json_equals",
+  json_schema: "json_schema",
+  file_delivered: "file_delivered",
+  semantic: "semantic",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type SkillsHubV11CheckConfigApiValue = { [key: string]: unknown };
+
+export type SkillsHubV11CheckConfigApiSchema = { [key: string]: unknown };
+
+export interface SkillsHubV11CheckConfigApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  text?: string;
+  case_sensitive?: boolean;
+  /** @maxLength 2000 */
+  pointer?: string;
+  /** Any valid JSON value. */
+  value?: SkillsHubV11CheckConfigApiValue;
+  schema?: SkillsHubV11CheckConfigApiSchema;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path?: string;
+  complete?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  requirement?: string;
+}
+
+export interface SkillsHubV11CheckApi {
+  id: string;
+  kind: SkillsHubV11CheckApiKind;
+  critical: boolean;
+  config: SkillsHubV11CheckConfigApi;
+}
+
+export interface SkillsHubV11CaseInputApi {
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  title: string;
+  /** @minLength 1 */
+  source_group_id: string;
+  /** @minLength 1 */
+  prompt: string;
+  fixtures: SkillsHubV11FixtureApi[];
+  expected_trigger: boolean | null;
+  checks: SkillsHubV11CheckApi[];
+  reviewed: boolean;
+}
+
+export interface SkillsHubV11CaseSelectionApi {
+  kind: SkillsHubV11CaseSelectionApiKind;
+  /** @minimum 1 */
+  suite_revision?: number;
+  /**
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids?: string[];
+  cases?: SkillsHubV11CaseInputApi[];
+}
+
+export type SkillsHubV11RunConfigApiBaselinesItem =
+  (typeof SkillsHubV11RunConfigApiBaselinesItem)[keyof typeof SkillsHubV11RunConfigApiBaselinesItem];
+
+export const SkillsHubV11RunConfigApiBaselinesItem = {
+  production: "production",
+  without_target: "without_target",
+} as const;
+
+export interface SkillsHubV11CompetitorRefApi {
+  skill_id: string;
+  /** @minimum 1 */
+  version: number;
+}
+
+export type SkillsHubV11RunConfigApiProfile =
+  (typeof SkillsHubV11RunConfigApiProfile)[keyof typeof SkillsHubV11RunConfigApiProfile];
+
+export const SkillsHubV11RunConfigApiProfile = {
+  quick: "quick",
+  repeated: "repeated",
+} as const;
+
+export type SkillsHubV11RunConfigApiRepetitions =
+  (typeof SkillsHubV11RunConfigApiRepetitions)[keyof typeof SkillsHubV11RunConfigApiRepetitions];
+
+export const SkillsHubV11RunConfigApiRepetitions = {
+  NUMBER_1: 1,
+  NUMBER_3: 3,
+} as const;
+
+export interface SkillsHubV11RunBudgetApi {
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  max_total_tokens: number;
+  max_estimated_cost_usd: string;
+}
+
+export type SkillsHubV11RunConfigApiPurpose =
+  (typeof SkillsHubV11RunConfigApiPurpose)[keyof typeof SkillsHubV11RunConfigApiPurpose];
+
+export const SkillsHubV11RunConfigApiPurpose = {
+  regression: "regression",
+  diagnostic: "diagnostic",
+} as const;
+
+export interface SkillsHubV11RunConfigApi {
+  candidate: SkillsHubV11CandidateRefApi;
+  cases: SkillsHubV11CaseSelectionApi;
+  /**
+   * @minItems 1
+   * @maxItems 2
+   */
+  baselines: SkillsHubV11RunConfigApiBaselinesItem[];
+  competitors: SkillsHubV11CompetitorRefApi[];
+  model: SkillsHubV11ModelConfigApi;
+  judge: SkillsHubV11ModelConfigApi;
+  profile: SkillsHubV11RunConfigApiProfile;
+  repetitions: SkillsHubV11RunConfigApiRepetitions;
+  limits: SkillsHubV11RunBudgetApi;
+  purpose: SkillsHubV11RunConfigApiPurpose;
+  parent_run_id: string | null;
+}
+
+export type SkillsHubV11FileClassificationApiClassification =
+  (typeof SkillsHubV11FileClassificationApiClassification)[keyof typeof SkillsHubV11FileClassificationApiClassification];
+
+export const SkillsHubV11FileClassificationApiClassification = {
+  reference_material: "reference_material",
+  evaluation_material: "evaluation_material",
+} as const;
+
+export interface SkillsHubV11FileClassificationApi {
+  skill_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{64}$
+   */
+  sha256: string;
+  classification: SkillsHubV11FileClassificationApiClassification;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  reason: string;
+}
+
+export interface SkillsHubV11InventoryReviewApi {
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  false_positive_secret_findings: SkillsHubV11SecretFindingReviewApi[];
+  reviewed_all_files: boolean;
+  no_known_answer_keys: boolean;
+  classifications: SkillsHubV11FileClassificationApi[];
+}
+
+export interface SkillsHubV11CreateTestRunRequestApi {
+  configuration: SkillsHubV11RunConfigApi;
+  /**
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  expected_fingerprint: string;
+  acknowledge_provider_processing: boolean;
+  inventory_review: SkillsHubV11InventoryReviewApi;
+}
+
+export type SkillsHubV11TestRunAckApiStatus =
+  (typeof SkillsHubV11TestRunAckApiStatus)[keyof typeof SkillsHubV11TestRunAckApiStatus];
+
+export const SkillsHubV11TestRunAckApiStatus = {
+  cancelled: "cancelled",
+  cancelling: "cancelling",
+  completed: "completed",
+  failed: "failed",
+  interrupted: "interrupted",
+  queued: "queued",
+  running: "running",
+  timed_out: "timed_out",
+} as const;
+
+export type SkillsHubV11TestRunAckApiPollAfterMs =
+  (typeof SkillsHubV11TestRunAckApiPollAfterMs)[keyof typeof SkillsHubV11TestRunAckApiPollAfterMs];
+
+export const SkillsHubV11TestRunAckApiPollAfterMs = {
+  NUMBER_2000: 2000,
+} as const;
+
+export type SkillsHubV11TestRunAckApiVisibility =
+  (typeof SkillsHubV11TestRunAckApiVisibility)[keyof typeof SkillsHubV11TestRunAckApiVisibility];
+
+export const SkillsHubV11TestRunAckApiVisibility = {
+  private: "private",
+} as const;
+
+export interface SkillsHubV11TestRunAckApi {
+  id: string;
+  status: SkillsHubV11TestRunAckApiStatus;
+  poll_after_ms: SkillsHubV11TestRunAckApiPollAfterMs;
+  deadline_at: string;
+  visibility: SkillsHubV11TestRunAckApiVisibility;
+  attempt_count: number;
+  /**
+   * Hash of the plan fingerprint plus canonical accepted review.
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  execution_fingerprint: string;
+}
+
+export interface SkillsTestRunAckResponseApi {
+  status: boolean;
+  result: SkillsHubV11TestRunAckApi;
+}
+
+export type SkillsHubV11InventoryFileApiFlagsItem =
+  (typeof SkillsHubV11InventoryFileApiFlagsItem)[keyof typeof SkillsHubV11InventoryFileApiFlagsItem];
+
+export const SkillsHubV11InventoryFileApiFlagsItem = {
+  evaluation_artifact: "evaluation_artifact",
+  case_overlap: "case_overlap",
+  secret_suspected: "secret_suspected",
+  executable_content: "executable_content",
+} as const;
+
+export interface SkillsHubV11InventoryFileApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+  flags: SkillsHubV11InventoryFileApiFlagsItem[];
+}
+
+export interface SkillsHubV11InventoryBundleApi {
+  skill_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  files: SkillsHubV11InventoryFileApi[];
+}
+
+export interface SkillsHubV11WarningOutApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface SkillsHubV11ProviderDisclosureApi {
+  /** @minLength 1 */
+  task_provider: string;
+  /** @minLength 1 */
+  judge_provider: string | null;
+}
+
+export interface SkillsHubV11TestRunPreviewApi {
+  /**
+   * Plan fingerprint excludes subsequently submitted review decisions.
+   * @minLength 1
+   * @pattern ^(?:sha256:)?[a-f0-9]{64}$
+   */
+  fingerprint: string;
+  candidate: SkillsHubV11SnapshotIdentityApi;
+  production: SkillsHubV11SnapshotIdentityApi;
+  production_event_id: string | null;
+  release_revision: number;
+  competitors: SkillsHubV11SnapshotIdentityApi[];
+  case_count: number;
+  variant_count: number;
+  repetitions: number;
+  attempt_count: number;
+  max_task_calls: number;
+  max_judge_calls: number;
+  estimate: SkillsHubV11EstimateApi;
+  limits: SkillsHubV11LimitsApi;
+  inventory: SkillsHubV11InventoryBundleApi[];
+  outbound_findings: SkillsHubV11OutboundFindingApi[];
+  warnings: SkillsHubV11WarningOutApi[];
+  provider_disclosure: SkillsHubV11ProviderDisclosureApi;
+}
+
+export interface SkillsTestRunPreviewResponseApi {
+  status: boolean;
+  result: SkillsHubV11TestRunPreviewApi;
+}
+
+export interface SkillsRunSummaryResponseApi {
+  status: boolean;
+  result: SkillsHubV11RunSummaryApi;
+}
+
+export type SkillsHubV11AttemptDetailApiStatus =
+  (typeof SkillsHubV11AttemptDetailApiStatus)[keyof typeof SkillsHubV11AttemptDetailApiStatus];
+
+export const SkillsHubV11AttemptDetailApiStatus = {
+  not_started: "not_started",
+  running: "running",
+  completed: "completed",
+  error: "error",
+  cancelled: "cancelled",
+  incomplete: "incomplete",
+  unknown: "unknown",
+} as const;
+
+export type SkillsHubV11AttemptDetailApiRoutingVerdict =
+  (typeof SkillsHubV11AttemptDetailApiRoutingVerdict)[keyof typeof SkillsHubV11AttemptDetailApiRoutingVerdict];
+
+export const SkillsHubV11AttemptDetailApiRoutingVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export type SkillsHubV11AttemptDetailApiDeliveryVerdict =
+  (typeof SkillsHubV11AttemptDetailApiDeliveryVerdict)[keyof typeof SkillsHubV11AttemptDetailApiDeliveryVerdict];
+
+export const SkillsHubV11AttemptDetailApiDeliveryVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export type SkillsHubV11AttemptDetailApiAnswerVerdict =
+  (typeof SkillsHubV11AttemptDetailApiAnswerVerdict)[keyof typeof SkillsHubV11AttemptDetailApiAnswerVerdict];
+
+export const SkillsHubV11AttemptDetailApiAnswerVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export type SkillsHubV11CaseOutApiOrigin =
+  (typeof SkillsHubV11CaseOutApiOrigin)[keyof typeof SkillsHubV11CaseOutApiOrigin];
+
+export const SkillsHubV11CaseOutApiOrigin = {
+  manual: "manual",
+  template: "template",
+  assist: "assist",
+} as const;
+
+export type SkillsHubV11CaseOutApiReviewedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export interface SkillsHubV11CaseOutApi {
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  title: string;
+  /** @minLength 1 */
+  source_group_id: string;
+  /** @minLength 1 */
+  prompt: string;
+  fixtures: SkillsHubV11FixtureApi[];
+  expected_trigger: boolean | null;
+  checks: SkillsHubV11CheckApi[];
+  reviewed: boolean;
+  reviewed_by: SkillsHubV11CaseOutApiReviewedBy;
+  reviewed_at: string | null;
+  origin: SkillsHubV11CaseOutApiOrigin;
+  exposed_to_assist: boolean;
+}
+
+export type SkillsHubV11AttemptDetailApiVariant =
+  (typeof SkillsHubV11AttemptDetailApiVariant)[keyof typeof SkillsHubV11AttemptDetailApiVariant];
+
+export const SkillsHubV11AttemptDetailApiVariant = {
+  candidate: "candidate",
+  production: "production",
+  without_target: "without_target",
+} as const;
+
+export type SkillsHubV11CheckResultApiCategory =
+  (typeof SkillsHubV11CheckResultApiCategory)[keyof typeof SkillsHubV11CheckResultApiCategory];
+
+export const SkillsHubV11CheckResultApiCategory = {
+  answer: "answer",
+  delivery: "delivery",
+} as const;
+
+export type SkillsHubV11CheckResultApiVerdict =
+  (typeof SkillsHubV11CheckResultApiVerdict)[keyof typeof SkillsHubV11CheckResultApiVerdict];
+
+export const SkillsHubV11CheckResultApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  unverifiable: "unverifiable",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type SkillsHubV11CheckResultApiExpected = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type SkillsHubV11CheckResultApiActual = { [key: string]: unknown };
+
+export interface SkillsHubV11CheckResultApi {
+  check_id: string;
+  category: SkillsHubV11CheckResultApiCategory;
+  verdict: SkillsHubV11CheckResultApiVerdict;
+  /** Any valid JSON value. */
+  expected: SkillsHubV11CheckResultApiExpected;
+  /** Any valid JSON value. */
+  actual: SkillsHubV11CheckResultApiActual;
+  evidence: string | null;
+  reason: string | null;
+}
+
+export type SkillsHubV11ReceiptApiOutcome =
+  (typeof SkillsHubV11ReceiptApiOutcome)[keyof typeof SkillsHubV11ReceiptApiOutcome];
+
+export const SkillsHubV11ReceiptApiOutcome = {
+  delivered: "delivered",
+  rejected: "rejected",
+} as const;
+
+export interface SkillsHubV11ReceiptApi {
+  call_id: string;
+  /** @minLength 1 */
+  tool_call_id: string;
+  skill_id: string;
+  version_id: string | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string | null;
+  offset: number;
+  next_offset: number | null;
+  total_chars: number | null;
+  eof: boolean | null;
+  delivered_bytes: number;
+  outcome: SkillsHubV11ReceiptApiOutcome;
+  /** @minLength 1 */
+  error_code: string | null;
+}
+
+export type SkillsHubV11CallSummaryApiKind =
+  (typeof SkillsHubV11CallSummaryApiKind)[keyof typeof SkillsHubV11CallSummaryApiKind];
+
+export const SkillsHubV11CallSummaryApiKind = {
+  task: "task",
+  judge: "judge",
+  assist: "assist",
+} as const;
+
+export type SkillsHubV11CallSummaryApiState =
+  (typeof SkillsHubV11CallSummaryApiState)[keyof typeof SkillsHubV11CallSummaryApiState];
+
+export const SkillsHubV11CallSummaryApiState = {
+  prepared: "prepared",
+  in_flight: "in_flight",
+  completed: "completed",
+  failed: "failed",
+  unknown: "unknown",
+} as const;
+
+export type SkillsHubV11CallSummaryApiAssistantMessage = {
+  [key: string]: string | null;
+} | null;
+
+export interface SkillsHubV11CallSummaryApi {
+  id: string;
+  sequence: number;
+  kind: SkillsHubV11CallSummaryApiKind;
+  state: SkillsHubV11CallSummaryApiState;
+  /** @minLength 1 */
+  requested_model: string;
+  /** @minLength 1 */
+  returned_model: string | null;
+  assistant_message: SkillsHubV11CallSummaryApiAssistantMessage;
+  /** @minLength 1 */
+  finish_reason: string | null;
+  /** @minLength 1 */
+  provider_request_id: string | null;
+  usage: SkillsHubV11UsageOutApi;
+  cost: SkillsHubV11CostOutApi;
+  latency_ms: number | null;
+  error: SkillsHubV11ErrorOutApi | null;
+}
+
+export interface SkillsHubV11AttemptDetailApi {
+  id: string;
+  repeat_index: number;
+  status: SkillsHubV11AttemptDetailApiStatus;
+  routing_verdict: SkillsHubV11AttemptDetailApiRoutingVerdict;
+  delivery_verdict: SkillsHubV11AttemptDetailApiDeliveryVerdict;
+  answer_verdict: SkillsHubV11AttemptDetailApiAnswerVerdict;
+  case: SkillsHubV11CaseOutApi;
+  variant: SkillsHubV11AttemptDetailApiVariant;
+  answer: string | null;
+  target_requested: boolean;
+  target_loaded: boolean | null;
+  root_fully_delivered: boolean | null;
+  checks: SkillsHubV11CheckResultApi[];
+  receipts: SkillsHubV11ReceiptApi[];
+  calls: SkillsHubV11CallSummaryApi[];
+  metrics: SkillsHubV11MetricsApi;
+  error: SkillsHubV11ErrorOutApi | null;
+}
+
+export interface SkillsAttemptDetailResponseApi {
+  status: boolean;
+  result: SkillsHubV11AttemptDetailApi;
+}
+
+export interface SkillsHubV11SnapshotFileOutApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minLength 1 */
+  sha256: string;
+  size_bytes: number;
+  total_chars: number;
+  offset: number;
+  next_offset: number | null;
+  eof: boolean;
+  text: string;
+  skill_id: string;
+  version_id: string | null;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string;
+}
+
+export interface SkillsSnapshotFileOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11SnapshotFileOutApi;
+}
+
+export type SkillsHubV11CaseResultApiChange =
+  (typeof SkillsHubV11CaseResultApiChange)[keyof typeof SkillsHubV11CaseResultApiChange];
+
+export const SkillsHubV11CaseResultApiChange = {
+  improved: "improved",
+  regressed: "regressed",
+  unchanged: "unchanged",
+  mixed: "mixed",
+  unmatched: "unmatched",
+  not_graded: "not_graded",
+} as const;
+
+export type SkillsHubV11VariantResultApiVariant =
+  (typeof SkillsHubV11VariantResultApiVariant)[keyof typeof SkillsHubV11VariantResultApiVariant];
+
+export const SkillsHubV11VariantResultApiVariant = {
+  candidate: "candidate",
+  production: "production",
+  without_target: "without_target",
+} as const;
+
+export type SkillsHubV11AttemptSummaryApiStatus =
+  (typeof SkillsHubV11AttemptSummaryApiStatus)[keyof typeof SkillsHubV11AttemptSummaryApiStatus];
+
+export const SkillsHubV11AttemptSummaryApiStatus = {
+  not_started: "not_started",
+  running: "running",
+  completed: "completed",
+  error: "error",
+  cancelled: "cancelled",
+  incomplete: "incomplete",
+  unknown: "unknown",
+} as const;
+
+export type SkillsHubV11AttemptSummaryApiRoutingVerdict =
+  (typeof SkillsHubV11AttemptSummaryApiRoutingVerdict)[keyof typeof SkillsHubV11AttemptSummaryApiRoutingVerdict];
+
+export const SkillsHubV11AttemptSummaryApiRoutingVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export type SkillsHubV11AttemptSummaryApiDeliveryVerdict =
+  (typeof SkillsHubV11AttemptSummaryApiDeliveryVerdict)[keyof typeof SkillsHubV11AttemptSummaryApiDeliveryVerdict];
+
+export const SkillsHubV11AttemptSummaryApiDeliveryVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export type SkillsHubV11AttemptSummaryApiAnswerVerdict =
+  (typeof SkillsHubV11AttemptSummaryApiAnswerVerdict)[keyof typeof SkillsHubV11AttemptSummaryApiAnswerVerdict];
+
+export const SkillsHubV11AttemptSummaryApiAnswerVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  not_graded: "not_graded",
+  unverifiable: "unverifiable",
+} as const;
+
+export interface SkillsHubV11AttemptSummaryApi {
+  id: string;
+  repeat_index: number;
+  status: SkillsHubV11AttemptSummaryApiStatus;
+  routing_verdict: SkillsHubV11AttemptSummaryApiRoutingVerdict;
+  delivery_verdict: SkillsHubV11AttemptSummaryApiDeliveryVerdict;
+  answer_verdict: SkillsHubV11AttemptSummaryApiAnswerVerdict;
+}
+
+export interface SkillsHubV11VariantResultApi {
+  variant: SkillsHubV11VariantResultApiVariant;
+  planned: number;
+  completed: number;
+  loaded: number;
+  answer_passed: number;
+  answer_graded: number;
+  delivery_passed: number;
+  inconsistent: boolean;
+  attempts: SkillsHubV11AttemptSummaryApi[];
+}
+
+export interface SkillsHubV11CaseResultApi {
+  case_id: string;
+  /** @minLength 1 */
+  title: string;
+  expected_trigger: boolean | null;
+  change: SkillsHubV11CaseResultApiChange;
+  variants: SkillsHubV11VariantResultApi[];
+  answer_comparisons: SkillsHubV11AnswerComparisonApi[];
+}
+
+export interface SkillsHubV11CaseResultPageApi {
+  results: SkillsHubV11CaseResultApi[];
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface SkillsCaseResultPageResponseApi {
+  status: boolean;
+  result: SkillsHubV11CaseResultPageApi;
+}
+
+export interface SkillsHubV11ShareRunRequestApi {
+  acknowledge_snapshot_sharing: boolean;
+}
+
+export type SkillsHubV11ShareRunOutApiVisibility =
+  (typeof SkillsHubV11ShareRunOutApiVisibility)[keyof typeof SkillsHubV11ShareRunOutApiVisibility];
+
+export const SkillsHubV11ShareRunOutApiVisibility = {
+  workspace: "workspace",
+} as const;
+
+export interface SkillsHubV11ShareRunOutApi {
+  id: string;
+  visibility: SkillsHubV11ShareRunOutApiVisibility;
+  shared_at: string;
+}
+
+export interface SkillsShareRunOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11ShareRunOutApi;
+}
+
+export type SkillsHubV11SuiteOutApiVisibility =
+  (typeof SkillsHubV11SuiteOutApiVisibility)[keyof typeof SkillsHubV11SuiteOutApiVisibility];
+
+export const SkillsHubV11SuiteOutApiVisibility = {
+  workspace: "workspace",
+} as const;
+
+export type SkillsHubV11SuiteOutApiUpdatedBy = {
+  id: string;
+  name: string;
+} | null;
+
+export interface SkillsHubV11SuiteOutApi {
+  revision: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest: string | null;
+  cases: SkillsHubV11CaseOutApi[];
+  updated_at: string | null;
+  updated_by: SkillsHubV11SuiteOutApiUpdatedBy;
+  visibility: SkillsHubV11SuiteOutApiVisibility;
+}
+
+export interface SkillsSuiteOutResponseApi {
+  status: boolean;
+  result: SkillsHubV11SuiteOutApi;
+}
+
+export interface SkillsHubV11SaveSuiteRequestApi {
+  /** @minimum 0 */
+  revision: number;
+  cases: SkillsHubV11CaseInputApi[];
 }
 
 export interface SkillsHubUsageDayApi {
@@ -16538,6 +18601,14 @@ export interface SkillsVersionPageResponseApi {
 }
 
 export interface SkillsHubPublishVersionRequestApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  expected_digest?: string;
+  /** @minimum 0 */
+  expected_release_revision?: number;
+  evidence_run_id?: string;
   /** @maxLength 2000 */
   note?: string;
   /** @maxItems 20 */
@@ -39798,6 +41869,8 @@ export type ModelHubSkillsImportCreateBody = {
   /** JSON array of labels to move. */
   labels?: string;
   acknowledge_warnings?: boolean;
+  /** JSON object mapping preview bundle keys to reviewed release revisions. */
+  expected_release_revisions?: string;
 };
 
 export type ModelHubSkillsImportPreviewCreateBody = {
@@ -39833,6 +41906,33 @@ export type ModelHubSkillsResolveListParams = {
   file_limit?: number;
 };
 
+export type ModelHubSkillsAdoptionListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  days?: ModelHubSkillsAdoptionListDays;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9][a-z0-9-]{0,39}$
+   */
+  label?: string;
+};
+
+export type ModelHubSkillsAdoptionListDays =
+  (typeof ModelHubSkillsAdoptionListDays)[keyof typeof ModelHubSkillsAdoptionListDays];
+
+export const ModelHubSkillsAdoptionListDays = {
+  NUMBER_7: 7,
+  NUMBER_30: 30,
+  NUMBER_90: 90,
+} as const;
+
 export type ModelHubSkillsCompareListParams = {
   /**
    * @minLength 1
@@ -39844,6 +41944,18 @@ export type ModelHubSkillsCompareListParams = {
    * @pattern ^(draft|[1-9][0-9]*)$
    */
   to: string;
+};
+
+export type ModelHubSkillsLabelProtectionHistoryListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
 };
 
 export type ModelHubSkillsLabelsHistoryListParams = {
@@ -39861,6 +41973,91 @@ export type ModelHubSkillsLabelsHistoryListParams = {
    */
   label?: string;
 };
+
+export type ModelHubSkillsTestEvidenceListParams = {
+  candidate: ModelHubSkillsTestEvidenceListCandidate;
+  /**
+   * @minimum 1
+   */
+  revision?: number;
+  /**
+   * @minimum 1
+   */
+  version?: number;
+};
+
+export type ModelHubSkillsTestEvidenceListCandidate =
+  (typeof ModelHubSkillsTestEvidenceListCandidate)[keyof typeof ModelHubSkillsTestEvidenceListCandidate];
+
+export const ModelHubSkillsTestEvidenceListCandidate = {
+  draft: "draft",
+  version: "version",
+} as const;
+
+export type ModelHubSkillsTestRunsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+};
+
+export type ModelHubSkillsTestRunsFilesListParams = {
+  snapshot_skill_id: string;
+  variant: ModelHubSkillsTestRunsFilesListVariant;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
+  /**
+   * @minimum 1
+   * @maximum 49152
+   */
+  max_bytes?: number;
+};
+
+export type ModelHubSkillsTestRunsFilesListVariant =
+  (typeof ModelHubSkillsTestRunsFilesListVariant)[keyof typeof ModelHubSkillsTestRunsFilesListVariant];
+
+export const ModelHubSkillsTestRunsFilesListVariant = {
+  candidate: "candidate",
+  production: "production",
+  without_target: "without_target",
+} as const;
+
+export type ModelHubSkillsTestRunsResultsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  filter?: ModelHubSkillsTestRunsResultsListFilter;
+};
+
+export type ModelHubSkillsTestRunsResultsListFilter =
+  (typeof ModelHubSkillsTestRunsResultsListFilter)[keyof typeof ModelHubSkillsTestRunsResultsListFilter];
+
+export const ModelHubSkillsTestRunsResultsListFilter = {
+  all: "all",
+  regressions: "regressions",
+  wrong_selection: "wrong_selection",
+  inconsistent: "inconsistent",
+  errors: "errors",
+  not_graded: "not_graded",
+} as const;
 
 export type ModelHubSkillsUsageListParams = {
   days?: ModelHubSkillsUsageListDays;

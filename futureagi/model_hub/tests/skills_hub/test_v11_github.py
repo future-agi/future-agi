@@ -317,7 +317,7 @@ def restricted_transport(response, seen):
 
 
 def test_sha_cache_pair_and_anonymous_conditional_request(monkeypatch):
-    seen = []
+    seen: list[dict] = []
     monkeypatch.setattr(
         github_public,
         "safe_fetch",
@@ -325,7 +325,7 @@ def test_sha_cache_pair_and_anonymous_conditional_request(monkeypatch):
             SsrfResponse(200, {"ETag": '"synthetic"'}, SHA.encode(), ""), seen
         ),
     )
-    args = {
+    args: dict = {
         "repo": "example/repo",
         "ref": "main",
         "organization_id": "org-1",
@@ -408,7 +408,7 @@ def test_secondary_rate_limit_waits_at_least_one_minute(monkeypatch):
 
 
 def test_last_successful_rate_slot_blocks_the_next_request(monkeypatch):
-    seen = []
+    seen: list[dict] = []
     response = SsrfResponse(
         200,
         {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(time.time() + 120)},
@@ -478,3 +478,14 @@ def test_metadata_rejects_private_or_wrong_identity_shape(monkeypatch):
         github_public.repository_metadata(
             repo="example/repo", organization_id="org", deadline=time.monotonic() + 60
         )
+
+
+@pytest.mark.parametrize(
+    "value,expected_type", [("not-metadata", dict), ({"not": "archive"}, bytes)]
+)
+def test_cached_payload_type_mismatch_fails_closed(value, expected_type):
+    cache.set("synthetic-invalid-github-cache", value, 60)
+    with pytest.raises(SkillsHubError) as error:
+        github_public._cache_get("synthetic-invalid-github-cache", expected_type)
+    assert error.value.code == "github_budget_unavailable"
+    assert error.value.status == 503

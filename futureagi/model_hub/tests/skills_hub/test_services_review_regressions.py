@@ -17,7 +17,7 @@ from model_hub.services.skills_hub import drafts
 from model_hub.services.skills_hub.checks import parse_frontmatter
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import file_sha256, parse_upload
-from model_hub.services.skills_hub.types import Actor
+from model_hub.services.skills_hub.v11.principals import principal_from_request
 from model_hub.services.skills_hub.versions import (
     create_skill,
     publish_by_name,
@@ -103,7 +103,9 @@ def test_tombstones_hide_content_from_reads_and_stats(
         drafts.get_draft(skill=hub_skill, user=user)
     assert (error.value.code, error.value.status) == ("draft_not_found", 404)
     context = {
-        "request": SimpleNamespace(user=user),
+        "request": SimpleNamespace(
+            user=user, organization=organization, workspace=workspace
+        ),
         "fetch_counts": {},
         "latest_versions": {},
     }
@@ -220,7 +222,7 @@ def test_cross_skill_publish_acquires_shared_blobs_in_hash_order(
             )
             result = publish_files(
                 skill=skill,
-                actor=Actor(user=None, api_key=None),
+                actor=hub_actor,
                 files=files,
                 note="Concurrent cross-skill publication",
                 base_version=None,
@@ -446,8 +448,14 @@ def test_library_summary_queries_never_select_draft_content_or_authors(
         HubSkillDraft.objects.create(skill=skill, user=hub_other_user, files=files)
         if index == 0:
             drafts.discard_draft(skill=skill, user=user)
+    serializer_request = SimpleNamespace(
+        user=user, organization=organization, workspace=workspace
+    )
+    # The real view resolves authorization before its serializer/query phase.
+    # Keep that prerequisite outside the metadata-only query budget as well.
+    serializer_request.skill_principal = principal_from_request(serializer_request)
     context = {
-        "request": SimpleNamespace(user=user),
+        "request": serializer_request,
         "fetch_counts": {},
         "latest_versions": {},
     }

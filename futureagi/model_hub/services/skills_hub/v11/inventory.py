@@ -181,7 +181,8 @@ def validate_secret_review(
     for item in decisions:
         finding_id, reason = item.get("finding_id"), item.get("reason", "")
         if (
-            set(item) != {"finding_id", "reason"}
+            not isinstance(finding_id, str)
+            or set(item) != {"finding_id", "reason"}
             or finding_id not in known
             or finding_id in accepted
             or not isinstance(reason, str)
