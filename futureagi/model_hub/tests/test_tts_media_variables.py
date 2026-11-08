@@ -639,7 +639,10 @@ PREVIEW_SPOKEN = [
         "Intro Hello",
     ),
     ("{% for Recording in ['a', 'b'] %}{{ Recording }}{% endfor %}", "ab"),
-    ("{{ clip.title }} {% set clip = {'audio': 'Hello'} %}{{ clip.audio }}", "Intro Hello"),
+    (
+        "{{ clip.title }} {% set clip = {'audio': 'Hello'} %}{{ clip.audio }}",
+        "Intro Hello",
+    ),
     ('{{ Script | default("Hello") }}', "Hello there"),
     ("record audio with script", "record audio with script"),
 ]
@@ -703,7 +706,9 @@ class TestPreviewStillSpeaksText:
         # gpt-4o-audio-preview (an organization model) is a completion-audio
         # model, not literal speech: the renderer's existing media handling
         # applies unchanged, including its audio-input capability check.
-        add_custom_model(organization, workspace, user, "gpt-4o-audio-preview", "openai")
+        add_custom_model(
+            organization, workspace, user, "gpt-4o-audio-preview", "openai"
+        )
         with patch("litellm.completion") as completion:
             response = preview(
                 auth_client,
@@ -857,7 +862,12 @@ class TestSavedColumnRejectsMediaColumns:
         error,
     ):
         run_prompter, column = saved_tts_column(
-            dataset, organization, workspace, row, user_prompt(template), template_format
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt(template),
+            template_format,
         )
 
         cell = rerun_saved_column(run_prompter, column, row)
@@ -923,7 +933,12 @@ class TestSavedColumnRejectsMediaColumns:
         spoken,
     ):
         run_prompter, column = saved_tts_column(
-            dataset, organization, workspace, row, user_prompt(template), template_format
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt(template),
+            template_format,
         )
 
         cell = rerun_saved_column(run_prompter, column, row)
@@ -1137,7 +1152,10 @@ class TestLiteralSpeechRouting:
     def test_vertex_gemini_tts_renders_media_as_before(
         self, organization, dataset, row, columns, media_fetch
     ):
-        from model_hub.views.run_prompt import is_literal_speech_run, populate_placeholders
+        from model_hub.views.run_prompt import (
+            is_literal_speech_run,
+            populate_placeholders,
+        )
 
         model = "vertex_ai/gemini-2.5-flash-preview-tts"
         assert not is_literal_speech_run(model, "audio", organization.id)

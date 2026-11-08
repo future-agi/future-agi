@@ -981,7 +981,11 @@ def populate_placeholders(
                         cell_value = media_value
                     else:
                         cell_value = cell.value if cell.value is not None else ""
-                    if media_value is None and cell_value and isinstance(cell_value, str):
+                    if (
+                        media_value is None
+                        and cell_value
+                        and isinstance(cell_value, str)
+                    ):
                         from model_hub.utils.json_path_resolver import parse_json_safely
 
                         parsed_json, is_valid = parse_json_safely(cell_value)
