@@ -270,7 +270,7 @@ const ChatMessageView = ({
     if (attrOutputMessages?.length > 0) {
       return normalizeMessage(attrOutputMessages[0]);
     }
-    if (!output) return null;
+    if (output == null || output === "") return null;
     let data = output;
     if (typeof data === "string") {
       try {
@@ -279,6 +279,7 @@ const ChatMessageView = ({
         return { role: "assistant", content: [output] };
       }
     }
+    if (data == null || (Array.isArray(data) && data.length === 0)) return null;
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
     if (typeof data === "object" && data.content && data.content.role) {
       return normalizeMessage(data.content);
@@ -292,7 +293,9 @@ const ChatMessageView = ({
     ) {
       return { role: "assistant", content: [data.content] };
     }
-    return null;
+    // Raw output may be content blocks or a JSON scalar, not a message envelope.
+    // Keep unknown blocks as JSON rather than silently hiding the model's reply.
+    return normalizeMessage({ role: "assistant", content: data });
   }, [output, attrOutputMessages]);
 
   const allMessages = useMemo(() => {
