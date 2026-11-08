@@ -19688,6 +19688,44 @@ export interface HarnessCapabilityCountsApi {
   stale: number;
 }
 
+/**
+ * Suite cases not selected for this run.
+ */
+export type HarnessCapabilityExcludedApiReason =
+  (typeof HarnessCapabilityExcludedApiReason)[keyof typeof HarnessCapabilityExcludedApiReason];
+
+export const HarnessCapabilityExcludedApiReason = {
+  not_selected: "not_selected",
+} as const;
+
+export interface HarnessCapabilityExcludedApi {
+  /** @minimum 0 */
+  count: number;
+  keys: string[];
+  truncated: boolean;
+  /** Suite cases not selected for this run. */
+  reason: HarnessCapabilityExcludedApiReason;
+}
+
+/**
+ * The newest run of this agent and environment version the selected cases are compared with; null when there is none.
+ */
+export interface HarnessCapabilityChangedSinceApi {
+  run_id: string;
+  suite_version: RunVersionLabelApi;
+}
+
+/**
+ * Selected cases whose contents differ from that run's suite version, or that it did not have.
+ */
+export interface HarnessCapabilityChangedApi {
+  /** @minimum 0 */
+  count: number;
+  keys: string[];
+  truncated: boolean;
+  since: HarnessCapabilityChangedSinceApi;
+}
+
 export interface HarnessCapabilityCaseListApi {
   keys: string[];
   /** More than 200 cases; page them. */
@@ -19745,6 +19783,13 @@ export interface HarnessCapabilityGradingApi {
 }
 
 export interface HarnessCapabilitySelectionCountsApi {
+  /**
+   * Every case of the suite version.
+   * @minimum 0
+   */
+  suite_total: number;
+  excluded: HarnessCapabilityExcludedApi;
+  changed: HarnessCapabilityChangedApi;
   /** @minimum 0 */
   requested: number;
   /** @minimum 0 */
@@ -20510,6 +20555,13 @@ export type HarnessRunReadinessSelectionApiReasons = { [key: string]: string };
  * The cases readiness held back from this run and why; null when runs are not pinned to versions.
  */
 export interface HarnessRunReadinessSelectionApi {
+  /**
+   * Every case of the suite version.
+   * @minimum 0
+   */
+  suite_total: number;
+  excluded: HarnessCapabilityExcludedApi;
+  changed: HarnessCapabilityChangedApi;
   /** @minimum 1 */
   requested: number;
   /** @minimum 0 */

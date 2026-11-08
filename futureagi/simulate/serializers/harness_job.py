@@ -813,6 +813,46 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     )
 
 
+class HarnessCapabilityExcludedSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    reason = serializers.ChoiceField(
+        choices=("not_selected",), help_text="Suite cases not selected for this run."
+    )
+
+
+class HarnessCapabilityChangedSinceSerializer(serializers.Serializer):
+    run_id = serializers.UUIDField()
+    suite_version = RunVersionLabelSerializer(allow_null=True)
+
+
+class HarnessCapabilityChangedSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    keys = serializers.ListField(child=serializers.CharField())
+    truncated = serializers.BooleanField()
+    since = HarnessCapabilityChangedSinceSerializer(
+        allow_null=True,
+        help_text=(
+            "The newest run of this agent and environment version the selected cases"
+            " are compared with; null when there is none."
+        ),
+    )
+
+
+class HarnessCapabilityScopeSerializer(serializers.Serializer):
+    suite_total = serializers.IntegerField(
+        min_value=0, help_text="Every case of the suite version."
+    )
+    excluded = HarnessCapabilityExcludedSerializer()
+    changed = HarnessCapabilityChangedSerializer(
+        help_text=(
+            "Selected cases whose contents differ from that run's suite version, or"
+            " that it did not have."
+        )
+    )
+
+
 class HarnessRunHeldBackSerializer(serializers.Serializer):
     count = serializers.IntegerField(min_value=0)
     keys = serializers.ListField(child=serializers.CharField())
@@ -823,7 +863,7 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
     )
 
 
-class HarnessRunReadinessSelectionSerializer(serializers.Serializer):
+class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
     requested = serializers.IntegerField(min_value=1)
     running = serializers.IntegerField(min_value=0)
     held_back = HarnessRunHeldBackSerializer()

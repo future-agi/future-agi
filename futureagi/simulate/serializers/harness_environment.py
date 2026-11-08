@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from simulate.models import HarnessNudge
 from simulate.serializers.harness_job import (
+    HarnessCapabilityScopeSerializer,
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
@@ -1030,7 +1031,7 @@ class HarnessCapabilityGradingSerializer(serializers.Serializer):
     )
 
 
-class HarnessCapabilitySelectionCountsSerializer(serializers.Serializer):
+class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):
     """The selected cases, each in one bucket: requested is their sum. Cases
     certifying dropped, or that grade no sub-goal, are listed under dropped and
     never counted."""

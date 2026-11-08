@@ -14,7 +14,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
-from simulate.models import HarnessAssembledBundle, HarnessSuiteValidation
+from simulate.models import (
+    HarnessAssembledBundle,
+    HarnessSuiteMember,
+    HarnessSuiteValidation,
+    HostedHarnessJob,
+)
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
     GATE_OPEN,
@@ -24,6 +30,7 @@ from simulate.services.harness_readiness.catalogue import (
     PairingView,
     RowView,
     Status,
+    VersionRef,
 )
 from simulate.services.harness_readiness.evidence import certified, pair_bundle
 from simulate.services.harness_readiness.report import readiness_report
@@ -64,7 +71,31 @@ class Grading(TypedDict):
     truncated: bool
 
 
-class SelectionView(TypedDict):
+class Exclusions(CaseList):
+    count: int
+    # A suite case not selected for this run.
+    reason: Literal["not_selected"]
+
+
+class ChangedSince(TypedDict):
+    run_id: str
+    suite_version: VersionRef | None
+
+
+class Changes(CaseList):
+    count: int
+    # The newest run of this agent and environment version the selected cases are
+    # compared with; ``None`` when there is none.
+    since: ChangedSince | None
+
+
+class Scope(TypedDict):
+    suite_total: int
+    excluded: Exclusions
+    changed: Changes
+
+
+class SelectionView(Scope):
     requested: int
     eligible: int
     blocked: int
@@ -133,6 +164,8 @@ class _Placement:
     placed: list[Placed]
     dropped: list[DroppedCase]
     recorded: bool
+    # Every case of the suite version, in number order.
+    suite: list[str]
 
 
 def selection_report(
@@ -167,6 +200,7 @@ def selection_report(
         **report,
         "rows": rows,
         "selection": {
+            **_scope(pairing, placement, keys),
             "requested": requested,
             **{bucket: len(by_bucket[bucket]) for bucket in BUCKETS},
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
@@ -189,7 +223,7 @@ class HeldBack(TypedDict):
     by: dict[str, int]
 
 
-class RunSelection(TypedDict):
+class RunSelection(Scope):
     requested: int
     running: int
     held_back: HeldBack
@@ -213,7 +247,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         HostedHarnessError: as ``selection_report``.
     """
     report = readiness_report(pairing)
-    placed = _place_all(pairing, report["rows"], keys=keys, trials=trials).placed
+    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    placed = placement.placed
     held = [one.case.key for one in placed if one.bucket == "blocked"]
     by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
     reasons = {
@@ -223,6 +258,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     }
     return RunPlan(
         view={
+            **_scope(pairing, placement, keys),
             "requested": len(keys),
             "running": len(keys) - len(held),
             "held_back": {"count": len(held), **_capped(held), "by": dict(by)},
@@ -270,6 +306,68 @@ def case_page(
             for one in page
         ],
         "next": str(page[-1].case.number) if len(matching) > PAGE_SIZE else None,
+    }
+
+
+def _scope(
+    pairing: Pairing, placement: _Placement, keys: list[str] | None
+) -> Scope:
+    """The suite's size, the cases not selected and the selected cases changed since
+    this agent and environment version last ran."""
+    wanted = set(keys) if keys is not None else None
+    excluded = [key for key in placement.suite if wanted is not None and key not in wanted]
+    selected = [key for key in placement.suite if wanted is None or key in wanted]
+    since, changed = changed_since_last_run(pairing, selected)
+    return {
+        "suite_total": len(placement.suite),
+        "excluded": {
+            "count": len(excluded),
+            **_capped(excluded),
+            "reason": "not_selected",
+        },
+        "changed": {"count": len(changed), **_capped(changed), "since": since},
+    }
+
+
+def changed_since_last_run(
+    pairing: Pairing, keys: list[str]
+) -> tuple[ChangedSince | None, list[str]]:
+    """The newest run of the pairing's agent and environment version, and which of
+    ``keys`` it ran with other contents, or did not have: a case whose stored contents
+    differ by digest from that run's suite version. No run: none changed."""
+    from simulate.services.harness_versioning.read import version_refs
+
+    last = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=pairing.environment.id,
+            agent_version_id=getattr(pairing.agent_version, "id", None),
+            environment_version_id=pairing.environment_version.id,
+            test_execution_id__isnull=False,
+            suite_version__isnull=False,
+            # A validation job never ran the agent's cases; its key is set only on them.
+            payload__metadata__certify_only__isnull=True,
+        )
+        .select_related("suite_version")
+        .order_by("-created_at")
+        .first()
+    )
+    if last is None:
+        return None, []
+    since: ChangedSince = {
+        "run_id": str(last.id),
+        "suite_version": version_refs(None, None, last.suite_version)["suite"],
+    }
+    before = _digests(last.suite_version_id, keys)
+    now = _digests(pairing.suite_version.id, keys)
+    return since, [key for key in keys if before.get(key) != now.get(key)]
+
+
+def _digests(suite_version_id: object, keys: list[str]) -> dict[str, str]:
+    return {
+        key: canonical_digest(content)
+        for key, content in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=suite_version_id, scenario_key__in=keys
+        ).values_list("scenario_key", "content")
     }
 
 
@@ -334,6 +432,7 @@ def _place_all(
         placed=placed,
         dropped=dropped,
         recorded=all(one.recorded for one in kept),
+        suite=[one.key for one in cases],
     )
 
 

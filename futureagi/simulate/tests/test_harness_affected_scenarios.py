@@ -710,3 +710,133 @@ class TestAgentGapCases:
             pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
         )
         assert plan.view["running"] == 10
+
+
+def _earlier_suite(environment, *, edited=(), missing=()):
+    """A discarded copy of the default suite version whose members differ: ``edited``
+    keys carry other contents and ``missing`` keys are absent."""
+    import uuid
+
+    suite = HarnessSuiteVersion.no_workspace_objects.get(
+        id=environment.suite_version_id
+    )
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite)
+    )
+    suite.pk = uuid.uuid4()
+    suite.id = suite.pk
+    suite.status = "discarded"
+    suite.version_number = None
+    suite.save()
+    for member in members:
+        if member.scenario_key in missing:
+            continue
+        content = dict(member.content)
+        if member.scenario_key in edited:
+            content["name"] = "an earlier wording"
+        HarnessSuiteMember.no_workspace_objects.create(
+            suite_version=suite,
+            scenario=member.scenario,
+            scenario_key=member.scenario_key,
+            number=member.number,
+            content=content,
+        )
+    return suite
+
+
+class TestScope:
+    def test_cases_not_selected_are_excluded_and_counted(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "sc-excluded")
+
+        chosen = _select(environment, [LOOKUP_KEYS[0], REFUND_KEYS[1]])["selection"]
+
+        assert chosen["suite_total"] == 10
+        assert chosen["requested"] == 2
+        assert chosen["excluded"] == {
+            "count": 8,
+            "keys": [key for key in REFUND_KEYS + LOOKUP_KEYS if key not in (LOOKUP_KEYS[0], REFUND_KEYS[1])],
+            "truncated": False,
+            "reason": "not_selected",
+        }
+
+    def test_the_whole_suite_excludes_nothing(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-whole")
+
+        chosen = _select(environment)["selection"]
+
+        assert (chosen["suite_total"], chosen["excluded"]["count"]) == (10, 0)
+
+    def test_nothing_changed_without_an_earlier_run(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-first")
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed == {"count": 0, "keys": [], "truncated": False, "since": None}
+
+    def test_a_run_of_the_same_suite_version_changed_nothing(
+        self, user, workspace, storage
+    ):
+        environment = _ten_certified(user, workspace, storage, "sc-same")
+        run = _run(environment, LOOKUP_KEYS, key="same")
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed["count"] == 0
+        assert changed["since"]["run_id"] == str(run.id)
+
+    def test_cases_edited_or_added_since_the_last_run_are_changed(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "sc-changed")
+        run = _run(environment, LOOKUP_KEYS, key="earlier")
+        earlier = _earlier_suite(
+            environment, edited=(LOOKUP_KEYS[1],), missing=(REFUND_KEYS[0],)
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            suite_version=earlier
+        )
+
+        changed = _select(environment)["selection"]["changed"]
+
+        assert changed["keys"] == [REFUND_KEYS[0], LOOKUP_KEYS[1]]
+        assert changed["count"] == 2
+        assert changed["since"]["run_id"] == str(run.id)
+
+    def test_a_check_is_not_a_run_to_compare_with(self, user, workspace, storage):
+        from simulate.models import HostedHarnessJob
+
+        environment = _ten_certified(user, workspace, storage, "sc-check")
+        run = _run(environment, LOOKUP_KEYS, key="check")
+        payload = dict(run.payload)
+        payload["metadata"] = {**payload["metadata"], "certify_only": True}
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+
+        assert _select(environment)["selection"]["changed"]["since"] is None
+
+    def test_a_run_records_its_scope(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "sc-run")
+
+        run = _run(environment, LOOKUP_KEYS, key="scoped")
+
+        chosen = _run_metadata(run)["readiness_selection"]
+        assert chosen["suite_total"] == 10
+        assert chosen["excluded"]["keys"] == REFUND_KEYS
+        assert chosen["changed"]["since"] is None
+
+    def test_another_agent_versions_run_is_not_compared(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "sc-other-agent")
+        _suite(environment, _ten())
+        _certify(environment, storage)
+        _run(environment, LOOKUP_KEYS, key="a1-run")
+
+        changed = _select(environment, pairing=_pairing(environment, a2))["selection"][
+            "changed"
+        ]
+
+        assert changed["since"] is None

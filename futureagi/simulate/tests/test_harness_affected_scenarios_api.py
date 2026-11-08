@@ -58,6 +58,8 @@ class TestApi:
         assert got.status_code == posted.status_code == 200, posted.content
         assert got.json()["selection"] == posted.json()["selection"]
         assert got.json()["selection"]["blocked"] == 1
+        assert got.json()["selection"]["suite_total"] == 10
+        assert got.json()["selection"]["excluded"]["count"] == 7
         assert [row["affected"] for row in got.json()["rows"]] == [
             row["affected"] for row in posted.json()["rows"]
         ]
@@ -291,6 +293,7 @@ class TestRunHoldBackApi:
         HarnessRunCreateResponseSerializer(data=body).is_valid(raise_exception=True)
         assert body["selection"]["held_back"]["keys"] == REFUND_KEYS
         assert (body["selection"]["running"], body["total_calls"]) == (6, 6)
+        assert (body["selection"]["suite_total"], body["selection"]["excluded"]["count"]) == (10, 0)
         header = auth_client.get(
             f"/simulate/v3/test-executions/{body['test_execution_id']}/calls/"
         ).json()["execution"]

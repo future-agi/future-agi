@@ -697,6 +697,9 @@ class TestApi:
             "selection",
         }
         assert set(body["selection"]) == {
+            "suite_total",
+            "excluded",
+            "changed",
             "requested",
             "eligible",
             "blocked",

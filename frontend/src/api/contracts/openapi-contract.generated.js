@@ -101634,6 +101634,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     HarnessCapabilitySelectionCounts: {
       required: [
+        "suite_total",
+        "excluded",
+        "changed",
         "requested",
         "eligible",
         "blocked",
@@ -101646,6 +101649,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        suite_total: {
+          title: "Suite total",
+          description: "Every case of the suite version.",
+          type: "integer",
+          minimum: 0,
+        },
+        excluded: {
+          $ref: "#/definitions/HarnessCapabilityExcluded",
+        },
+        changed: {
+          $ref: "#/definitions/HarnessCapabilityChanged",
+        },
         requested: {
           title: "Requested",
           type: "integer",
@@ -104274,9 +104289,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessRunReadinessSelection: {
       description:
         "The cases readiness held back from this run and why; null when runs are not pinned to versions.",
-      required: ["requested", "running", "held_back", "reasons"],
+      required: [
+        "suite_total",
+        "excluded",
+        "changed",
+        "requested",
+        "running",
+        "held_back",
+        "reasons",
+      ],
       type: "object",
       properties: {
+        suite_total: {
+          title: "Suite total",
+          description: "Every case of the suite version.",
+          type: "integer",
+          minimum: 0,
+        },
+        excluded: {
+          $ref: "#/definitions/HarnessCapabilityExcluded",
+        },
+        changed: {
+          $ref: "#/definitions/HarnessCapabilityChanged",
+        },
         requested: {
           title: "Requested",
           type: "integer",
@@ -121871,6 +121906,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityChanged: {
+      description:
+        "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+      required: ["count", "keys", "truncated", "since"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        since: {
+          $ref: "#/definitions/HarnessCapabilityChangedSince",
+        },
+      },
+    },
     HarnessCapabilityDroppedCase: {
       required: ["key", "code", "reason"],
       type: "object",
@@ -121891,6 +121953,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Reason",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessCapabilityExcluded: {
+      required: ["count", "keys", "truncated", "reason"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          description: "Suite cases not selected for this run.",
+          type: "string",
+          enum: ["not_selected"],
         },
       },
     },
@@ -130924,6 +131014,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+    },
+    HarnessCapabilityChangedSince: {
+      description:
+        "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+      required: ["run_id", "suite_version"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+      },
+      "x-nullable": true,
     },
     HarnessCapabilityNotGradable: {
       required: ["key", "reason"],

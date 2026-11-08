@@ -38895,6 +38895,12 @@ export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedC
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedOfMin = 0;
 
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin = 0;
+
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRequestedMin = 0;
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionEligibleMin = 0;
@@ -39101,6 +39107,48 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
   selection: zod.object({
+    suite_total: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin,
+      )
+      .describe("Every case of the suite version."),
+    excluded: zod.object({
+      count: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin,
+        ),
+      keys: zod.array(zod.string().min(1)),
+      truncated: zod.boolean(),
+      reason: zod
+        .enum(["not_selected"])
+        .describe("Suite cases not selected for this run."),
+    }),
+    changed: zod
+      .object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        since: zod
+          .object({
+            run_id: zod.string().uuid(),
+            suite_version: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+          })
+          .describe(
+            "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+          ),
+      })
+      .describe(
+        "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+      ),
     requested: zod
       .number()
       .min(
@@ -39224,6 +39272,12 @@ export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemNee
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedOfMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRequestedMin = 0;
 
@@ -39432,6 +39486,48 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
     rules_version: zod.string().min(1),
     computed_at: zod.string().min(1),
     selection: zod.object({
+      suite_total: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin,
+        )
+        .describe("Every case of the suite version."),
+      excluded: zod.object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        reason: zod
+          .enum(["not_selected"])
+          .describe("Suite cases not selected for this run."),
+      }),
+      changed: zod
+        .object({
+          count: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          since: zod
+            .object({
+              run_id: zod.string().uuid(),
+              suite_version: zod.object({
+                id: zod.string().uuid().optional(),
+                label: zod.string().min(1).optional(),
+              }),
+            })
+            .describe(
+              "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+            ),
+        })
+        .describe(
+          "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+        ),
       requested: zod
         .number()
         .min(
@@ -54390,6 +54486,12 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
 
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin = 0;
+
 export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin = 0;
 
 export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin = 0;
@@ -54633,6 +54735,48 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .describe("The run readiness of the run's versions when it was created."),
     readiness_selection: zod
       .object({
+        suite_total: zod
+          .number()
+          .min(
+            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin,
+          )
+          .describe("Every case of the suite version."),
+        excluded: zod.object({
+          count: zod
+            .number()
+            .min(
+              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          reason: zod
+            .enum(["not_selected"])
+            .describe("Suite cases not selected for this run."),
+        }),
+        changed: zod
+          .object({
+            count: zod
+              .number()
+              .min(
+                simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin,
+              ),
+            keys: zod.array(zod.string().min(1)),
+            truncated: zod.boolean(),
+            since: zod
+              .object({
+                run_id: zod.string().uuid(),
+                suite_version: zod.object({
+                  id: zod.string().uuid().optional(),
+                  label: zod.string().min(1).optional(),
+                }),
+              })
+              .describe(
+                "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+              ),
+          })
+          .describe(
+            "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+          ),
         requested: zod.number().min(1),
         running: zod
           .number()
