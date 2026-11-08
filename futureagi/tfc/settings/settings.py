@@ -1739,6 +1739,11 @@ SKILLS_GITHUB_ENABLED = os.getenv("SKILLS_GITHUB_ENABLED", "false").lower() in (
     "1",
     "yes",
 )
+# Enable only after isolated-credential SDK/CLI conformance. Disabling this
+# never disables legacy label protection, quarantine checks or credential revoke.
+SKILLS_CONTEXT_CONSUMPTION_ENABLED = os.getenv(
+    "SKILLS_CONTEXT_CONSUMPTION_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 # Approved standard catalog IDs only, after live credential/tool/usage/deadline
 # verification. Empty by default; no managed/global/environment-key fallback.
 SKILLS_VERIFIED_MODELS = _split_env("SKILLS_VERIFIED_MODELS")

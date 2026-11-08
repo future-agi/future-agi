@@ -267,6 +267,7 @@ def _plan(
     }
     queryset = HubSkill.no_workspace_objects.filter(
         id__in=requested_ids,
+        kind=HubSkill.Kind.SKILL,
         organization_id=scope.organization_id,
         workspace_id=scope.workspace_id,
     ).order_by("id")

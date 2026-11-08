@@ -110,7 +110,7 @@ def contract(output=None, *, body=None, query=None, status=200, many=False, **kw
     def decorate(handler):
         parameters = list(kwargs.pop("manual_parameters", []))
         for name in signature(handler).parameters:
-            if name == "skill_id":
+            if name in {"skill_id", "resource_id", "credential_id"}:
                 parameters.append(
                     openapi.Parameter(
                         name,
@@ -516,6 +516,11 @@ class SkillVersionDownloadView(SkillsView):
     def get(self, request, skill_id, number):
         skill = self.skill(request, skill_id)
         version = selectors.version_for_skill(skill, number)
+        from model_hub.services.skills_hub.v12.resolution_leases import (
+            require_distribution_eligibility,
+        )
+
+        require_distribution_eligibility(version)
         response = zip_response(request, [bundle(skill, version)])
         fetch(request, version, "download")
         return response
