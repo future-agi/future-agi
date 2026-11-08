@@ -23,10 +23,12 @@ services:
     environment:
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      E2E_SKILLS_FIXTURES: "1"
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
     volumes:
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
+      - ./e2e/stack/backend/e2e_skills_transport.py:/app/backend/tfc/e2e_skills_transport.py:ro
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
       - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
       - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
@@ -42,6 +44,14 @@ services:
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-28123}:8123"
       - "127.0.0.1:${CH_PORT:-29000}:9000"
+    restart: "no"
+  skills-fakes:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/skills-fakes/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28082}:8080"
     restart: "no"
   mock-llm:
     image: node:22-alpine

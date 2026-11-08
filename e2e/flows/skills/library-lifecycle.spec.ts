@@ -274,7 +274,10 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(response.status()).toBe(200);
       expect(response.request().postDataJSON()).toMatchObject({ version: 3, expected_version: 1 });
       await expect(dialog).not.toBeVisible({ timeout: UI_READY });
-      const stale = await scopeActors.send<{ code: string }>(actor, 'PUT', `${SKILLS}${id}/labels/production/`, { version: 2, expected_version: 1 });
+      const release = await read<{ release_revision: number }>(`${SKILLS}${id}/`);
+      const stale = await scopeActors.send<{ code: string }>(actor, 'PUT', `${SKILLS}${id}/labels/production/`, {
+        version: 2, expected_version: 1, expected_release_revision: release.release_revision,
+      });
       expect(stale.status).toBe(409);
       expect(stale.body.code).toBe('label_conflict');
       expect((await read<Label[]>(`${SKILLS}${id}/labels/`)).map(label => [label.name, label.version])).toEqual([['production', 3]]);
@@ -355,6 +358,7 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       expect(Buffer.byteLength(content)).toBeGreaterThan(100 * 1024);
       const seeded = await actor.api.post<Envelope<{ skill: { id: string }; version: Version }>>(`${SKILLS}publish/`, {
         files: [{ path: 'SKILL.md', content }], labels: ['production'], acknowledge_warnings: true,
+        expected_release_revision: 0,
       });
       await testInfo.attach('long-file-fixture', { body: JSON.stringify({ skillId: seeded.result.skill.id,
         version: seeded.result.version, sha256: sha256(content), bytes: Buffer.byteLength(content) }), contentType: 'application/json' });
