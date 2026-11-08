@@ -44,7 +44,12 @@ test('Git transport pins refs/ETags, exposes rate/redirect failures and forbids 
   assert.equal((await fixture.fetch(url(repo, '/commits/main'), { headers: { 'if-none-match': `"${repo.base}"` } })).status, 304);
   assert.equal((await fixture.fetch(url(repo, `/contents/AGENTS.md?ref=${repo.base}`))).status, 200);
   fixture.advanceBase(repo.id, 'a'.repeat(40));
-  assert.equal((await fixture.fetch(url(repo, `/contents/AGENTS.md?ref=${repo.base}`))).status, 409);
+  const retained = await fixture.fetch(url(repo, `/contents/AGENTS.md?ref=${repo.base}`));
+  assert.equal(retained.status, 200, 'branch movement must not erase the immutable preview source');
+  assert.equal(Buffer.from((await retained.json()).content, 'base64').toString('utf8'), repo.files['AGENTS.md']);
+  assert.equal((await (await fixture.fetch(url(repo, `/commits/${repo.base}`))).json()).sha, repo.base);
+  assert.equal((await (await fixture.fetch(url(repo, '/commits/main'))).json()).sha, 'a'.repeat(40));
+  assert.equal((await fixture.fetch(url(repo, '/contents/AGENTS.md?ref=main'))).status, 409);
   fixture.faultNext({ status: 429, retryAfter: 60 });
   assert.equal((await fixture.fetch(url(repo))).headers.get('retry-after'), '60');
   fixture.faultNext({ status: 302, location: 'https://unapproved.invalid/' });

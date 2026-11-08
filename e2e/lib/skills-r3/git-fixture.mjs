@@ -4,11 +4,15 @@ import { repositoryFixture } from '../../fixtures/skills-r3/library.mjs';
 /** In-memory HTTP transport boundary. No sockets, git commands, hooks, or real GitHub writes. */
 export class GitFixture {
   #repos;
+  #snapshots = new Map();
   #pulls = new Map();
   #ledger = [];
   #unknownSent = new Set();
   #faults = [];
-  constructor(repositories = repositoryFixture()) { this.#repos = structuredClone(repositories); }
+  constructor(repositories = repositoryFixture()) {
+    this.#repos = structuredClone(repositories);
+    for (const repo of this.#repos) this.#snapshots.set(`${repo.id}/${repo.base}`, structuredClone(repo.files));
+  }
   inventory() { return structuredClone(this.#repos); }
   ledger() { return structuredClone(this.#ledger); }
   pulls(repositoryId) { return structuredClone(this.#pulls.get(repositoryId) ?? []); }
@@ -19,7 +23,9 @@ export class GitFixture {
   advanceBase(repositoryId, base) {
     requireValue(/^[a-f0-9]{40}$/.test(base), 'Full commit required');
     const repo = this.#repos.find((r) => r.id === repositoryId);
-    requireValue(repo, 'Unknown repository'); repo.base = base;
+    requireValue(repo, 'Unknown repository');
+    repo.base = base;
+    this.#snapshots.set(`${repo.id}/${base}`, structuredClone(repo.files));
   }
   async fetch(input, init) {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -40,16 +46,19 @@ export class GitFixture {
     if (request.method === 'GET' && suffix === '') return out({ id: Number(repo.id), full_name: `synthetic/${repo.name}`, default_branch: 'main', private: true });
     if (request.method === 'GET' && suffix.startsWith('commits/')) {
       const ref = suffix.slice('commits/'.length);
-      if (ref !== 'main' && ref !== repo.base) return out({ message: 'Not Found' }, 404);
-      const etag = `"${repo.base}"`;
+      const sha = ref === 'main' ? repo.base : ref;
+      if (!this.#snapshots.has(`${repo.id}/${sha}`)) return out({ message: 'Not Found' }, 404);
+      const etag = `"${sha}"`;
       if (request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers: { etag } });
-      return out({ sha: repo.base }, 200, { etag });
+      return out({ sha }, 200, { etag });
     }
     if (request.method === 'GET' && suffix.startsWith('contents/')) {
-      if (url.searchParams.get('ref') !== repo.base) return out({ message: 'Exact fixture commit required' }, 409);
+      const ref = url.searchParams.get('ref');
+      if (!/^[a-f0-9]{40}$/.test(ref ?? '')) return out({ message: 'Exact fixture commit required' }, 409);
+      const files = this.#snapshots.get(`${repo.id}/${ref}`);
       const path = decodeURIComponent(suffix.slice('contents/'.length));
-      if (!(path in repo.files)) return out({ message: 'Not Found' }, 404);
-      return out({ path, sha: digest(repo.files[path]).slice(0, 40), encoding: 'base64', content: Buffer.from(repo.files[path]).toString('base64') });
+      if (!files || !(path in files)) return out({ message: 'Not Found' }, 404);
+      return out({ path, sha: digest(files[path]).slice(0, 40), encoding: 'base64', content: Buffer.from(files[path]).toString('base64') });
     }
     if (suffix === 'pulls' && request.method === 'GET') {
       const head = url.searchParams.get('head')?.replace(/^synthetic:/, '');
