@@ -754,6 +754,7 @@ def test_migration_state_matches_registered_new_models():
 @pytest.mark.django_db(transaction=True)
 def test_migration_reverses_and_preserves_legacy_policy(organization, workspace):
     executor = MigrationExecutor(connection)
+    current_targets = executor.loader.graph.leaf_nodes()
     try:
         executor.migrate([("model_hub", "0123_skills_hub")])
         tables = connection.introspection.table_names()
@@ -769,7 +770,7 @@ def test_migration_reverses_and_preserves_legacy_policy(organization, workspace)
             workspace_id=workspace.pk,
         )
     finally:
-        MigrationExecutor(connection).migrate([("model_hub", "0124_skills_hub_v11")])
+        MigrationExecutor(connection).migrate(current_targets)
     assert "model_hub_hubskilljob" in connection.introspection.table_names()
     assert HubSkill.no_workspace_objects.get(pk=legacy.pk).protected_label_names == []
     fresh = HubSkill.no_workspace_objects.create(
