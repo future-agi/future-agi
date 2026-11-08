@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  AREA_OF_E2E_DIR,
+  FE_AREA,
   buildPinnedIndex,
   classifyChange,
   classifyPath,
@@ -79,6 +81,18 @@ const cases = [
   ["frontend/src/sections/projects/Alerts/common.js", "B2", "alerts"],
   ["frontend/src/components/traceDetail/SpanDetailPane.jsx", "B2", "observe"],
   ["frontend/src/sections/tasks/TaskList.jsx", "B2", "tasks"],
+  ["frontend/src/sections/skills/library/SkillsLibraryView.jsx", "B2", "skills"],
+  ["futureagi/model_hub/models/skills_hub.py", "E5", "skills"],
+  ["futureagi/model_hub/selectors/skills_hub.py", "E5", "skills"],
+  ["futureagi/model_hub/serializers/skills_hub.py", "B3", "skills"],
+  ["futureagi/model_hub/services/skills_hub/drafts.py", "E5", "skills"],
+  ["futureagi/model_hub/views/skills_hub.py", "B3", "skills"],
+  ["futureagi/model_hub/views/skills_hub_v11.py", "B3", "skills"],
+  ["futureagi/model_hub/urls_skills_hub.py", "E5", "skills"],
+  ["futureagi/model_hub/urls_skills_hub_v11.py", "E5", "skills"],
+  ["futureagi/model_hub/views/datasets.py", "B3", "datasets"],
+  ["futureagi/model_hub/models/skills_hub_unrelated_name.py", "E5", "datasets"],
+  ["futureagi/model_hub/tests/skills_hub/test_api_core.py", "E3", null],
   ["futureagi/tracer/urls.py", "B3", "observe"],
   ["futureagi/tracer/views/eval_task.py", "B3", "evals"],
   ["futureagi/model_hub/views/annotation_queues.py", "B3", "annotations"],
@@ -425,6 +439,18 @@ test("detectNewSurface fires on routes, urls.py, new views, new pages, collector
     [],
   );
   assert.equal(signals.length, 6);
+});
+
+test("Skills has its own catalog prefix and uncovered-feature signal", () => {
+  assert.equal(FE_AREA.skills, "skills");
+  assert.equal(AREA_OF_E2E_DIR.skills, "SKILLS");
+  assert.deepEqual(detectNewSurface({
+    "frontend/src/sections/skills/library/SkillsLibraryView.jsx": {
+      status: "M", added: ["new behavior"], removed: [],
+    },
+  }, "feat", ["skills"]), [
+    "feat: PR in area skills, which has no flows",
+  ]);
 });
 
 test("detectNewSurface fires on feat title in an area with no flows", () => {

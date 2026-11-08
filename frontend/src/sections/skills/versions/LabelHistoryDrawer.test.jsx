@@ -6,6 +6,10 @@ import { endpoints } from "src/api/skills/endpoints";
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 
 vi.mock("src/utils/axios", () => ({ default: { get: vi.fn() } }));
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ authenticated: true, user: { id: "reviewer" } }) }));
+vi.mock("src/contexts/OrganizationContext", () => ({ useOrganization: () => ({ currentOrganizationId: "org-a", isReady: true }) }));
+vi.mock("src/contexts/WorkspaceContext", () => ({ useWorkspace: () => ({ currentWorkspaceId: "ws-a", isReady: true }) }));
+const headers = { "X-Organization-Id": "org-a", "X-Workspace-Id": "ws-a" };
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 const skill = { id: "skill-1", name: "release-review" };
 const events = [
@@ -34,7 +38,7 @@ describe("LabelHistoryDrawer", () => {
     expect(screen.getByText("production: Not set → v1")).toBeInTheDocument();
     expect(screen.getByText(/Release bot \(API key\)/)).toBeInTheDocument();
     expect(screen.getByText(/Unknown actor/)).toBeInTheDocument();
-    expect(axios.get).toHaveBeenCalledWith(endpoints.labelHistory(skill.id), { params: { label: "production", page: 1, page_size: 25 }, signal: expect.any(AbortSignal) });
+    expect(axios.get).toHaveBeenCalledWith(endpoints.labelHistory(skill.id), { params: { label: "production", page: 1, page_size: 25 }, signal: expect.any(AbortSignal), headers });
     fireEvent.click(screen.getByRole("button", { name: "Close label history" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -53,8 +57,8 @@ describe("LabelHistoryDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Older changes" }));
     expect(await screen.findByText("Initial promotion")).toBeInTheDocument();
     expect(screen.queryByText("Recent change 24")).not.toBeInTheDocument();
-    expect(axios.get).toHaveBeenLastCalledWith(endpoints.labelHistory(skill.id), { params: { label: "production", page: 2, page_size: 25 }, signal: expect.any(AbortSignal) });
-    expect(client.getQueryCache().getAll().map((query) => query.queryKey)).toContainEqual(["skills", skill.id, "labelHistory", "production", { page: 2, pageSize: 25 }]);
+    expect(axios.get).toHaveBeenLastCalledWith(endpoints.labelHistory(skill.id), { params: { label: "production", page: 2, page_size: 25 }, signal: expect.any(AbortSignal), headers });
+    expect(client.getQueryCache().getAll().map((query) => query.queryKey)).toContainEqual(["skills", "v11", "org-a", "ws-a", "reviewer", "legacy", skill.id, "labelHistory", "production", { page: 2, pageSize: 25 }]);
     expect(screen.getByRole("button", { name: "Older changes" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Newer changes" }));
     expect(await screen.findByText("Recent change 24")).toBeInTheDocument();

@@ -2443,3 +2443,35 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+## skills
+
+### SKILLS-E2E-001 — author, restore and consume the reviewed workspace skill
+
+**Goal:** A developer authors, publishes, restores and consumes the exact reviewed workspace skill while production changes only through an explicit promotion
+
+**Spec:** `flows/skills/library-lifecycle.spec.ts:42`
+
+**Tags:** —
+
+**User steps:**
+
+1. open an isolated Skills library and create from Support policy
+2. edit in Monaco to trigger a synthetic secret warning, remove it and wait for autosave
+3. publish v1 with production, rename a reference and repair its link, then publish v2 without promotion
+4. compare v1 and v2, restore v1 as distinct v3, explicitly move production and inspect history
+5. preview a valid-plus-invalid ZIP and import only the valid skill
+6. copy and execute the validated localhost install command in an owned temporary project
+7. reconstruct the immutable release and a separate greater-than-100-KiB UTF-8 fixture through real MCP
+8. inspect fetch usage and the populated library in light and dark themes
+
+**Backend state verified:**
+
+- template and draft belong to the actor organization/workspace and persist exact authored files with a monotonic revision
+- live checks detect the synthetic secret and clear after its removal
+- v1 and v2 remain distinct immutable snapshots, publication sends the saved revision, and production stays on v1 after v2
+- compare returns the exact added, removed, modified and unchanged path sets shown in the UI
+- restore creates distinct v3 with the v1 digest; explicit CAS promotion records exactly the expected history and rejects a stale move
+- ZIP preview disables the invalid bundle and imports only the valid identity
+- installed bytes and lock identity plus real MCP reconstruction equal the immutable manifest, including the long UTF-8 fixture
+- API, download and MCP fetch accounting increases for the minted skill without claiming execution

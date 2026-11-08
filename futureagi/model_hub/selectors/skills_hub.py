@@ -32,6 +32,7 @@ def skills_for_request_scope(
         organization_id=organization.pk,
         workspace_id=workspace.pk,
         workspace__organization_id=organization.pk,
+        kind=HubSkill.Kind.SKILL,
     )
 
 
@@ -55,6 +56,7 @@ def scoped_skill(skill: HubSkill, *, lock: bool = False) -> HubSkill:
         organization_id=skill.organization_id,
         workspace_id=skill.workspace_id,
         workspace__organization_id=skill.organization_id,
+        kind=HubSkill.Kind.SKILL,
     )
     if lock:
         queryset = queryset.select_for_update(of=("self",))

@@ -180,6 +180,10 @@ def _tombstone(draft: HubSkillDraft) -> None:
     draft.note = ""
     draft.base_version = None
     draft.source = {}
+    draft.context_spec = {}
+    draft.resolved_lock = {}
+    draft.expected_head_version = None
+    draft.head_review_fingerprint = ""
     draft.discarded_at = timezone.now()
     draft.revision += 1
     draft.save(
@@ -188,6 +192,10 @@ def _tombstone(draft: HubSkillDraft) -> None:
             "note",
             "base_version",
             "source",
+            "context_spec",
+            "resolved_lock",
+            "expected_head_version",
+            "head_review_fingerprint",
             "discarded_at",
             "revision",
             "updated_at",
