@@ -64,6 +64,8 @@ class Evidence:
     checked_at: str | None
     # Tools observed reaching the test world in the qualification conversation.
     routed: list[Mapping[str, Any]] = field(default_factory=list)
+    # Tools qualification did not see reaching the world, each with why.
+    unobserved: list[Mapping[str, Any]] = field(default_factory=list)
     # A build certificate of an earlier environment version than the pairing's, read
     # because the pairing's own version has none.
     made_for: HarnessEnvironmentVersion | None = None
@@ -119,6 +121,7 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             "tools": [],
             "actions": [],
             "routed": [],
+            "unobserved": [],
         }
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
@@ -126,6 +129,7 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
         "tools": _items(_json(found.get(TOOL_CERTIFICATION)), "tools"),
         "actions": _items(_json(found.get(ACTION_CERTIFICATION)), "actions"),
         "routed": _items(_json(found.get(TOOL_ROUTING)), "tools"),
+        "unobserved": _items(_json(found.get(TOOL_ROUTING)), "unobserved"),
     }
     cache.set(cache_key, files, timeout=_FILES_TTL_SECONDS)
     return files
@@ -176,6 +180,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             actions=files["actions"],
             checked_at=bundle.updated_at.isoformat(),
             routed=files.get("routed", []),
+            unobserved=files.get("unobserved", []),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -197,6 +202,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         actions=_items(data.get("action_certification"), "actions"),
         checked_at=version.created_at.isoformat(),
         routed=files.get("routed", []),
+        unobserved=files.get("unobserved", []),
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
     )
@@ -359,7 +365,8 @@ def _tool_routing(evidence: Evidence) -> Reading:
         return Reading(
             "limited",
             "probe_not_run",
-            "Not yet shown reaching the test world: " + ", ".join(not_run),
+            "Not yet shown reaching the test world: "
+            + ", ".join(_why_unobserved(one, evidence) for one in not_run),
             targets("action", not_run, "not_run"),
             seen,
         )
@@ -368,6 +375,26 @@ def _tool_routing(evidence: Evidence) -> Reading:
     return Reading(
         "not_run", targets=targets("action", not_run, "not_run"), evidence=seen
     )
+
+
+_UNOBSERVED_REASONS = {
+    "changes_state": "changes state, so it was not asked",
+    "not_called": "asked, but not called",
+    "request_failed": "asked, but the agent did not answer",
+}
+
+
+def _why_unobserved(tool: str, evidence: Evidence) -> str:
+    reason = next(
+        (
+            str(item.get("reason") or "")
+            for item in evidence.unobserved
+            if item.get("tool") == tool
+        ),
+        "",
+    )
+    shown = _UNOBSERVED_REASONS.get(reason)
+    return f"{tool} ({shown})" if shown else tool
 
 
 def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Reading:

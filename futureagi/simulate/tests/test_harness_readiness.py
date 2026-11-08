@@ -122,6 +122,7 @@ def _certify(
     pairing=None,
     warnings=(),
     routed=None,
+    unobserved=(),
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
@@ -147,7 +148,8 @@ def _certify(
                             "tools": [
                                 {"tool": name, "routed": True, "calls": 1}
                                 for name in routed
-                            ]
+                            ],
+                            "unobserved": list(unobserved),
                         }
                     ).encode()
                 }
@@ -2256,6 +2258,26 @@ class TestObservedRouting:
         )
 
         assert reading.finding == "not_run"
+
+    def test_an_unobserved_tool_names_why_it_was_not_shown(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-why")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+            routed=["lookup_order"],
+            unobserved=[{"tool": "issue_refund", "reason": "changes_state"}],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason"] == (
+            "Not yet shown reaching the test world: issue_refund (changes state, so it"
+            " was not asked)"
+        )
 
 
 class TestReleaseChecks:
