@@ -2034,3 +2034,23 @@ class TestFailureRecord:
             "check": "failed_check",
             "result": "spawn/spawn_failed (agent): exited 1",
         } in start["evidence"]
+
+    def test_the_gateway_keeps_the_excerpt_on_the_failed_bundle(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-record-mark")
+        job = _start(environment).job
+        payload = dict(job.payload)
+        payload["metadata"]["assembly"]["outcome"] = "miss"
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+        job.refresh_from_db()
+        failure = _failure(_AGENT_CRASH)
+        failure["details"]["harness_failure"] = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+
+        assembly.mark_failed(job, failure)
+
+        row = _row(environment)
+        assert row.state == "failed"
+        assert row.error["excerpt"] == "spawn/spawn_failed (agent): exited 1"

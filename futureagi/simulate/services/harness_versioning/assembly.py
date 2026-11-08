@@ -1249,6 +1249,12 @@ def mark_failed(
         }
         if failed_actions is not None:
             error["failed_actions"] = failed_actions
+        excerpt = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+            "message"
+        )
+        if excerpt:
+            # The harness's own redacted line; the message above may quote the log.
+            error["excerpt"] = excerpt
         if certify_only(job):
             error["source"] = FAILURE_SOURCE
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(
