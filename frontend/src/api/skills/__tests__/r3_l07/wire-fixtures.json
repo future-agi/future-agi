@@ -1,0 +1,495 @@
+{
+  "NativeConfiguration": {
+    "code_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "code_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entrypoint": "synthetic.app:invoke",
+    "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runtime_version": "3.11.14",
+    "packages": [
+      {
+        "name": "synthetic-app",
+        "version": "1.0.0",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "package_lock_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "model": {
+      "model_id": "synthetic-model",
+      "temperature": 0.0,
+      "max_output_tokens": 100
+    },
+    "connection_id": "00000000-0000-4000-8000-000000000001",
+    "connection_revision": "1",
+    "tools_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "retrieval_fixture_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state_schema": "synthetic-v1",
+    "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "side_effect_policy": "fixture_only",
+    "reset_entrypoint": "synthetic.app:reset",
+    "context_mount": "/fi_context/",
+    "observable_boundaries": [
+      "catalog",
+      "child_selection",
+      "tool_result"
+    ]
+  },
+  "TextConfiguration": {
+    "model": {
+      "model_id": "synthetic-model",
+      "temperature": 0.0,
+      "max_output_tokens": 100
+    },
+    "judge": null,
+    "harness_version": "contexts-text-v1.2",
+    "adapter_version": "synthetic-v1",
+    "evaluator_version": "synthetic-v1"
+  },
+  "EvidenceRef": {
+    "schema": 1,
+    "source_id": "00000000-0000-4000-8000-000000000003",
+    "subject_kind": "agent_context",
+    "subject_id": "00000000-0000-4000-8000-000000000001",
+    "candidate_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "execution_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "failed",
+    "visibility": "workspace",
+    "payload_expires_at": "2026-11-08T12:00:00Z",
+    "configuration": {
+      "schema": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "native": {
+        "code_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "code_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "entrypoint": "synthetic.app:invoke",
+        "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime_version": "3.11.14",
+        "packages": [
+          {
+            "name": "synthetic-app",
+            "version": "1.0.0",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "package_lock_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "model": {
+          "model_id": "synthetic-model",
+          "temperature": 0.0,
+          "max_output_tokens": 100
+        },
+        "connection_id": "00000000-0000-4000-8000-000000000001",
+        "connection_revision": "1",
+        "tools_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "retrieval_fixture_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state_schema": "synthetic-v1",
+        "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "side_effect_policy": "fixture_only",
+        "reset_entrypoint": "synthetic.app:reset",
+        "context_mount": "/fi_context/",
+        "observable_boundaries": [
+          "catalog",
+          "child_selection",
+          "tool_result"
+        ]
+      }
+    },
+    "annotation_revision": 2,
+    "source": "simulation_native"
+  },
+  "TargetConfiguration": {
+    "binding_id": "00000000-0000-4000-8000-000000000001",
+    "environment_id": null,
+    "revision": 0,
+    "configuration_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "PointerTransition": {
+    "expected_version": null,
+    "version": 1,
+    "expected_release_revision": 0,
+    "expected_security_revision": 0,
+    "expected_impact_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "label": "production"
+  },
+  "ReleasePacket": {
+    "schema": 1,
+    "subject_kind": "agent_context",
+    "subject_id": "00000000-0000-4000-8000-000000000001",
+    "candidate_version_id": "00000000-0000-4000-8000-000000000002",
+    "candidate_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "transition": {
+      "expected_version": null,
+      "version": 1,
+      "expected_release_revision": 0,
+      "expected_security_revision": 0,
+      "expected_impact_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "label": "production"
+    },
+    "target": {
+      "binding_id": "00000000-0000-4000-8000-000000000001",
+      "environment_id": null,
+      "revision": 0,
+      "configuration_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "evidence": [
+      {
+        "schema": 1,
+        "source_id": "00000000-0000-4000-8000-000000000003",
+        "subject_kind": "agent_context",
+        "subject_id": "00000000-0000-4000-8000-000000000001",
+        "candidate_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "execution_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "failed",
+        "visibility": "workspace",
+        "payload_expires_at": "2026-11-08T12:00:00Z",
+        "configuration": {
+          "schema": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "native": {
+            "code_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "code_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entrypoint": "synthetic.app:invoke",
+            "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "runtime_version": "3.11.14",
+            "packages": [
+              {
+                "name": "synthetic-app",
+                "version": "1.0.0",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "package_lock_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "model": {
+              "model_id": "synthetic-model",
+              "temperature": 0.0,
+              "max_output_tokens": 100
+            },
+            "connection_id": "00000000-0000-4000-8000-000000000001",
+            "connection_revision": "1",
+            "tools_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "retrieval_fixture_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "state_schema": "synthetic-v1",
+            "checkpoint_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "side_effect_policy": "fixture_only",
+            "reset_entrypoint": "synthetic.app:reset",
+            "context_mount": "/fi_context/",
+            "observable_boundaries": [
+              "catalog",
+              "child_selection",
+              "tool_result"
+            ]
+          }
+        },
+        "annotation_revision": 2,
+        "source": "simulation_native"
+      }
+    ],
+    "external_pipeline": {
+      "url": "https://example.test/ci/123",
+      "configuration_identity": "ci-v1",
+      "decision": "Operator recorded hold",
+      "trust": "operator_recorded_unimported",
+      "recorded_by": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "HumanAnnotation": {
+    "source_id": "00000000-0000-4000-8000-000000000001",
+    "annotation_revision": 0,
+    "check_id": null,
+    "attempt_id": null,
+    "verdict": "cannot_assess",
+    "cited_text": " {\"user_key\": \"retain_me\"}\n",
+    "comment": " needs human review ",
+    "source": "skills_text"
+  },
+  "NativeSelection": {
+    "child_selection": [
+      {
+        "skill_id": "00000000-0000-4000-8000-000000000001",
+        "expectation": "forbidden"
+      }
+    ],
+    "catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "invocation_mode": "natural"
+  },
+  "RetainedPlanAcceptance": {
+    "plan_id": "00000000-0000-4000-8000-000000000001",
+    "expected_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "item_key": "source/policy",
+    "mode": "patch",
+    "expected_head_version": 4,
+    "expected_head_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rights_confirmed": true
+  },
+  "CheckpointRestore": {
+    "checkpoint_id": "00000000-0000-4000-8000-000000000001",
+    "revision": 0,
+    "expected_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "SpendPolicyInput": {
+    "revision": 0,
+    "enabled": false,
+    "period_limit_usd": "0.00000000"
+  },
+  "CredentialInput": {
+    "purpose": "consume",
+    "grants": [
+      {
+        "kind": "agent_context",
+        "resource_id": "00000000-0000-4000-8000-000000000001",
+        "labels": [
+          "production"
+        ],
+        "version_ids": []
+      }
+    ],
+    "binding_ids": [],
+    "expires_at": "2026-11-08T12:00:00Z"
+  },
+  "CredentialMetadata": {
+    "purpose": "consume",
+    "grants": [
+      {
+        "kind": "agent_context",
+        "resource_id": "00000000-0000-4000-8000-000000000001",
+        "labels": [
+          "production"
+        ],
+        "version_ids": []
+      }
+    ],
+    "binding_ids": [],
+    "expires_at": "2026-11-08T12:00:00Z",
+    "id": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-11-08T12:00:00Z",
+    "revoked_at": null,
+    "last_used_at": null
+  },
+  "CredentialIssued": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "secret": null,
+    "secret_available": false,
+    "metadata": {
+      "purpose": "consume",
+      "grants": [
+        {
+          "kind": "agent_context",
+          "resource_id": "00000000-0000-4000-8000-000000000001",
+          "labels": [
+            "production"
+          ],
+          "version_ids": []
+        }
+      ],
+      "binding_ids": [],
+      "expires_at": "2026-11-08T12:00:00Z",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "created_at": "2026-11-08T12:00:00Z",
+      "revoked_at": null,
+      "last_used_at": null
+    }
+  },
+  "ConsumptionManifest": {
+    "resource_id": "00000000-0000-4000-8000-000000000001",
+    "kind": "agent_context",
+    "name": "synthetic-agent",
+    "description": "Synthetic purpose",
+    "version": 1,
+    "version_id": "00000000-0000-4000-8000-000000000002",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requested": {
+      "label": "production"
+    },
+    "entrypoint": "AGENTS.md",
+    "descriptor_path": ".futureagi/context.json",
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes": 5,
+        "origin": {
+          "kind": "owned",
+          "skill_id": null,
+          "version_id": null,
+          "source_path": null
+        }
+      }
+    ],
+    "file_count": 26,
+    "file_offset": 0,
+    "next_file_offset": 25,
+    "created_at": "2026-11-08T12:00:00Z",
+    "resolution_id": "00000000-0000-4000-8000-000000000003",
+    "resolution_expires_at": "2026-11-08T12:00:00Z"
+  },
+  "ConsumptionChunk": {
+    "path": "AGENTS.md",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size_bytes": 15,
+    "total_chars": 9,
+    "offset": 0,
+    "next_offset": 2,
+    "eof": false,
+    "text": "\"é",
+    "resource_id": "00000000-0000-4000-8000-000000000001",
+    "version_id": "00000000-0000-4000-8000-000000000002",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "AccessCheck": {
+    "allowed": true,
+    "version_id": "00000000-0000-4000-8000-000000000002",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "checked_at": "2026-11-08T12:00:00Z"
+  },
+  "TraceRef": {
+    "project_id": "00000000-0000-4000-8000-000000000001",
+    "trace_id": "synthetic-trace",
+    "span_id": "synthetic-span",
+    "start_time": "2026-11-08T12:00:00Z"
+  },
+  "BindingOut": {
+    "name": "Synthetic repository",
+    "kind": "repository",
+    "selector": {
+      "version": 1
+    },
+    "update_mode": "repository_lock",
+    "profile": "codex",
+    "profile_version": "1",
+    "repository": {
+      "provider": "github",
+      "repository_id": "123",
+      "default_branch": "main",
+      "project_scope": ""
+    },
+    "expected_report_interval_seconds": 3600,
+    "id": "00000000-0000-4000-8000-000000000001",
+    "context_id": "00000000-0000-4000-8000-000000000002",
+    "revision": 1,
+    "retired_at": null
+  },
+  "ReceiptInput": {
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "session_id": null,
+    "instance_id": "00000000-0000-4000-8000-000000000002",
+    "sequence": 0,
+    "stage": "installed",
+    "version_id": "00000000-0000-4000-8000-000000000002",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "materialization_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_at": "2026-11-08T12:00:00Z",
+    "details": {
+      "path": null,
+      "sha256": null,
+      "ranges": [],
+      "runtime_version": null,
+      "adapter_version": "1",
+      "diagnostic_codes": [],
+      "trace_ref": {
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "trace_id": "synthetic-trace",
+        "span_id": "synthetic-span",
+        "start_time": "2026-11-08T12:00:00Z"
+      }
+    }
+  },
+  "SessionInput": {
+    "client_session_key": "synthetic-thread",
+    "incarnation_id": "00000000-0000-4000-8000-000000000001",
+    "resume_session_id": null,
+    "adapter_version": "1",
+    "runtime_version": "1",
+    "runtime_config_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "QuarantineInput": {
+    "revision": 0,
+    "quarantined": true,
+    "reason": "Synthetic safety exercise",
+    "replacement_version_id": null
+  },
+  "DraftStart": {
+    "revision": 0,
+    "from_version": 4
+  },
+  "DraftSave": {
+    "revision": 1,
+    "base_version": 4,
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "content": "Preserve exact bytes.\n"
+      }
+    ],
+    "description": "Retained purpose",
+    "note": " note "
+  },
+  "HeadAcknowledgment": {
+    "revision": 1,
+    "expected_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_head_version": 6,
+    "review_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "ContextPublish": {
+    "revision": 1,
+    "expected_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_head_version": 6,
+    "review_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base_version": 4,
+    "note": "repair",
+    "acknowledge_warnings": true
+  },
+  "DependencyPreview": {
+    "revision": 1,
+    "links": [
+      {
+        "skill_id": "00000000-0000-4000-8000-000000000001",
+        "selector": {
+          "label": "production"
+        }
+      }
+    ],
+    "refresh_skill_ids": [
+      "00000000-0000-4000-8000-000000000001"
+    ]
+  },
+  "DependencyApply": {
+    "revision": 1,
+    "links": [
+      {
+        "skill_id": "00000000-0000-4000-8000-000000000001",
+        "selector": {
+          "label": "production"
+        }
+      }
+    ],
+    "refresh_skill_ids": [
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    "expected_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "ResolvedLock": {
+    "schema": 1,
+    "links": [
+      {
+        "mount": "skills/synthetic/",
+        "skill_id": "00000000-0000-4000-8000-000000000001",
+        "requested": {
+          "label": "production"
+        },
+        "version": 8,
+        "version_id": "00000000-0000-4000-8000-000000000002",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "ContextSpec": {
+    "schema": 1,
+    "description": "Retain purpose",
+    "links": [
+      {
+        "skill_id": "00000000-0000-4000-8000-000000000001",
+        "selector": {
+          "label": "production"
+        }
+      }
+    ]
+  }
+}
