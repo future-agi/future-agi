@@ -70,6 +70,17 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 			if nested, dup := duplicateKey(v); dup {
 				return c, invalid("invalid_parameter", "input_reference."+nested, "field repeated")
 			}
+			// encoding/json matches struct field names case-insensitively. Check
+			// exact keys first so aliases cannot override a validated image URL.
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(v, &fields) != nil {
+				return c, invalid("invalid_parameter", "input_reference", "image_url object required")
+			}
+			for name := range fields {
+				if name != "image_url" && name != "file_id" {
+					return c, invalid("invalid_parameter", "input_reference", "image_url object required")
+				}
+			}
 			var ref struct {
 				ImageURL string `json:"image_url"`
 				FileID   string `json:"file_id"`
