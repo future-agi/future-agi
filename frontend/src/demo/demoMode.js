@@ -99,6 +99,11 @@ const ROUTES = [
   [/\/model-hub\/organizations\/[^/]+\/users\/$/, () => drfPage(TEAM)],
   [/\/accounts\/key\/get_secret_keys\/$/, (q) => ({ status: true, result: page(KEYS, q) })],
   [/\/accounts\/first-checks\/$/, () => ({ status: true, result: { completed: true } })],
+  /* Product screens beside the prototype: the empty shapes their lists read, so they show their own empty states. */
+  [/\/model-hub\/eval-templates\/list\/$/, () => ({ status: true, result: { items: [], total: 0 } })],
+  [/\/model-hub\/get-eval-template-names\/?$/, () => ({ status: true, result: [] })],
+  [/\/tracer\/eval-task\/list_eval_tasks(_with_project_name)?\/$/, (q) => ({ status: true, result: page([], q) })],
+  [/\/agentcc\/gateways\/$/, () => ({ status: true, result: [{ id: "demo-gateway", name: "Default gateway", status: "healthy", is_active: true, created_at: "2026-10-01T09:00:00Z" }] })],
 ];
 
 const answer = (method, url, params = {}) => {

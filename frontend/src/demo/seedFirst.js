@@ -7,8 +7,17 @@
 if (import.meta.env.VITE_DEMO_MODE === "true") {
   localStorage.setItem("accessToken", "demo-token");
   localStorage.setItem("refreshToken", "demo-token");
-  if (!localStorage.getItem("fagi.proto.integrations.v1")) {
+  /* Once per browser — including ones that saved their own GitHub state on an
+     earlier visit — so a later removal in Settings still sticks. */
+  if (!localStorage.getItem("fagi.demo.github.v1")) {
+    const KEY = "fagi.proto.integrations.v1";
     const inst = (account, kind = "Organization") => ({ id: `inst_${account}`, account, kind, access: "all", repos: [], installedAt: "2026-10-15T09:00:00.000Z", installedBy: "you", githubAccess: "read" });
-    localStorage.setItem("fagi.proto.integrations.v1", JSON.stringify({ github: { installations: [inst("acme-inc"), inst("skyline-air"), inst("acme"), inst("acme-labs"), inst("you", "Personal account")] } }));
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch { /* start fresh */ }
+    const accounts = [["acme-inc"], ["skyline-air"], ["acme"], ["acme-labs"], ["you", "Personal account"]];
+    const have = saved.github?.installations || [];
+    const installations = [...have, ...accounts.filter(([a]) => !have.some((i) => i.account === a)).map(([a, k]) => inst(a, k))];
+    localStorage.setItem(KEY, JSON.stringify({ ...saved, github: { ...(saved.github || {}), installations } }));
+    localStorage.setItem("fagi.demo.github.v1", "1");
   }
 }
