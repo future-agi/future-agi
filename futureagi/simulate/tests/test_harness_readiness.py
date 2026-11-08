@@ -2272,14 +2272,14 @@ class TestObservedRouting:
             checks={**PASSED, "action_behavior": "0/0"},
             actions=NOT_PROBED,
             routed=["lookup_order"],
-            unobserved=[{"tool": "issue_refund", "reason": "changes_state"}],
+            unobserved=[{"tool": "issue_refund", "reason": "reaches_outside"}],
         )
 
         routing = _rows(_report(environment))["tool_routing"]
 
         assert routing["reason"] == (
-            "Not yet shown reaching the test world: issue_refund (changes state, so it"
-            " was not asked)"
+            "Not yet shown reaching the test world: issue_refund (its contract says it"
+            " leaves the test world, so it was not asked)"
         )
 
     def test_a_tool_the_agent_called_outside_the_world_blocks_its_cases(

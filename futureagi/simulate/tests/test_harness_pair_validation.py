@@ -2072,7 +2072,7 @@ class TestToolRoutingKept:
         _ready(_row(environment))
         observed = {
             "tools": [{"tool": "lookup_order", "routed": True, "calls": 1}],
-            "unobserved": [{"tool": "issue_refund", "reason": "changes_state"}],
+            "unobserved": [{"tool": "issue_refund", "reason": "reaches_outside"}],
         }
         _exit(
             gateway,

@@ -394,7 +394,7 @@ def _tool_routing(evidence: Evidence) -> Reading:
 
 
 _UNOBSERVED_REASONS = {
-    "changes_state": "changes state, so it was not asked",
+    "reaches_outside": "its contract says it leaves the test world, so it was not asked",
     "not_called": "asked, but not called",
     "request_failed": "asked, but the agent did not answer",
 }
