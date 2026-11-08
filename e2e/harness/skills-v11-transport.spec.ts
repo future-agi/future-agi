@@ -8,6 +8,18 @@ import { skillDigest, sha256 } from '../lib/skills-consumption';
 type Envelope<T> = { result: T };
 const SKILLS = '/model-hub/skills/'; // urls_skills_hub.py and urls_skills_hub_v11.py
 
+test('Skills v1.1 harness: synthetic repositories have stable, isolated identities', () => {
+  const branches = [{ sha: 'a'.repeat(40), files: { 'SKILL.md': 'synthetic fixture' } }];
+  const first = githubRepository('synthetic/first', branches);
+  const same = githubRepository('synthetic/first', branches);
+  const other = githubRepository('synthetic/other', branches);
+  const metadata = (fixture: ReturnType<typeof githubRepository>) => JSON.parse(Buffer.from(fixture.recordings[0].body_base64, 'base64').toString());
+  expect(first.recordings).toEqual(same.recordings);
+  expect(metadata(first).id).not.toBe(metadata(other).id);
+  expect(metadata(first)).toMatchObject({ full_name: 'synthetic/first', private: false, default_branch: 'main' });
+  expect(first.ref('b'.repeat(40)).url).toBe('https://api.github.com/repos/synthetic/first/commits/refs%2Fheads%2Fmain');
+});
+
 test('Skills v1.1 harness: real scoped adapter and Temporal persist structured tool turns', async ({ scopeActors, scopeProbe, request }, testInfo) => {
   test.setTimeout(180_000); // provisioning + two transport/Temporal stages, each <=60s
   const actor = scopeActors.ownerA;

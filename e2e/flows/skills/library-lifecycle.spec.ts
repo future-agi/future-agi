@@ -145,6 +145,9 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       await dialog.getByRole('textbox', { name: /^Description/ }).fill('Use when a customer asks about refunds, returns, or support-policy exceptions.');
       await expect(dialog.getByRole('combobox', { name: 'Start from' })).toHaveText('Support policy', { timeout: UI_READY });
       await dialog.getByRole('button', { name: 'Create skill', exact: true }).click();
+      // v1.1 offers optional private assistance after identity creation; this
+      // lifecycle chooses the ordinary editor and never starts a paid proposal.
+      await page.getByRole('dialog').getByRole('button', { name: 'Open editor', exact: true }).click();
       await expect(page).toHaveURL(/\/dashboard\/skills\/[a-f0-9-]+\/edit$/, { timeout: UI_READY });
       id = new URL(page.url()).pathname.split('/')[3];
       await testInfo.attach('created-skill', { body: id, contentType: 'text/plain' });
@@ -269,17 +272,20 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
       await page.getByRole('option', { name: 'v3', exact: true }).click();
       await dialog.getByRole('textbox', { name: 'Note (optional)' }).fill(`${prefix}: restore reviewed policy`);
       const responsePromise = page.waitForResponse(response => response.url().endsWith(`${SKILLS}${id}/labels/production/`) && response.request().method() === 'PUT', { timeout: UI_READY });
-      await dialog.getByRole('button', { name: 'Move production to v3', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Move production from v1 to v3', exact: true }).click();
       const response = await responsePromise;
       expect(response.status()).toBe(200);
       expect(response.request().postDataJSON()).toMatchObject({ version: 3, expected_version: 1 });
       await expect(dialog).not.toBeVisible({ timeout: UI_READY });
       const release = await read<{ release_revision: number }>(`${SKILLS}${id}/`);
-      const stale = await scopeActors.send<{ code: string }>(actor, 'PUT', `${SKILLS}${id}/labels/production/`, {
+      const stale = await scopeActors.send<{ code: string; detail: { current_version: number; release_revision: number } }>(actor, 'PUT', `${SKILLS}${id}/labels/production/`, {
         version: 2, expected_version: 1, expected_release_revision: release.release_revision,
       });
       expect(stale.status).toBe(409);
-      expect(stale.body.code).toBe('label_conflict');
+      // v11/governance.py reports protected pointer mismatches as release_conflict.
+      // The current aggregate revision still matches: this is the pointer CAS.
+      expect(stale.body.code).toBe('release_conflict');
+      expect(stale.body.detail).toEqual({ current_version: 3, release_revision: release.release_revision });
       expect((await read<Label[]>(`${SKILLS}${id}/labels/`)).map(label => [label.name, label.version])).toEqual([['production', 3]]);
       await page.getByRole('button', { name: 'History for production', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Close label history' })).toBeVisible({ timeout: UI_READY });

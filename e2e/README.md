@@ -475,7 +475,8 @@ parser, shared rate budgets, rights checks and source/draft CAS. The fake endpoi
 is a fixed internal address, not a configurable production endpoint. The test
 settings' `gpt-4o-mini` entry qualifies this fixture protocol only; it does not add
 a model to the production verified list. API and workers must use the same E2E
-settings. Standalone uses read-only test-overlay mounts; Distributed copies these
+settings. Both overlays use the image's pinned local LiteLLM price map, rather
+than fetching a moving GitHub price catalog. Standalone uses read-only test-overlay mounts; Distributed copies these
 modules into its E2E backend image. Neither changes the normal backend image.
 
 Qualify this seam before writing dependent flows:
@@ -494,6 +495,11 @@ inertness, unchanged real endpoint selection and preservation of no-retry flags.
 Mount only that probe file read-only, set `PYTHONPATH=/app/backend` and
 `NO_STARTUP_DB_MUTATIONS=true`, and invoke it with the container's Python. A fake
 run is not real-provider verification, GitHub conformance or native-agent evidence.
+The GitHub seam deliberately keeps the production 60-second ref/metadata caches
+and anonymous hourly budgets. It does not provide a clock/period-control seam.
+Advancing a recording alone therefore cannot make an immediate update check see
+a fresh branch. Do not clear shared counters, bypass cache policy or reinterpret
+`unchanged_commit` as proof of a changed-source replacement.
 
 ### Harness self-tests
 

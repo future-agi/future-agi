@@ -1,7 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createFixtureHandler } from '../stack/skills-fakes/server.mjs';
+
+test('both test topologies freeze prices and production does not recognize the fixture switch', () => {
+  for (const [file, processes] of [['docker-compose.e2e.yml', 2], ['docker-compose.standalone-e2e.yml', 1]]) {
+    const text = readFileSync(new URL(`../stack/${file}`, import.meta.url), 'utf8');
+    assert.equal((text.match(/E2E_SKILLS_FIXTURES: "1"/g) ?? []).length, processes);
+    assert.equal((text.match(/LITELLM_LOCAL_MODEL_COST_MAP: "True"/g) ?? []).length, processes);
+  }
+  const settings = readFileSync(new URL('../../futureagi/tfc/settings/settings.py', import.meta.url), 'utf8');
+  assert.equal(settings.includes('E2E_SKILLS_FIXTURES'), false);
+  assert.equal(settings.includes('e2e_skills_transport'), false);
+});
 
 async function fixture(t) {
   const server = createServer(createFixtureHandler());

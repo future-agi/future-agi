@@ -20,6 +20,7 @@ def main(mode: str) -> None:
         "tfc.settings.settings" if mode == "production" else "tfc.settings.e2e"
     )
     os.environ["E2E_SKILLS_FIXTURES"] = "0" if mode == "overlay-off" else "1"
+    os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     os.environ["SKILLS_VERIFIED_MODELS"] = ""
     os.environ["SKILLS_TESTING_ENABLED"] = "false"
     os.environ["SKILLS_GITHUB_ENABLED"] = "false"

@@ -81,7 +81,7 @@ export function githubRepository(repo: string, branches: { sha: string; files: R
   const refUrl = `https://api.github.com/repos/${repo}/commits/refs%2Fheads%2Fmain`;
   const ref = (sha: string) => githubRecording(refUrl, sha, 'application/vnd.github.sha');
   const recordings = [githubRecording(`https://api.github.com/repos/${repo}`,
-    JSON.stringify({ id: 170001, full_name: repo, default_branch: 'main', private: false })), ref(branches[0].sha),
+    JSON.stringify({ id: Number.parseInt(sha256(repo).slice(0, 12), 16) + 1, full_name: repo, default_branch: 'main', private: false })), ref(branches[0].sha),
     ...branches.map(branch => githubRecording(`https://codeload.github.com/${repo}/zip/${branch.sha}`,
       skillsArchive(Object.fromEntries(Object.entries(branch.files).map(([path, content]) => [`repo-${branch.sha}/${path}`, content]))),
       'application/zip'))];

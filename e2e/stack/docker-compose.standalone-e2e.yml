@@ -24,6 +24,8 @@ services:
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       E2E_SKILLS_FIXTURES: "1"
+      # Freeze pricing to the image's pinned LiteLLM catalog; no live GitHub fetch.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
     volumes:

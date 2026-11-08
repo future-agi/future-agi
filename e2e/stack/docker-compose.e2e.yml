@@ -37,6 +37,7 @@ services:
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       E2E_SKILLS_FIXTURES: "1"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
       # The app and worker must share one key to decrypt OAuth credentials.
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_CLIENT_ID: e2e-client
@@ -55,6 +56,7 @@ services:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       E2E_SKILLS_FIXTURES: "1"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
   fi-collector:
