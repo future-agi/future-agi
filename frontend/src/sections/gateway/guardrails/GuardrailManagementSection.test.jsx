@@ -309,9 +309,9 @@ describe("GuardrailManagementSection", () => {
         await screen.findByText("gpt-4o-mini");
         // Columns: Time, Model, Status, Guardrail Details, Request ID.
         const statusCell = screen.getAllByRole("cell")[2];
-        // A missing code (null, undefined or the backend's default 0) shows a dash.
+        // A missing code (null, undefined or the API default 0) shows a dash.
         const label = within(statusCell).getByText(
-          String(statusCode || "—"),
+          String(statusCode || "\u2014"),
         );
         const colors = statusColors(theme, role);
         // StatusBadge draws a dot before the label in both of its variants.
