@@ -504,6 +504,13 @@ PREVIEW_SPOKEN = [
     ("{{ clip.title }}", "Intro"),
     ("{{ clip['caption'] | default('Hello') }}", "Hello"),
     ("{{ clip.subtitle | default('Hi') }}", "Hi"),
+    # Template-local names shadow the dataset's media columns.
+    (
+        "{{ clip.title }} {% with clip = {'audio': 'Hello'} %}"
+        "{{ clip.audio }}{% endwith %}",
+        "Intro Hello",
+    ),
+    ("{% for Recording in ['a', 'b'] %}{{ Recording }}{% endfor %}", "ab"),
     ('{{ Script | default("Hello") }}', "Hello there"),
     ("record audio with script", "record audio with script"),
 ]
@@ -731,6 +738,36 @@ class TestSavedColumnRejectsMediaColumns:
             f"its template is invalid ({error}:"
         )
         speech_boundary.assert_not_called()
+
+    def test_mustache_section_scope_shadows_a_media_column(
+        self,
+        dataset,
+        organization,
+        workspace,
+        row,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        # chevron finds "Recording" in the Lines section's JSON value first.
+        add_column(
+            dataset, row, "Lines", DataTypeChoices.TEXT.value, '{"Recording": "Hello"}'
+        )
+        run_prompter, column = saved_tts_column(
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt("{{#Lines}}{{ Recording }}{{/Lines}}"),
+            "mustache",
+        )
+
+        cell = rerun_saved_column(run_prompter, column, row)
+
+        assert cell.status == CellStatus.PASS.value
+        assert speech_boundary.call_args.kwargs["input"] == "Hello"
+        media_fetch.audio.assert_not_called()
 
     @pytest.mark.parametrize(
         ("template_format", "template", "spoken"),

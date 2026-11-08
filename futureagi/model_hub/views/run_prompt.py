@@ -21,6 +21,7 @@ from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
 from jinja2 import meta as jinja2_meta
 from jinja2 import nodes as jinja2_nodes
+from jinja2.idtracking import VAR_LOAD_RESOLVE
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -617,29 +618,32 @@ def _jinja2_lookup_key(node):
     return None
 
 
-class _Jinja2ContextNames(jinja2_meta.TrackingCodeGenerator):
+class _Jinja2ContextReads(jinja2_meta.TrackingCodeGenerator):
     """
-    Names a Jinja2 template resolves from its render context.
+    The Name nodes a Jinja2 template resolves from its render context.
 
-    jinja2.meta.find_undeclared_variables leaves out names of environment
-    globals (range, dict, ...), but a column of that name shadows the global.
+    Jinja's own scoping decides (set, with, for and macro parameters shadow a
+    column). Unlike jinja2.meta.find_undeclared_variables, names of
+    environment globals (range, dict, ...) count, since a column shadows them.
     """
 
-    def enter_frame(self, frame):
-        super().enter_frame(frame)
-        self.undeclared_identifiers.update(
-            param
-            for action, param in frame.symbols.loads.values()
-            if action == "resolve"
-        )
+    def __init__(self, environment):
+        super().__init__(environment)
+        self.context_reads = set()
+
+    def visit_Name(self, node, frame):
+        super().visit_Name(node, frame)
+        if node.ctx == "load":
+            load = frame.symbols.find_load(frame.symbols.ref(node.name))
+            if load is not None and load[0] == VAR_LOAD_RESOLVE:
+                self.context_reads.add(id(node))
 
 
 def _jinja2_variable_paths(source, context) -> list:
     """Context paths read by a Jinja2 template, from its parsed syntax tree."""
     tree = _jinja2_env.parse(source)
-    tracker = _Jinja2ContextNames(tree.environment)
+    tracker = _Jinja2ContextReads(tree.environment)
     tracker.visit(tree)
-    roots = tracker.undeclared_identifiers
     lookups = (jinja2_nodes.Getattr, jinja2_nodes.Getitem)
     inner = {
         id(node.node)
@@ -654,19 +658,29 @@ def _jinja2_variable_paths(source, context) -> list:
         while isinstance(node, lookups) and _jinja2_lookup_key(node) is not None:
             keys.append(_jinja2_lookup_key(node))
             node = node.node
-        if (
-            isinstance(node, jinja2_nodes.Name)
-            and node.ctx == "load"
-            and node.name in roots
-        ):
+        if isinstance(node, jinja2_nodes.Name) and id(node) in tracker.context_reads:
             paths.append(_context_path(node.name, keys[::-1], context))
     return paths
+
+
+def _context_value(path, context):
+    """The render-context value at a path, or None."""
+    value = context
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def _mustache_scope_has(value, key) -> bool:
+    """Whether chevron finds a key in a section's value before outer scopes."""
+    items = value if isinstance(value, list) else [value]
+    return any(isinstance(item, dict) and key in item for item in items)
 
 
 def _mustache_variable_paths(text, context) -> list:
     """Context paths read by a Mustache template, from chevron's tokens."""
     paths = []
-    sections = []
+    sections = []  # (tag, path) of the open sections
     for tag, key in chevron_tokenize(text):
         if tag == "end":
             sections.pop()
@@ -683,13 +697,31 @@ def _mustache_variable_paths(text, context) -> list:
             if key == ".":
                 # "." is the innermost (non-inverted) section's value, already
                 # checked; outside one it is the whole context.
-                if "section" not in sections:
-                    paths.append(())
+                opened = [path for open_tag, path in sections if open_tag == "section"]
+                path = opened[-1] if opened else ()
+                if not opened:
+                    paths.append(path)
             else:
                 root, *keys = key.split(".")
-                paths.append(_context_path(root, keys, context))
+                # chevron looks a key up in the open sections' values first.
+                scope = next(
+                    (
+                        section_path
+                        for open_tag, section_path in reversed(sections)
+                        if open_tag == "section"
+                        and _mustache_scope_has(
+                            _context_value(section_path, context), root
+                        )
+                    ),
+                    None,
+                )
+                if scope is None:
+                    path = _context_path(root, keys, context)
+                else:
+                    path = (*scope, root, *keys)
+                paths.append(path)
             if tag in ("section", "inverted section"):
-                sections.append(tag)
+                sections.append((tag, path))
     return paths
 
 
