@@ -570,3 +570,161 @@ def test_temporal_dispatch_never_replaces_existing_work(execution, monkeypatch):
     assert args["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
     assert args["workflow_id"] == f"skills-job-{run.pk}"
     assert len(get_workflows()) == 1 and len(get_activities()) == 4
+
+
+def _quarantine(version):
+    from model_hub.models.skills_hub_v12 import HubSkillContextQuarantine
+
+    HubSkillContextQuarantine.objects.create(
+        organization_id=version.skill.organization_id,
+        workspace_id=version.skill.workspace_id,
+        version=version,
+        revision=1,
+        active=True,
+        reason="Synthetic worker boundary control",
+    )
+
+
+@pytest.mark.parametrize("arm", ["candidate", "production", "competitor"])
+def test_quarantine_blocks_preview_and_acceptance(execution, publish_skill, arm):
+    from accounts.models.user import User
+    from model_hub.services.skills_hub.types import Actor
+    from model_hub.services.skills_hub.versions import create_skill
+
+    principal, skill, config, _ = execution
+    subject = skill
+    if arm == "competitor":
+        subject = create_skill(
+            organization=skill.organization,
+            workspace=skill.workspace,
+            actor=Actor(user=User.objects.get(pk=principal.user_id), api_key=None),
+            name="alternate-policy",
+            description="Use when checking another synthetic policy.",
+            tags=[],
+        )
+    version = publish_skill(
+        subject, labels=["production"] if arm == "production" else []
+    ).version
+    if arm == "candidate":
+        config["candidate"] = {
+            "kind": "version",
+            "version": version.number,
+            "digest": version.digest,
+        }
+    elif arm == "production":
+        config["baselines"] = ["production"]
+    else:
+        config["competitors"] = [
+            {"skill_id": str(subject.pk), "version": version.number}
+        ]
+    preview = preview_test_run(
+        principal=principal, skill_id=skill.pk, configuration=config
+    )
+    _quarantine(version)
+    with pytest.raises(SkillsHubError) as denied:
+        preview_test_run(principal=principal, skill_id=skill.pk, configuration=config)
+    assert denied.value.code == "context_quarantined"
+    with pytest.raises(SkillsHubError) as denied:
+        create_test_run(
+            principal=principal,
+            skill_id=skill.pk,
+            idempotency_key=uuid4(),
+            request={
+                "configuration": config,
+                "expected_fingerprint": preview["fingerprint"],
+                "acknowledge_provider_processing": True,
+                "inventory_review": {
+                    "fingerprint": preview["fingerprint"],
+                    "reviewed_all_files": True,
+                    "no_known_answer_keys": True,
+                    "classifications": [],
+                    "false_positive_secret_findings": [],
+                },
+            },
+        )
+    assert denied.value.code == "context_quarantined"
+    assert not HubSkillJob.objects.exists()
+
+
+def test_quarantine_after_tool_receipt_stops_next_provider_call(
+    execution, publish_skill, monkeypatch
+):
+    import litellm
+
+    from model_hub.services.skills_hub.v11 import runner
+
+    principal, skill, config, _ = execution
+    version = publish_skill(skill).version
+    config["candidate"] = {
+        "kind": "version",
+        "version": version.number,
+        "digest": version.digest,
+    }
+    run, _, _ = accepted(execution)
+    start_job(scope=principal.scope, job_id=run.pk)
+    attempt = run.hub_skill_attempts.get(variant="candidate")
+    handle = next(
+        iter(runner.variant_bundles(snapshot=run.snapshot, variant="candidate"))
+    )
+    transport = AsyncMock(
+        return_value=litellm.ModelResponse(
+            id="synthetic-tool-request",
+            model="gpt-4o-mini",
+            choices=[
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "root",
+                                "type": "function",
+                                "function": {
+                                    "name": "load_skill",
+                                    "arguments": '{"skill_id":"' + handle + '"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+    )
+    monkeypatch.setattr(litellm, "acompletion", transport)
+    prepared_receipts = []
+    original_tool = runner.process_tool
+
+    def observe_tool(**kwargs):
+        result = original_tool(**kwargs)
+        prepared_receipts.append(result[1])
+        return result
+
+    monkeypatch.setattr(runner, "process_tool", observe_tool)
+    # Quarantine after the loader produces a tool result but before the next
+    # model request can deliver it. Pending receipts are not delivery claims.
+    original_live = runner._check_live
+    checks = 0
+
+    def live_boundary(**kwargs):
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            _quarantine(version)
+        return original_live(**kwargs)
+
+    monkeypatch.setattr(runner, "_check_live", live_boundary)
+    asyncio.run(
+        runner.execute_test_attempt(scope=principal.scope, attempt_id=attempt.pk)
+    )
+    attempt.refresh_from_db()
+    assert transport.call_count == 1
+    assert attempt.error["code"] == "context_quarantined"
+    assert attempt.status == "error"
+    assert len(prepared_receipts) == 1
+    assert prepared_receipts[0]["path"] == "SKILL.md"
+    assert attempt.receipts == []
+    call = HubSkillModelCall.objects.get(job_id=run.pk)
+    assert call.state == "completed" and call.finished_at is not None

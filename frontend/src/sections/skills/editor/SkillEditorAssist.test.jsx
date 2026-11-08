@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import SkillEditorView from './SkillEditorView';
 
-const api = vi.hoisted(() => ({ scope: 'org:workspace:owner', save: vi.fn(), preview: vi.fn(), create: vi.fn(), apply: vi.fn(), snapshot: null }));
+const api = vi.hoisted(() => ({ scope: 'org:workspace:owner', save: vi.fn(), preview: vi.fn(), create: vi.fn(), apply: vi.fn(), snapshot: null, assistEnabled: true }));
 const files = [{ path: 'SKILL.md', content: 'Saved approved policy' }];
 const initial = { files, note: '', revision: 4, baseVersion: 1 };
 const skill = { id: 'skill', name: 'policy', latestVersion: 1, permissions: { canRunTests: true } };
@@ -19,7 +19,7 @@ vi.mock('src/api/skills', () => ({
 }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ identity: api.scope, enabled: true }),
-  useSkillTestingOptions: () => query({ enabled: true, models: [{ modelId: 'fixture-model', canRun: true }] }),
+  useSkillTestingOptions: () => query({ enabled: true, assistEnabled: api.assistEnabled, models: [{ modelId: 'fixture-model', canRun: true }] }),
   useSkillTestResults: () => query({ results: [] }), useSkillTestAttempt: () => query(null),
   isActiveSkillJob: (status) => ['queued', 'running', 'cancelling'].includes(status),
 }));
@@ -39,7 +39,7 @@ vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('crypto', webcrypto);
-  api.scope = 'org:workspace:owner'; api.snapshot = null;
+  api.scope = 'org:workspace:owner'; api.snapshot = null; api.assistEnabled = true;
   api.save.mockImplementation(async (input) => ({ ...input, revision: input.revision + 1 }));
   api.preview.mockImplementation(async (input) => { api.snapshot = input; return plan; });
   api.create.mockResolvedValue({ id: 'proposal' });
@@ -132,5 +132,15 @@ it('does not repopulate assistance after switching the session scope during prev
   await act(async () => { finish(plan); });
   expect(screen.queryByText('Confirm outbound processing')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Task and use / non-use boundary')).toHaveValue('');
+  expect(api.create).not.toHaveBeenCalled();
+});
+
+it('does not expose paid generation when only text comparisons are enabled', async () => {
+  api.assistEnabled = false;
+  render(tree());
+  expect(await screen.findByText('Paid assistance is unavailable')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Draft with AI' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Generate proposal' })).not.toBeInTheDocument();
+  expect(api.preview).not.toHaveBeenCalled();
   expect(api.create).not.toHaveBeenCalled();
 });

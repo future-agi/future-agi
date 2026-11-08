@@ -209,6 +209,7 @@ class ModelOption(HubV11Serializer):
 
 class TestingOptions(HubV11Serializer):
     enabled = Boolean()
+    assist_enabled = Boolean()
     github_enabled = Boolean()
     models = ModelOption(many=True)
     limits = Limits()

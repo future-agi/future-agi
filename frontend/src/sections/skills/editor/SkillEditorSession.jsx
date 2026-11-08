@@ -5,6 +5,7 @@ import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, IconButton, Stack, Tab, Typography } from "@mui/material";
 
 import { useDiscardSkillDraft } from "src/api/skills";
+import { useSkillTestingOptions } from "src/api/skills/testing";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
 import Iconify from "src/components/iconify";
@@ -18,6 +19,7 @@ import DraftChecksPanel from "./DraftChecksPanel";
 import DraftConflictDialog from "./DraftConflictDialog";
 import PublishDialog from "./PublishDialog";
 import SkillFileEditor from "./SkillFileEditor";
+import SkillDocumentEditor from "./SkillDocumentEditor";
 import useDraftSession from "./useDraftSession";
 import useUnsavedNavigation from "./useUnsavedNavigation";
 
@@ -44,6 +46,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
   const [publishDraft, setPublishDraft] = useState(null);
   const [preparing, setPreparing] = useState(false);
   const discard = useDiscardSkillDraft(skill.id);
+  const options = useSkillTestingOptions();
   const session = useDraftSession(skill.id, initialDraft, discardOpen || Boolean(publishDraft));
   const guard = useUnsavedNavigation(session.dirty || session.status === "saving");
   const [selectedPath, setSelectedPath] = useState("SKILL.md");
@@ -102,7 +105,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
             <Typography role="status" variant="s3" color="text.secondary">{saveLabel}</Typography>
             {session.status === "error" && <Button size="small" onClick={() => session.save()}>Retry</Button>}
             {session.status === "conflict" && <Button size="small" onClick={() => setConflictOpen(true)}>Resolve conflict</Button>}
-            <Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests} onClick={() => openAssist("draft")}>Draft with AI</Button>
+            <Button variant="outlined" disabled={locked || !skill.permissions?.canRunTests || !options.data?.assistEnabled} onClick={() => openAssist("draft")}>Draft with AI</Button>
             <Button variant="outlined" disabled={locked || saving} onClick={() => setDiscardOpen(true)}>Discard draft</Button>
             <Button variant="contained" disabled={locked || session.status === "conflict" || session.status === "error"} onClick={startPublish}>Publish</Button>
           </Box>
@@ -141,8 +144,11 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
           />
         </Box>
         <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0 }}>
-          {isMarkdown && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view" sx={{ flexShrink: 0 }}><Tab value="edit" label="Edit" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
-          {file && (isMarkdown && mode === "preview" ? (
+          {isMarkdown && file.path !== "SKILL.md" && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view" sx={{ flexShrink: 0 }}><Tab value="edit" label="Edit" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
+          {file?.path === "SKILL.md" && <SkillDocumentEditor file={file} target={target} readOnly={locked} onOpenPath={openFile} onChange={(content) => {
+            if (!locked) session.edit(session.files.map((item) => item.path === file.path ? { ...item, content } : item));
+          }} />}
+          {file && file.path !== "SKILL.md" && (isMarkdown && mode === "preview" ? (
             <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}><SkillMarkdownPreview content={file.content} currentPath={file.path} onOpenPath={openFile} /></Box>
           ) : (
             <SkillFileEditor key={file.path} file={file} target={target} readOnly={locked} onChange={(content) => {
@@ -153,7 +159,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
         <Box sx={{ minWidth: 0, minHeight: 0, overflowY: "auto", maxHeight: { xs: 320, md: 200, lg: "none" }, gridColumn: { md: "1 / -1", lg: "auto" } }}>
           <SegmentedTabs value={panel} onChange={(_, value) => setPanel(value)} aria-label="Draft review panels"><Tab value="checks" label="Checks" /><Tab value="tests" label="Tests" /></SegmentedTabs>
           <Box sx={{ pt: 1.5 }} hidden={panel !== 'checks'}><DraftChecksPanel files={session.files} name={skill.name} onSelect={(check) => openFile(check.path, check.line)} /></Box>
-          <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}><EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={(selection) => openAssist('description', selection)} /></Box>
+          <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}><EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={options.data?.assistEnabled ? (selection) => openAssist('description', selection) : undefined} /></Box>
         </Box>
       </Box>
       {assistKind && !publishDraft && <Stack spacing={1.5}>
