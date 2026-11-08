@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Exists, F, Max, OuterRef, Q
 from django.utils import timezone
@@ -247,6 +248,29 @@ def cancel_job(*, principal: SkillPrincipal, job_id: UUID) -> HubSkillJob:
 
 def check_job_running(job: HubSkillJob) -> None:
     check_job_access(job)
+    if job.kind == "assist" and (
+        not settings.SKILLS_TESTING_ENABLED
+        or not getattr(settings, "SKILLS_ASSIST_ENABLED", False)
+    ):
+        raise SkillsHubError(
+            "skills_unavailable", "Paid assistance is not enabled.", status=503
+        )
+    if job.kind == "test":
+        from model_hub.models.skills_hub_v11 import HubSkillTestRun
+        from model_hub.services.skills_hub.v12.resolution_leases import (
+            check_snapshot_distribution,
+        )
+
+        snapshot = (
+            HubSkillTestRun.objects.filter(job=job)
+            .values_list("snapshot", flat=True)
+            .first()
+        )
+        if snapshot is not None:
+            check_snapshot_distribution(
+                scope=SkillScope(job.organization_id, job.workspace_id),
+                snapshot=snapshot,
+            )
     if job.status not in {"queued", "running"} or job.cancel_requested_at:
         raise SkillsHubError(
             "execution_cancelled",

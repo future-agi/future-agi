@@ -12,6 +12,8 @@ from uuid import UUID, uuid4
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F, Value
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare, salted_hmac
 
@@ -303,6 +305,39 @@ def require_active_credential(
             status=403,
         )
     return credential
+
+
+def record_credential_use(
+    *, principal: ContextCredentialPrincipal, observed_at: datetime | None = None
+) -> None:
+    """Account for a successful authorized operation, never mere authentication.
+
+    The optional time is a server observation, not a client timestamp. Greatest
+    prevents a delayed request from moving the rotation signal backwards.
+    """
+    require_active_credential(principal=principal)
+    now = timezone.now()
+    observed_at = observed_at or now
+    if timezone.is_naive(observed_at) or observed_at > now:
+        raise ValueError("Credential use requires a past aware server timestamp.")
+    updated = HubSkillContextCredential.objects.filter(
+        pk=principal.credential_id,
+        organization_id=principal.scope.organization_id,
+        workspace_id=principal.scope.workspace_id,
+        purpose=principal.purpose,
+        revoked_at__isnull=True,
+        expires_at__gt=now,
+    ).update(
+        last_used_at=Greatest(
+            Coalesce(F("last_used_at"), Value(observed_at)), Value(observed_at)
+        )
+    )
+    if not updated:
+        # A revoke/expiry racing this final accounting boundary must fail closed.
+        require_active_credential(principal=principal)
+        raise SkillsHubError(
+            "context_credential_invalid", "Invalid Context credential.", status=401
+        )
 
 
 def authenticate_credential(*, token: str) -> ContextCredentialPrincipal:

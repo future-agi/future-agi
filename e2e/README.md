@@ -457,6 +457,50 @@ An assertion that cannot fail is worse than no assertion, because it reads as co
   `status = 'completed'`, so a row that arrived and failed is distinguishable from a row the mirror
   has not delivered yet.
 
+### Skills v1.1 transport fixtures
+
+The managed overlays start `skills-fakes` on container port 8080 and host
+`127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28082}`. `lib/skills-fixtures.ts` registers an
+isolated synthetic-credential namespace, declarative OpenAI tool/answer rules and
+recorded synthetic GitHub metadata/ref/archive responses. Unknown credentials,
+unrecorded URLs and ambiguous rules fail closed; the service never proxies live
+GitHub or model providers. Dispose only the namespace your test created. Its
+bounded ledger records request/response hashes and synthetic protocol messages,
+never authorization headers. Do not send private inputs or real provider keys.
+
+Only the E2E settings module reads `E2E_SKILLS_FIXTURES=1`. Its app config wraps the
+transport at the last boundary, preserving the actual scoped connection resolver,
+LiteLLM protocol normalization, reservations, native `tasks_l` workflow, GitHub
+parser, shared rate budgets, rights checks and source/draft CAS. The fake endpoint
+is a fixed internal address, not a configurable production endpoint. The test
+settings' `gpt-4o-mini` entry qualifies this fixture protocol only; it does not add
+a model to the production verified list. API and workers must use the same E2E
+settings. Both overlays use the image's pinned local LiteLLM price map, rather
+than fetching a moving GitHub price catalog. Standalone uses read-only test-overlay mounts; Distributed copies these
+modules into its E2E backend image. Neither changes the normal backend image.
+
+Qualify this seam before writing dependent flows:
+
+```bash
+node --test e2e/scripts/skills-fakes.test.mjs
+PYTHONPATH="$PWD/futureagi" flock /tmp/ctxhub-pytest.lock \
+  futureagi/.venv/bin/python -m pytest e2e/stack/backend/test_skills_transport.py
+E2E_STACK=standalone bin/e2e test harness/skills-v11-transport.spec.ts --workers=1
+```
+
+`e2e/stack/backend/prove_skills_boundary.py` additionally runs in separately built
+normal and E2E backend containers, with networking disabled. Its `production`,
+`overlay-off` and `overlay-on` modes assert module absence/presence, switch
+inertness, unchanged real endpoint selection and preservation of no-retry flags.
+Mount only that probe file read-only, set `PYTHONPATH=/app/backend` and
+`NO_STARTUP_DB_MUTATIONS=true`, and invoke it with the container's Python. A fake
+run is not real-provider verification, GitHub conformance or native-agent evidence.
+The GitHub seam deliberately keeps the production 60-second ref/metadata caches
+and anonymous hourly budgets. It does not provide a clock/period-control seam.
+Advancing a recording alone therefore cannot make an immediate update check see
+a fresh branch. Do not clear shared counters, bypass cache policy or reinterpret
+`unchanged_commit` as proof of a changed-source replacement.
+
 ### Harness self-tests
 
 `harness/` holds the tests of the harness itself — provisioning, the probe, OTLP seeding, and the
