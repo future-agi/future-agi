@@ -1,21 +1,26 @@
+import _string
 import base64
 import json
 import os
 import re
+import string
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, NamedTuple
 
 import chevron
 import litellm
 import structlog
 import yaml
+from chevron.tokenizer import tokenize as chevron_tokenize
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from jinja2 import meta as jinja2_meta
+from jinja2 import nodes as jinja2_nodes
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -31,6 +36,12 @@ from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManage
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
+)
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.factory import (
+    uses_tts_handler,
+)
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
+    speaks_text_literally,
 )
 from model_hub.models.api_key import ApiKey
 from model_hub.utils.llm_providers import is_model_in_catalog
@@ -429,6 +440,30 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 _jinja2_env = SandboxedEnvironment()
 
 
+def _inline_spaced_jinja2_variables(template_str: str, context: dict):
+    """
+    Inline variables whose names contain spaces, which Jinja2 cannot parse.
+
+    Returns the Jinja2 source to compile, the render context without the
+    inlined names, and the inlined names.
+    """
+    processed = template_str
+    safe_ctx = dict(context)
+    inlined = []
+    raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
+    for var_name in raw_vars:
+        stripped = var_name.strip()
+        if " " in stripped and stripped in safe_ctx:
+            inlined.append(stripped)
+            processed = processed.replace(
+                "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
+            )
+            processed = processed.replace(
+                "{{ " + stripped + " }}", str(context.get(stripped, ""))
+            )
+    return processed, safe_ctx, inlined
+
+
 def render_template(
     template_str: str, context: dict, template_format: str = None
 ) -> str:
@@ -457,21 +492,7 @@ def render_template(
         return chevron.render(template_str, context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
-        # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
-        import re
-
-        processed = template_str
-        safe_ctx = dict(context)
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped and stripped in safe_ctx:
-                processed = processed.replace(
-                    "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
-                )
-                processed = processed.replace(
-                    "{{ " + stripped + " }}", str(context.get(stripped, ""))
-                )
+        processed, safe_ctx, _ = _inline_spaced_jinja2_variables(template_str, context)
         return _jinja2_env.from_string(processed).render(**safe_ctx)
 
     else:
@@ -493,8 +514,218 @@ class JsonStr(dict):
         return self._raw
 
 
+# Column types whose values are media files rather than text.
+MEDIA_COLUMN_TYPES = ("audio", "image", "images", "document")
+
+
+class LiteralSpeechMediaError(ValueError):
+    """A literal text-to-speech prompt uses a media column, or cannot be checked."""
+
+
+class LiteralSpeechMediaColumn(NamedTuple):
+    """A media column that a literal text-to-speech prompt must not use."""
+
+    name: str
+    data_type: str
+    # Render-context paths of the value: the dotted name's parts, and the
+    # sanitized column id.
+    paths: tuple
+
+
+def is_literal_speech_run(model_name, output_format, organization_id) -> bool:
+    """
+    Whether a run sends the prompt's text to a speech API that reads it aloud.
+
+    Follows RunPrompt's routing: ModelHandlerFactory's choice of TTSHandler,
+    the provider resolved the way RunPrompt resolves it, then TTSHandler's
+    sub-handler. A completion-audio model (gpt-4o-audio-preview, Vertex Gemini
+    TTS) is not literal speech: it receives the whole prompt, media included.
+    """
+    if not model_name or not uses_tts_handler(model_name, output_format):
+        return False
+    try:
+        provider = LiteLLMModelManager(
+            model_name, organization_id=organization_id
+        ).get_provider(model_name=model_name, organization_id=organization_id)
+    except Exception as e:
+        # RunPrompt resolves the provider the same way and fails the run
+        # before any provider call, so there is no speech to guard.
+        logger.warning(f"Could not resolve the provider of {model_name}: {e}")
+        return False
+    return speaks_text_literally(model_name, provider)
+
+
+def _context_path(root, keys, context) -> tuple:
+    """
+    Render-context path that a variable lookup reads.
+
+    Dotted column names are grouped in plain dicts. A key that is not one of a
+    group's columns (e.g. .get or .items) uses the group itself, so the path
+    stops at the group.
+    """
+    path = [root]
+    value = context.get(root)
+    for key in keys:
+        if type(value) is dict:
+            if key not in value:
+                break
+            value = value[key]
+        else:
+            value = None
+        path.append(key)
+    return tuple(path)
+
+
+def _jinja2_lookup_key(node):
+    """The constant key of a Jinja2 attribute or item lookup, else None."""
+    if isinstance(node, jinja2_nodes.Getattr):
+        return node.attr
+    if (
+        isinstance(node.arg, jinja2_nodes.Const)
+        and isinstance(node.arg.value, (str, int))
+        and not isinstance(node.arg.value, bool)
+    ):
+        return str(node.arg.value)
+    return None
+
+
+def _jinja2_variable_paths(source, context) -> list:
+    """Context paths read by a Jinja2 template, from its parsed syntax tree."""
+    tree = _jinja2_env.parse(source)
+    roots = jinja2_meta.find_undeclared_variables(tree)
+    lookups = (jinja2_nodes.Getattr, jinja2_nodes.Getitem)
+    inner = {
+        id(node.node)
+        for node in tree.find_all(lookups)
+        if _jinja2_lookup_key(node) is not None
+    }
+    paths = []
+    for node in tree.find_all(lookups + (jinja2_nodes.Name,)):
+        if id(node) in inner:
+            continue
+        keys = []
+        while isinstance(node, lookups) and _jinja2_lookup_key(node) is not None:
+            keys.append(_jinja2_lookup_key(node))
+            node = node.node
+        if (
+            isinstance(node, jinja2_nodes.Name)
+            and node.ctx == "load"
+            and node.name in roots
+        ):
+            paths.append(_context_path(node.name, keys[::-1], context))
+    return paths
+
+
+def _mustache_variable_paths(text, context) -> list:
+    """Context paths read by a Mustache template, from chevron's tokens."""
+    paths = []
+    depth = 0
+    for tag, key in chevron_tokenize(text):
+        if tag == "end":
+            depth -= 1
+        elif tag == "partial":
+            # A partial's content is unknown: treat it as reading everything.
+            paths.append(())
+        elif tag in ("variable", "no escape", "section", "inverted section"):
+            if key == ".":
+                # At the top level "." is the whole context; inside a section
+                # it is the section's value, already checked.
+                if depth == 0:
+                    paths.append(())
+            else:
+                root, *keys = key.split(".")
+                paths.append(_context_path(root, keys, context))
+            if tag in ("section", "inverted section"):
+                depth += 1
+    return paths
+
+
+def _fstring_variable_paths(text, context) -> list:
+    """Context paths read by a str.format template, nested fields included."""
+    paths = []
+    for _, field_name, format_spec, _ in string.Formatter().parse(text):
+        if field_name is not None:
+            root, keys = _string.formatter_field_name_split(field_name)
+            # Positional fields have no value in the render context.
+            if isinstance(root, str) and root:
+                keys = [str(key) for _, key in keys]
+                paths.append(_context_path(root, keys, context))
+        if format_spec:
+            paths.extend(_fstring_variable_paths(format_spec, context))
+    return paths
+
+
+def _media_columns_used(text, template_format, context, media_columns) -> list:
+    """Media columns whose values a template reads, by the renderer's parser."""
+    if template_format == TEMPLATE_FORMAT_FSTRING:
+        paths = _fstring_variable_paths(text, context)
+    elif template_format == TEMPLATE_FORMAT_MUSTACHE:
+        paths = _mustache_variable_paths(text, context)
+    elif template_format in (None, TEMPLATE_FORMAT_JINJA2):
+        source, _, inlined = _inline_spaced_jinja2_variables(text, context)
+        paths = [(name,) for name in inlined]
+        paths += _jinja2_variable_paths(source, context)
+    else:
+        # render_template rejects an unknown format.
+        return []
+
+    def overlaps(path, media_path):
+        size = min(len(path), len(media_path))
+        return path[:size] == media_path[:size]
+
+    return [
+        column
+        for column in media_columns
+        if any(
+            overlaps(path, media_path)
+            for path in paths
+            for media_path in column.paths
+        )
+    ]
+
+
+def check_literal_speech_prompt(
+    text, template_format, context, media_columns, model_name
+):
+    """
+    Reject a literal text-to-speech prompt that uses a media column.
+
+    The speech API reads the rendered text aloud, so a media column could only
+    reach it as a generated label or as its URL. Every variable the template
+    reads, through any filter, test, lookup or format, is found with the
+    renderer's own parser; a template the parser cannot read is rejected
+    rather than spoken as written.
+    """
+    try:
+        used = _media_columns_used(text, template_format, context, media_columns)
+    except Exception as e:
+        raise LiteralSpeechMediaError(
+            f'Text-to-speech model "{model_name}" cannot read this prompt: its '
+            f"template is invalid ({type(e).__name__}: {e}). Fix the template."
+        ) from e
+    if len(used) == 1:
+        raise LiteralSpeechMediaError(
+            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
+            f'so it cannot use the {used[0].data_type} column "{used[0].name}". '
+            "Remove this variable from the prompt."
+        )
+    if used:
+        columns = ", ".join(f'"{column.name}" ({column.data_type})' for column in used)
+        raise LiteralSpeechMediaError(
+            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
+            f"so it cannot use the media columns {columns}. "
+            "Remove these variables from the prompt."
+        )
+
+
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    output_format=None,
 ):
     try:
         media_error = None
@@ -503,6 +734,15 @@ def populate_placeholders(
 
         dataset = Dataset.objects.get(id=dataset_id)
         column_ids = dataset.column_order
+
+        # Literal text-to-speech reads the prompt's text aloud, and today it
+        # reads every message. A media column could only reach it as a
+        # generated label or a URL, so on that lane media columns are never
+        # fetched and a prompt that uses one is rejected.
+        literal_speech = is_literal_speech_run(
+            model_name, output_format, dataset.organization_id
+        )
+        literal_speech_media = []
 
         # Create context for Handlebars with proper nesting
         context: dict[str, Any] = {}
@@ -514,6 +754,19 @@ def populate_placeholders(
             try:
                 if column_id != str(col_id):
                     column = Column.objects.get(id=column_id)
+                    if literal_speech and column.data_type in MEDIA_COLUMN_TYPES:
+                        # Recorded before the cell lookup: an empty or missing
+                        # cell is still a media column.
+                        literal_speech_media.append(
+                            LiteralSpeechMediaColumn(
+                                name=column.name,
+                                data_type=column.data_type,
+                                paths=(
+                                    tuple(column.name.split(".")),
+                                    (sanitize_uuid_for_jinja(column_id),),
+                                ),
+                            )
+                        )
                     cell = Cell.objects.filter(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
@@ -592,6 +845,13 @@ def populate_placeholders(
                     f"Context['{key}'] is a dict with keys: {list(value.keys())}"
                 )
 
+        if literal_speech_media:
+            column_info = {
+                column_id: info
+                for column_id, info in column_info.items()
+                if info["data_type"] not in MEDIA_COLUMN_TYPES
+            }
+
         # Process messages
         image_counter = 0
         processed_messages = []
@@ -608,6 +868,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        literal_speech_media=literal_speech_media,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -617,6 +878,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        literal_speech_media=literal_speech_media,
                     )
 
                 # If no content was processed, keep original
@@ -646,7 +908,13 @@ def populate_placeholders(
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech_media=None,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -661,6 +929,7 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                literal_speech_media=literal_speech_media,
             )
             processed_content.extend(text_segments)
         else:
@@ -676,7 +945,13 @@ def process_list_content(
 
 
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech_media=None,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -686,13 +961,25 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        literal_speech_media=literal_speech_media,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech_media=None,
 ):
-    """Process text content, handling both templates and media placeholders"""
+    """
+    Process text content, handling both templates and media placeholders.
+
+    literal_speech_media lists the media columns of a literal text-to-speech
+    run; a template that uses one raises LiteralSpeechMediaError.
+    """
     try:
         # Get the text and fix doubled-up quotes
         text = fix_double_quotes(text)
@@ -806,6 +1093,10 @@ def process_text_with_media(
         effective_format = template_format
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
+        if literal_speech_media:
+            check_literal_speech_prompt(
+                text, effective_format, context, literal_speech_media, model_name
+            )
         try:
             processed_text = render_template(
                 text, context, template_format=effective_format
@@ -995,6 +1286,7 @@ class LitellmAPIView(CreateAPIView):
                 row_id=row.id,
                 col_id=column.id,
                 model_name=validated_data.get("model"),
+                output_format=validated_data.get("output_format"),
             )
             messages = remove_empty_text_from_messages(messages)
 
@@ -1435,6 +1727,7 @@ class RunPrompts:
                     template_format=(self.run_prompt_model.run_prompt_config or {}).get(
                         "template_format"
                     ),
+                    output_format=self.run_prompt_model.output_format,
                 )
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(
@@ -1925,6 +2218,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        output_format=output_format,
                     )
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
