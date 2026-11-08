@@ -100,7 +100,8 @@ vi.mock(
 // names the run it was opened for.
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) => (open ? <div>{`launch-fix:${sourceRunId}`}</div> : null),
+  default: ({ open, sourceRunId }) =>
+    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -201,6 +202,7 @@ function RunTraceTableStub({
   evalActions,
   rerunDisabledReason,
   onRerunScenarios,
+  onRerunInRun,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -232,6 +234,7 @@ function RunTraceTableStub({
           rerun ticked
         </button>
       )}
+      {onRerunInRun && <span>rerun-in-run</span>}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -251,6 +254,7 @@ RunTraceTableStub.propTypes = {
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
   onRerunScenarios: PropTypes.func,
+  onRerunInRun: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -302,6 +306,16 @@ CallDrawerStub.propTypes = {
   onClose: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
+
+// Resume's mutation, so a test can see the button call it.
+const resumeMutate = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/rerunScenarios",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useResumeRun: () => ({ mutate: resumeMutate, isPending: false }),
+  }),
+);
 
 const { default: RunDetail } = await import("../RunDetail");
 
@@ -490,12 +504,65 @@ beforeEach(() => {
   });
 });
 
+describe("RunDetail resume", () => {
+  const interrupted = (resume) =>
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed", runState: "failed", resume },
+      stats: STATS,
+      isLoading: false,
+    });
+
+  it("offers Resume on an interrupted run and says how far it got", async () => {
+    resumeMutate.mockReset();
+    interrupted({ resumable: true, finished: 7, unfinished: 5, history: [] });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "a run that cannot resume",
+      { resumable: false, finished: null, unfinished: null, history: [] },
+    ],
+    ["a backend that says nothing", null],
+  ])("offers no Resume for %s", (_, resume) => {
+    interrupted(resume);
+    renderDetail();
+
+    expect(
+      screen.queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/not finished/)).not.toBeInTheDocument();
+  });
+
+  it("says when a run was resumed", () => {
+    interrupted({
+      resumable: false,
+      finished: null,
+      unfinished: null,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
+    renderDetail();
+
+    expect(screen.getByText(/resumed /)).toBeInTheDocument();
+  });
+});
+
 describe("RunDetail", () => {
   it("goes back to where it was opened from when the opener says so", async () => {
     const user = userEvent.setup();
     renderDetail({
       initialEntries: [
-        { pathname: "/run", state: { backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1" } },
+        {
+          pathname: "/run",
+          state: {
+            backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1",
+          },
+        },
       ],
     });
     await user.click(screen.getByRole("button", { name: "Back" }));
@@ -588,6 +655,50 @@ describe("RunDetail", () => {
     expect(
       screen.queryByRole("button", { name: "Stop simulation" }),
     ).toBeNull();
+  });
+
+  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+        fixRun: { id: "fix-1", label: "c2-target" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
+      "Check run c2-target for this fix · agent v2",
+    );
+    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+    expect(screen.queryByText(/^Run 3/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
+  });
+
+  it("offers no Re-run or Debug failures on a fix's check run", () => {
+    stubTickable = false;
+    const fixRun = { id: "fix-1", label: "c2-target" };
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, fixRun },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rerun ticked" })).toBeNull();
+    expect(screen.queryByText("rerun-in-run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Debug failures" })).toBeNull();
+    stubTickable = true;
   });
 
   it("shows Cancelling in the header while a stopped run winds down", () => {
@@ -1099,6 +1210,32 @@ describe("RunDetail", () => {
 
     // The run reports 4 failing, but the diagnosis measured 3 broken of 12.
     expect(screen.getByText("3 failing of 12 measured")).toBeInTheDocument();
+  });
+
+  it("gives no measured count until the diagnosis has one", async () => {
+    // The run's failing count holds errored calls; its measured count does not.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 19, measured: 18 },
+      isLoading: false,
+    });
+    useDebugAnalysis.mockReturnValue(
+      debugHook({
+        ...ANALYSIS,
+        status: "running",
+        isWorking: true,
+        summary: null,
+        goals: [],
+        oneOffs: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(screen.getByText("19 failing")).toBeInTheDocument();
+    expect(screen.queryByText(/failing of/)).toBeNull();
   });
 
   it("folds long tails into one row so the rows still add up", async () => {
