@@ -21,7 +21,10 @@ const content = `---\nname: ${name}\ndescription: Use when reviewing a synthetic
 const first = await actor.api("/model-hub/skills/publish/", { method: "POST", body: { files: [{ path: "SKILL.md", content }, { path: "references/policy.md", content: "# Refund policy\nReview the purchase date and eligibility.\n" }], labels: [] } });
 const id = first.skill.id;
 const skillUrl = `/model-hub/skills/${id}/`;
-await actor.api(skillUrl, { method: "PATCH", body: { tags: [`support-${"b".repeat(40)}`] } });
+const boundaryTag = `support-${"b".repeat(32)}`;
+assert.equal(boundaryTag.length, 40, "Exercise the exact API tag-length boundary");
+await actor.api(skillUrl, { method: "PATCH", body: { tags: [boundaryTag] } });
+assert.deepEqual((await actor.api(skillUrl)).tags, [boundaryTag]);
 const browser = await chromium.launch();
 const context = await browser.newContext({ baseURL: APP, viewport: { width: 1440, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
 await context.addInitScript(({ tokens, organizationId, workspaceId }) => {
