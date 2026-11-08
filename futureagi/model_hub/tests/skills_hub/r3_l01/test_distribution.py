@@ -47,6 +47,23 @@ def test_legacy_distribution_and_noops_enforce_quarantine(
     assert hub_skill.versions.count() == 1
 
 
+def test_restore_separates_content_origin_from_publication_head(
+    hub_skill, hub_actor, publish_skill, make_skill_files
+):
+    original = publish_skill(hub_skill).version
+    head = publish_skill(
+        hub_skill, files=make_skill_files(body="Unrelated latest policy.")
+    ).version
+    restored = restore_version(
+        skill=hub_skill, actor=hub_actor, number=original.number
+    ).version
+    assert restored.number == 3
+    assert restored.parent_number == head.number
+    assert restored.origin_number == original.number
+    assert restored.digest == original.digest
+    assert restored.digest != head.digest
+
+
 def test_latest_quarantine_event_controls_access(hub_skill, publish_skill):
     version = publish_skill(hub_skill, labels=["production"]).version
     for revision, active in [(1, True), (2, False)]:

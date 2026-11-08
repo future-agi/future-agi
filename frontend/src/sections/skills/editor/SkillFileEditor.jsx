@@ -14,19 +14,32 @@ export default function SkillFileEditor({ file, onChange, target, readOnly = fal
   useEffect(() => {
     if (!monaco || !target?.line) return undefined;
     let active = true;
+    let focused = false;
+    let boundEditor;
+    let layoutSubscription;
     const focus = () => {
-      if (!active) return;
+      if (!active || focused) return;
       const editor = monaco.editor.getEditors().find(
         (candidate) => candidate.getModel()?.uri.toString() === monaco.Uri.parse(file.path).toString(),
       );
       if (!editor) return;
+      if (boundEditor !== editor) {
+        layoutSubscription?.dispose();
+        boundEditor = editor;
+        // Document/Preview keep Monaco mounted to preserve undo history. Its
+        // automaticLayout observer notifies us when the hidden pane is revealed.
+        layoutSubscription = editor.onDidLayoutChange?.(focus);
+      }
+      const node = editor.getDomNode?.();
+      if (node && node.getClientRects().length === 0) return;
+      focused = true;
       editor.setPosition({ lineNumber: target.line, column: 1 });
       editor.revealLineInCenter(target.line);
       editor.focus();
     };
     focus();
     const subscription = monaco.editor.onDidCreateEditor(() => { Promise.resolve().then(focus); });
-    return () => { active = false; subscription.dispose(); };
+    return () => { active = false; subscription.dispose(); layoutSubscription?.dispose(); };
   }, [monaco, file.path, target]);
 
   return (
