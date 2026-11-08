@@ -1299,7 +1299,7 @@ def process_text_with_media(
         logger.debug(f"Template text (first 500 chars): {text[:500]}")
         logger.debug(f"Context keys: {list(context.keys())}")
         for key, value in context.items():
-            if isinstance(value, dict):
+            if type(value) is not _LiteralSpeechMediaValue and isinstance(value, dict):
                 logger.debug(f"Context[{key}] is dict with keys: {list(value.keys())}")
 
         # IMPORTANT: Sanitize UUID placeholders BEFORE Jinja2 rendering
