@@ -39,6 +39,13 @@ describe("historical head review", () => {
     expect(session.files[0].content).toBe("Original standing rules");
     expect(session.mutateDraft).toHaveBeenCalledOnce();
   });
+  it("does not acknowledge a head when either full comparison is missing", async () => {
+    render(<HotfixHeadReview scopeKey={scopeKey} session={draft()} onPreview={async () => ({ review: headPreview.review })} onAcknowledge={vi.fn()} />);
+    click("Review against current latest"); await screen.findByText(/v4-derived/);
+    expect(screen.getAllByText(/complete file comparison is unavailable/)).toHaveLength(2);
+    expect(screen.getByRole("checkbox")).toBeDisabled(); expect(button("Acknowledge reviewed head")).toBeDisabled();
+    expect(screen.queryByText("No file changes.")).not.toBeInTheDocument();
+  });
   it("a failed flush cannot preview a runnable snapshot", async () => {
     const session = draft(); session.flush.mockResolvedValue(null); const preview = vi.fn();
     render(<HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={preview} />);
@@ -253,7 +260,7 @@ describe("retained source intake", () => {
     expect(accept.mock.calls[0][0]).not.toHaveProperty("tags");
   });
   it("recovers an unknown acceptance with the same operation after the retained plan expires", async () => {
-    const plan = { id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", expectedHeadVersion: 6, expectedHeadDigest: digest }] };
+    const plan = { id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", sourceChanges: [], hubChanges: [], expectedHeadVersion: 6, expectedHeadDigest: digest }] };
     const accept = vi.fn().mockRejectedValueOnce(new Error("Lost response")).mockResolvedValueOnce({ id: "receipt" });
     const view = render(<MigrationPlanPanel scopeKey={scopeKey} plan={plan} onKeep={accept} />);
     choose("Review item", "refunds"); check("Apply this exact decision to the reviewed identity and head, without changing production."); click("Record keep decision");
@@ -265,7 +272,7 @@ describe("retained source intake", () => {
   });
   it.each([false, true])("preserves omitted tags versus explicit clear in replacement (%s)", async (clear) => {
     const accept = vi.fn(async () => ({ id: "replacement-receipt" }));
-    render(<MigrationPlanPanel scopeKey={scopeKey} plan={{ id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", expectedHeadVersion: 6, expectedHeadDigest: digest }] }} onAccept={accept} />);
+    render(<MigrationPlanPanel scopeKey={scopeKey} plan={{ id: "plan", fingerprint: "fp", expiresAt: future, items: [{ key: "one", name: "refunds", sourceChanges: [], hubChanges: [], expectedHeadVersion: 6, expectedHeadDigest: digest }] }} onAccept={accept} />);
     choose("Review item", "refunds");
     check("Apply this exact decision to the reviewed identity and head, without changing production.");
     expect(button("Record keep decision")).toBeDisabled();

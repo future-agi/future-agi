@@ -32,7 +32,7 @@ function Plan({ scopeKey, plan, onAccept, onKeep, onPreserveDraft, onAccepted })
   // Keep is a separate service operation. Never send it through the replacement
   // mapper, which intentionally has no decision field and could drop that intent.
   const commitDecision = decision === "keep" ? onKeep : onAccept;
-  const blocked = !item || item.blocked || (expired && !operation.canRetry(input)) || Boolean(receipts[selected]) || (decision !== "keep" && item.hasDraft) || decision === "manual";
+  const blocked = !item || item.blocked || (expired && !operation.canRetry(input)) || Boolean(receipts[selected]) || (decision !== "keep" && item.hasDraft) || (decision === "replace" && (!Array.isArray(item.sourceChanges) || !Array.isArray(item.hubChanges))) || decision === "manual";
   const accept = async () => {
     if (blocked || !reviewed || (decision !== "keep" && !rights)) return;
     const result = await operation.run(commitDecision, input);

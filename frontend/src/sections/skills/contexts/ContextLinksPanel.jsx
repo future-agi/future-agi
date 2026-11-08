@@ -21,7 +21,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
   const lock = session.resolvedLock?.links || [];
   const invalidate = () => { setPreview(null); setConfirmed(false); };
   const validSelector = policy === "version" ? /^[1-9]\d*$/.test(selector) && Number.isSafeInteger(Number(selector)) : /^[a-z0-9][a-z0-9-]{0,39}$/.test(selector);
-  const current = preview && !session.dirty && !session.mutationError && !session.pendingMutations && preview.revision === session.revision;
+  const current = preview && Array.isArray(preview.changes) && Boolean(preview.fingerprint) && Boolean(preview.candidateDigest) && Number.isInteger(preview.checks?.summary?.errors) && !session.dirty && !session.mutationError && !session.pendingMutations && preview.revision === session.revision;
   const prepare = async () => {
     invalidate();
     const result = await operation.run(async () => {

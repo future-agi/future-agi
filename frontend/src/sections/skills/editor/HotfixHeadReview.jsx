@@ -81,7 +81,8 @@ export function useExpired(expiresAt) {
   return !expiresAt || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now();
 }
 
-export function FileChanges({ files = [], beforeTitle = "Before", afterTitle = "After" }) {
+export function FileChanges({ files, beforeTitle = "Before", afterTitle = "After" }) {
+  if (!Array.isArray(files)) return <Alert severity="info">The complete file comparison is unavailable. Load it before acknowledging a replacement or publication.</Alert>;
   const ordered = [...files].filter((file) => file.status !== "unchanged").sort((a, b) => {
     const root = (path) => ["AGENTS.md", "SKILL.md"].includes(path) ? 0 : 1;
     return root(a.path) - root(b.path) || a.path.localeCompare(b.path);
@@ -101,7 +102,7 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
   const [confirmed, setConfirmed] = useState(false);
   const operation = useAuthoringOperation(scopeKey);
   const review = preview?.review;
-  const current = review && !session.dirty && !session.pendingMutations && !session.mutationError && session.revision === review.draftRevision;
+  const current = review && Array.isArray(preview.originChanges) && Array.isArray(preview.headChanges) && !session.dirty && !session.pendingMutations && !session.mutationError && session.revision === review.draftRevision;
   const prepare = async () => {
     setConfirmed(false);
     setPreview(null);
