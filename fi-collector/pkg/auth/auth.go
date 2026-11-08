@@ -36,7 +36,7 @@ var (
 // Match the Django API expiry error across transports.
 const (
 	ExpiredKeyMessage = "API key has expired"
-	ExpiredKeyCode = "api_key_expired"
+	ExpiredKeyCode    = "api_key_expired"
 )
 
 // ProjectAuthChangedError means the authenticated cache entry disappeared or
