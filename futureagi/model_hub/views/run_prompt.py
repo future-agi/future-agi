@@ -6,6 +6,7 @@ import re
 import string
 import traceback
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from typing import Any, NamedTuple
@@ -843,6 +844,7 @@ class _LiteralSpeechMediaValue(metaclass=_LiteralSpeechMediaValueType):
     __iter__ = __reversed__ = __len__ = __contains__ = __getitem__ = _read
     __bool__ = __int__ = __float__ = __index__ = __call__ = _read
     __add__ = __radd__ = __mul__ = __rmul__ = __mod__ = __rmod__ = _read
+    __eq__ = __ne__ = __lt__ = __le__ = __gt__ = __ge__ = __hash__ = _read
 
 
 def _reject_media_value(value):
@@ -852,13 +854,13 @@ def _reject_media_value(value):
     return value
 
 
-def _reject_contained_media(value, seen=None):
+def _reject_contained_media(value, seen=None, *, allow_json_text=False):
     _reject_media_value(value)
-    # JsonStr represents a text column: its string form is the original JSON,
-    # not the nested render-context media children. Preserve text filters on
-    # that raw value; item/method reads still cross the guarded boundaries.
+    if allow_json_text and type(value) is JsonStr:
+        return
     if type(value) not in (
         dict,
+        JsonStr,
         list,
         tuple,
         type({}.values()),
@@ -870,20 +872,59 @@ def _reject_contained_media(value, seen=None):
     if id(value) in seen:
         return
     seen.add(id(value))
-    children = value.values() if type(value) is dict else value
+    children = value.values() if type(value) in (dict, JsonStr) else value
     for child in children:
         _reject_contained_media(child, seen)
 
 
-def _guard_template_operation(operation):
+def _guard_media_result(value, *, allow_json_text=False):
+    _reject_contained_media(value, allow_json_text=allow_json_text)
+    if isinstance(value, Iterator):
+        # Jinja assigns loop targets without getitem/getattr. Check lazy
+        # results before handing an item (including a tuple) to the template.
+        return (_guard_media_result(item) for item in value)
+    return value
+
+
+# These filters stringify a JsonStr's original text, never its mapping values.
+# default/d can also return it unchanged; a subsequent structural operation
+# must still inspect it. Do not exempt the type for all filters or for tests:
+# items/dictsort expose the media children inserted into its mapping.
+_JSON_TEXT_FILTERS = frozenset(
+    {
+        "string",
+        "upper",
+        "lower",
+        "capitalize",
+        "center",
+        "title",
+        "trim",
+        "replace",
+        "escape",
+        "e",
+        "forceescape",
+        "safe",
+        "striptags",
+        "format",
+        "wordcount",
+        "urlize",
+        "default",
+        "d",
+    }
+)
+
+
+def _guard_template_operation(operation, *, allow_json_text=False):
     # Keep Jinja's pass_context/pass_environment metadata via wraps. A filter
     # or identity test must not silently reduce a media-containing value to a
     # boolean, count, or default without ever coercing the media value.
     @wraps(operation)
     def guarded(*args, **kwargs):
         for value in (*args, *kwargs.values()):
-            _reject_contained_media(value)
-        return _reject_media_value(operation(*args, **kwargs))
+            _reject_contained_media(value, allow_json_text=allow_json_text)
+        return _guard_media_result(
+            operation(*args, **kwargs), allow_json_text=allow_json_text
+        )
 
     return guarded
 
@@ -899,7 +940,9 @@ class _MediaGuardedEnvironment(SandboxedEnvironment):
     def __init__(self):
         super().__init__()
         self.filters = {
-            name: _guard_template_operation(operation)
+            name: _guard_template_operation(
+                operation, allow_json_text=name in _JSON_TEXT_FILTERS
+            )
             for name, operation in self.filters.items()
         }
         self.tests = {
@@ -914,9 +957,7 @@ class _MediaGuardedEnvironment(SandboxedEnvironment):
         return _reject_media_value(super().getitem(obj, argument))
 
     def call(self, context, obj, *args, **kwargs):
-        result = super().call(context, obj, *args, **kwargs)
-        _reject_contained_media(result)
-        return result
+        return _guard_media_result(super().call(context, obj, *args, **kwargs))
 
 
 _literal_speech_jinja2_env = _MediaGuardedEnvironment()

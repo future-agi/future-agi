@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from jinja2.defaults import DEFAULT_TESTS
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1232,6 +1233,189 @@ class TestConditionalBranchReportsTheRejection:
         assert value == media_error("Recording", "audio")
         assert value_infos == {"reason": media_error("Recording", "audio")}
         media_fetch.audio.assert_not_called()
+
+
+# ------------------------------------------------------- structural filters
+
+# Keep the verifier's exact expressions: neither names clip.audio statically,
+# and both compare a value without coercing it to text.
+STRUCTURAL_MEDIA_TEMPLATES = [
+    "{% for key, value in clip | items %}{% if key == 'audio' %}{{ value == none }}{% endif %}{% endfor %}",
+    "{{ (clip | dictsort)[0] == ('audio', none) }}",
+    "{% for pair in clip | items %}{{ pair != ('audio', none) }}{% endfor %}",
+    "{{ clip | items | list | length }}",
+    "{{ clip | dictsort | first == ('audio', none) }}",
+    "{{ clip | default({}) | items | list | length }}",
+    "{{ clip | d({}) | dictsort | length }}",
+    "{% for pair in clip.items() %}{{ pair[1] == none }}{% endfor %}",
+    "{% for value in clip.values() %}{{ value == none }}{% endfor %}",
+]
+
+# Every built-in filter that returns a container, iterator, or selects an
+# arbitrary element (plus reductions/serializers that could hide a read).
+STRUCTURAL_MEDIA_FILTERS = [
+    "items",
+    "dictsort",
+    "batch(2)",
+    "slice(2)",
+    "list",
+    "reverse",
+    "map('string')",
+    "select",
+    "reject",
+    "selectattr('audio')",
+    "rejectattr('audio')",
+    "groupby('audio')",
+    "sort",
+    "unique",
+    "first",
+    "last",
+    "random",
+    "min",
+    "max",
+    "attr('items')",
+    "count",
+    "length",
+    "join(',')",
+    "sum",
+    "pprint",
+    "tojson",
+    "urlencode",
+    "xmlattr",
+]
+
+
+@pytest.mark.django_db
+class TestLiteralSpeechStructuralFilters:
+    @pytest.mark.parametrize(
+        "template",
+        STRUCTURAL_MEDIA_TEMPLATES
+        + [
+            "{{ clip | " + expression + " }}" for expression in STRUCTURAL_MEDIA_FILTERS
+        ],
+    )
+    def test_json_structural_filter_rejects_before_speech(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        template,
+    ):
+        add_column(dataset, row, "clip", "text", '{"title":"Hello"}')
+        add_column(dataset, row, "clip.audio", "audio", CLIP_URL)
+        response = preview(auth_client, dataset, tts_config(user_prompt(template)))
+        assert response.json()["result"]["responses"] == [
+            media_error("clip.audio", "audio")
+        ]
+        speech_boundary.assert_not_called()
+        media_fetch.audio.assert_not_called()
+        media_fetch.inline.assert_not_called()
+
+    @pytest.mark.parametrize("template", STRUCTURAL_MEDIA_TEMPLATES[:2])
+    def test_saved_worker_rejects_structural_filter(
+        self,
+        dataset,
+        organization,
+        workspace,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        template,
+    ):
+        add_column(dataset, row, "clip", "text", '{"title":"Hello"}')
+        add_column(dataset, row, "clip.audio", "audio", CLIP_URL)
+        run_prompter, column = saved_tts_column(
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt(template),
+            "jinja",
+        )
+        cell = rerun_saved_column(run_prompter, column, row)
+        assert cell.status == CellStatus.ERROR.value
+        assert cell.value == media_error("clip.audio", "audio")
+        speech_boundary.assert_not_called()
+        media_fetch.audio.assert_not_called()
+        media_fetch.inline.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("template", "spoken"),
+        [
+            (
+                "{% for k, v in clip | items %}{{ k }}={{ v }}{% endfor %}",
+                "title=Hello",
+            ),
+            ("{{ (clip | dictsort)[0] == ('title', 'Hello') }}", "True"),
+            ("{{ clip | items | map('last') | list | join(',') }}", "Hello"),
+            ("{{ clip is mapping }}", "True"),
+        ],
+    )
+    def test_structural_text_without_media_still_speaks(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        template,
+        spoken,
+    ):
+        add_column(dataset, row, "clip", "text", '{"title":"Hello"}')
+        response = preview(auth_client, dataset, tts_config(user_prompt(template)))
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == spoken
+        media_fetch.audio.assert_not_called()
+
+
+@pytest.mark.parametrize("name", sorted(DEFAULT_TESTS))
+def test_all_jinja_tests_guard_json_media_arguments(name):
+    from model_hub.views.run_prompt import (
+        JsonStr,
+        _LiteralSpeechMediaRead,
+        _LiteralSpeechMediaValue,
+        _literal_speech_jinja2_env,
+    )
+
+    media = _LiteralSpeechMediaValue(SimpleNamespace(name="clip.audio"))
+    context = _literal_speech_jinja2_env.from_string("").new_context({})
+    value = JsonStr({"audio": media}, '{"title":"Hello"}')
+    with pytest.raises(_LiteralSpeechMediaRead):
+        _literal_speech_jinja2_env.call_test(name, value, context=context)
+
+
+@pytest.mark.parametrize(
+    "shape", ["dict", "list", "tuple", "items", "values", "iterator", "generator"]
+)
+def test_operation_result_is_guarded_before_template_comparison(shape):
+    from collections.abc import Iterator
+    from model_hub.views.run_prompt import (
+        _guard_template_operation,
+        _LiteralSpeechMediaRead,
+        _LiteralSpeechMediaValue,
+    )
+
+    media = _LiteralSpeechMediaValue(SimpleNamespace(name="clip.audio"))
+    mapping = {"audio": media}
+    values = {
+        "dict": mapping,
+        "list": [media],
+        "tuple": (media,),
+        "items": mapping.items(),
+        "values": mapping.values(),
+        "iterator": iter([(media,)]),
+        "generator": (item for item in [(media,)]),
+    }
+    operation = _guard_template_operation(lambda: values[shape])
+    with pytest.raises(_LiteralSpeechMediaRead):
+        result = operation()
+        if isinstance(result, Iterator):
+            list(result)
 
 
 # ------------------------------------------------------- recovery regressions
