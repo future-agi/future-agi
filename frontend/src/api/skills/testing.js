@@ -32,6 +32,11 @@ export function useSkillV11Scope() {
   const identity = JSON.stringify([scope.organizationId, scope.workspaceId, scope.userId]);
   const current = useRef(identity);
   current.current = identity;
+  // A shared query can outlive the dialog that supplied its queryFn. Its
+  // AbortSignal owns observer lifetime; this ref only fences identity changes.
+  // Mutations retain the stricter unmount guard below.
+  const queryIdentity = useRef(identity);
+  queryIdentity.current = identity;
   const previous = useRef({ identity, scope });
   useEffect(() => {
     current.current = identity;
@@ -46,7 +51,7 @@ export function useSkillV11Scope() {
     }
   }, [client, identity, scope]);
   const enabled = Boolean(auth.authenticated && !auth.loading && organization.isReady && workspace.isReady && scope.organizationId && scope.workspaceId && scope.userId);
-  return { scope, identity, current, enabled, headers: { 'X-Organization-Id': scope.organizationId, 'X-Workspace-Id': scope.workspaceId } };
+  return { scope, identity, current, queryIdentity, enabled, headers: { 'X-Organization-Id': scope.organizationId, 'X-Workspace-Id': scope.workspaceId } };
 }
 
 export function useSkillV11Query({ parts, url, mapper, params, enabled = true, poll = false, terminalParts = [] }) {
@@ -56,7 +61,7 @@ export function useSkillV11Query({ parts, url, mapper, params, enabled = true, p
     queryKey: skillsKeys.v11(access.scope, ...parts),
     queryFn: async ({ signal }) => {
       const response = await axios.get(url(), { params, signal, headers: access.headers });
-      if (signal.aborted || access.current.current !== access.identity) throw new Error('The Skills scope changed.');
+      if (signal.aborted || access.queryIdentity.current !== access.identity) throw new Error('The Skills scope changed.');
       return mapper(skillV11Result(response));
     },
     enabled: access.enabled && enabled, retry: false,
