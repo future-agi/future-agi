@@ -824,6 +824,7 @@ import type {
   ModelHubAnnotationsList200,
   ModelHubAnnotationsListParams,
   ModelHubApiKeysListParams,
+  ModelHubApiModelsListListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
   ModelHubDevelopsGetDatasetTableListParams,
@@ -912,6 +913,7 @@ import type {
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
   ModelHubTtsVoicesListParams,
+  ModelListResponseApi,
   ModelParametersResponseApi,
   NodeExecutionDetailResponseApi,
   NodeReadApi,
@@ -28656,7 +28658,7 @@ export const modelHubApiModelVoicesList = async (
 };
 
 export type modelHubApiModelsListListResponse200 = {
-  data: ModelHubPaginatedResponseApi;
+  data: ModelListResponseApi;
   status: 200;
 };
 
@@ -28709,15 +28711,34 @@ export type modelHubApiModelsListListResponse =
   | modelHubApiModelsListListResponseSuccess
   | modelHubApiModelsListListResponseError;
 
-export const getModelHubApiModelsListListUrl = () => {
-  return `/model-hub/api/models_list/`;
+export const getModelHubApiModelsListListUrl = (
+  params?: ModelHubApiModelsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/api/models_list/?${stringifiedParams}`
+    : `/model-hub/api/models_list/`;
 };
 
 export const modelHubApiModelsListList = async (
+  params?: ModelHubApiModelsListListParams,
   options?: RequestInit,
 ): Promise<modelHubApiModelsListListResponse> => {
   return apiMutator<modelHubApiModelsListListResponse>(
-    getModelHubApiModelsListListUrl(),
+    getModelHubApiModelsListListUrl(params),
     {
       ...options,
       method: "GET",
