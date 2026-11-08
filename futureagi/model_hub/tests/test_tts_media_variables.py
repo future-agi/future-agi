@@ -1313,6 +1313,32 @@ class TestLiteralSpeechLookupBoundaries:
         assert speech_boundary.call_args.kwargs["input"] == "Hello"
         media_fetch.audio.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("template", "spoken"),
+        [
+            ("{{ clip | string }}", '{"title":"Hello"}'),
+            ("{{ clip | upper }}", '{"TITLE":"HELLO"}'),
+            ("{{ clip | default('fallback') }}", '{"title":"Hello"}'),
+        ],
+    )
+    def test_json_text_parent_filters_do_not_read_media_children(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        template,
+        spoken,
+    ):
+        add_column(dataset, row, "clip", "text", '{"title":"Hello"}')
+        add_column(dataset, row, "clip.audio", "audio", CLIP_URL)
+        response = preview(auth_client, dataset, tts_config(user_prompt(template)))
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == spoken
+        media_fetch.audio.assert_not_called()
+
     @pytest.mark.parametrize("string_content", [False, True])
     def test_text_renders_once_and_preserves_message_order(
         self,

@@ -854,9 +854,11 @@ def _reject_media_value(value):
 
 def _reject_contained_media(value, seen=None):
     _reject_media_value(value)
+    # JsonStr represents a text column: its string form is the original JSON,
+    # not the nested render-context media children. Preserve text filters on
+    # that raw value; item/method reads still cross the guarded boundaries.
     if type(value) not in (
         dict,
-        JsonStr,
         list,
         tuple,
         type({}.values()),
@@ -868,7 +870,7 @@ def _reject_contained_media(value, seen=None):
     if id(value) in seen:
         return
     seen.add(id(value))
-    children = value.values() if type(value) in (dict, JsonStr) else value
+    children = value.values() if type(value) is dict else value
     for child in children:
         _reject_contained_media(child, seen)
 
