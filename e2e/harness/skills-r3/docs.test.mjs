@@ -51,4 +51,11 @@ test('all pilot surfaces and deferred boundaries have a canonical customer expla
   assert.match(pages['rollout-recovery'], /unknown Git write/i);
   assert.match(pages.compatibility, /isolated Context-token MCP ingress/);
   assert.match(pages.compatibility, /Not measured \/ Not qualified/);
+  assert.match(pages.compatibility, /equivalent initial conditions/);
+  assert.match(pages.compatibility, /\*\*cold adoption\*\*, \*\*recurring rollout\*\*, and \*\*recovery\*\* separately/);
+  assert.match(pages.compatibility, /batched command counts once/);
+  assert.match(pages['safe-installation'], /`resource_id` and `kind`/);
+  assert.match(pages['safe-installation'], /Never infer EOF from a short chunk/);
+  assert.match(pages['safe-installation'], /`last_used_at`/);
+  assert.match(pages['agent-contexts'], /queued dependency update/);
 });

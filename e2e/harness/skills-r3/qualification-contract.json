@@ -1,13 +1,19 @@
 {
   "schema": 1,
   "status": "harness_primitives_only_public_interface_integration_blocked",
-  "foundation_base": "dbb78272e92cdb06fc0fdffc9c2dc9d8150d6d30",
-  "foundation_contract": "F12-interfaces.md was absent at lane kickoff; supplied base contains v1.1, no v12 service package",
+  "foundation_base": "3d15feb6a783dbd15fe905089ec91838de58aaa7",
+  "foundation_contract": "F12-interfaces.md r3.2 plus F12b corrections: consumption/auth/lease, immutable persistence, selected-origin internal helpers, editor and source serializers exist. Complete context authoring/review/native/session endpoints and runtime qualification are not provided.",
   "test_command": "CTXHUB_DOCS_ROOT=/absolute/isolated/docs node --test e2e/harness/skills-r3/*.test.mjs",
   "baseline_command": "node e2e/benchmarks/context-hub/cli.mjs baseline /absolute/new-report.json",
+  "current_report": "e2e/benchmarks/context-hub/qualification-report.json",
+  "historical_report": "e2e/benchmarks/context-hub/baseline-report.json is the retained r3.1 baseline, not current qualification",
+  "report_compatibility": "Retain r3.1 runs unchanged. Reports without an initial-condition comparison contract and ledger registration cannot be retroactively upgraded into r3.2 comparisons.",
+  "comparison_command": "node e2e/benchmarks/context-hub/cli.mjs compare OURS.json COMPETITOR.json REVIEW.json OUTPUT.json",
+  "comparison_protocol": "r3.2: initial conditions are part of the ledger-bound comparison identity; J5 cold_adoption/recurring_rollout/recovery never pool; shared/automatic stage coverage is independent of action counting; required human decisions remain measured",
+  "review_corrections": ["TEST-003", "TENX-01", "TENX-02", "TENX-03"],
   "driver_export": "async createDriver({jobId, runId, registration}) -> {mode, provenance, perform, observe, teardown}",
   "driver_contract": {
-    "perform": "async perform(stage, {ledger, signal}); drive only frozen public UI/CLI interfaces; instrument every meaningful primitive inside each stage, plus S/H/R separately; respect cancellation",
+    "perform": "async perform(stage, {ledger, signal}); drive only frozen public UI/CLI interfaces; instrument every meaningful primitive plus S/H/R separately. Mechanical stages may share a completed same-phase action through ledger.stage or supply independent automatic evidence. Honor stage.human_actions and cancellation.",
     "observe": "async observe(check, {signal}) -> {source, value, artifact_sha256}; read independent API/PG/filesystem/model-boundary/external evidence, never a product toast",
     "teardown": "async teardown() -> {qualified}; qualified only after owned resources are cancelled, settled or explicitly uncertain, terminated and destruction verified",
     "raw_evidence": "Raw customer evidence stays in separately authorized redacted artifacts; the ledger retains opaque IDs and hashes only",
@@ -16,6 +22,7 @@
   "harness_interfaces": [
     "ActionLedger.measure({dimension,primitive,actor,step,phase,target,items,exceptionItems}, effect)",
     "ActionLedger.observation({step,id,artifactHash}), fault(id,scenarioId), outcome(id,status,artifactHash)",
+    "ActionLedger.stage({step,phase,source,artifactHash,actionSequences:[]}) records independent completion without fabricating an operator action; the runner binds preregistration before any action",
     "MeasuredOperator.click/fill/review/approve/command/configurationEdit/recoveryDecision/transition/handoff/reconcile: primitive instrumentation without payload logging",
     "ProgrammableProvider.register(steps), listen(), ledger(capability), remaining(capability), close()",
     "GitFixture.fetch(input,init), inventory(), pulls(repositoryId), advanceBase(repositoryId,base), faultNext(fault)",
@@ -41,8 +48,9 @@
     {"id":"assist-original-operation","barrier":"received-before-response","oracle":"if assistance ever enables, recover original key/job with no second paid generation"}
   ],
   "integration_blockers": [
-    "Callable F12 interfaces and product test-image-only scoped transport, clock and worker seams",
-    "Approved browser flow plans with real routes, serializer pins and locators; no new flow IDs reserved",
+    "Complete downstream context authoring/review/native/session public interfaces; F12b does not expose them",
+    "Product test-image-only scoped clock/cache/quota and owned-worker barriers; existing v1.1 programmable transport alone is insufficient",
+    "Concrete round-3 browser flow approvals with usable routes, serializer pins and locators; the supplied approval document covers only SKILLS-E2E-001 through 003, no round-3 IDs are reserved",
     "Actual Simulation launch/ingestion path and private-native/shared-budget controls",
     "Released SDK/application wheel and npm artifacts with hashes; actual native binaries and observable delivery",
     "Customer environment, retained external tracing/CI access, independent competitor reviewer and measured comparator runs",
@@ -50,7 +58,7 @@
     "Human-time/success/comprehension/cost study before product acceptance"
   ],
   "limitations": [
-    "No new browser flows or FLOWS.md edits: plan approval and usable foundation are absent",
+    "No new round-3 browser flows or FLOWS.md edits: concrete round-3 approvals and complete dependent public surfaces are absent; the three existing Skills flows are inherited foundation work",
     "44 one-sided oracle self-tests prove harness fallibility, not backend product coverage",
     "Provider/Git fixtures do not qualify real provider transport, permissions, GitHub semantics or business behavior",
     "Worker barriers/clock are injection primitives, not production state mutations or an alternative scheduler",

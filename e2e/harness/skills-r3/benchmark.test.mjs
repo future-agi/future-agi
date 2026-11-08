@@ -4,10 +4,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JOBS } from '../../benchmarks/context-hub/jobs.mjs';
-import { baselineReport, compareActionRuns, runJourney, validateProvenance } from '../../benchmarks/context-hub/runner.mjs';
+import { baselineReport, compareActionRuns, comparisonContract, runJourney, validateProvenance } from '../../benchmarks/context-hub/runner.mjs';
 import { extractDocumentedBaselines } from '../../benchmarks/context-hub/flow-audit.mjs';
 import { assertObservation, OracleFailure } from '../../lib/skills-r3/oracles.mjs';
-import { sha256 } from '../../lib/skills-r3/canonical.mjs';
+import { digest, sha256 } from '../../lib/skills-r3/canonical.mjs';
 import { ActionLedger, summarizeLedger } from '../../lib/skills-r3/ledger.mjs';
 
 const hash = 'a'.repeat(64);
@@ -30,8 +30,8 @@ function registration(job) {
 function driverFor(job, { fail = false } = {}) {
   return { mode: 'selftest', provenance,
     async perform(stage, { ledger }) {
-      await ledger.measure({ dimension: 'A', primitive: 'command', actor: 'synthetic-operator', step: stage.id,
-        phase: stage.phase, target: 'synthetic-target' }, () => {});
+      await ledger.measure({ dimension: 'A', primitive: stage.human_actions[0] ?? 'command', actor: 'synthetic-operator', step: stage.id,
+        phase: stage.phase, target: 'synthetic-target', items: ['synthetic-item'] }, () => {});
       if (stage.id === job.steps[0].id) for (const fault of job.fault_ids) ledger.fault(fault, `scenario-${fault}`);
       if (fail) throw new Error('secret-bearing failure must not be printed');
     },
@@ -76,6 +76,7 @@ test('missing drivers and deferred expansion cannot become green measurements', 
   assert.equal(report.jobs.length, 6);
   assert.ok(report.jobs.every((j) => j.operator_actions === null && j.ten_x_actions === null));
   assert.equal(report.general_10x_launch, 'not_established');
+  assert.deepEqual(Object.keys(report.jobs.find((job) => job.job === 'J5').components), ['cold_adoption', 'recurring_rollout', 'recovery']);
   const noDriver = await runJourney({ jobId: 'J1', runId: 'missing' });
   assert.equal(noDriver.status, 'not_measured');
   const job = JOBS.find((j) => j.id === 'J5');
@@ -113,10 +114,13 @@ test('unrecorded faults and uninstrumented stages fail rather than inventing cou
 test('complete-job comparisons use verified ledgers, refuse zero, selftest, dirty and mismatched cohorts', async () => {
   async function run(mode, count) {
     const ledger = new ActionLedger({ runId: `compare-${mode}`, job: 'J1', mode });
-    for (const stage of JOBS[0].steps) for (let i = 0; i < count; i++) await ledger.measure({ dimension: 'A', primitive: 'command', actor: 'operator', step: stage.id, phase: stage.phase, target: 'test' }, () => {});
+    const contract = comparisonContract(JOBS[0], registration(JOBS[0]));
+    ledger.registration({ comparisonIdentity: digest(contract), preregistrationHash: hash });
+    for (const stage of JOBS[0].steps) for (let i = 0; i < count; i++) await ledger.measure({ dimension: 'A', primitive: stage.human_actions[0] ?? 'command', actor: 'operator', step: stage.id, phase: stage.phase, target: 'test', items: ['item-1'] }, () => {});
     for (const fault of JOBS[0].fault_ids) ledger.fault(fault, `scenario-${fault}`);
     for (const check of JOBS[0].checks) ledger.outcome(check.id, 'pass', hash);
-    return { status: 'completed', mode, job: 'J1', run_id: `compare-${mode}`, cohort: 'cold', evidence_scope: 'customer', comparison_identity: hash,
+    return { status: 'completed', mode, job: 'J1', run_id: `compare-${mode}`, cohort: 'cold', evidence_scope: 'customer',
+      comparison_contract: contract, comparison_identity: digest(contract), preregistration_hash: hash,
       stages: JOBS[0].steps.map((stage) => ({ id: stage.id, status: 'completed' })),
       checks: JOBS[0].checks.map((check) => ({ id: check.id, status: 'pass', source: check.sources[0], artifact_sha256: hash })),
       observations_complete: true, teardown: 'confirmed', provenance, events: ledger.events() };

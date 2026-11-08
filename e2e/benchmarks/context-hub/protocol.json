@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "protocol_id": "context-hub-complete-jobs-r3.1",
+  "protocol_id": "context-hub-complete-jobs-r3.2",
   "status": "template_requires_customer_preregistration",
   "primary_product_metric": "human_active_time_failure_to_verified_release_and_load",
   "scripted_claim": "10x fewer operator actions",
@@ -14,6 +14,9 @@
   "cohorts": ["cold", "configured"],
   "rules": [
     "Do not count a grouped workflow step as one action; instrument every primitive inside it.",
+    "One genuinely batched command counts once. A stage receipt may reference the same completed same-phase action as another stage; automatic mechanical stages require independent hashed evidence, not invented actions. Explicit human reviews and authorizations remain instrumented.",
+    "Bind comparison identity to the preregistered normalized initial_conditions_hash as well as job, input, cohort, safety, population and boundary; bind that identity into the reviewer-verified ledger. Different initial conditions are not measured comparators.",
+    "J5 reports cold_adoption, recurring_rollout and recovery separately, with phase coverage and nonzero action denominators. No pooled J5 ratio. Configured-only runs leave cold adoption not measured and cannot pass an overall J5 gate.",
     "Record every reviewed item and exception and retain human review time separately from click counts.",
     "Count custom wrapper and integration code construction in cold setup.",
     "Use the customer's strongest competent configured route, including combined products, scripts, batching and CI.",
@@ -23,7 +26,7 @@
     "Fault acceptance requires zero wrong-version deliveries, lost edits, unauthorized effects, duplicate business actions or false-green decisions over the explicit scenario set.",
     "A synthetic fixture establishes mechanics only, not customer qualification or competitive superiority."
   ],
-  "required_preregistration": ["customer_input_hash", "initial_conditions_hash", "safety_requirements_hash", "supported_versions", "cohort", "population", "complete_job_boundary", "expected_observations", "fault_ids", "independent_comparator_reviewer", "strongest_configured_route_hash"],
+  "required_preregistration": ["customer_input_hash", "initial_conditions_hash", "safety_requirements_hash", "supported_versions", "cohort", "population", "complete_job_boundary_hash", "expected_observations", "fault_ids", "independent_comparator_reviewer", "strongest_configured_route_hash"],
   "required_provenance": ["product_base", "product_head", "product_tree", "sdk_commit", "package_hashes", "runtime_digest", "fixture_hash", "lockfile_hashes", "environment", "dirty"],
   "human_study": {
     "status": "not_conducted",
