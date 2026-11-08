@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import timedelta
 from uuid import UUID
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from accounts.models.user import OrgApiKey, User
@@ -63,7 +63,7 @@ def lock_intake_workspace(principal: SkillPrincipal) -> Workspace:
         raise RuntimeError("Intake mutation requires a transaction.")
     require_private_principal(principal=principal)
     require_scope_access(principal=principal, write=True)
-    return Workspace.no_workspace_objects.select_for_update().get(
+    return Workspace.no_workspace_objects.select_for_update(no_key=True).get(
         pk=principal.scope.workspace_id, organization_id=principal.scope.organization_id
     )
 
@@ -565,17 +565,32 @@ def _create_import_identity(
             "This name already exists. Do not overwrite it by name.",
             status=409,
         )
-    return HubSkill._base_manager.create(
-        organization_id=principal.scope.organization_id,
-        workspace_id=principal.scope.workspace_id,
-        name=item["name"],
-        description=description,
-        tags=tags,
-        kind=item["kind"],
-        source={"type": "import"},
-        created_by_id=principal.user_id,
-        updated_by_id=principal.user_id,
-    )
+    try:
+        with transaction.atomic():
+            return HubSkill._base_manager.create(
+                organization_id=principal.scope.organization_id,
+                workspace_id=principal.scope.workspace_id,
+                name=item["name"],
+                description=description,
+                tags=tags,
+                kind=item["kind"],
+                source={"type": "import"},
+                created_by_id=principal.user_id,
+                updated_by_id=principal.user_id,
+            )
+    except IntegrityError as exc:
+        # Legacy creation does not take the new intake workspace lock. Preserve
+        # the unique-name winner instead of returning an internal error or retrying
+        # as an overwrite of the identity created while this plan was reviewed.
+        if HubSkill._base_manager.filter(
+            workspace_id=principal.scope.workspace_id, name=item["name"], deleted=False
+        ).exists():
+            raise SkillsHubError(
+                "name_taken",
+                "This name was created concurrently. Review the destination.",
+                status=409,
+            ) from exc
+        raise
 
 
 def validated_intake_tags(value: object) -> list[str]:
