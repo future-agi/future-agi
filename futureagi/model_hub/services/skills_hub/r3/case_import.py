@@ -25,6 +25,7 @@ from model_hub.services.skills_hub.v11.inventory import (
     fingerprint,
     secret_findings,
 )
+from model_hub.services.skills_hub.v11.limits import MAX_SUITE_BYTES
 from model_hub.services.skills_hub.v11.principals import (
     require_private_principal,
     require_scope_access,
@@ -406,6 +407,12 @@ def accept_dataset_case(
         for index, old in enumerate(suite.cases if suite else []):
             if "source" in old:
                 saved.cases[index]["source"] = old["source"]
+        if len(canonical_json(saved.cases).encode()) > MAX_SUITE_BYTES:
+            raise SkillsHubError(
+                "payload_too_large",
+                "Saved cases and retained source lineage exceed 1 MiB.",
+                status=413,
+            )
         saved.digest = fingerprint(saved.cases)
         saved.save(update_fields=["cases", "digest"])
         response = {

@@ -251,6 +251,75 @@ def test_preview_retention_removes_private_text_in_bounded_batches(preview):
         purge_expired_case_previews(batch_size=101)
 
 
+def test_source_lineage_counts_toward_suite_limit_and_rolls_back(
+    principal, hub_skill, preview
+):
+    from model_hub.services.skills_hub.v11.inventory import canonical_json, fingerprint
+    from model_hub.services.skills_hub.v11.limits import MAX_SUITE_BYTES
+    from model_hub.services.skills_hub.v11.suites import save_suite
+
+    prior = []
+    for index in range(15):
+        prior.append(
+            {
+                "id": str(uuid4()),
+                "title": f"Synthetic prior {index}",
+                "source_group_id": f"synthetic-{index}",
+                "prompt": "p" * 16000,
+                "fixtures": [
+                    {
+                        "id": str(uuid4()),
+                        "name": "Synthetic fixture",
+                        "text": "f" * 47000,
+                    }
+                ],
+                "expected_trigger": None,
+                "checks": [
+                    {
+                        "id": str(uuid4()),
+                        "kind": "contains",
+                        "critical": True,
+                        "config": {"text": "safe", "case_sensitive": False},
+                    }
+                ],
+                "reviewed": True,
+            }
+        )
+    saved = save_suite(
+        principal=principal, skill_id=hub_skill.id, revision=0, cases=prior
+    )
+    source = {
+        **preview["source"],
+        "fixture_column_ids": [str(uuid4()) for _ in range(19)],
+        "hashes": {str(uuid4()): "a" * 64 for _ in range(20)},
+        "source_fingerprint": preview["source_fingerprint"],
+        "sanitized_digest": "sha256:" + "b" * 64,
+        "replay_scope": "text_only",
+    }
+    for case in saved.cases:
+        case["source"] = source
+    assert len(canonical_json(saved.cases).encode()) <= MAX_SUITE_BYTES
+    saved.digest = fingerprint(saved.cases)
+    saved.save(update_fields=["cases", "digest"])
+    before = saved.digest
+    request = acceptance(preview)
+    request["suite_revision"] = saved.revision
+    request["case"]["prompt"] = "p" * 16000
+    request["case"]["fixtures"] = [
+        {"id": str(uuid4()), "name": "Synthetic addition", "text": "f" * 48000}
+    ]
+    with pytest.raises(SkillsHubError) as error:
+        accept_dataset_case(
+            principal=principal, resource_id=hub_skill.id, kind="skill", **request
+        )
+    assert error.value.code == "payload_too_large"
+    assert "source lineage" in error.value.message
+    saved.refresh_from_db()
+    assert saved.revision == 1 and saved.digest == before and len(saved.cases) == 15
+    assert HubSkillIntakePlan.objects.get(pk=preview["plan_id"]).payload is not None
+    assert not HubSkillContextOperation.objects.exists()
+
+
 def test_replay_conflict_does_not_rewrite_later_case(principal, hub_skill, preview):
     request = acceptance(preview)
     accept_dataset_case(
