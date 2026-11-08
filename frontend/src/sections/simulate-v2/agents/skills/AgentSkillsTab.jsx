@@ -16,6 +16,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -48,8 +49,10 @@ import SkillImportDrawer from "./SkillImportDrawer";
 import SkillTestDrawer from "./SkillTestDrawer";
 import {
   addFromRepo,
+  attach,
   attachmentsOf,
   detach,
+  latestV,
   libraryOf,
   refLabel,
 } from "../../_mock/skillLibrary";
@@ -138,6 +141,19 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
       if (key !== "skill")
         dispatch({ type: "setWorkspaceSetting", key, value });
     });
+  /* Attach (skills.md, Agent version → Skills): a library skill at a
+     version or tag. Production when the skill has it, else its latest. */
+  const [attachId, setAttachId] = useState("");
+  const [attachRef, setAttachRef] = useState("");
+  const attachable = library.filter(
+    (s) => !attachedHere.some((a) => a.skillId === s.id),
+  );
+  const attachSkill = library.find((s) => s.id === attachId);
+  const pickSkill = (id) => {
+    const s = library.find((x) => x.id === id);
+    setAttachId(id);
+    setAttachRef(s?.tags?.production ? "production" : latestV(s));
+  };
   const inLibrary = (id) => library.some((x) => x.name === id);
   const toggle = (skill) => {
     const now = draftStateOf(skill, set.draft);
@@ -372,8 +388,8 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 1.5, pb: 1.25 }}
           >
-            None attached. Attach a library skill from Build → Skills; this
-            agent then loads that version or tag.
+            None attached. Attach a library skill below; this agent then loads
+            that version or tag.
           </Typography>
         ) : (
           attachedHere.map((a) => (
@@ -407,6 +423,76 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
             </Stack>
           ))
         )}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <TextField
+            select
+            size="small"
+            value={attachId}
+            onChange={(e) => pickSkill(e.target.value)}
+            sx={{ minWidth: 220 }}
+            SelectProps={{ displayEmpty: true }}
+          >
+            <MenuItem value="" disabled>
+              {attachable.length
+                ? "Choose a library skill…"
+                : "Every library skill is attached"}
+            </MenuItem>
+            {attachable.map((s) => (
+              <MenuItem key={s.id} value={s.id}>
+                {s.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
+            size="small"
+            value={attachSkill ? attachRef : ""}
+            onChange={(e) => setAttachRef(e.target.value)}
+            disabled={!attachSkill}
+            sx={{ minWidth: 150 }}
+            SelectProps={{ displayEmpty: true }}
+          >
+            <MenuItem value="" disabled>
+              Version or tag
+            </MenuItem>
+            {Object.keys(attachSkill?.tags || {}).map((k) => (
+              <MenuItem
+                key={k}
+                value={k}
+              >{`${k} (v${attachSkill.tags[k]})`}</MenuItem>
+            ))}
+            {(attachSkill?.versions || []).map((ver) => (
+              <MenuItem key={ver.v} value={ver.v}>{`v${ver.v}`}</MenuItem>
+            ))}
+          </TextField>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!attachSkill}
+            onClick={() => {
+              saveLib(
+                attach(state.workspaceSettings, agent.key, attachId, attachRef),
+              );
+              enqueueSnackbar(
+                `Attached ${attachSkill.name} · ${refLabel(attachSkill, attachRef)}`,
+                { variant: "success" },
+              );
+              setAttachId("");
+            }}
+          >
+            Attach
+          </Button>
+        </Stack>
       </Box>
 
       <FactBox>
