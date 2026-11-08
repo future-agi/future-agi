@@ -633,7 +633,9 @@ class _Jinja2ContextReads(jinja2_meta.TrackingCodeGenerator):
 
     def visit_Name(self, node, frame):
         super().visit_Name(node, frame)
-        if node.ctx == "load":
+        # A name also assigned in this frame may hold the assigned value when
+        # read; leave it to the render-time check.
+        if node.ctx == "load" and node.name not in frame.symbols.stores:
             load = frame.symbols.find_load(frame.symbols.ref(node.name))
             if load is not None and load[0] == VAR_LOAD_RESOLVE:
                 self.context_reads.add(id(node))
@@ -765,21 +767,78 @@ def _media_columns_used(text, template_format, context, media_columns) -> list:
 
 
 def _media_columns_at(paths, media_columns) -> list:
-    """Media columns whose render-context paths overlap any of the paths."""
+    """Media columns read by any of the paths (at or below the media value)."""
 
-    def overlaps(path, media_path):
-        size = min(len(path), len(media_path))
-        return path[:size] == media_path[:size]
+    def reads(path, media_path):
+        return path[: len(media_path)] == media_path
 
     return [
         column
         for column in media_columns
-        if any(
-            overlaps(path, media_path)
-            for path in paths
-            for media_path in column.paths
-        )
+        if any(reads(path, media_path) for path in paths for media_path in column.paths)
     ]
+
+
+def _literal_speech_media_message(model_name, columns) -> str:
+    if len(columns) == 1:
+        return (
+            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
+            f'so it cannot use the {columns[0].data_type} column "{columns[0].name}". '
+            "Remove this variable from the prompt."
+        )
+    names = ", ".join(f'"{column.name}" ({column.data_type})' for column in columns)
+    return (
+        f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
+        f"so it cannot use the media columns {names}. "
+        "Remove these variables from the prompt."
+    )
+
+
+def _literal_speech_unreadable_message(model_name, error) -> str:
+    return (
+        f'Text-to-speech model "{model_name}" cannot read this prompt: its '
+        f"template is invalid ({type(error).__name__}: {error}). Fix the template."
+    )
+
+
+class _LiteralSpeechMediaRead(BaseException):
+    """
+    A template read a media value on the literal speech lane.
+
+    A BaseException, so no renderer can swallow it: chevron and Jinja filters
+    catch ValueError, KeyError, AttributeError and Exception. It is converted
+    to LiteralSpeechMediaError where the template is rendered.
+    """
+
+    def __init__(self, column):
+        super().__init__(column.name)
+        self.column = column
+
+
+class _LiteralSpeechMediaValue:
+    """
+    Stands for a media column's value while a literal speech prompt renders.
+
+    Turning it into text, or looking anything up in it, raises
+    _LiteralSpeechMediaRead, so a template expression the parser check did not
+    resolve still cannot speak a media value or silently drop it.
+    """
+
+    __slots__ = ("_column",)
+
+    def __init__(self, column):
+        object.__setattr__(self, "_column", column)
+
+    def _read(self, *args, **kwargs):
+        raise _LiteralSpeechMediaRead(object.__getattribute__(self, "_column"))
+
+    __str__ = __repr__ = __format__ = __bytes__ = _read
+    __iter__ = __reversed__ = __len__ = __contains__ = __getitem__ = _read
+    __bool__ = __int__ = __float__ = __index__ = __call__ = _read
+    __add__ = __radd__ = __mul__ = __rmul__ = __mod__ = __rmod__ = _read
+
+    def __getattr__(self, name):
+        self._read()
 
 
 def check_literal_speech_prompt(
@@ -789,31 +848,22 @@ def check_literal_speech_prompt(
     Reject a literal text-to-speech prompt that uses a media column.
 
     The speech API reads the rendered text aloud, so a media column could only
-    reach it as a generated label or as its URL. Every variable the template
-    reads, through any filter, test, lookup or format, is found with the
-    renderer's own parser; a template the parser cannot read is rejected
-    rather than spoken as written.
+    reach it as a generated label or as its URL. Variables the template reads,
+    through filters, tests, lookups or formats, are found with the renderer's
+    own parser; a template the parser cannot read is rejected rather than
+    spoken as written. Reads this check does not resolve are caught while
+    rendering (_LiteralSpeechMediaValue).
     """
     try:
         used = _media_columns_used(text, template_format, context, media_columns)
+    except _LiteralSpeechMediaRead as read:
+        used = [read.column]
     except Exception as e:
         raise LiteralSpeechMediaError(
-            f'Text-to-speech model "{model_name}" cannot read this prompt: its '
-            f"template is invalid ({type(e).__name__}: {e}). Fix the template."
+            _literal_speech_unreadable_message(model_name, e)
         ) from e
-    if len(used) == 1:
-        raise LiteralSpeechMediaError(
-            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
-            f'so it cannot use the {used[0].data_type} column "{used[0].name}". '
-            "Remove this variable from the prompt."
-        )
     if used:
-        columns = ", ".join(f'"{column.name}" ({column.data_type})' for column in used)
-        raise LiteralSpeechMediaError(
-            f'Text-to-speech model "{model_name}" reads the prompt aloud as text, '
-            f"so it cannot use the media columns {columns}. "
-            "Remove these variables from the prompt."
-        )
+        raise LiteralSpeechMediaError(_literal_speech_media_message(model_name, used))
 
 
 def check_literal_speech_messages(
@@ -854,6 +904,7 @@ def populate_placeholders(
     template_format=None,
     output_format=None,
 ):
+    literal_speech_media = []
     try:
         media_error = None
         # Debug: Log input messages to see what template we're processing
@@ -870,7 +921,6 @@ def populate_placeholders(
         literal_speech = is_literal_speech_run(
             model_name, output_format, dataset.organization_id
         )
-        literal_speech_media = []
         column_paths = []  # (name parts, sanitized id) of every column
 
         # Create context for Handlebars with proper nesting
@@ -887,30 +937,37 @@ def populate_placeholders(
                         column_paths.append(
                             (column.name.split("."), sanitize_uuid_for_jinja(column_id))
                         )
+                    media_value = None
                     if literal_speech and column.data_type in MEDIA_COLUMN_TYPES:
-                        # Never fetched and never in the render context, so no
-                        # template can turn it into speech. An empty or missing
+                        # Never fetched (no column_info). Its place in the
+                        # context holds a value that refuses to become text, so
+                        # any template read is rejected. An empty or missing
                         # cell is still a media column.
                         literal_speech_media.append(column)
-                        continue
-                    cell = Cell.objects.filter(
-                        dataset=dataset, column=column, row__id=row_id
-                    ).first()
-
-                    if not cell:
-                        continue
-
-                    # Store raw values for debugging
-                    raw_values[column.name] = (
-                        cell.value if cell.value is not None else ""
+                        media_value = _LiteralSpeechMediaValue(column)
+                    cell = (
+                        None
+                        if media_value is not None
+                        else Cell.objects.filter(
+                            dataset=dataset, column=column, row__id=row_id
+                        ).first()
                     )
 
-                    # Store column info for image handling
-                    column_info[column_id] = {
-                        "value": cell.value if cell.value is not None else "",
-                        "data_type": column.data_type,
-                        "name": column.name,
-                    }
+                    if media_value is None and not cell:
+                        continue
+
+                    if media_value is None:
+                        # Store raw values for debugging
+                        raw_values[column.name] = (
+                            cell.value if cell.value is not None else ""
+                        )
+
+                        # Store column info for image handling
+                        column_info[column_id] = {
+                            "value": cell.value if cell.value is not None else "",
+                            "data_type": column.data_type,
+                            "name": column.name,
+                        }
 
                     # Build nested structure based on column name (e.g., account.name)
                     parts = column.name.split(".")
@@ -920,8 +977,11 @@ def populate_placeholders(
                     # For any column with a JSON string value, parse it into a
                     # JsonStr dict so {{col.key}} works via Jinja attribute access
                     # while {{col}} still renders as the original JSON string.
-                    cell_value = cell.value if cell.value is not None else ""
-                    if cell_value and isinstance(cell_value, str):
+                    if media_value is not None:
+                        cell_value = media_value
+                    else:
+                        cell_value = cell.value if cell.value is not None else ""
+                    if media_value is None and cell_value and isinstance(cell_value, str):
                         from model_hub.utils.json_path_resolver import parse_json_safely
 
                         parsed_json, is_valid = parse_json_safely(cell_value)
@@ -952,11 +1012,12 @@ def populate_placeholders(
                     context[sanitized_col_id] = cell_value
 
                     # Debug: Log what we're adding to context
-                    logger.info(
-                        f"Added to context: column_name={column.name}, data_type={column.data_type}, "
-                        f"value_type={type(cell_value).__name__}, "
-                        f"value_preview={str(cell_value)[:100] if cell_value else 'None'}"
-                    )
+                    if media_value is None:
+                        logger.info(
+                            f"Added to context: column_name={column.name}, data_type={column.data_type}, "
+                            f"value_type={type(cell_value).__name__}, "
+                            f"value_preview={str(cell_value)[:100] if cell_value else 'None'}"
+                        )
             except Exception as e:
                 logger.exception(
                     f"Error processing column {column_id} ({column.name if 'column' in locals() else 'unknown'}): {e}"
@@ -997,6 +1058,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        literal_speech=bool(literal_speech_media),
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -1006,6 +1068,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        literal_speech=bool(literal_speech_media),
                     )
 
                 # If no content was processed, keep original
@@ -1024,18 +1087,33 @@ def populate_placeholders(
             media_error = True
             raise e
 
+    except _LiteralSpeechMediaRead as read:
+        raise LiteralSpeechMediaError(
+            _literal_speech_media_message(model_name, [read.column])
+        ) from None
     except Exception as e:
         if media_error:
             raise e
-        else:
-            traceback.print_exc()
-            logger.exception(f"Fatal error processing messages: {e}")
-            # Return original messages as fallback
-            return messages
+        if literal_speech_media:
+            # Never fall back to the original (unrendered) messages on the
+            # literal speech lane: they would be read aloud as written.
+            raise LiteralSpeechMediaError(
+                _literal_speech_unreadable_message(model_name, e)
+            ) from e
+        traceback.print_exc()
+        logger.exception(f"Fatal error processing messages: {e}")
+        # Return original messages as fallback
+        return messages
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech=False,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -1050,6 +1128,7 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                literal_speech=literal_speech,
             )
             processed_content.extend(text_segments)
         else:
@@ -1065,7 +1144,13 @@ def process_list_content(
 
 
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech=False,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -1075,13 +1160,26 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        literal_speech=literal_speech,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    literal_speech=False,
 ):
-    """Process text content, handling both templates and media placeholders"""
+    """
+    Process text content, handling both templates and media placeholders.
+
+    With literal_speech (a literal text-to-speech run whose dataset has media
+    columns), a template that reads a media value or cannot be rendered raises
+    LiteralSpeechMediaError instead of falling back to the raw template.
+    """
     try:
         # Get the text and fix doubled-up quotes
         text = fix_double_quotes(text)
@@ -1199,6 +1297,10 @@ def process_text_with_media(
             processed_text = render_template(
                 text, context, template_format=effective_format
             )
+        except _LiteralSpeechMediaRead as read:
+            raise LiteralSpeechMediaError(
+                _literal_speech_media_message(model_name, [read.column])
+            ) from None
         except Exception as render_error:
             logger.exception(
                 f"Template rendering failed: {render_error}. Template: {text[:200]}..."
@@ -1247,6 +1349,10 @@ def process_text_with_media(
         logger.exception(f"Error processing text with media: {e}")
         logger.exception(f"Template text: {text[:200]}...")
         logger.exception(f"Context keys: {list(context.keys())}")
+        if literal_speech:
+            raise LiteralSpeechMediaError(
+                _literal_speech_unreadable_message(model_name, e)
+            ) from e
         # Fallback to original text
         response = [{"type": "text", "text": text}]
         if is_pdf:

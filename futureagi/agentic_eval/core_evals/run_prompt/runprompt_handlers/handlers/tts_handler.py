@@ -85,16 +85,11 @@ def speaks_text_literally(model: str, provider: Optional[str]) -> bool:
     """
     Check if TTSHandler sends the prompt's text to a speech API to be read aloud.
 
-    True for custom speech providers and SpeechAPIHandler models. False for the
-    completion-audio lane, and for model names SpeechAPIHandler hands to the
-    completion endpoint after the speech endpoint rejects them (the same
-    case-sensitive "gpt-4o-audio-preview" check as
-    SpeechAPIHandler._should_fallback_to_completion).
+    True for custom speech providers and every SpeechAPIHandler model: that
+    handler sends the text to the speech endpoint first, even for a name it
+    may later retry through completion. False for the completion-audio lane.
     """
-    lane = tts_lane(model, provider)
-    if lane == TTS_LANE_CUSTOM:
-        return True
-    return lane == TTS_LANE_SPEECH and "gpt-4o-audio-preview" not in model
+    return tts_lane(model, provider) in (TTS_LANE_CUSTOM, TTS_LANE_SPEECH)
 
 
 class TTSHandler(BaseModelHandler):

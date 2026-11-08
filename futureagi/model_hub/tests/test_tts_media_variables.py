@@ -207,6 +207,9 @@ def columns(dataset, row):
         ("Script", DataTypeChoices.TEXT.value, "Hello there"),
         ("Say This", DataTypeChoices.TEXT.value, "{{ Recording }}"),
         ("clip.title", DataTypeChoices.TEXT.value, "Intro"),
+        # A text child named like a dict method.
+        ("clip.get", DataTypeChoices.TEXT.value, "Greeting"),
+        ("Items", DataTypeChoices.TEXT.value, '[{"Recording": "a"}, {"other": 1}]'),
         ("Recording", DataTypeChoices.AUDIO.value, RECORDING_URL),
         ("My Recording", DataTypeChoices.AUDIO.value, MY_RECORDING_URL),
         ("clip.audio", DataTypeChoices.AUDIO.value, CLIP_URL),
@@ -298,6 +301,13 @@ PREVIEW_REJECTED = [
     ("{{ clip['audio'] }}", "clip.audio", "audio"),
     ("{{ clip }}", "clip.audio", "audio"),
     ("{{ clip.get('audio') }}", "clip.audio", "audio"),
+    ("{{ clip.items() | list }}", "clip.audio", "audio"),
+    (
+        "{{ clip.title }} {% for n in [1] %}{% if false %}{% set clip = {} %}"
+        "{% endif %}{{ clip.audio.upper() }}{% endfor %}",
+        "clip.audio",
+        "audio",
+    ),
     ("{{ Cover|string }}", "Cover", "image"),
     ("{{Photos}}", "Photos", "images"),
     ("{{ Photos[0] }}", "Photos", "images"),
@@ -361,6 +371,8 @@ class TestPreviewRejectsMediaColumns:
             "neuphonic-tts",
             # An organization chat-mode model with audio output uses TTSHandler.
             "th9061-voice",
+            # The speech endpoint is called first, before any completion retry.
+            "openai/gpt-4o-audio-preview",
         ],
     )
     def test_every_literal_speech_lane_rejects(
@@ -375,7 +387,7 @@ class TestPreviewRejectsMediaColumns:
         media_fetch,
         model,
     ):
-        if model == "th9061-voice":
+        if model in ("th9061-voice", "openai/gpt-4o-audio-preview"):
             add_custom_model(organization, workspace, user, model, "openai")
 
         response = preview(
@@ -507,11 +519,63 @@ class TestPreviewRejectsMediaColumns:
         ]
 
         spoken = preview(
-            auth_client, dataset, tts_config(user_prompt("{{ take.title }}"))
+            auth_client,
+            dataset,
+            tts_config(user_prompt("{{ take.title }} {{ take }}")),
         )
         assert spoken.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
-        assert speech_boundary.call_args.kwargs["input"] == "Intro"
+        # The JSON column prints as its own text, never with the media child.
+        assert speech_boundary.call_args.kwargs["input"] == 'Intro {"title": "Intro"}'
         media_fetch.audio.assert_not_called()
+
+    def test_group_with_only_a_media_value_keeps_text_defaults(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        add_column(dataset, row, "grp.audio", DataTypeChoices.AUDIO.value, CLIP_URL)
+        add_column(dataset, row, "grp.title", DataTypeChoices.TEXT.value)  # no cell
+
+        response = preview(
+            auth_client,
+            dataset,
+            tts_config(user_prompt("{{ grp.title | default('Hello') }}")),
+        )
+
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == "Hello"
+        media_fetch.audio.assert_not_called()
+
+    def test_unreadable_message_content_fails_closed(
+        self,
+        auth_client,
+        dataset,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        content = [
+            {"type": "text", "text": None},
+            {"type": "text", "text": "Hello {{ Name }}"},
+        ]
+
+        response = preview(
+            auth_client,
+            dataset,
+            tts_config([{"role": "user", "content": content}]),
+        )
+
+        speech_boundary.assert_not_called()
+        [message] = response.json()["result"]["responses"]
+        assert message.startswith(
+            f'Text-to-speech model "{TTS_MODEL}" cannot read this prompt: '
+            "its template is invalid (TypeError:"
+        )
 
     def test_several_media_columns_are_named(
         self,
@@ -575,6 +639,7 @@ PREVIEW_SPOKEN = [
         "Intro Hello",
     ),
     ("{% for Recording in ['a', 'b'] %}{{ Recording }}{% endfor %}", "ab"),
+    ("{{ clip.title }} {% set clip = {'audio': 'Hello'} %}{{ clip.audio }}", "Intro Hello"),
     ('{{ Script | default("Hello") }}', "Hello there"),
     ("record audio with script", "record audio with script"),
 ]
@@ -718,6 +783,8 @@ SAVED_REJECTED = [
     ("f-string", "{Name:{Recording}}", "Recording", "audio"),
     ("f-string", "{My Recording}", "My Recording", "audio"),
     ("f-string", "{clip[audio]}", "clip.audio", "audio"),
+    ("f-string", "{clip.get.__self__[audio]}", "clip.audio", "audio"),
+    ("mustache", "{{#Items}}{{Recording}}{{/Items}}", "Recording", "audio"),
     ("f-string", "{Doc}", "Doc", "document"),
 ]
 
@@ -754,10 +821,10 @@ class TestSavedColumnRejectsMediaColumns:
 
         speech_boundary.assert_not_called()
         if "{{.}}" in template:
-            # The whole context is read: every media column is named.
+            # The whole context is read: the first media value reached is named.
             assert cell.value.startswith(
                 f'Text-to-speech model "{TTS_MODEL}" reads the prompt aloud as '
-                "text, so it cannot use the media columns "
+                "text, so it cannot use the "
             )
         else:
             assert cell.value == media_error(column_name, data_type)
@@ -1033,8 +1100,10 @@ class TestLiteralSpeechRouting:
         [
             ("gpt-4o-audio-preview", "openai", False),
             ("gpt-4o-audio-preview-2024-12-17", "openai", False),
-            # The speech endpoint hands this name to the completion endpoint.
-            ("openai/gpt-4o-audio-preview", "openai", False),
+            # SpeechAPIHandler sends the text to the speech endpoint first and
+            # only retries through completion after an error.
+            ("openai/gpt-4o-audio-preview", "openai", True),
+            ("azure/gpt-4o-audio-preview-voice", "azure", True),
             # A custom speech provider wins over a completion-looking name.
             ("gpt-4o-audio-preview", "neuphonic", True),
             # Audio output routes any chat-mode model to TTSHandler.
@@ -1064,20 +1133,6 @@ class TestLiteralSpeechRouting:
 
         with django_assert_num_queries(0):
             assert not is_literal_speech_run(TTS_MODEL, "string", organization.id)
-
-    def test_completion_fallback_names_match_speech_handler(self):
-        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts.speech_api_handler import (
-            SpeechAPIHandler,
-        )
-        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.tts_handler import (
-            speaks_text_literally,
-        )
-
-        for model in ("openai/gpt-4o-audio-preview", "azure/gpt-4o-audio-preview"):
-            handler = SpeechAPIHandler.__new__(SpeechAPIHandler)
-            handler.context = SimpleNamespace(model=model)
-            assert handler._should_fallback_to_completion(Exception("404"))
-            assert not speaks_text_literally(model, "openai")
 
     def test_vertex_gemini_tts_renders_media_as_before(
         self, organization, dataset, row, columns, media_fetch
