@@ -19,6 +19,7 @@ from simulate.serializers.harness_environment import (
 )
 from simulate.services import harness_readiness
 from simulate.services.agent_setup import store_agent
+from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
 from simulate.services.hosted_harness import HostedHarnessError
@@ -119,10 +120,12 @@ def _certify(
     actions=None,
     pairing=None,
     warnings=(),
+    routed=None,
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
-    per-action files and these warnings."""
+    per-action files, the tools ``routed`` to the world in qualification and these
+    warnings."""
     pairing = pairing or _pairing(environment, agent)
     key = assembly.bundle_key(
         pairing.runtime, pairing.environment_version, pairing.suite_version
@@ -136,6 +139,20 @@ def _certify(
             harness_readiness.ACTION_CERTIFICATION: json.dumps(
                 {"actions": ACTIONS if actions is None else actions}
             ).encode(),
+            **(
+                {
+                    evidence_module.TOOL_ROUTING: json.dumps(
+                        {
+                            "tools": [
+                                {"tool": name, "routed": True, "calls": 1}
+                                for name in routed
+                            ]
+                        }
+                    ).encode()
+                }
+                if routed is not None
+                else {}
+            ),
         }
     )
     HarnessAssembledBundle._base_manager.update_or_create(
@@ -2132,3 +2149,109 @@ class TestObservedRows:
 
         assert _rows(report)["streaming"]["affected"]["count"] == 0
         assert report["answer"]["kind"] == "ready"
+
+
+NOT_PROBED = [
+    {"action": "lookup_order", "status": "not_run", "reason": ""},
+    {"action": "issue_refund", "status": "not_run", "reason": ""},
+]
+
+
+class TestObservedRouting:
+    """B1: a tool seen reaching the test world in qualification is routed there."""
+
+    def test_no_probe_and_no_call_reads_untested(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "tr-none")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "untested"
+
+    def test_every_tool_seen_routed_reads_supported(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "tr-all")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+            routed=["issue_refund", "lookup_order"],
+        )
+
+        report = _report(environment)
+        routing = _rows(report)["tool_routing"]
+
+        assert routing["status"] == "supported"
+        assert {
+            "check": "tools_routed",
+            "result": "issue_refund, lookup_order",
+        } in routing["evidence"]
+        assert report["answer"]["kind"] == "ready"
+
+    def test_a_tool_never_called_stays_unshown_and_holds_only_its_cases(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-some")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+            routed=["lookup_order"],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "partial",
+            "probe_not_run",
+        )
+        assert [one["name"] for one in routing["targets"]] == ["issue_refund"]
+        assert (
+            routing["reason"] == "Not yet shown reaching the test world: issue_refund"
+        )
+
+    def test_a_failed_probe_still_blocks_a_routed_tool(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "tr-failed")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "1/2"},
+            actions=FAILED_PROBE,
+            routed=["issue_refund", "lookup_order"],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "blocked"
+
+    def test_production_only_outranks_a_routed_call(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "tr-production")
+        _certify(environment, storage, routed=["issue_refund", "lookup_order"])
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "production_only",
+        )
+
+    def test_a_call_not_marked_routed_is_not_counted(self):
+        reading = evidence_module._tool_routing(
+            evidence_module.Evidence(
+                source="pair_certificate",
+                checks={"action_behavior": "0/0"},
+                tools=[],
+                actions=NOT_PROBED,
+                checked_at=None,
+                routed=[{"tool": "lookup_order", "routed": False}],
+            )
+        )
+
+        assert reading.finding == "not_run"

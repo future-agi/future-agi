@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -40,6 +40,8 @@ logger = structlog.get_logger(__name__)
 
 TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
+# Each tool call the qualification conversation made that reached the test world.
+TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
 _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # An archive's files never change, so they are kept long; an unreadable one is tried
 # again soon.
@@ -60,6 +62,8 @@ class Evidence:
     tools: list[Mapping[str, Any]]
     actions: list[Mapping[str, Any]]
     checked_at: str | None
+    # Tools observed reaching the test world in the qualification conversation.
+    routed: list[Mapping[str, Any]] = field(default_factory=list)
     # A build certificate of an earlier environment version than the pairing's, read
     # because the pairing's own version has none.
     made_for: HarnessEnvironmentVersion | None = None
@@ -102,7 +106,7 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
     try:
         found = archives.read_members(
             archives.get_archive(object_key),
-            {TOOL_CERTIFICATION, ACTION_CERTIFICATION},
+            {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
             _MAX_CERTIFICATION_BYTES,
         )
     except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
@@ -111,12 +115,17 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: dict[str, list[Mapping[str, Any]]] = {"tools": [], "actions": []}
+        unreadable: dict[str, list[Mapping[str, Any]]] = {
+            "tools": [],
+            "actions": [],
+            "routed": [],
+        }
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     files = {
         "tools": _items(_json(found.get(TOOL_CERTIFICATION)), "tools"),
         "actions": _items(_json(found.get(ACTION_CERTIFICATION)), "actions"),
+        "routed": _items(_json(found.get(TOOL_ROUTING)), "tools"),
     }
     cache.set(cache_key, files, timeout=_FILES_TTL_SECONDS)
     return files
@@ -166,6 +175,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             tools=files["tools"],
             actions=files["actions"],
             checked_at=bundle.updated_at.isoformat(),
+            routed=files.get("routed", []),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -174,17 +184,19 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
     certificate = data.get("certificate")
     checks = certificate.get("checks") if isinstance(certificate, Mapping) else None
     # Only an archive kept whole holds the sealed tool certification.
-    tools = (
-        _certification_files(version.archive_object_key)["tools"]
+    files = (
+        _certification_files(version.archive_object_key)
         if version.archive_layout == ArchiveLayout.COMBINED
-        else []
+        else {}
     )
+    tools = files.get("tools", [])
     return Evidence(
         source="build_certificate",
         checks=checks if isinstance(checks, Mapping) else {},
         tools=tools,
         actions=_items(data.get("action_certification"), "actions"),
         checked_at=version.created_at.isoformat(),
+        routed=files.get("routed", []),
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
     )
@@ -332,14 +344,22 @@ def _tool_routing(evidence: Evidence) -> Reading:
             targets("action", failed, "failed"),
             seen,
         )
-    # A refused probe is the agent declining a call it should decline: a pass.
-    passed = _actions(evidence, "passed", "refused")
-    not_run = _actions(evidence, "not_run")
+    # A refused probe is the agent declining a call it should decline: a pass. A tool
+    # seen reaching the test world in the qualification conversation is routed there.
+    routed = sorted(
+        str(item.get("tool") or "")
+        for item in evidence.routed
+        if item.get("routed") is True and item.get("tool")
+    )
+    passed = sorted({*_actions(evidence, "passed", "refused"), *routed})
+    not_run = [one for one in _actions(evidence, "not_run") if one not in routed]
+    if routed:
+        seen = [*seen, {"check": "tools_routed", "result": ", ".join(routed)}]
     if passed and not_run:
         return Reading(
             "limited",
             "probe_not_run",
-            "Not probed: " + ", ".join(not_run),
+            "Not yet shown reaching the test world: " + ", ".join(not_run),
             targets("action", not_run, "not_run"),
             seen,
         )
