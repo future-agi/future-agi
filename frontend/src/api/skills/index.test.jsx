@@ -48,6 +48,39 @@ afterEach(() => { cleanup(); client.clear(); });
 });
 
 describe('queries', () => {
+  it.each(['detail', 'draft', 'file'])('retains a shared %s refetch when the dialog observer closes', async (kind) => {
+    let finish;
+    const wire = (number) => {
+      if (kind === 'detail') return { id: 'id', latest_version: number };
+      if (kind === 'draft') return { revision: number, base_version: 1, files: [] };
+      return { path: 'SKILL.md', sha256: 'synthetic', offset: 0, text: String(number), next_offset: null, eof: true, total_chars: 1, size_bytes: 1 };
+    };
+    const useRead = () => {
+      const detail = api.useSkill(kind === 'detail' ? 'id' : null);
+      const draft = api.useSkillDraft(kind === 'draft' ? 'id' : null);
+      const file = api.useSkillFile('id', 1, kind === 'file' ? 'SKILL.md' : null);
+      return { detail, draft, file }[kind];
+    };
+    axios.get.mockResolvedValueOnce(envelope(wire(1)))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const page = renderHook(useRead, { wrapper });
+    await waitFor(() => expect(page.result.current.isSuccess).toBe(true));
+    // Subscribe to data before the refetch, as the rendered page does. React
+    // Query otherwise only notifies for the isSuccess property read above.
+    expect(page.result.current.data).toBeDefined();
+    const dialog = renderHook(useRead, { wrapper });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    const signal = axios.get.mock.calls[1][1].signal;
+    dialog.unmount();
+    expect(signal.aborted).toBe(false);
+    await act(async () => { finish(envelope(wire(2))); });
+    await waitFor(() => {
+      if (kind === 'detail') expect(page.result.current.data.latestVersion).toBe(2);
+      else if (kind === 'draft') expect(page.result.current.data.revision).toBe(2);
+      else expect(page.result.current.data.text).toBe('2');
+    });
+    expect(page.result.current.isError).toBe(false);
+  });
   it('maps list pagination and sends page_size and an AbortSignal', async () => {
     axios.get.mockResolvedValue(envelope({ results: [], page: 2, page_size: 50, total_pages: 3, count: 101 }));
     const { result } = renderHook(() => api.useSkillsList({ page: 2, pageSize: 50, search: 'policy' }), { wrapper });

@@ -2475,3 +2475,58 @@
 - ZIP preview disables the invalid bundle and imports only the valid identity
 - installed bytes and lock identity plus real MCP reconstruction equal the immutable manifest, including the long UTF-8 fixture
 - API, download and MCP fetch accounting increases for the minted skill without claiming execution
+
+### SKILLS-E2E-002 — review a policy repair and deliberately release its exact evidence
+
+**Goal:** A contributor verifies a policy repair against reviewed examples, publishes exactly the shared evidence-backed candidate without moving production, and an administrator deliberately promotes or rolls it back
+
+**Spec:** `flows/skills/reviewed-release.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a member draft based on a synthetic production policy and author reviewed boundary, exclusion and near-miss examples
+2. review model, inventory and spend; run the first comparison and inspect its failing answer
+3. repair policy bytes in the editor, await autosave and compare the saved candidate against pinned production again
+4. inspect selection, root/reference delivery and answer outcomes separately, then explicitly share the private evidence
+5. publish the tested revision and digest with its evidence, leaving protected production unchanged
+6. verify member promotion denial, then have an administrator review and promote the exact candidate
+7. inspect history, execute an ABA pointer sequence, reject stale aggregate release state and explicitly roll back
+
+**Backend state verified:**
+
+- saved cases and review attribution exactly match the authored case IDs in the actor workspace
+- run snapshot candidate revision and digest equal the acknowledged saved draft and production is pinned
+- the complete planned case-by-arm matrix, answers, grades and root/reference receipts match the programmed transport ledger, preserving exclusion and near-miss behavior
+- private evidence is absent from non-owner reads and counts until explicit sharing
+- publication creates the exact tested immutable candidate and evidence association while production remains on baseline, and forbidden promotion changes nothing
+- authorized promotion records the intended version, actor, evidence and release revision
+- an ABA sequence rejects stale release_revision even when expected_version matches, without another event
+- rollback moves only the pointer to the exact prior immutable version and retained history remains available
+
+### SKILLS-E2E-003 — review and stage an exact GitHub update without overwriting local work
+
+**Goal:** A maintainer reviews a public source and stages its exact update without overwriting a personal draft, silently merging local customizations or changing production
+
+**Spec:** `flows/skills/github-draft-update.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. preview a synthetic multi-root repository and advance its branch before choosing a root at the original commit
+2. review the exact files and inherited LICENSE/NOTICE, confirm rights and import an unpublished draft
+3. publish explicitly, then author and publish a local customization with honest source provenance
+4. create a personal draft, check upstream updates and inspect the replacement diff and divergence
+5. verify that staging is blocked and preserves the personal draft, then explicitly discard it through the editor confirmation
+6. review replacement consequences, stage the retained update and inspect unchanged releases and the replay receipt
+
+**Backend state verified:**
+
+- root continuation keeps the original immutable SHA and tracked ref despite branch movement
+- the staged initial bundle includes the exact reviewed paths, license and NOTICE bytes and provenance without publication
+- publication alone adopts the source binding and local edits retain honest source and local_modifications metadata
+- update diff compares the retained upstream basis and current local content and exposes divergence
+- existing-draft rejection preserves exact files and revision, and explicit discard enables only the reviewed replacement
+- staging leaves immutable releases and labels unchanged and replay returns the same destination and draft revision without another save
