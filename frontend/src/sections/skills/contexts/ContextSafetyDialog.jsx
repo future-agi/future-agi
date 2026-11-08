@@ -23,7 +23,7 @@ function Safety({ scopeKey, open, onClose, action, resource, review, canAct = fa
     const result = await operation.run(onApply, input);
     if (result) onApplied?.(result);
   };
-  return <ClosableDialog open={open} onClose={operation.pending ? undefined : onClose} fullWidth maxWidth="sm" aria-labelledby="context-safety-title">
+  return <ClosableDialog open={open} onClose={(...args) => { if (!operation.pending) onClose(...args); }} fullWidth maxWidth="sm" aria-labelledby="context-safety-title">
     <DialogTitle id="context-safety-title">{labels[action]}</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>
       <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>{resource.name} · {resource.id}</Typography>

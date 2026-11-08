@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { AuthoringError, FileChanges, useAuthoringOperation, useExpired } from "./HotfixHeadReview";
@@ -23,6 +23,9 @@ function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints 
   const [exportedSequence, setExportedSequence] = useState(null);
   const exported = exportedSequence !== null && exportedSequence === session.editSequence;
   const operation = useAuthoringOperation(scopeKey);
+  const latestSession = useRef(session);
+  latestSession.current = session;
+  const [newerEdits, setNewerEdits] = useState(false);
   const checkpoint = checkpoints.find((item) => item.id === selected);
   const expired = useExpired(checkpoint?.expiresAt);
   const restoreInput = { checkpointId: checkpoint?.id, revision: session.revision, expectedDigest: checkpoint?.digest };
@@ -38,24 +41,37 @@ function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints 
   };
   const preserve = async () => {
     if (!confirmed) return;
+    let savedSequence;
+    let savedRevision;
     const result = await operation.run(async (_, options) => {
       const saved = await session.flush();
       if (!saved) throw Object.assign(new Error("Save conflict"), { code: "draft_conflict" });
+      savedSequence = latestSession.current.editSequence;
+      savedRevision = saved.revision;
       // Server checkpoints and suspends atomically. Starting the selected origin is
       // a separate explicit action in the caller; no overwrite fallback is allowed.
       return onSuspend({ revision: saved.revision, expectedDigest: saved.digest, reason: "switch" }, options);
     }, { action: "suspend", revision: session.revision, editSequence: session.editSequence });
-    if (result) onPreserved?.(result);
+    if (result) {
+      if (latestSession.current.editSequence !== savedSequence || latestSession.current.revision !== savedRevision) setNewerEdits(true);
+      else onPreserved?.(result);
+    }
   };
   const restore = async () => {
     if (!checkpoint || restoreExpired || hasLiveDraft || !confirmed) return;
+    const sequence = latestSession.current.editSequence;
+    const revision = latestSession.current.revision;
     const result = await operation.run(onRestore, restoreInput);
-    if (result) { session.reload(result); onPreserved?.(result); }
+    if (result) {
+      if (latestSession.current.editSequence !== sequence || latestSession.current.revision !== revision) setNewerEdits(true);
+      else { session.reload(result); onPreserved?.(result); }
+    }
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Preserve your draft</Typography>
     <Typography variant="s1">Your local r{session.revision} · server {serverDraft ? `r${serverDraft.revision}` : "not loaded"}. No automatic merge or overwrite.</Typography>
     <AuthoringError error={operation.error} />
+    {newerEdits && <Alert severity="warning">The saved recovery operation completed, but newer local edits remain here. Download those edits before switching or reloading; this view did not replace them.</Alert>}
     <Button variant="outlined" onClick={exportLocal}>Download unsent edits</Button>
     {exported && <Typography variant="s3" role="status">Download requested. Keep the private export before leaving this draft.</Typography>}
     <TextField select size="small" label="Compare local changes with" value={comparison} onChange={(event) => setComparison(event.target.value)}>

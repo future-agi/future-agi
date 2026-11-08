@@ -160,6 +160,25 @@ describe("lifecycle authority and exact consequences", () => {
 });
 
 describe("additional recovery boundaries", () => {
+  it.each(["suspend", "restore"])("retains edits typed during a pending %s instead of navigating or reloading", async (action) => {
+    const session = draft(); const pending = deferred(); const preserved = vi.fn(); const write = vi.fn(() => pending.promise);
+    const props = { scopeKey, session, onPreserved: preserved, hasLiveDraft: action === "suspend", onSuspend: write, onRestore: write, checkpoints: [{ id: "saved", draftRevision: 2, reason: "switch", digest, expiresAt: future }] };
+    const view = render(<RecoverableDraftChanges {...props} />);
+    if (action === "suspend") { check("Save a recovery checkpoint and suspend my current draft."); click("Preserve and suspend draft"); }
+    else { choose("Recovery checkpoint", "r2 · switch"); check("Restore this checkpoint as a new draft revision, without changing production."); click("Restore private checkpoint"); }
+    await waitFor(() => expect(write).toHaveBeenCalledOnce());
+    view.rerender(<RecoverableDraftChanges {...props} session={{ ...session, editSequence: 1, dirty: true, files: [{ path: "AGENTS.md", content: "New unsent edits" }] }} />);
+    await act(async () => pending.resolve({ ...session, revision: 20 }));
+    expect(session.reload).not.toHaveBeenCalled(); expect(preserved).not.toHaveBeenCalled();
+    expect(screen.getByText(/newer local edits remain here/)).toBeVisible();
+  });
+  it("keeps the dialog close control visible but does not dismiss an in-flight mutation", async () => {
+    const pending = deferred(); const close = vi.fn();
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={close} action="unarchive" resource={{ id: "resource", name: "policy" }} review={{ subjectId: "resource", releaseRevision: 1 }} canAct onApply={() => pending.promise} />);
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover" } }); check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
+    expect(button("Close")).toBeVisible(); click("Close"); expect(close).not.toHaveBeenCalled();
+    await act(async () => pending.resolve({ id: "resource" }));
+  });
   it("requires a new export after local edits before adopting the server draft", async () => {
     const session = draft();
     const url = globalThis.URL;

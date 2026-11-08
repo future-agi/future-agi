@@ -44,7 +44,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     if (result) onCreated?.(result);
   };
   const locked = operation.pending || submitted;
-  return <ClosableDialog open={open} onClose={operation.pending ? undefined : onClose} fullWidth maxWidth="md" aria-labelledby="context-import-title">
+  return <ClosableDialog open={open} onClose={(...args) => { if (!operation.pending) onClose(...args); }} fullWidth maxWidth="md" aria-labelledby="context-import-title">
     <DialogTitle id="context-import-title">Create agent context</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1, minWidth: 0 }}>
       <Typography variant="s1">AGENTS.md is standing context. Skills load when needed. Import creates a private draft; production and source applications stay unchanged.</Typography>
