@@ -65,7 +65,7 @@ export const mapOutboundFinding = (value) => ({
   location: fields(value.location, [['kind'], ['skill_id', 'skillId'], ['digest'], ['path'], ['case_id', 'caseId'], ['fixture_id', 'fixtureId'], ['check_id', 'checkId'], ['pointer'], ['line']]),
 });
 export const mapTestingOptions = (value) => ({
-  enabled: value.enabled, githubEnabled: value.github_enabled, limits: mapLimits(value.limits), harnessVersion: value.harness_version, evaluatorVersion: value.evaluator_version,
+  enabled: value.enabled, assistEnabled: value.assist_enabled === true, githubEnabled: value.github_enabled, limits: mapLimits(value.limits), harnessVersion: value.harness_version, evaluatorVersion: value.evaluator_version,
   models: value.models.map((model) => fields(model, [['model_id', 'modelId'], ['provider'], ['configured'], ['tool_support', 'toolSupport'], ['context_limit', 'contextLimit'], ['pricing_status', 'pricingStatus'], ['can_run', 'canRun'], ['disabled_reason', 'disabledReason']])),
 });
 export const mapRunPreview = (value) => ({

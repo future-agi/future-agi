@@ -22,7 +22,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
   const { mutateAsync } = useSaveSkillDraft(skillId);
   const saveDraft = resourceApi ? resourceApi.saveDraft : mutateAsync;
   const saveInput = resourceApi ? resourceApi.saveInput : skillSaveInput;
-  const dirty = state.editSequence !== state.savedSequence || state.pendingMutations > 0;
+  const dirty = state.editSequence !== state.savedSequence || state.pendingMutations > 0 || Boolean(state.mutationError);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; generation.current += 1; };
@@ -43,7 +43,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
     const request = (async () => saveDraft(saveInput(snapshot, revision ?? snapshot.revision)))()
       .then((draft) => {
         if (!mounted.current || epoch !== generation.current) return null;
-        update({ ...latest.current, revision: draft.revision, source: draft.source, savedFiles: snapshot.files, savedSequence: snapshot.editSequence, status: "saved", error: null });
+        update({ ...latest.current, revision: draft.revision, source: draft.source, savedFiles: snapshot.files, savedSequence: snapshot.editSequence, status: latest.current.mutationError ? "error" : "saved", error: latest.current.mutationError });
         return draft;
       }).catch((error) => {
         if (mounted.current && epoch === generation.current) update({ ...latest.current, status: getSkillErrorCode(error) === "draft_conflict" ? "conflict" : "error", error });
@@ -89,7 +89,14 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
     const request = mutations.current.then(async () => {
       if (!mounted.current || epoch !== generation.current) return null;
       const acknowledged = await flushLocal();
-      if (!acknowledged) return null;
+      if (!mounted.current || epoch !== generation.current) return null;
+      if (!acknowledged) {
+        // A failed prerequisite save means the requested server mutation never
+        // ran. A later ordinary save must not acknowledge that omitted intent.
+        const error = latest.current.error ?? new Error("Save failed before the draft operation. Retry the operation or reload the draft.");
+        update({ ...latest.current, mutationError: error });
+        return null;
+      }
       const snapshot = latest.current;
       update({ ...snapshot, status: "saving" });
       const mutation = Promise.resolve().then(() => operation(acknowledged)).then((draft) => {

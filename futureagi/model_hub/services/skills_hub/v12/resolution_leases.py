@@ -74,6 +74,41 @@ def require_distribution_eligibility(version: HubSkillVersion) -> None:
     )
 
 
+def check_snapshot_distribution(*, scope: SkillScope, snapshot: dict) -> None:
+    """Reauthorize frozen published arms without following current labels.
+
+    Called at every worker file-delivery and paid-call boundary. Draft bytes are
+    private input, while every published arm retains its exact version identity.
+    Context versions additionally recheck their complete retained child closure.
+    """
+    bundles = [
+        snapshot.get("candidate"),
+        snapshot.get("production"),
+        snapshot.get("reference"),
+        *snapshot.get("competitors", []),
+    ]
+    for bundle in bundles:
+        if not bundle or bundle.get("version_id") is None:
+            continue
+        version = (
+            HubSkillVersion.objects.select_related("skill")
+            .filter(
+                pk=bundle["version_id"],
+                skill_id=bundle["skill_id"],
+                skill__organization_id=scope.organization_id,
+                skill__workspace_id=scope.workspace_id,
+                number=bundle["version"],
+                digest=bundle["digest"],
+            )
+            .first()
+        )
+        if version is None:
+            raise SkillsHubError(
+                "access_revoked", "A frozen release is no longer available.", status=403
+            )
+        check_quarantine_closure(scope=scope, version=version)
+
+
 def authorize_grant(
     *, principal: ContextCredentialPrincipal, version: HubSkillVersion, requested: dict
 ) -> dict:

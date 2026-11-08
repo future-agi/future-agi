@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PublishDialog from "./PublishDialog";
 
-const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), refreshCompare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn(), currentSkill: null }));
+const api = vi.hoisted(() => ({ publish: vi.fn(), checks: vi.fn(), compare: vi.fn(), refreshCompare: vi.fn(), navigate: vi.fn(), snackbar: vi.fn(), refetch: vi.fn(), save: vi.fn(), currentSkill: null, assistEnabled: true }));
 vi.mock("src/api/skills", () => ({
   useSkill: () => ({ data: api.currentSkill ?? skill, refetch: async () => ({ data: skill }) }),
   usePublishSkillDraft: () => ({ mutateAsync: api.publish, isPending: false }),
@@ -14,6 +14,7 @@ vi.mock("src/api/skills", () => ({
   useSaveSkillDraft: () => ({ mutateAsync: api.save }),
   getSkillErrorCode: (error) => error.code,
 }));
+vi.mock("src/api/skills/testing", () => ({ useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => api.navigate }));
 vi.mock("notistack", () => ({ enqueueSnackbar: api.snackbar }));
 vi.mock("src/sections/skills/components/TextDiff", () => ({ default: ({ fromText, toText }) => <div data-testid="diff">{fromText} → {toText}</div> }));
@@ -28,7 +29,7 @@ const renderDialog = (overrides = {}) => render(<PublishDialog open onClose={vi.
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.currentSkill = null;
+  api.currentSkill = null; api.assistEnabled = true;
   vi.stubGlobal("crypto", webcrypto);
   api.checks.mockResolvedValue(checks());
   api.publish.mockResolvedValue({ version: { number: 3 }, unchanged: false });
@@ -324,3 +325,10 @@ vi.mock("src/sections/skills/assist/AssistPanel", () => ({ default: ({ onUseSumm
    expect(api.publish).not.toHaveBeenCalled();
    expect(api.save).not.toHaveBeenCalled();
  });
+
+it('keeps summary generation disabled independently of text testing permission', async () => {
+  api.assistEnabled = false;
+  renderDialog();
+  expect(await screen.findByRole('button', { name: 'Summarize changes' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Use summary suggestion' })).not.toBeInTheDocument();
+});
