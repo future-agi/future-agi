@@ -753,6 +753,51 @@ class TestPreviewStillSpeaksText:
         assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
         assert speech_boundary.call_args.kwargs["input"] == "First Ada. Then Intro."
 
+    def test_completion_audio_call_succeeds(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        dataset,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        import base64
+
+        add_custom_model(
+            organization, workspace, user, "gpt-4o-audio-preview", "openai"
+        )
+        result = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        audio=SimpleNamespace(
+                            data=base64.b64encode(SILENT_WAV).decode("ascii")
+                        )
+                    )
+                )
+            ]
+        )
+        with patch("litellm.completion", return_value=result) as completion:
+            response = preview(
+                auth_client,
+                dataset,
+                tts_config(
+                    user_prompt("Hello {{ Name }}"), model="gpt-4o-audio-preview"
+                ),
+            )
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        completion.assert_called_once()
+        payload = completion.call_args.kwargs
+        assert payload["model"] == "gpt-4o-audio-preview"
+        assert payload["messages"] == user_prompt("Hello Ada")
+        assert payload["modalities"] == ["text", "audio"]
+        speech_boundary.assert_not_called()
+        media_fetch.audio.assert_not_called()
+
     def test_completion_audio_model_keeps_its_media_handling(
         self,
         auth_client,
@@ -1186,6 +1231,178 @@ class TestConditionalBranchReportsTheRejection:
         speech_boundary.assert_not_called()
         assert value == media_error("Recording", "audio")
         assert value_infos == {"reason": media_error("Recording", "audio")}
+        media_fetch.audio.assert_not_called()
+
+
+# ------------------------------------------------------- recovery regressions
+
+
+def test_sentry_local_capture_contains_the_media_tripwire():
+    import sys
+
+    from sentry_sdk.client import get_options
+    from sentry_sdk.utils import event_from_exception
+
+    from model_hub.views.run_prompt import _LiteralSpeechMediaValue
+
+    media = _LiteralSpeechMediaValue(SimpleNamespace(name="Recording"))
+    try:
+        raise ValueError("synthetic render failure")
+    except ValueError:
+        event, _ = event_from_exception(
+            sys.exc_info(), client_options=get_options(include_local_variables=True)
+        )
+    error = event["exception"]["values"][0]
+    assert error["type"] == "ValueError"
+    assert error["value"] == "synthetic render failure"
+    assert "media" in error["stacktrace"]["frames"][-1]["vars"]
+    assert type(media) is _LiteralSpeechMediaValue
+
+
+@pytest.mark.django_db
+class TestLiteralSpeechLookupBoundaries:
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "{{ clip.get('audio') is none }}",
+            "{{ clip.get('audio') is sameas(none) }}",
+            "{{ clip.get('audio') is callable }}",
+            "{% set x = clip['audio'] %}{{ x is boolean }}",
+            "{% set Recording = Recording %}{{ Recording is none }}",
+            "{{ clip.values() | list | length }}",
+            "{{ clip | length }}",
+            "{{ clip.get('audio') | default('fallback') }}",
+        ],
+    )
+    def test_media_cannot_be_reduced_without_a_read(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        template,
+    ):
+        add_column(dataset, row, "clip.audio", "audio", CLIP_URL)
+        add_column(dataset, row, "Recording", "audio", RECORDING_URL)
+        response = preview(auth_client, dataset, tts_config(user_prompt(template)))
+        expected = "Recording" if "Recording" in template else "clip.audio"
+        assert response.json()["result"]["responses"] == [
+            media_error(expected, "audio")
+        ]
+        speech_boundary.assert_not_called()
+        media_fetch.audio.assert_not_called()
+        media_fetch.inline.assert_not_called()
+
+    def test_json_parent_method_is_not_a_media_child_read(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        add_column(dataset, row, "clip", "text", '{"title":"Hello"}')
+        add_column(dataset, row, "clip.get", "audio", CLIP_URL)
+        response = preview(
+            auth_client, dataset, tts_config(user_prompt("{{ clip.get('title') }}"))
+        )
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == "Hello"
+        media_fetch.audio.assert_not_called()
+
+    @pytest.mark.parametrize("string_content", [False, True])
+    def test_text_renders_once_and_preserves_message_order(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+        string_content,
+    ):
+        add_column(dataset, row, "Recording", "audio", RECORDING_URL)
+        add_column(dataset, row, "Script", "text", '{"lines":["Hello","Goodbye"]}')
+        content = "{{ Script.lines.pop(0) }}"
+        messages = [
+            {
+                "role": "user",
+                "content": content if string_content else text_part(content),
+            },
+            {
+                "role": "user",
+                "content": content if string_content else text_part(content),
+            },
+        ]
+        response = preview(auth_client, dataset, tts_config(messages))
+        assert response.json()["result"]["responses"] == [SPOKEN_AUDIO_URL]
+        assert speech_boundary.call_args.kwargs["input"] == "Hello Goodbye"
+        media_fetch.audio.assert_not_called()
+
+    def test_later_mutating_text_is_checked_before_earlier_inline_media(
+        self,
+        auth_client,
+        dataset,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        add_column(dataset, row, "clip.audio", "audio", CLIP_URL)
+        add_column(dataset, row, "clip.title", "text", "Hello")
+        add_column(dataset, row, "Selector", "text", '{"order":["title","audio"]}')
+        template = "{{ clip.get(Selector.order.pop(0)) }}"
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "audio_url", "audio_url": {"url": RECORDING_URL}},
+                    {"type": "text", "text": template},
+                    {"type": "text", "text": template},
+                ],
+            }
+        ]
+        response = preview(auth_client, dataset, tts_config(messages))
+        assert response.json()["result"]["responses"] == [
+            media_error("clip.audio", "audio")
+        ]
+        speech_boundary.assert_not_called()
+        media_fetch.inline.assert_not_called()
+
+    def test_existing_pass_cell_can_be_rerun(
+        self,
+        dataset,
+        organization,
+        workspace,
+        row,
+        columns,
+        openai_provider_key,
+        speech_boundary,
+        media_fetch,
+    ):
+        run_prompter, column = saved_tts_column(
+            dataset,
+            organization,
+            workspace,
+            row,
+            user_prompt("Hello {{ Name }}"),
+            "jinja",
+        )
+        prior = Cell.objects.create(
+            dataset=dataset,
+            column=column,
+            row=row,
+            value="https://audio.example/prior.mp3",
+            status=CellStatus.PASS.value,
+        )
+        cell = rerun_saved_column(run_prompter, column, row)
+        assert cell.pk == prior.pk
+        assert cell.status == CellStatus.PASS.value
+        assert cell.value == SPOKEN_AUDIO_URL
+        assert speech_boundary.call_args.kwargs["input"] == "Hello Ada"
         media_fetch.audio.assert_not_called()
 
 

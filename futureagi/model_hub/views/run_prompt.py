@@ -7,6 +7,7 @@ import string
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 from typing import Any, NamedTuple
 
 import chevron
@@ -22,6 +23,7 @@ from drf_yasg.utils import swagger_auto_schema
 from jinja2 import meta as jinja2_meta
 from jinja2 import nodes as jinja2_nodes
 from jinja2.idtracking import VAR_LOAD_RESOLVE
+from jinja2.runtime import Context
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -464,7 +466,8 @@ def _inline_spaced_jinja2_variables(template_str: str, context: dict):
 
 
 def render_template(
-    template_str: str, context: dict, template_format: str = None
+    template_str: str, context: dict, template_format: str = None,
+    *, literal_speech: bool = False,
 ) -> str:
     """
     Render a template string with the given context.
@@ -492,7 +495,8 @@ def render_template(
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
         processed, safe_ctx, _ = _inline_spaced_jinja2_variables(template_str, context)
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
+        environment = _literal_speech_jinja2_env if literal_speech else _jinja2_env
+        return environment.from_string(processed).render(**safe_ctx)
 
     else:
         raise ValueError(
@@ -600,7 +604,7 @@ def _context_path(root, keys, context) -> tuple:
     path = [root]
     value = context.get(root)
     for key in keys:
-        if type(value) is dict:
+        if type(value) in (dict, JsonStr):
             attribute_first = isinstance(key, _Attribute)
             if hasattr(dict, key) and (attribute_first or key not in value):
                 break
@@ -841,6 +845,81 @@ class _LiteralSpeechMediaValue(metaclass=_LiteralSpeechMediaValueType):
     __add__ = __radd__ = __mul__ = __rmul__ = __mod__ = __rmod__ = _read
 
 
+def _reject_media_value(value):
+    """Reject at lookup boundaries, before identity tests can discard provenance."""
+    if type(value) is _LiteralSpeechMediaValue:
+        raise _LiteralSpeechMediaRead(object.__getattribute__(value, "_column"))
+    return value
+
+
+def _reject_contained_media(value, seen=None):
+    _reject_media_value(value)
+    if type(value) not in (
+        dict,
+        JsonStr,
+        list,
+        tuple,
+        type({}.values()),
+        type({}.items()),
+    ):
+        return
+    if seen is None:
+        seen = set()
+    if id(value) in seen:
+        return
+    seen.add(id(value))
+    children = value.values() if type(value) in (dict, JsonStr) else value
+    for child in children:
+        _reject_contained_media(child, seen)
+
+
+def _guard_template_operation(operation):
+    # Keep Jinja's pass_context/pass_environment metadata via wraps. A filter
+    # or identity test must not silently reduce a media-containing value to a
+    # boolean, count, or default without ever coercing the media value.
+    @wraps(operation)
+    def guarded(*args, **kwargs):
+        for value in (*args, *kwargs.values()):
+            _reject_contained_media(value)
+        return _reject_media_value(operation(*args, **kwargs))
+
+    return guarded
+
+
+class _MediaGuardedContext(Context):
+    def resolve_or_missing(self, key):
+        return _reject_media_value(super().resolve_or_missing(key))
+
+
+class _MediaGuardedEnvironment(SandboxedEnvironment):
+    context_class = _MediaGuardedContext
+
+    def __init__(self):
+        super().__init__()
+        self.filters = {
+            name: _guard_template_operation(operation)
+            for name, operation in self.filters.items()
+        }
+        self.tests = {
+            name: _guard_template_operation(operation)
+            for name, operation in self.tests.items()
+        }
+
+    def getattr(self, obj, attribute):
+        return _reject_media_value(super().getattr(obj, attribute))
+
+    def getitem(self, obj, argument):
+        return _reject_media_value(super().getitem(obj, argument))
+
+    def call(self, context, obj, *args, **kwargs):
+        result = super().call(context, obj, *args, **kwargs)
+        _reject_contained_media(result)
+        return result
+
+
+_literal_speech_jinja2_env = _MediaGuardedEnvironment()
+
+
 def check_literal_speech_prompt(
     text, template_format, context, media_columns, model_name
 ):
@@ -1046,6 +1125,7 @@ def populate_placeholders(
         # Process messages
         image_counter = 0
         processed_messages = []
+        prepared_text = None
         try:
             if literal_speech_media:
                 # Check and render every message's text before any content
@@ -1057,7 +1137,10 @@ def populate_placeholders(
                     model_name,
                     template_format,
                 )
-                for text in _message_texts(messages):
+                # Materialize every text result before processing any inline
+                # media. Reuse those segments: a second render could mutate the
+                # context and either speak different text or reject too late.
+                prepared_text = iter([
                     process_text_with_media(
                         text,
                         column_info,
@@ -1067,6 +1150,8 @@ def populate_placeholders(
                         template_format=template_format,
                         literal_speech=True,
                     )
+                    for text in _message_texts(messages)
+                ])
             for message in messages:
                 content = message.get("content")
                 processed_content = []
@@ -1080,6 +1165,7 @@ def populate_placeholders(
                         model_name,
                         template_format=template_format,
                         literal_speech=bool(literal_speech_media),
+                        prepared_text=prepared_text,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -1090,6 +1176,7 @@ def populate_placeholders(
                         model_name,
                         template_format=template_format,
                         literal_speech=bool(literal_speech_media),
+                        prepared_text=prepared_text,
                     )
 
                 # If no content was processed, keep original
@@ -1135,6 +1222,7 @@ def process_list_content(
     model_name,
     template_format=None,
     literal_speech=False,
+    prepared_text=None,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -1142,14 +1230,18 @@ def process_list_content(
     for item in content:
         if "text" in item:
             # Process text content with templates and media
-            text_segments = process_text_with_media(
-                item["text"],
-                column_info,
-                context,
-                image_counter,
-                model_name,
-                template_format=template_format,
-                literal_speech=literal_speech,
+            text_segments = (
+                next(prepared_text)
+                if prepared_text is not None
+                else process_text_with_media(
+                    item["text"],
+                    column_info,
+                    context,
+                    image_counter,
+                    model_name,
+                    template_format=template_format,
+                    literal_speech=literal_speech,
+                )
             )
             processed_content.extend(text_segments)
         else:
@@ -1172,8 +1264,11 @@ def process_string_content(
     model_name,
     template_format=None,
     literal_speech=False,
+    prepared_text=None,
 ):
     """Process string-type content with proper media handling"""
+    if prepared_text is not None:
+        return next(prepared_text)
     return process_text_with_media(
         content,
         column_info,
@@ -1316,7 +1411,8 @@ def process_text_with_media(
             effective_format = TEMPLATE_FORMAT_JINJA2
         try:
             processed_text = render_template(
-                text, context, template_format=effective_format
+                text, context, template_format=effective_format,
+                literal_speech=literal_speech,
             )
         except _LiteralSpeechMediaRead as read:
             raise LiteralSpeechMediaError(
