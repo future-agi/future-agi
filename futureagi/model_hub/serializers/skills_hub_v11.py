@@ -234,6 +234,15 @@ class CheckConfig(HubV11Serializer):
     complete = Boolean(required=False)
     requirement = s.CharField(max_length=2000, trim_whitespace=False, required=False)
 
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        # DRF emits None for an absent nullable field. Only json_equals owns
+        # "value"; adding it to another kind makes the saved case fail strict
+        # validation on its next save. Preserve an explicitly supplied JSON null.
+        if "value" not in instance:
+            result.pop("value", None)
+        return result
+
 
 class Check(HubV11Serializer):
     id = s.UUIDField()

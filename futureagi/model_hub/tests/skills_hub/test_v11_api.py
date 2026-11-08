@@ -260,6 +260,51 @@ def test_suite_read_save_conflict_and_unknown_fields(client, hub_skill, user):
     )
 
 
+@pytest.mark.parametrize(
+    "kind,config",
+    [
+        ("contains", {"text": "eligible", "case_sensitive": False}),
+        ("not_contains", {"text": "exception", "case_sensitive": False}),
+        ("json_valid", {}),
+        ("json_equals", {"pointer": "/eligible", "value": False}),
+        ("json_equals", {"pointer": "/missing", "value": None}),
+        ("json_schema", {"schema": {"type": "object"}}),
+        ("file_delivered", {"path": "references/policy.md", "complete": True}),
+        ("semantic", {"requirement": "Respect the supplied policy."}),
+    ],
+)
+def test_saved_check_config_round_trips_when_adding_another_case(
+    client, hub_skill, kind, config
+):
+    url = f"{BASE}{hub_skill.pk}/tests/"
+    output_only = {"reviewed_by", "reviewed_at", "origin", "exposed_to_assist"}
+    example = {key: value for key, value in case().items() if key not in output_only}
+    example["checks"][0].update(kind=kind, config=config)
+    saved = result(client.put(url, {"revision": 0, "cases": [example]}, format="json"))
+    # Missing optional fields must stay absent; an explicit JSON null must remain.
+    assert saved["cases"][0]["checks"][0]["config"] == config
+    loaded = result(client.get(url))
+    assert loaded["cases"][0]["checks"][0]["config"] == config
+    preserved = {
+        key: value
+        for key, value in loaded["cases"][0].items()
+        if key not in output_only
+    }
+    another = {key: value for key, value in case().items() if key not in output_only}
+    updated = result(
+        client.put(
+            url,
+            {"revision": loaded["revision"], "cases": [preserved, another]},
+            format="json",
+        )
+    )
+    assert updated["revision"] == 2
+    assert [item["id"] for item in updated["cases"]] == [example["id"], another["id"]]
+    assert updated["cases"][0]["checks"][0]["config"] == config
+    assert updated["cases"][0]["reviewed_by"] == saved["cases"][0]["reviewed_by"]
+    assert updated["cases"][0]["reviewed_at"] == saved["cases"][0]["reviewed_at"]
+
+
 def test_compact_run_list_counts_only_visible_and_stores_historical_configuration(
     client, make_run, hub_other_user
 ):
