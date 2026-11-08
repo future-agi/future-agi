@@ -14,6 +14,7 @@ from model_hub.models.skills_hub import (
     HubSkillBlob,
     HubSkillDraft,
     HubSkillFile,
+    HubSkillVersion,
 )
 from model_hub.selectors.skills_hub import scoped_skill, skills_for_request_scope
 from model_hub.services.skills_hub.checks import (
@@ -124,7 +125,6 @@ def _create_identity(
     source: dict,
 ) -> HubSkill:
     _validate_identity(name, description, tags)
-    scope = skills_for_request_scope(organization, workspace)
     if workspace.organization_id != organization.pk:
         raise SkillsHubError(
             "workspace_required", "Choose a workspace in this organization.", status=403
@@ -143,7 +143,9 @@ def _create_identity(
                 updated_by=actor.user,
             )
     except IntegrityError as exc:
-        if scope.filter(name=name).exists():
+        if HubSkill.no_workspace_objects.filter(
+            organization_id=organization.pk, workspace_id=workspace.pk, name=name
+        ).exists():
             raise SkillsHubError(
                 "name_taken", "A skill with this name already exists.", status=409
             ) from exc
@@ -194,6 +196,124 @@ def create_skill(
     return skill
 
 
+def persist_immutable_version_locked(
+    *,
+    skill: HubSkill,
+    actor: Actor,
+    files: list[FileInput],
+    note: str,
+    parent_number: int | None,
+    origin_number: int | None,
+    description: str,
+    frontmatter: dict,
+    checks: dict,
+    source: dict,
+    always_new: bool = False,
+    expected_digest: str | None = None,
+) -> tuple[HubSkillVersion, bool]:
+    """Persist validated bytes without parsing kind-specific instructions.
+
+    The caller owns the atomic transaction and sorted parent/child locks and must
+    authorize ALL effects before calling, including deduplication. No labels move.
+    Context callers write the descriptor projection in the same transaction.
+    """
+    from model_hub.services.skills_hub.drafts import _validate_payload
+
+    if not transaction.get_connection().in_atomic_block:
+        raise RuntimeError("Immutable persistence requires an atomic caller.")
+    _validate_payload(files, note)
+    if (
+        not description
+        or len(description) > MAX_DESCRIPTION
+        or checks["summary"]["errors"]
+    ):
+        raise SkillsHubError(
+            "checks_failed",
+            "Validate the complete candidate before publication.",
+            status=422,
+        )
+    if skill.kind == HubSkill.Kind.AGENT_CONTEXT and frontmatter:
+        raise SkillsHubError(
+            "invalid_context_definition",
+            "Context versions have no frontmatter.",
+            status=400,
+        )
+    hashed = [
+        {
+            "path": file["path"],
+            "content": file["content"],
+            "sha256": file_sha256(file["content"]),
+        }
+        for file in sorted(files, key=lambda file: file["path"])
+    ]
+    digest = manifest_digest(hashed)
+    if expected_digest is not None and expected_digest != digest:
+        raise SkillsHubError(
+            "candidate_changed", "The reviewed content changed.", status=409
+        )
+    latest = skill.versions.filter(number=skill.latest_version_number).first()
+    if latest is not None and latest.digest == digest and not always_new:
+        from model_hub.services.skills_hub.v12.resolution_leases import (
+            require_distribution_eligibility,
+        )
+
+        require_distribution_eligibility(latest)
+        return latest, True
+    if source.get("provider") == "github":
+        source = {
+            **source,
+            "local_modifications": digest != source.get("upstream_digest"),
+        }
+    version = skill.versions.create(
+        number=skill.latest_version_number + 1,
+        digest=digest,
+        note=note,
+        created_by=actor.user,
+        created_by_api_key=actor.api_key,
+        file_count=len(files),
+        total_bytes=sum(len(file["content"].encode("utf-8")) for file in files),
+        frontmatter=frontmatter,
+        checks=checks,
+        parent_number=parent_number,
+        origin_number=origin_number,
+        source=source,
+    )
+    # Global content-addressed keys are acquired in hash order to avoid deadlock.
+    content_by_hash = {file["sha256"]: file["content"] for file in hashed}
+    blobs = {}
+    for sha256, content in sorted(content_by_hash.items()):
+        blobs[sha256], _ = HubSkillBlob.objects.get_or_create(
+            organization_id=skill.organization_id,
+            sha256=sha256,
+            defaults={"content": content, "size_bytes": len(content.encode("utf-8"))},
+        )
+    HubSkillFile.objects.bulk_create(
+        [
+            HubSkillFile(
+                version=version,
+                path=file["path"],
+                blob=blobs[file["sha256"]],
+                size_bytes=len(file["content"].encode("utf-8")),
+                sha256=file["sha256"],
+                token_estimate=estimate_tokens(file["content"]),
+            )
+            for file in hashed
+        ]
+    )
+    skill.description = description
+    skill.latest_version_number = version.number
+    skill.updated_by = actor.user
+    skill.save(
+        update_fields=[
+            "description",
+            "latest_version_number",
+            "updated_by",
+            "updated_at",
+        ]
+    )
+    return version, False
+
+
 def _publish_checked(
     *,
     skill: HubSkill,
@@ -230,81 +350,20 @@ def _publish_checked(
             status=409,
             detail={"base_version": base_version, "latest_version": latest_number},
         )
-    hashed = [
-        {
-            "path": file["path"],
-            "content": file["content"],
-            "sha256": file_sha256(file["content"]),
-        }
-        for file in sorted(files, key=lambda file: file["path"])
-    ]
-    digest = manifest_digest(hashed)
-    if expected_digest is not None and expected_digest != digest:
-        raise SkillsHubError(
-            "candidate_changed", "The reviewed content changed.", status=409
-        )
-    if source.get("provider") == "github":
-        source = {
-            **source,
-            "local_modifications": digest != source.get("upstream_digest"),
-        }
-    latest = (
-        skill.versions.filter(number=latest_number).first() if latest_number else None
+    version, unchanged = persist_immutable_version_locked(
+        skill=skill,
+        actor=actor,
+        files=files,
+        note=note,
+        parent_number=base_version,
+        origin_number=base_version,
+        description=frontmatter["description"],
+        frontmatter=frontmatter,
+        checks=checks,
+        source=source,
+        always_new=always_new,
+        expected_digest=expected_digest,
     )
-    unchanged = bool(latest is not None and latest.digest == digest and not always_new)
-    if unchanged and latest is not None:
-        version = latest
-    else:
-        version = skill.versions.create(
-            number=skill.latest_version_number + 1,
-            digest=digest,
-            note=note,
-            created_by=actor.user,
-            created_by_api_key=actor.api_key,
-            file_count=len(files),
-            total_bytes=sum(len(file["content"].encode("utf-8")) for file in files),
-            frontmatter=frontmatter,
-            checks=checks,
-            parent_number=base_version,
-            source=source,
-        )
-        # Different skills share organization-wide blob keys. Acquire each once,
-        # in hash order, so concurrent publications cannot deadlock on those keys.
-        content_by_hash = {file["sha256"]: file["content"] for file in hashed}
-        blobs = {}
-        for sha256, content in sorted(content_by_hash.items()):
-            blobs[sha256], _ = HubSkillBlob.objects.get_or_create(
-                organization_id=skill.organization_id,
-                sha256=sha256,
-                defaults={
-                    "content": content,
-                    "size_bytes": len(content.encode("utf-8")),
-                },
-            )
-        HubSkillFile.objects.bulk_create(
-            [
-                HubSkillFile(
-                    version=version,
-                    path=file["path"],
-                    blob=blobs[file["sha256"]],
-                    size_bytes=len(file["content"].encode("utf-8")),
-                    sha256=file["sha256"],
-                    token_estimate=estimate_tokens(file["content"]),
-                )
-                for file in hashed
-            ]
-        )
-        skill.description = frontmatter["description"]
-        skill.latest_version_number = version.number
-        skill.updated_by = actor.user
-        skill.save(
-            update_fields=[
-                "description",
-                "latest_version_number",
-                "updated_by",
-                "updated_at",
-            ]
-        )
     for label in dict.fromkeys(labels):
         _set_label_locked(
             skill=skill,
@@ -413,7 +472,9 @@ def publish_by_name(
         except SkillsHubError as exc:
             if exc.code != "name_taken":
                 raise
-            skill = scope.get(name=frontmatter["name"])
+            skill = scope.filter(name=frontmatter["name"]).first()
+            if skill is None:
+                raise
     skill = scoped_skill(skill, lock=True)
     normalized_tags = list(dict.fromkeys(tags))
     if skill.tags != normalized_tags:
@@ -446,6 +507,11 @@ def restore_version(
     version = skill.versions.filter(number=number).first()
     if version is None:
         raise SkillsHubError("version_not_found", "Version not found.", status=404)
+    from model_hub.services.skills_hub.v12.resolution_leases import (
+        require_distribution_eligibility,
+    )
+
+    require_distribution_eligibility(version)
     files: list[FileInput] = [
         {"path": row.path, "content": row.blob.content}
         for row in version.files.select_related("blob").order_by("path")

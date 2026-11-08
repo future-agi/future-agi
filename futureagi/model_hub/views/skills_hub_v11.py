@@ -119,6 +119,16 @@ class SkillsV11View(SkillsView):
     permission_classes = [IsAuthenticated, SkillsV11Permission]
     principal: SkillPrincipal
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if "skill_id" in kwargs:
+            # Keep the private-resource error contract while isolating leaf routes.
+            from model_hub.selectors.skills_hub_v12 import get_resource
+
+            get_resource(
+                principal=self.principal, resource_id=kwargs["skill_id"], kind="skill"
+            )
+
     def idempotency_key(self, request: Request) -> UUID:
         value = request.headers.get("Idempotency-Key", "")
         try:
