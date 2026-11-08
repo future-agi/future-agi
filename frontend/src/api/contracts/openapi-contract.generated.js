@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1129,
+  endpointCount: 1130,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28774,6 +28774,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessCapabilityCasePage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/capabilities/history/": {
+      get: {
+        operationId: "simulate_api_harness-environments_capability_history",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          cursor: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessCertifiedPairingPage",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -66510,6 +66535,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCertifiedPairingPage: {
+      required: ["items", "next"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCertifiedPairing",
+          },
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessCompare: {
       required: [
         "execution_id",
@@ -101413,6 +101456,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           "x-nullable": true,
         },
+        release_checks: {
+          $ref: "#/definitions/HarnessReleaseChecks",
+        },
       },
     },
     HarnessAgentPayloadChange: {
@@ -101840,6 +101886,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         affected: {
           $ref: "#/definitions/HarnessCapabilityAffected",
+        },
+      },
+    },
+    HarnessCertifiedPairing: {
+      required: [
+        "bundle_id",
+        "agent_version",
+        "environment_version",
+        "suite_version",
+        "certified_at",
+      ],
+      type: "object",
+      properties: {
+        bundle_id: {
+          title: "Bundle id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        certified_at: {
+          title: "Certified at",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -102455,6 +102532,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Whether this environment can discard an agent version.",
           type: "boolean",
           "x-nullable": true,
+        },
+        release_checks: {
+          $ref: "#/definitions/HarnessReleaseChecks",
         },
         stale: {
           title: "Stale",
@@ -121851,6 +121931,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessReleaseChecks: {
+      description:
+        "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+      required: ["status", "checks"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          description: "checks_pending until every release check has passed.",
+          type: "string",
+          enum: ["ready", "checks_pending", "failed"],
+        },
+        checks: {
+          $ref: "#/definitions/HarnessReleaseCheckResults",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessAgentConfigChange: {
       type: "object",
       properties: {
@@ -130994,6 +131092,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
+        },
+      },
+    },
+    HarnessReleaseCheckResults: {
+      required: [
+        "starts",
+        "resets",
+        "reference_passes",
+        "wrong_answer_fails",
+        "hidden_checks_kept",
+      ],
+      type: "object",
+      properties: {
+        starts: {
+          title: "Starts",
+          type: "string",
+          enum: ["passed", "failed", "pending"],
+        },
+        resets: {
+          title: "Resets",
+          type: "string",
+          enum: ["passed", "failed", "pending"],
+        },
+        reference_passes: {
+          title: "Reference passes",
+          type: "string",
+          enum: ["passed", "failed", "pending"],
+        },
+        wrong_answer_fails: {
+          title: "Wrong answer fails",
+          type: "string",
+          enum: ["passed", "failed", "pending"],
+        },
+        hidden_checks_kept: {
+          title: "Hidden checks kept",
+          type: "string",
+          enum: ["passed", "failed", "pending"],
         },
       },
     },

@@ -39702,6 +39702,50 @@ export const SimulateApiHarnessEnvironmentsCapabilityCasesResponse = zod.object(
 );
 
 /**
+ * The pairings certified on this environment, newest first, with the exact
+agent, environment and suite versions of each. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
+
+export const simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryQueryParams =
+  zod.object({
+    cursor: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin)
+      .optional()
+      .describe("The previous page's next."),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryResponse =
+  zod.object({
+    items: zod.array(
+      zod.object({
+        bundle_id: zod.string().uuid(),
+        agent_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        environment_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        suite_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        certified_at: zod.string().datetime({ offset: true }),
+      }),
+    ),
+    next: zod.string().min(1),
+  });
+
+/**
  * Validate a pairing again with a run-less check; moves no default. An absent
 id is the environment's default.
  */
@@ -39943,6 +39987,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40048,6 +40109,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40153,6 +40231,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40309,6 +40404,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       )
       .describe("Each saved piece's new default version, by piece."),
@@ -40390,6 +40504,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
       environment: zod.array(
@@ -40469,6 +40602,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
       suite: zod.array(
@@ -40548,6 +40700,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
     }),
@@ -41764,6 +41935,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
   environment: zod.array(
@@ -41841,6 +42029,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
   suite: zod.array(
@@ -41918,6 +42123,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
 });
@@ -42065,6 +42287,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -42144,6 +42383,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -42223,6 +42479,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
   });
@@ -42362,6 +42635,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -42441,6 +42731,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -42520,6 +42827,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
   });
