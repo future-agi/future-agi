@@ -32,6 +32,7 @@ from simulate.services.harness_readiness.findings import (
     structural_findings,
 )
 from simulate.services.harness_versioning import assembly
+from simulate.services.harness_versioning.read import _label as version_label
 
 _BASE_PATH = "/simulate/api/harness-environments"
 
@@ -186,15 +187,16 @@ def rows(
                     reason="The agent this environment was built with is not known",
                     checked_at=evidence.checked_at,
                 )
-            elif stale == "agent_version":
+            elif stale is not None:
+                code, reason = _stale_reason(stale, pairing, evidence)
                 row = _row(
                     capability,
                     "stale",
                     reading=reading,
-                    reason_code="agent_changed",
-                    reason="Checked with the agent version the environment was built with",
+                    reason_code=code,
+                    reason=reason,
                     checked_at=evidence.checked_at,
-                    stale_because="agent_version",
+                    stale_because=stale,
                     was=fresh[capability.id],
                 )
             else:
@@ -255,20 +257,55 @@ def failed_actions(bundle: HarnessAssembledBundle | None) -> list[Mapping[str, A
     ]
 
 
+StaleBecause = Literal["agent_version", "environment_version", "suite_version"]
+
+
 def _stale(
     pairing: Pairing, evidence: Evidence
-) -> Literal["agent_version", "built_with_unknown"] | None:
+) -> StaleBecause | Literal["built_with_unknown"] | None:
     """Rule 3: evidence other than the pairing's own was measured with the agent the
-    environment version was built with."""
+    environment version was built with, on the environment version that holds the
+    build certificate (an edit saves a new one without certifying it) and on the
+    scenarios that build made."""
     if evidence.source == "pair_certificate":
         return None
     built_with = pairing.environment_version.agent_version_id
     if built_with is None:
         return "built_with_unknown"
     picked = pairing.agent_version.id if pairing.agent_version is not None else None
-    if assembly.same_bundle_agent(picked, built_with, pairing.environment):
-        return None
-    return "agent_version"
+    if not assembly.same_bundle_agent(picked, built_with, pairing.environment):
+        return "agent_version"
+    if evidence.made_for is not None:
+        return "environment_version"
+    if evidence.covers_suite is False:
+        return "suite_version"
+    return None
+
+
+def _stale_reason(
+    stale: StaleBecause, pairing: Pairing, evidence: Evidence
+) -> tuple[str, str]:
+    if stale == "agent_version":
+        return (
+            "agent_changed",
+            "Checked with the agent version the environment was built with",
+        )
+    now = _label(pairing.environment_version.version_number)
+    if stale == "environment_version":
+        was = _label(evidence.made_for.version_number)
+        return (
+            "environment_changed",
+            f"Checked with environment version {was}; this pairing uses {now}",
+        )
+    return (
+        "suite_changed",
+        f"Checked with the scenarios environment version {now} was built with; this"
+        f" pairing uses suite version {_label(pairing.suite_version.version_number)}",
+    )
+
+
+def _label(number: int | None) -> str:
+    return version_label(number) or "a draft"
 
 
 # --- fixes ------------------------------------------------------------------------------

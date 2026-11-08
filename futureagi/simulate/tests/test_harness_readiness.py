@@ -1785,3 +1785,133 @@ class TestAgentGap:
             {"kind": "action", "name": "issue_refund", "result": "failed"},
         ]
         assert routing["reason"].endswith("failed its probe: issue_refund")
+
+
+def _copy_version(version, **fields):
+    """A new version of ``version``'s piece after it: ``fields`` override its own."""
+    model = type(version)
+    copy = model._base_manager.get(id=version.id)
+    copy.pk = uuid.uuid4()
+    copy.id = copy.pk
+    copy.parent_id = version.id
+    copy.version_number = (version.version_number or 0) + 1
+    copy.hash = "sha256:" + uuid.uuid4().hex * 2
+    if hasattr(copy, "certify_hash"):
+        # Another scenario set certifies into another pair bundle.
+        copy.certify_hash = "sha256:" + uuid.uuid4().hex * 2
+    for name, value in fields.items():
+        setattr(copy, name, value)
+    copy.save()
+    return copy
+
+
+def _with_revisions(version, revisions):
+    type(version)._base_manager.filter(id=version.id).update(
+        documents={**(version.documents or {}), "authoring_revisions": revisions}
+    )
+    version.refresh_from_db()
+    return version
+
+
+def _pinned(environment, **versions):
+    import dataclasses
+
+    return dataclasses.replace(_pairing(environment), **versions)
+
+
+class TestStaleVersions:
+    """An edit saves a new environment or suite version without certifying it."""
+
+    def _built_once(self, user, workspace, storage, key):
+        environment = _environment(user, workspace, storage, key)
+        _built(environment)
+        _with_revisions(
+            environment.environment_version, ["sha256:build", "sha256:edit"]
+        )
+        _with_revisions(environment.suite_version, ["sha256:build"])
+        environment.refresh_from_db()
+        return environment
+
+    def test_an_edited_environment_version_reads_its_parents_certificate_as_stale(
+        self, user, workspace, storage
+    ):
+        environment = self._built_once(user, workspace, storage, "rd-stale-env")
+        parent = environment.environment_version
+        documents = dict(parent.documents)
+        documents["stage_outputs"] = []
+        edited = _copy_version(parent, documents=documents)
+
+        report = harness_readiness.readiness_report(
+            _pinned(environment, environment_version=edited)
+        )
+        start = _rows(report)["start"]
+
+        assert report["pairing"]["evidence"] == "build_certificate"
+        assert (start["status"], start["reason_code"], start["stale_because"]) == (
+            "stale",
+            "environment_changed",
+            "environment_version",
+        )
+        assert start["was"] == "supported"
+        assert start["reason"] == (
+            f"Checked with environment version v{parent.version_number}; this pairing"
+            f" uses v{edited.version_number}"
+        )
+        assert start["fix"]["type"] == "recheck"
+        assert report["answer"]["kind"] == "stale"
+
+    def test_an_edited_suite_version_reads_the_build_certificate_as_stale(
+        self, user, workspace, storage
+    ):
+        environment = self._built_once(user, workspace, storage, "rd-stale-suite")
+        edited = _copy_version(environment.suite_version)
+        _with_revisions(edited, ["sha256:edit"])
+
+        report = harness_readiness.readiness_report(
+            _pinned(environment, suite_version=edited)
+        )
+        reset = _rows(report)["reset"]
+
+        assert (reset["status"], reset["reason_code"], reset["stale_because"]) == (
+            "stale",
+            "suite_changed",
+            "suite_version",
+        )
+        assert reset["was"] == "supported"
+        assert f"suite version v{edited.version_number}" in reset["reason"]
+
+    def test_the_versions_the_certificate_was_made_with_are_not_stale(
+        self, user, workspace, storage
+    ):
+        environment = self._built_once(user, workspace, storage, "rd-stale-none")
+        HarnessAssembledBundle._base_manager.filter(job_id=environment.id).delete()
+
+        report = harness_readiness.readiness_report(_pairing(environment))
+
+        assert report["pairing"]["evidence"] == "build_certificate"
+        assert not [row for row in report["rows"] if row["status"] == "stale"]
+
+    def test_unrecorded_revisions_never_make_a_suite_stale(
+        self, user, workspace, storage
+    ):
+        environment = self._built_once(user, workspace, storage, "rd-stale-unknown")
+        _with_revisions(environment.environment_version, [])
+        edited = _copy_version(environment.suite_version)
+        _with_revisions(edited, ["sha256:edit"])
+
+        report = harness_readiness.readiness_report(
+            _pinned(environment, suite_version=edited)
+        )
+
+        assert not [row for row in report["rows"] if row["status"] == "stale"]
+
+    def test_a_pairings_own_certificate_is_never_stale_on_versions(
+        self, user, workspace, storage
+    ):
+        environment = self._built_once(user, workspace, storage, "rd-stale-own")
+        _with_revisions(environment.suite_version, ["sha256:other"])
+
+        report = harness_readiness.readiness_report(_pairing(environment))
+
+        assert report["pairing"]["evidence"] == "pair_certificate"
+        assert not [row for row in report["rows"] if row["status"] == "stale"]

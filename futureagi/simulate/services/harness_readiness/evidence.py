@@ -20,6 +20,7 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HarnessSuiteVersion,
     HostedHarnessAttempt,
 )
 from simulate.models.harness_versioning import ArchiveLayout
@@ -56,6 +57,12 @@ class Evidence:
     tools: list[Mapping[str, Any]]
     actions: list[Mapping[str, Any]]
     checked_at: str | None
+    # A build certificate of an earlier environment version than the pairing's, read
+    # because the pairing's own version has none.
+    made_for: HarnessEnvironmentVersion | None = None
+    # Whether a build certificate covered the pairing's suite version; ``None`` when
+    # it cannot be told.
+    covers_suite: bool | None = None
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -157,8 +164,8 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             actions=files["actions"],
             checked_at=bundle.updated_at.isoformat(),
         )
-    version = pairing.environment_version
-    data = _build_certification(version)
+    version = _certified_version(pairing.environment_version)
+    data = _build_certification(version) if version is not None else None
     if data is None:
         return Evidence("none", {}, [], [], None)
     certificate = data.get("certificate")
@@ -175,6 +182,46 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         tools=tools,
         actions=_items(data.get("action_certification"), "actions"),
         checked_at=version.created_at.isoformat(),
+        made_for=None if version.id == pairing.environment_version.id else version,
+        covers_suite=_covers_suite(version, pairing.suite_version),
+    )
+
+
+_ANCESTORS_READ = 50
+
+
+def _certified_version(
+    version: HarnessEnvironmentVersion,
+) -> HarnessEnvironmentVersion | None:
+    """``version``, or its nearest earlier version, that holds a build certificate: an
+    edit saves a new version without certifying it."""
+    seen: set[Any] = set()
+    current: HarnessEnvironmentVersion | None = version
+    while (
+        current is not None and current.id not in seen and len(seen) < _ANCESTORS_READ
+    ):
+        if _build_certification(current) is not None:
+            return current
+        seen.add(current.id)
+        current = (
+            HarnessEnvironmentVersion._base_manager.filter(id=current.parent_id).first()
+            if current.parent_id
+            else None
+        )
+    return None
+
+
+def _covers_suite(
+    version: HarnessEnvironmentVersion, suite_version: HarnessSuiteVersion
+) -> bool | None:
+    """Whether the build that made ``version``'s certificate also made
+    ``suite_version``: the two share that build's authoring revision, the first one
+    ``version`` records."""
+    revisions = (version.documents or {}).get("authoring_revisions") or []
+    if not revisions:
+        return None
+    return revisions[0] in (
+        (suite_version.documents or {}).get("authoring_revisions") or []
     )
 
 
