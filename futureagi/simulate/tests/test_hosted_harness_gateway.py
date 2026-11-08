@@ -465,6 +465,19 @@ def test_connect_only_provider_authoring_gets_the_inspection_key(
     assert material == {secret_name: "target-secret"}
 
 
+@pytest.mark.parametrize("mode", ["environment_backed", ""])
+def test_a_provider_agent_built_from_source_gets_no_inspection_key(mode):
+    payload = {"agent": {"connector": "vapi", "mode": mode}}
+    with patch(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        return_value={"VAPI_API_KEY": "v"},
+    ) as resolve:
+        material, _ = _provider_import_authoring_material(SimpleNamespace(), payload)
+
+    assert material == {}
+    resolve.assert_not_called()
+
+
 @pytest.mark.parametrize("connector", ["phone", "livekit"])
 def test_connect_only_non_provider_authoring_gets_no_key(connector):
     payload = {"agent": {"connector": connector, "mode": "connect_only"}}

@@ -2080,9 +2080,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2451,7 +2453,9 @@ class HostedHarnessGateway:
             if sandbox is not None:
                 try:
                     sandbox.delete()
-                except Exception:  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
+                except (
+                    Exception
+                ):  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
                     pass
 
     def launch(
@@ -3623,7 +3627,9 @@ class HostedHarnessGateway:
                 response = {
                     "error": {"code": exc.code, "message": exc.message},
                 }
-            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - return a bounded typed response to guest
                 logger.exception(
                     "offline hosted control failed attempt=%s request=%s",
                     attempt.id,
@@ -3786,7 +3792,9 @@ class HostedHarnessGateway:
                         path, _PROGRESS_FILE_TIMEOUT_SECONDS
                     ).decode("utf-8")
                 )
-            except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
+            except (
+                Exception
+            ):  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
         try:
@@ -3916,7 +3924,9 @@ class HostedHarnessGateway:
                     proved_since=getattr(attempt, "created_at", None),
                 )
                 job.refresh_from_db()
-            except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
+            except (
+                Exception
+            ):  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
                     job.id,
@@ -4009,7 +4019,9 @@ class HostedHarnessGateway:
             raw = sandbox.fs.download_file(
                 _ADJUSTMENT_STATUS_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
             ).decode("utf-8")
-        except Exception:  # noqa: BLE001 - status file does not exist before first boundary
+        except (
+            Exception
+        ):  # noqa: BLE001 - status file does not exist before first boundary
             return
         statuses: dict[str, dict[str, Any]] = {}
         for line in raw.splitlines():
@@ -4514,7 +4526,9 @@ class HostedHarnessGateway:
         ):
             try:
                 self._recover_offline_delivery(attempt)
-            except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
+            except (
+                Exception
+            ):  # noqa: BLE001 - preserve the typed delivery failure below
                 logger.exception(
                     "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
                     attempt.id,
@@ -4585,24 +4599,26 @@ class HostedHarnessGateway:
             label = (
                 "Generated environment failed real-runtime validation after bounded repair"
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    "Environment authoring failed before a runnable world was saved"
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
             cause = guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment" if authoring_failed else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed" if authoring_failed else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
@@ -5027,9 +5043,14 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
     return resolved
 
 
-# Connect-only targets the harness inspects before authoring; must match ALK's
-# PROVIDER_MANAGED_CONNECTORS, whose builder waits for the provider profile cache.
-_CONNECT_ONLY_INSPECTED_CONNECTORS = frozenset({"vapi", "retell", "retell_chat"})
+# The provider key each inspected target needs. Connect-only targets of these connectors are
+# inspected before authoring; must match ALK's PROVIDER_MANAGED_CONNECTORS, whose builder
+# waits for the provider profile cache.
+_INSPECTION_KEYS = {
+    "vapi": "VAPI_API_KEY",
+    "retell": "RETELL_API_KEY",
+    "retell_chat": "RETELL_API_KEY",
+}
 
 
 def _provider_import_authoring_material(
@@ -5039,17 +5060,8 @@ def _provider_import_authoring_material(
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "")
-    inspect_connect_only = (
-        mode == "connect_only" and connector in _CONNECT_ONLY_INSPECTED_CONNECTORS
-    )
-    if mode != "provider_import" and not inspect_connect_only:
-        return {}, connector
-    secret_name = {
-        "vapi": "VAPI_API_KEY",
-        "retell": "RETELL_API_KEY",
-        "retell_chat": "RETELL_API_KEY",
-    }.get(connector)
-    if not secret_name:
+    secret_name = _INSPECTION_KEYS.get(connector)
+    if mode not in ("provider_import", "connect_only") or not secret_name:
         return {}, connector
     resolved = PlatformSecretResolver().resolve(job)
     value = str(resolved.get(secret_name) or "")
@@ -5151,7 +5163,9 @@ def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
 
     try:
         return briefing_evals(job.organization, job.workspace, _authored_modality(job))
-    except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
+    except (
+        Exception
+    ):  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
         structlog_logger.exception(
             "harness_eval_catalogue_failed",
             job_id=str(getattr(job, "id", "") or ""),
@@ -5254,7 +5268,9 @@ def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
         body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
+    except (
+        Exception
+    ):  # noqa: BLE001 - no ledger is the ordinary case for an early failure
         logger.debug("no harness ledger to read attempt=%s", attempt.id)
 
 
@@ -5810,7 +5826,9 @@ def rewrite_authoring_scenarios(
     try:
         response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
         body = response.read()
-    except Exception as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
         logger.exception("could not read authoring archive for amend job=%s", job.id)
         raise AuthoringArchiveKept("the saved scenarios could not be read") from exc
     finally:
@@ -5839,7 +5857,9 @@ def rewrite_authoring_scenarios(
             raise AuthoringArchiveKept(
                 exc.message, code=exc.code, status_code=exc.status_code
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
             logger.exception("could not version an amended suite job=%s", job.id)
             raise AuthoringArchiveKept("the change could not be saved") from exc
         if recorded is None:
