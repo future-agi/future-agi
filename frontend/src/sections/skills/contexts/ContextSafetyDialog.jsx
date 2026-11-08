@@ -14,11 +14,11 @@ function Safety({ scopeKey, open, onClose, action, resource, review, canAct = fa
   const [confirmed, setConfirmed] = useState(false);
   const operation = useAuthoringOperation(scopeKey);
   const quarantine = action === "quarantine" || action === "clear";
-  const ready = canAct && review && review.subjectId === resource.id && (quarantine ? Number.isInteger(review.securityRevision) && Boolean(review.versionId) : Number.isInteger(review.releaseRevision)) && (action !== "archive" || Boolean(review.impactFingerprint)) && !review.blocked;
+  const ready = canAct && review && review.subjectId === resource.id && (quarantine ? Number.isInteger(review.revision) && Boolean(review.versionId) : Number.isInteger(review.releaseRevision)) && (action !== "archive" || Boolean(review.impactFingerprint)) && !review.blocked;
   const apply = async () => {
     if (!ready || !confirmed || !reason.trim()) return;
     const input = quarantine
-      ? { revision: review.securityRevision, quarantined: action === "quarantine", reason: reason.trim(), replacementVersionId: review.replacementVersionId || null }
+      ? { revision: review.revision, quarantined: action === "quarantine", reason: reason.trim(), replacementVersionId: review.replacementVersionId || null }
       : { expectedReleaseRevision: review.releaseRevision, note: reason.trim(), ...(action === "archive" ? { expectedImpactFingerprint: review.impactFingerprint } : {}) };
     const result = await operation.run(onApply, input);
     if (result) onApplied?.(result);

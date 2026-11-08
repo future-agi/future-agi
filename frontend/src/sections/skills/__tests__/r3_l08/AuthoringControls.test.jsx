@@ -149,6 +149,14 @@ describe("lifecycle authority and exact consequences", () => {
     await waitFor(() => expect(apply).toHaveBeenCalledOnce());
     expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 7, note: "Recover reviewed policy" });
   });
+  it("uses the version safety revision rather than the resource-wide security counter", async () => {
+    const apply = vi.fn(async () => ({ revision: 3 }));
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="quarantine" resource={resource} review={{ subjectId: resource.id, versionId: "retained-version", revision: 2, securityRevision: 99 }} canAct onApply={apply} />);
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Confirmed unsafe policy" } });
+    check("I reviewed this exact identity and its retained-label and load consequences."); click("Quarantine version");
+    await waitFor(() => expect(apply).toHaveBeenCalledOnce());
+    expect(apply.mock.calls[0][0]).toEqual({ revision: 2, quarantined: true, reason: "Confirmed unsafe policy", replacementVersionId: null });
+  });
   it("retries an unknown mutation using the original operation key", async () => {
     const apply = vi.fn().mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ id: resource.id });
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} canAct onApply={apply} />);
