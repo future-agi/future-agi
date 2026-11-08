@@ -254,6 +254,28 @@ describe("exact decisions and retry safety", () => {
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     expect(decide.mock.calls[1][0]).toEqual(decide.mock.calls[0][0]);
   });
+  it("retains an uncertain original key when a recovery attempt loses authority", async () => {
+    const decide = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockRejectedValueOnce({ response: { status: 403 } })
+      .mockResolvedValue({ id: ID });
+    render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);
+    acknowledge();
+    click("Approve exact packet");
+    await screen.findByText(/response was not confirmed/);
+    click("Retry original request");
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry original request" })).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Review comment" }),
+    ).toBeDisabled();
+    click("Retry original request");
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(3));
+    expect(decide.mock.calls[2][0]).toEqual(decide.mock.calls[0][0]);
+  });
   it("blocks duplicate submissions after a confirmed decision until server state refreshes", async () => {
     const decide = vi.fn().mockResolvedValue({ id: ID });
     render(<ReleaseRequestPanel {...panelProps} onDecide={decide} />);

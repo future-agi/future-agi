@@ -72,10 +72,14 @@ export function useReviewedOperation() {
       const status = err?.response?.status ?? err?.status;
       const knownRejected =
         status >= 400 && status < 500 && ![408, 425, 429].includes(status);
-      if (knownRejected) pending.current = null;
-      setUncertain(!knownRejected);
+      // A denial on a recovery attempt cannot prove that the original send
+      // failed: current authorization is checked before receipt lookup.
+      const confirmedRejected = knownRejected && !operation.uncertain;
+      if (confirmedRejected) pending.current = null;
+      else operation.uncertain = true;
+      setUncertain(!confirmedRejected);
       setError(
-        knownRejected
+        confirmedRejected
           ? "Request rejected. Review current permissions and packet state; your inputs are preserved. No preconditions were refreshed."
           : "The response was not confirmed. Do not assume failure or submit a new operation. Retry the original request to recover its receipt.",
       );
