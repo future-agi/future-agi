@@ -551,31 +551,35 @@ class TestPreviewRejectsMediaColumns:
         media_fetch.audio.assert_not_called()
 
     def test_unreadable_message_content_fails_closed(
-        self,
-        auth_client,
-        dataset,
-        columns,
-        openai_provider_key,
-        speech_boundary,
-        media_fetch,
+        self, dataset, row, columns, speech_boundary, media_fetch
     ):
+        # The preview serializer already rejects a null text part, so drive
+        # the renderer directly: the original messages must not come back.
+        from model_hub.views.run_prompt import (
+            LiteralSpeechMediaError,
+            populate_placeholders,
+        )
+
         content = [
             {"type": "text", "text": None},
             {"type": "text", "text": "Hello {{ Name }}"},
         ]
 
-        response = preview(
-            auth_client,
-            dataset,
-            tts_config([{"role": "user", "content": content}]),
-        )
+        with pytest.raises(LiteralSpeechMediaError) as error:
+            populate_placeholders(
+                [{"role": "user", "content": content}],
+                dataset_id=dataset.id,
+                row_id=row.id,
+                col_id=None,
+                model_name=TTS_MODEL,
+                output_format="audio",
+            )
 
-        speech_boundary.assert_not_called()
-        [message] = response.json()["result"]["responses"]
-        assert message.startswith(
+        assert str(error.value).startswith(
             f'Text-to-speech model "{TTS_MODEL}" cannot read this prompt: '
             "its template is invalid (TypeError:"
         )
+        speech_boundary.assert_not_called()
 
     def test_several_media_columns_are_named(
         self,
