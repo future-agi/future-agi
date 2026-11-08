@@ -254,6 +254,46 @@ def certify_only(job: HostedHarnessJob) -> bool:
     return ((job.payload or {}).get("metadata") or {}).get("certify_only") is True
 
 
+def reads_agent(job: HostedHarnessJob) -> bool:
+    """Whether a validation job first reads its agent version's tools."""
+    return ((job.payload or {}).get("metadata") or {}).get("agent_reading") in (
+        "before_certify",
+        "only",
+    )
+
+
+def reading_only(job: HostedHarnessJob) -> bool:
+    """Whether a validation job only reads its agent version's tools: the pairing is
+    certified already."""
+    return ((job.payload or {}).get("metadata") or {}).get("agent_reading") == "only"
+
+
+def unread(agent_version: AgentVersion, runtime: Any) -> bool:
+    """A version whose tools no build has read, started in our sandbox from source."""
+    from simulate.services.agent_setup import stored_agent
+    from simulate.services.harness_agent_versions import _payload_source
+
+    return (
+        runtime is not None
+        and _payload_source(runtime)["kind"] in ("github", "archive")
+        and stored_agent(agent_version.id) is None
+    )
+
+
+def needs_reading(
+    environment: HostedHarnessJob,
+    agent_version: AgentVersion,
+    environment_version: HarnessEnvironmentVersion,
+    runtime: Any,
+) -> bool:
+    """Whether a check of this pairing reads the agent version's tools: readiness
+    compares them only for an agent other than the one the environment version was
+    built with (whose tools are its contract's), and only an unread one."""
+    return not assembly.same_bundle_agent(
+        agent_version.id, environment_version.agent_version_id, environment
+    ) and unread(agent_version, runtime)
+
+
 def can_validate(environment: HostedHarnessJob, agent_version_id: Any) -> bool:
     """Whether a pairing of this agent version can be validated in ``environment``:
     certifying is on, the environment pins an agent and versions, and the version has a
@@ -364,7 +404,30 @@ def start_validation(
                 "state": HarnessAssembledBundle.State.PENDING,
             },
         )
-        if bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key:
+        # Only an explicit Re-check reads the version's tools: it costs model calls.
+        read = purpose == "recheck" and needs_reading(
+            locked, agent_version, environment_version, runtime
+        )
+        certified = (
+            bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
+        )
+        if certified and read and live_validation(bundle.id) is None:
+            job = _create_job(
+                locked,
+                runtime,
+                agent_version,
+                environment_version,
+                suite_version,
+                bundle,
+                purpose=purpose,
+                move=move,
+                reading="only",
+            )
+            job_id = job.id
+            transaction.on_commit(lambda: _dispatch(job_id))
+            logger.info("harness_pair_agent_reading_started", **_check_log(job))
+            return Validation("validating", bundle, purpose, job)
+        if certified:
             logger.info(
                 "harness_pair_validation_reused",
                 environment_id=str(locked.id),
@@ -402,6 +465,7 @@ def start_validation(
             bundle,
             purpose=purpose,
             move=move,
+            reading="before_certify" if read else None,
         )
         job_id = job.id
         transaction.on_commit(lambda: _dispatch(job_id))
@@ -466,8 +530,10 @@ def _create_job(
     *,
     purpose: Purpose,
     move: AgentMove | None,
+    reading: Literal["before_certify", "only"] | None = None,
 ) -> HostedHarnessJob:
-    """The environment's job, pinned to the pairing; certifying is all it does."""
+    """The environment's job, pinned to the pairing; certifying is all it does, after
+    reading the agent version's tools when ``reading`` says so."""
     from simulate.services.harness_agent_versions import (
         apply_agent_version,
         own_credential_set,
@@ -492,6 +558,8 @@ def _create_job(
     )
     if move is not None:
         metadata["validation_move"] = move
+    if reading is not None:
+        metadata["agent_reading"] = reading
     payload.pop("job_id", None)
     payload.pop("run_id", None)
     # One key per check of this bundle, so two requests for the same check make one job,

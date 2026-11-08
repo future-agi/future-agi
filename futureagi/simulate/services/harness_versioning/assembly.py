@@ -837,6 +837,39 @@ def source_check_command(source_digest: str | None) -> str:
     return f'python -c "{code}" {source_digest} && '
 
 
+AGENT_READING_PATH = "/work/reading/agent.json"
+
+
+def agent_reading_command() -> str:
+    """Read the agent version's tools from its source into ``AGENT_READING_PATH``, its
+    model spend journalled where the gateway reads a build's. Never fails the command:
+    an unread version stays unread and the certify after it runs as without it."""
+    return (
+        "ALK_SPEND_JOURNAL=/work/authoring/cost.json python -m "
+        "fi.alk.harness.hosted_agent_reading --source /work/source "
+        f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
+    )
+
+
+def agent_reading(sandbox: Any) -> dict[str, Any] | None:
+    """The agent document a reading wrote, ``{sdk_version, agent}``; ``None`` when it
+    is absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(AGENT_READING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS)
+        )
+    except Exception as exc:  # noqa: BLE001 - a reading that failed writes nothing
+        logger.info("harness_agent_reading_unread", error=type(exc).__name__)
+        return None
+    if not (
+        isinstance(document, dict)
+        and isinstance(document.get("agent"), dict)
+        and isinstance(document.get("sdk_version"), str)
+    ):
+        return None
+    return document
+
+
 def certify_command() -> str:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 

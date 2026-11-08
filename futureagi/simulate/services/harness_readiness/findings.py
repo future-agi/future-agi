@@ -119,11 +119,7 @@ def _arguments(tool: Mapping[str, Any], field: str) -> frozenset[str] | None:
     value = tool.get(field)
     if field == "parameters":
         value = value.get("properties") if isinstance(value, Mapping) else None
-        return (
-            frozenset(str(name) for name in value)
-            if isinstance(value, Mapping)
-            else None
-        )
+        return frozenset(str(name) for name in value) if isinstance(value, Mapping) else None
     return frozenset(str(name) for name in value) if isinstance(value, list) else None
 
 

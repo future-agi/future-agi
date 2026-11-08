@@ -1672,6 +1672,54 @@ class TestAgentGap:
         assert report["pairing"]["agent_tools"] == {"read": False, "count": 0}
         assert report["answer"]["kind"] == "unchecked"
 
+    def test_an_unread_provider_agent_offers_no_recheck_that_cannot_read_it(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(
+            user, workspace, storage, "rd-gap-unread-provider", tools=None
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=a2
+        ).update(source_kind="provider")
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        discovery = _rows(_report(environment, a2))["tool_discovery"]
+
+        assert discovery["reason_code"] == "agent_tools_unread"
+        assert discovery["fix"] is None
+
+    def test_rechecking_a_certified_unread_version_reads_it_and_is_metered(
+        self, user, workspace, storage, auth_client
+    ):
+        from ee.usage.exceptions import UsageLimitExceeded
+        from ee.usage.schemas.events import CheckResult
+
+        environment, a2 = _with_a2(
+            user, workspace, storage, "rd-gap-unread-recheck", tools=None
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        refusal = UsageLimitExceeded(
+            CheckResult(
+                allowed=False, reason="out of credits", error_code="BUDGET_PAUSED"
+            )
+        )
+
+        with patch(
+            "simulate.services.harness_usage._require_harness_action",
+            side_effect=refusal,
+        ):
+            refused = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+        started = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+
+        assert refused.status_code == 402, refused.content
+        assert started.status_code == 202, started.content
+        validation = started.json()["validation"]
+        assert validation["state"] == "validating"
+        job = HostedHarnessJob.no_workspace_objects.get(id=validation["job_id"])
+        assert job.payload["metadata"]["agent_reading"] == "only"
+
     def test_the_same_tools_leave_the_certificate_reading(
         self, user, workspace, storage
     ):

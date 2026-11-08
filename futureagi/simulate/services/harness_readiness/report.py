@@ -218,12 +218,18 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
 
     Raises:
         UsageLimitExceeded: the organization cannot spend on a build sandbox, which a
-            validation runs in; a pairing already certified starts none.
+            validation runs in; a pairing already certified starts none unless its
+            agent version's tools are still to be read.
     """
     from simulate.services.harness_usage import require_harness_authoring
 
     agent = pairing.agent_version
-    if not certified(pair_bundle(pairing)):
+    if not certified(pair_bundle(pairing)) or (
+        agent is not None
+        and validation.needs_reading(
+            pairing.environment, agent, pairing.environment_version, pairing.runtime
+        )
+    ):
         require_harness_authoring(str(pairing.environment.organization_id))
     started = (
         validation.start_validation(

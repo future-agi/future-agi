@@ -2461,10 +2461,20 @@ class HostedHarnessGateway:
     ) -> HostedHarnessAttempt:
 
         from simulate.services.harness_versioning import assembly as bundle_cache
-        from simulate.services.harness_versioning.validation import certify_only
+        from simulate.services.harness_versioning.validation import (
+            certify_only,
+            reading_only,
+            reads_agent,
+        )
 
         validation = certify_only(job)
-        if validation and bundle_cache.assembled_bundle_ready(job):
+        # A certified pairing's check only reads its agent version's tools.
+        only_reading = validation and reading_only(job)
+        if (
+            validation
+            and not only_reading
+            and bundle_cache.assembled_bundle_ready(job)
+        ):
             # Certified meanwhile, by a run or another validation: nothing to launch.
             return self._complete_without_sandbox(job, endpoint_base_url)
         _mark_stage(job, "acquiring_source")
@@ -2473,6 +2483,7 @@ class HostedHarnessGateway:
         assembled, assembly_error = _prepare_assembly(job)
         if (
             validation
+            and not only_reading
             and assembly_error is None
             and (assembled is None or assembled.hit)
         ):
@@ -2827,6 +2838,12 @@ class HostedHarnessGateway:
             )
             if certify:
                 bundle_command = bundle_cache.certify_command()
+                if reads_agent(job):
+                    bundle_command = (
+                        bundle_cache.agent_reading_command() + bundle_command
+                    )
+            elif only_reading:
+                bundle_command = bundle_cache.agent_reading_command() + "true"
             elif assembled is not None:
                 bundle_command = (
                     bundle_cache.source_check_command(assembled.source_digest)
@@ -4552,6 +4569,8 @@ class HostedHarnessGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+        if certify_only(job):
+            self._store_agent_reading(attempt)
 
         # Event/manifest ingestion runs independently from the provider poll. The attempt object
         # held by the workflow may predate terminal HTTP requests even though both commits are
@@ -4741,6 +4760,40 @@ class HostedHarnessGateway:
             )
             return None
         return bundle_cache.certify_failed_actions(sandbox)
+
+    def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
+        """Store the tools a validation read for its agent version, before its sandbox
+        is deleted. Never raises: an unread version stays unread."""
+        from simulate.services.agent_setup import store_agent
+        from simulate.services.harness_versioning import assembly as bundle_cache
+        from simulate.services.harness_versioning.validation import reads_agent
+
+        job = attempt.job
+        if not reads_agent(job) or job.agent_version_id is None:
+            return
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            document = bundle_cache.agent_reading(sandbox)
+            if document is None:
+                return
+            outcome = store_agent(
+                agent_version_id=job.agent_version_id,
+                agent=document["agent"],
+                sdk_version=document["sdk_version"],
+            )
+            logger.info(
+                "harness_agent_reading_stored job=%s agent_version=%s outcome=%s",
+                job.id,
+                job.agent_version_id,
+                outcome,
+            )
+        except Exception:  # noqa: BLE001 - the check settles whatever the reading did
+            logger.warning(
+                "harness agent reading not stored attempt=%s", attempt.id, exc_info=True
+            )
 
     def _finish_certify_only(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
         """A validation's guest exited 0: completed when its bundle was filled."""

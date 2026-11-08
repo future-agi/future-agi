@@ -62,6 +62,21 @@ FAILED_ACTIONS = {
 }
 
 
+_UNREAD = validation.unread
+
+
+@pytest.fixture(autouse=True)
+def tools_read(monkeypatch):
+    """Every agent version's tools were read, unless a test reads them in its check."""
+    monkeypatch.setattr(validation, "unread", lambda agent_version, runtime: False)
+
+
+@pytest.fixture
+def tools_unread(monkeypatch):
+    """Agent versions are read only where a stored document says so."""
+    monkeypatch.setattr(validation, "unread", _UNREAD)
+
+
 @pytest.fixture(autouse=True)
 def certify_on(settings):
     settings.HARNESS_VERSIONING_ENABLED = True
@@ -1702,3 +1717,189 @@ class TestUnavailableReuse:
 
         assert _move(environment).state == "validating"
         assert _checks(environment) == 2
+
+
+def _reading(tools):
+    from simulate.tests.test_agent_setup_service import source_agent
+
+    document = source_agent(tools=tools)
+    document["behaviour"][0]["tools"] = [tool["name"] for tool in tools]
+    return json.dumps({"sdk_version": "0.2.3", "agent": document}).encode()
+
+
+def _not_built_with(environment):
+    """The environment version names no agent it was built with, so its default agent
+    is not known to be that one and its own tools are what readiness compares."""
+    type(environment.environment_version)._base_manager.filter(
+        id=environment.environment_version_id
+    ).update(agent_version=None)
+    environment.refresh_from_db()
+    return environment
+
+
+def _runtime(environment):
+    from simulate.models import HarnessAgentVersionRuntime
+
+    return effective_runtime(
+        environment,
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=environment.agent_version
+        ).first(),
+    )
+
+
+_EMAIL = [{"name": "send_email", "kind": "http", "parameters": None, "endpoint": None}]
+
+
+@pytest.mark.usefixtures("tools_unread")
+class TestAgentReading:
+    def test_a_version_is_unread_until_a_document_is_stored(
+        self, user, workspace, storage
+    ):
+        from simulate.services.agent_setup import store_agent
+
+        environment = _pending(user, workspace, storage, "pv-unread")
+        agent = environment.agent_version
+        runtime = _runtime(environment)
+        assert validation.unread(agent, runtime)
+
+        document = json.loads(_reading(_EMAIL))
+        store_agent(
+            agent_version_id=agent.id,
+            agent=document["agent"],
+            sdk_version=document["sdk_version"],
+        )
+
+        assert not validation.unread(agent, runtime)
+
+    def test_a_recheck_of_an_unread_version_reads_it_before_certifying(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-first"))
+        job = _start(environment).job
+
+        _launch(gateway, job)
+
+        assert _job_metadata(job)["agent_reading"] == "before_certify"
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.agent_reading_command() + assembly.certify_command()
+
+    def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-move-no-read"))
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=None
+        )
+        job = _start(environment, purpose="agent_move", move=move).job
+
+        _launch(gateway, job)
+
+        assert "agent_reading" not in _job_metadata(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.certify_command()
+
+    def test_a_certified_unread_pairing_starts_a_reading_only_check(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(_environment(user, workspace, "pv-read-only", storage))
+        assert _row(environment).state == "ready"
+
+        started = _start(environment)
+        attempt = _launch(gateway, started.job)
+
+        assert started.state == "validating"
+        assert _job_metadata(started.job)["agent_reading"] == "only"
+        assert attempt.terminal_stage != "completed"
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.agent_reading_command() + "true"
+
+    def test_the_read_document_is_stored_and_the_check_settles(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-store"))
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        stored = stored_agent(environment.agent_version_id)
+        assert [tool["name"] for tool in stored["tools"]] == ["send_email"]
+
+    def test_a_failed_certify_still_stores_the_reading(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-78"))
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _exit(
+            gateway, monkeypatch, 78, {assembly.AGENT_READING_PATH: _reading(_EMAIL)}
+        )
+
+        gateway.reconcile_completed(attempt)
+
+        assert stored_agent(environment.agent_version_id) is not None
+
+    def test_no_document_leaves_the_version_unread_and_settles(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _not_built_with(_environment(user, workspace, "pv-read-none", storage))
+        started = _start(environment)
+        attempt = _launch(gateway, started.job)
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        assert _job_metadata(started.job)["validation_outcome"] == "ready"
+        assert _row(environment).state == "ready"
+        assert validation.unread(environment.agent_version, _runtime(environment))
+
+    def test_a_check_without_reading_never_stores_a_document(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-no-read-store"))
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=None
+        )
+        job = _start(environment, purpose="agent_move", move=move).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
+
+        gateway.reconcile_completed(attempt)
+
+        assert stored_agent(environment.agent_version_id) is None
+
+    def test_the_agent_the_environment_was_built_with_is_never_read(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _pending(user, workspace, storage, "pv-built-with")
+        job = _start(environment).job
+
+        _launch(gateway, job)
+
+        assert "agent_reading" not in _job_metadata(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.certify_command()

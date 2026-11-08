@@ -471,6 +471,9 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
             },
         }
     if code == "agent_tools_unread":
+        if connection(pairing.runtime) != "sandbox":
+            # Only an agent started from its source in our sandbox can be read.
+            return None
         # Checking the pairing reads the version's tools, whether or not it is
         # certified already.
         return {
