@@ -53,6 +53,37 @@ export const DEMO_PERSONAS = [
     chat({ persona_type: "workspace", persona_type_display: "Custom", is_default: false, updated_at: "2026-11-05T11:00:00Z", gender: ["male"], age_group: ["25-32"], occupation: ["Teacher"], location: ["Canada"], personality: ["Calm"], communication_style: ["Friendly"] })),
 ];
 
+/* Personas made, edited or deleted on the demo, kept in this browser. */
+const SAVED = "fagi.demo.personas.v1";
+try {
+  const { put = [], gone = [] } = JSON.parse(localStorage.getItem(SAVED)) || {};
+  put.forEach((p) => { const i = DEMO_PERSONAS.findIndex((x) => x.id === p.id); i >= 0 ? (DEMO_PERSONAS[i] = p) : DEMO_PERSONAS.push(p); });
+  gone.forEach((id) => { const i = DEMO_PERSONAS.findIndex((x) => x.id === id); if (i >= 0) DEMO_PERSONAS.splice(i, 1); });
+} catch { /* nothing saved */ }
+const remember = (fn) => {
+  let saved = { put: [], gone: [] };
+  try { saved = { ...saved, ...JSON.parse(localStorage.getItem(SAVED)) }; } catch { /* start fresh */ }
+  fn(saved);
+  try { localStorage.setItem(SAVED, JSON.stringify(saved)); } catch { /* storage unavailable */ }
+};
+
+export const savePersona = (body = {}) => {
+  const old = DEMO_PERSONAS.find((p) => p.id === body.id);
+  const now = new Date().toISOString();
+  const p = old
+    ? { ...old, ...body, updated_at: now }
+    : { ...chat({}), ...body, id: `demo-persona-${Date.now().toString(36)}`, persona_type: "workspace", persona_type_display: "Custom", is_default: false, created_at: now, updated_at: now, languages: body.languages || ["English"], keywords: body.keywords || [], metadata: body.metadata || {} };
+  if (old) DEMO_PERSONAS[DEMO_PERSONAS.indexOf(old)] = p; else DEMO_PERSONAS.unshift(p);
+  remember((s) => { s.put = [...s.put.filter((x) => x.id !== p.id), p]; });
+  return p;
+};
+export const deletePersona = (id) => {
+  const i = DEMO_PERSONAS.findIndex((p) => p.id === id);
+  if (i >= 0) DEMO_PERSONAS.splice(i, 1);
+  remember((s) => { s.put = s.put.filter((x) => x.id !== id); s.gone = [...new Set([...s.gone, id])]; });
+  return {};
+};
+
 /* The list endpoint's answer: page, limit, search, type and simulation_type, as the API takes them. */
 export const personasPage = (q = {}) => {
   const search = (q.search || "").toLowerCase();

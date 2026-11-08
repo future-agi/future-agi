@@ -5,7 +5,8 @@
   product never set the flag, so none of this runs there.
 */
 import { OBSERVE_PROJECTS } from "src/sections/simulate-v2/_mock/connectAgent";
-import { DEMO_PERSONAS, personasPage } from "./personas";
+import { DEMO_PERSONAS, personasPage, savePersona, deletePersona } from "./personas";
+import { evalsPage, evalDetail } from "./evals";
 
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -86,8 +87,13 @@ const drfPage = (rows) => ({ count: rows.length, next: null, previous: null, res
 
 /* path → result. Anything not listed answers an empty success. */
 const ROUTES = [
-  [/\/simulate\/api\/personas\/$/, (q) => ({ status: true, result: personasPage(q) })],
-  [/\/simulate\/api\/personas\/[^/]+\/$/, (q, path) => ({ status: true, result: DEMO_PERSONAS.find((p) => path.includes(p.id)) || DEMO_PERSONAS[0] })],
+  [/\/simulate\/api\/personas\/$/, (q, path, m, body) => ({ status: true, result: m === "post" ? savePersona(body) : personasPage(q) })],
+  [/\/simulate\/api\/personas\/[^/]+\/$/, (q, path, m, body) => {
+    const id = path.split("/").filter(Boolean).pop();
+    if (m === "delete") return { status: true, result: deletePersona(id) };
+    if (m === "put" || m === "patch") return { status: true, result: savePersona({ ...body, id }) };
+    return { status: true, result: DEMO_PERSONAS.find((p) => p.id === id) || DEMO_PERSONAS[0] };
+  }],
   [/\/api\/capabilities\/$/, () => ({ features: features() })],
   [/\/accounts\/user-info\/$/, () => USER],
   [/\/accounts\/organizations\/$/, () => ({ status: true, result: { organizations: [{ ...ORG, role: "Owner", level: 15, is_selected: true }] } })],
@@ -100,25 +106,32 @@ const ROUTES = [
   [/\/accounts\/key\/get_secret_keys\/$/, (q) => ({ status: true, result: page(KEYS, q) })],
   [/\/accounts\/first-checks\/$/, () => ({ status: true, result: { completed: true } })],
   /* Product screens beside the prototype: the empty shapes their lists read, so they show their own empty states. */
-  [/\/model-hub\/eval-templates\/list\/$/, () => ({ status: true, result: { items: [], total: 0 } })],
+  [/\/model-hub\/eval-templates\/list\/$/, (q) => ({ status: true, result: evalsPage(q) })],
+  [/\/model-hub\/eval-templates\/[^/]+\/detail\/$/, (q, path) => ({ status: true, result: evalDetail(path) })],
   [/\/model-hub\/get-eval-template-names\/?$/, () => ({ status: true, result: [] })],
   [/\/tracer\/eval-task\/list_eval_tasks(_with_project_name)?\/$/, (q) => ({ status: true, result: page([], q) })],
   [/\/agentcc\/gateways\/$/, () => ({ status: true, result: [{ id: "demo-gateway", name: "Default gateway", status: "healthy", is_active: true, created_at: "2026-10-01T09:00:00Z" }] })],
 ];
 
-const answer = (method, url, params = {}) => {
+const answer = (method, url, params = {}, body = {}) => {
   const u = new URL(url, "https://demo.invalid");
-  const q = { ...Object.fromEntries(u.searchParams), ...params };
+  /* A POST list sends its paging and search in the body. */
+  const q = { ...Object.fromEntries(u.searchParams), ...(body && typeof body === "object" && !(body instanceof FormData) ? body : {}), ...params };
   const hit = ROUTES.find(([re]) => re.test(u.pathname));
-  if (hit) return hit[1](q, u.pathname);
+  if (hit) return hit[1](q, u.pathname, method, body);
   /* Requests with no demo answer yet, readable in the console as __demoMisses. */
   (window.__demoMisses ||= new Set()).add(`${method.toUpperCase()} ${u.pathname}`);
   return method === "get" ? { status: true, result: [] } : { status: true, result: {} };
 };
 
+const parseBody = (data) => {
+  if (typeof data !== "string") return data || {};
+  try { return JSON.parse(data); } catch { return {}; }
+};
+
 /* An axios adapter: the request never goes out. */
 export const demoAdapter = async (config) => ({
-  data: answer((config.method || "get").toLowerCase(), `${config.baseURL || ""}${config.url || ""}`, config.params || {}),
+  data: answer((config.method || "get").toLowerCase(), `${config.baseURL || ""}${config.url || ""}`, config.params || {}, parseBody(config.data)),
   status: 200,
   statusText: "OK",
   headers: {},
@@ -137,7 +150,7 @@ export const installDemoMode = (axiosInstance, axiosPackage, hostApi) => {
   window.fetch = (input, init) => {
     const url = typeof input === "string" ? input : input?.url || "";
     if (hostApi && url.startsWith(hostApi)) {
-      const body = JSON.stringify(answer((init?.method || "GET").toLowerCase(), url));
+      const body = JSON.stringify(answer((init?.method || "GET").toLowerCase(), url, {}, parseBody(init?.body)));
       return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));
     }
     return realFetch(input, init);
