@@ -1567,39 +1567,41 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
@@ -2315,6 +2317,27 @@
 - Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
+
+### OBS-E2E-059 — Copilot agent traces show request usage and optional timing detail
+
+**Goal:** A developer inspects a VS Code Copilot turn with accurate token usage, an Agent label and optional internal timing detail
+
+**Spec:** `flows/observe/copilot-agent-usage-timing.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. send the sanitized native VS Code capture plus Strands, Pydantic and parent-only controls
+2. open the captured trace from the real Observe grid
+3. read the agent label and observed token summary with timing activity hidden
+4. show timing spans and hide them again without losing their stored data
+
+**Backend state verified:**
+
+- all 91 captured spans retain their IDs; one agent, five model calls and 72 internal timing spans are stored
+- trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
+- all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
 
 ## prompts
 

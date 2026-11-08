@@ -48,9 +48,12 @@ EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
 # Reviewed unfiltered cursor shape: complete tuple-winner replay, followed by
 # the lexically bound trace-metric tuple before whole-user totals. The former
-# pin expanded the summary proof into each metric's SELECT alias.
+# pin expanded the summary proof into each metric's SELECT alias. The current
+# pin adds a source-winner GenAI operation bit and descendant summary proof,
+# excluding explicitly nonadditive retry siblings from its collision veto.
+# Tenant, window, latest-live replay and cursor ordering are unchanged.
 UNFILTERED_PAGE_DIGEST = (
-    "ada3a7176700fdc3cbd8e91f50ff1de0cb0058ca98e1dbe5e040f87ee76c491c"
+    "006a8d93bc8d5d2799441f45d4e36f22e3aae0ce9067ddc68771af012a95eba5"
 )
 
 
