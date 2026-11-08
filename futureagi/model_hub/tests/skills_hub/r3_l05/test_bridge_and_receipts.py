@@ -346,10 +346,14 @@ def test_serializer_validated_packet_round_trips_through_submission(
             "trust": "operator_recorded_unimported",
         },
     )
-    serializer = ReleasePacket(data=review["packet"])
-    assert serializer.is_valid(), serializer.errors
-    parsed = {"packet": serializer.validated_data, "fingerprint": review["fingerprint"]}
-    request = reviews.submit(author, reviewer, parsed)
+    with timezone.override("Asia/Kolkata"):
+        serializer = ReleasePacket(data=review["packet"])
+        assert serializer.is_valid(), serializer.errors
+        parsed = {
+            "packet": serializer.validated_data,
+            "fingerprint": review["fingerprint"],
+        }
+        request = reviews.submit(author, reviewer, parsed)
     reviews.approve(reviewer, request, review)
     reviews.execute(reviewer, request, review)
 

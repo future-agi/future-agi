@@ -6,6 +6,7 @@ review handoff and its pre-move/currentness receipt, never a second release log.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from django.db import transaction
@@ -44,6 +45,30 @@ from model_hub.services.skills_hub.v12.resolution_leases import (
 
 def _error(code: str, message: str, status: int = 409) -> SkillsHubError:
     return SkillsHubError(code, message, status=status)
+
+
+def _review_value(value: object) -> object:
+    """DRF can normalize 0 to 0.0 and UTC timestamps to another aware zone."""
+    if isinstance(value, dict):
+        return {key: _review_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_review_value(item) for item in value]
+    if isinstance(value, datetime):
+        if timezone.is_naive(value):
+            raise ValueError("An evidence timestamp must be aware.")
+        return value.astimezone(UTC).isoformat()
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _review_digest(value: object) -> str:
+    try:
+        return canonical_digest(_review_value(value))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _error(
+            "invalid_release_request", "Use a valid immutable review identity.", 400
+        ) from exc
 
 
 def _scope(principal: SkillPrincipal) -> dict:
@@ -336,7 +361,7 @@ def preview_release_packet(
         external_pipeline=_external(principal, external_pipeline),
         lock=False,
     )
-    return {"packet": packet, "fingerprint": canonical_digest(packet)}
+    return {"packet": packet, "fingerprint": _review_digest(packet)}
 
 
 def _operation(
@@ -348,7 +373,7 @@ def _operation(
         "operation": name,
         "idempotency_key": key,
     }
-    digest = canonical_digest(body)
+    digest = _review_digest(body)
     old = HubSkillContextOperation.objects.filter(**lookup).first()
     if old and old.request_digest != digest:
         raise _error("idempotency_conflict", "The operation key has another request.")
@@ -386,7 +411,7 @@ def _validate_packet(
         external_pipeline=packet["external_pipeline"],
         lock=lock,
     )
-    if canonical_digest(actual) != canonical_digest(packet):
+    if _review_digest(actual) != _review_digest(packet):
         raise _error(
             "review_stale", "Evidence or candidate changed. Review a new packet."
         )
@@ -427,7 +452,7 @@ def submit_release_request(
         assert old.result_resource_id is not None
         _request_packet(principal=principal, request_id=old.result_resource_id)
         return dict(old.response)
-    if expected_fingerprint != canonical_digest(packet):
+    if expected_fingerprint != _review_digest(packet):
         raise _error("review_stale", "The reviewed packet changed.")
     if (
         not 1 <= len(recipient_ids) <= 20
@@ -483,7 +508,7 @@ def submit_release_request(
         **_scope(principal),
         request=request,
         revision=request.revision,
-        fingerprint=canonical_digest(actual),
+        fingerprint=_review_digest(actual),
         candidate_id=packet["candidate_version_id"],
         packet=actual,
     )
