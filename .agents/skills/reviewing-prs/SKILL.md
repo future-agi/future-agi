@@ -140,7 +140,8 @@ reported as pre-existing — not deleted from the review because CI happens not 
 | A `pyproject.toml` configures `[tool.ruff]` and `.py` files changed               | `ruff check` and `ruff format --check` on the changed files. A new F405 or F821 is a probable runtime `NameError` — treat it as P0 until you prove otherwise. |
 | A file under a `migrations/` directory changed                                    | `makemigrations --check --dry-run` with the test settings. A second leaf node blocks.                                                                         |
 | Any test file changed                                                             | Run the PR's own new tests. A failing new test ends the review until it is fixed.                                                                             |
-| `frontend/package.json` defines the scripts, and serializers or contracts changed | `yarn lint`, and the contract check the repo defines (`yarn contracts:check`).                                                                                |
+| Frontend source files changed, and `frontend/package.json` defines the script     | `yarn lint` on the frontend.                                                                                                                                  |
+| Serializers or contracts changed, and `frontend/package.json` defines the scripts | The contract check the repo defines (`yarn contracts:check`).                                                                                                 |
 
 Never cite `yarn type-check` as evidence: without a `tsconfig.json` it is a no-op and proves nothing.
 
@@ -152,9 +153,10 @@ Trace the main changed path end to end yourself first — inputs, the branch tha
 written, the value read back. Then fan out.
 
 The rules live in [references/standards-checklist.md](references/standards-checklist.md), grouped by
-lens; load the section for the lens you are working, not the whole file. Dispatch one subagent per
-lens when subagents are available, each carrying that lens's section; otherwise work the lenses
-yourself in this order.
+lens; load the section for the lens you are working, not the whole file. Every lens also loads the
+**Every lens** section at the top and the Severity and attribution rules at the foot. Dispatch one
+subagent per lens when subagents are available, each carrying those plus its lens's sections;
+otherwise work the lenses yourself in this order.
 
 | Lens                   | Checklist sections                                              |
 | ---------------------- | --------------------------------------------------------------- |
@@ -231,7 +233,9 @@ Nothing reaches GitHub until the user answers that question.
 - **P0 — blocks.** Broken new code this PR introduced, the open build cannot deploy or migrate, data
   loss or corruption.
 - **P1 — blocks.** A verified correctness or contract bug: wrong value recorded, response drift, a
-  crash on a scheduled path, undeclared E2E coverage on a behaviour change.
+  crash on a scheduled path, undeclared E2E coverage on a behaviour change. Also an introduced
+  instance from the banned-pattern tables of standard `12`, subject to each pattern's stated
+  exceptions. Signals and meta-rules do not block just because they cite `12`.
 - **P2 / P3 — should fix, does not block.** Edge cases, performance, consistency, hygiene.
 - **Severity is not blocking.** A pre-existing P1 in a file this PR touches is a judgement call —
   "fix it while you are in here" or "file it urgently" — but the block is anchored on what this PR

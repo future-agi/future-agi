@@ -3175,7 +3175,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         identity_names = self._physical_identity_names_sql()
         group_by = self._physical_group_by_sql()
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
-        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP)
+        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP, include_summary=True)
         message_length = (
             f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
             if include_messages
@@ -3268,10 +3268,22 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ),
         member_trace_usage AS (
             SELECT project_id, member_session_id, trace_id,
-                {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present")}
-                {message_aggregates}
-            FROM session_members
-            GROUP BY project_id, member_session_id, trace_id
+                usage_metrics.1 AS usage_cost_unknown,
+                usage_metrics.2 AS usage_cost,
+                usage_metrics.3 AS usage_total_tokens,
+                usage_metrics.4 AS usage_prompt_tokens,
+                usage_metrics.5 AS usage_completion_tokens,
+                usage_metrics.6 AS usage_source_summary_present,
+                usage_metrics.7 AS usage_request_count
+                {", trace_root_start, trace_has_root, trace_message_key" if include_messages else ""}
+            FROM (
+                SELECT project_id, member_session_id, trace_id,
+                    {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present", materialized=True)}
+                    {message_aggregates}
+                FROM session_members
+                GROUP BY project_id, member_session_id, trace_id
+            ) AS member_trace_usage_state
+            ARRAY JOIN trace_usage_metrics AS usage_metrics
         )
         """
 

@@ -36,9 +36,14 @@ from tracer.views.otlp import (
     ids=lambda v: v["name"],
 )
 def test_shared_vectors(vector):
-    attrs = normalize_attributes(vector["attributes"], vector["scope"])
+    attrs = normalize_attributes(
+        vector["attributes"], vector["scope"], name=vector.get("span_name", "")
+    )
     assert attrs == vector["expected"]
-    assert normalize_attributes(attrs, vector["scope"]) == attrs
+    assert (
+        normalize_attributes(attrs, vector["scope"], name=vector.get("span_name", ""))
+        == attrs
+    )
 
 
 def test_none_suppresses_all_accounting_aliases_and_fallback():

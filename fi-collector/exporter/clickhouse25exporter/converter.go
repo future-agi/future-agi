@@ -68,7 +68,7 @@ const (
 var knownObservationTypes = map[string]struct{}{
 	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
 	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
-	"conversation": {}, "unknown": {},
+	"conversation": {}, "unknown": {}, "internal": {},
 }
 
 // Pricer computes token-based cost for spans that carried no user cost
@@ -162,6 +162,7 @@ var spanKindSynonyms = map[string]string{
 	"embeddings":       "embedding",
 	"execute_tool":     "tool",
 	"invoke":           "chain",
+	"invoke_agent":     "agent",
 }
 
 // resolveObservationType mirrors Python get_observation_type ∘ normalize_span_kind:

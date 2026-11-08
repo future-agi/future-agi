@@ -31566,6 +31566,7 @@ export const ObservationSpanApiObservationType = {
   guardrail: "guardrail",
   evaluator: "evaluator",
   conversation: "conversation",
+  internal: "internal",
 } as const;
 
 export type ObservationSpanApiInput = { [key: string]: unknown };

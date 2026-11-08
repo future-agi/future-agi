@@ -140,9 +140,12 @@ def test_agent_graph_is_one_latest_state_v2_statement():
     assert "'hierarchy'" in query
     assert "'path'" not in query
     assert "arrayFirst(" not in query
-    assert "arrayExists(" not in query
+    assert "arrayExists(c -> c.2 = s.1" in query  # Pydantic usage proof only
     assert "indexOfAssumeSorted(" in query
-    assert "arrayFold(" not in query
+    # GenAI usage ancestry is bounded to branch spans; never restore the old
+    # chronological fold over every leaf or infer execution order from times.
+    assert "range(length(usage_branches))" in query
+    assert "range(length(usage_spans))" not in query
     assert "graph_execution_groups" not in query
     # Timestamp order must never invent a transition between siblings. Agent
     # Path stays unavailable until producers record chronological transitions;
