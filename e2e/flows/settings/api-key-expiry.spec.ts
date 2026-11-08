@@ -12,6 +12,9 @@ const HEALTH = '/api/public/health';
 const PAGE = '/dashboard/keys';
 // e2e/README.md: first-paint budget, not a CDC wait.
 const UI_READY = 60_000;
+// Exceed the request client's 30s default timeout so queueing cannot turn the
+// seed into a past date before validation. The clock poll remains bounded.
+const KEY_LIFETIME = 60_000;
 // CreateApiKey uses a local calendar end-of-day; make the independent expected instant explicit.
 test.use({ timezoneId: 'UTC' });
 
@@ -52,7 +55,7 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
     .map(kind => [kind, `${prefix}-${kind}`]));
   // The public serializer rejects past dates. Seed a valid short TTL, which ages
   // naturally during the real UI journey; no fake clock, SQL writes or fixed sleep.
-  const shortExpiry = new Date(Date.now() + 3_000).toISOString();
+  const shortExpiry = new Date(Date.now() + KEY_LIFETIME).toISOString();
   const expired = (await actor.api.post<Created>(CREATE, {
     key_name: names.expired, expires_at: shortExpiry,
   })).result;
