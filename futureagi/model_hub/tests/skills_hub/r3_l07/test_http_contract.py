@@ -287,7 +287,7 @@ def test_wrong_kind_and_human_auth_cannot_use_consumption(admin, issued, release
 
 
 def test_credential_list_scope_and_pagination(
-    admin, issued, workspace, hub_other_workspace
+    admin, issued, organization, user, hub_other_workspace
 ):
     _, first, _, _ = issued
     response = admin.get(BASE + "contexts/credentials/", {"page_size": 1})
@@ -295,10 +295,28 @@ def test_credential_list_scope_and_pagination(
     page = response.data["result"]
     assert page["count"] == 1 and page["results"][0]["id"] == first["id"]
     assert "secret" not in json.dumps(page)
-    denied = admin.get(
+    # Existing user-key authentication uses its fixed key workspace; an ambient
+    # header cannot redirect it. Exercise the other scope with a real bound key.
+    anchored = admin.get(
         BASE + "contexts/credentials/", HTTP_X_WORKSPACE_ID=str(hub_other_workspace.pk)
     )
-    assert denied.status_code in {403, 404}
-    assert first["id"] not in json.dumps(denied.data)
+    assert anchored.status_code == 200
+    assert anchored.data["result"]["results"][0]["id"] == first["id"]
+    key = OrgApiKey.objects.create(
+        name="Synthetic other workspace",
+        type="user",
+        user=user,
+        api_key=f"test-{uuid4()}",
+        secret_key=f"test-{uuid4()}",
+        organization=organization,
+        workspace=hub_other_workspace,
+    )
+    other = APIClient()
+    other.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+    listing = other.get(BASE + "contexts/credentials/")
+    assert listing.status_code == 200
+    assert listing.data["result"]["count"] == 0
+    assert listing.data["result"]["results"] == []
+    assert first["id"] not in json.dumps(listing.data)
     bad_page = admin.get(BASE + "contexts/credentials/", {"page_size": 101})
     assert bad_page.status_code == 400
