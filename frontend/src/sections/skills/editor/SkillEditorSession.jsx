@@ -92,7 +92,7 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
   else if (session.revision === 0) saveLabel = "Not saved yet";
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={2} sx={{ flex: { xs: "1 0 auto", md: "1 1 0%" }, minHeight: 0 }}>
       <PageHeader
         title={<Box component="span" sx={{ fontFamily: "monospace" }}>{skill.name}</Box>}
         description={session.baseVersion === null ? "New skill" : `Draft based on v${session.baseVersion}`}
@@ -107,15 +107,15 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
             <Button variant="contained" disabled={locked || session.status === "conflict" || session.status === "error"} onClick={startPublish}>Publish</Button>
           </Box>
         )}
-        sx={{ flexWrap: "wrap", rowGap: 1.5 }}
+        sx={{ flexWrap: "wrap", rowGap: 1.5, flexShrink: 0 }}
       />
       {stale && (
-        <Alert severity="warning" action={<Button color="inherit" disabled={locked || saving || session.status === "conflict"} onClick={compareLatest}>Compare</Button>}>
+        <Alert severity="warning" sx={{ flexShrink: 0 }} action={<Button color="inherit" disabled={locked || saving || session.status === "conflict"} onClick={compareLatest}>Compare</Button>}>
           v{skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.
         </Alert>
       )}
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "200px minmax(0, 1fr)", lg: "200px minmax(0, 1fr) 280px" }, gap: 3, alignItems: "start" }}>
-        <Box sx={{ minWidth: 0 }}>
+      <Box sx={{ display: "grid", flex: 1, minHeight: 0, gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "200px minmax(0, 1fr)", lg: "200px minmax(0, 1fr) 280px" }, gridTemplateRows: { xs: "auto minmax(400px, 1fr) auto", md: "minmax(0, 1fr) auto", lg: "minmax(0, 1fr)" }, gap: 3 }}>
+        <Box sx={{ minWidth: 0, minHeight: 0, maxHeight: { xs: 240, md: "none" }, overflowY: "auto" }}>
           <FileTree
             files={session.files}
             selectedPath={file?.path}
@@ -140,17 +140,17 @@ export default function SkillEditorSession({ skill, initialDraft, refetchDraft }
             }}
           />
         </Box>
-        <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-          {isMarkdown && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view"><Tab value="edit" label="Edit" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
+        <Stack spacing={1.5} sx={{ minWidth: 0, minHeight: 0 }}>
+          {isMarkdown && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view" sx={{ flexShrink: 0 }}><Tab value="edit" label="Edit" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
           {file && (isMarkdown && mode === "preview" ? (
-            <SkillMarkdownPreview content={file.content} currentPath={file.path} onOpenPath={openFile} />
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}><SkillMarkdownPreview content={file.content} currentPath={file.path} onOpenPath={openFile} /></Box>
           ) : (
             <SkillFileEditor key={file.path} file={file} target={target} readOnly={locked} onChange={(content) => {
               if (!locked) session.edit(session.files.map((item) => item.path === file.path ? { ...item, content } : item));
             }} />
           ))}
         </Stack>
-        <Box sx={{ minWidth: 0, gridColumn: { md: "1 / -1", lg: "auto" } }}>
+        <Box sx={{ minWidth: 0, minHeight: 0, overflowY: "auto", maxHeight: { xs: 320, md: 200, lg: "none" }, gridColumn: { md: "1 / -1", lg: "auto" } }}>
           <SegmentedTabs value={panel} onChange={(_, value) => setPanel(value)} aria-label="Draft review panels"><Tab value="checks" label="Checks" /><Tab value="tests" label="Tests" /></SegmentedTabs>
           <Box sx={{ pt: 1.5 }} hidden={panel !== 'checks'}><DraftChecksPanel files={session.files} name={skill.name} onSelect={(check) => openFile(check.path, check.line)} /></Box>
           <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}><EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={(selection) => openAssist('description', selection)} /></Box>

@@ -197,17 +197,26 @@ export default function VersionsTab({ skill }) {
         title="Labels"
         description="Agents fetching a label receive the version it points to."
         actions={
-          <Stack direction="row" spacing={1}><Button variant="outlined" size="small" disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => setProtectionOpen(true)}>Protection</Button>
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={
-              !skill.latestVersion || labels.isError || labels.isLoading
-            }
-            onClick={() => setMove({})}
-          >
-            Set label
-          </Button></Stack>
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" size="small" disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => setProtectionOpen(true)}>Protection</Button>
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => setHistory("")}
+            >
+              Label history
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={
+                !skill.latestVersion || labels.isError || labels.isLoading
+              }
+              onClick={() => setMove({})}
+            >
+              Set label
+            </Button>
+          </Stack>
         }
       >
         <Typography variant="s3" color="text.secondary">Protected names: {skill.protectedLabelNames?.join(', ') || 'None'}. Protection remains even when a label is unassigned.</Typography>

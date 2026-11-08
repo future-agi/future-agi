@@ -11,6 +11,7 @@ from rest_framework import serializers as s
 
 from model_hub.services.skills_hub import limits
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.resolve import MANIFEST_PAGE_SIZE
 from model_hub.services.skills_hub.usage import fetches_7d_map
 from model_hub.services.skills_hub.v11.principals import (
     principal_from_request,
@@ -166,6 +167,18 @@ class SelectorQuery(HubSerializer):
 class ResolveQuery(SelectorQuery):
     name = s.CharField()
     include_content = s.BooleanField(default=False)
+    file_offset = s.IntegerField(
+        min_value=0,
+        max_value=limits.MAX_FILES,
+        default=0,
+        help_text="Zero-based file offset. Pin version when following next_file_offset.",
+    )
+    file_limit = s.IntegerField(
+        min_value=1,
+        max_value=MANIFEST_PAGE_SIZE,
+        required=False,
+        help_text="Files per manifest page (1–25). REST defaults to all files; MCP defaults to 25.",
+    )
 
 
 class DownloadQuery(SelectorQuery):
@@ -484,7 +497,8 @@ class DraftSummary(HubSerializer):
     is_mine = s.SerializerMethodField()
 
     def get_is_mine(self, obj) -> bool:
-        return bool(obj.user_id == self.context["request"].user.pk)
+        principal = _principal(self.context)
+        return principal.kind != "system_key" and obj.user_id == principal.user_id
 
 
 class SkillPermissions(HubSerializer):
@@ -557,8 +571,14 @@ class Manifest(HubSerializer):
     version_id = s.UUIDField()
     digest = s.CharField()
     requested = Requested()
-    frontmatter = s.JSONField()
+    frontmatter = s.JSONField(
+        required=False,
+        help_text="REST only. MCP callers read the original frontmatter from SKILL.md in chunks.",
+    )
     files = ManifestFile(many=True)
+    file_count = s.IntegerField()
+    file_offset = s.IntegerField()
+    next_file_offset = s.IntegerField(allow_null=True)
     created_at = s.DateTimeField()
 
 

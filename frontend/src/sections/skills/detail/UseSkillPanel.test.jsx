@@ -53,6 +53,21 @@ async function selectLabel(label) {
 afterEach(cleanup);
 
 describe("Use skill panel", () => {
+  it("wraps both install commands without inserting newlines into the copied shell command", () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const { container } = show({ name: "support-policy-" + "a".repeat(48), tags: ["very-long-tag-" + "b".repeat(48)] });
+    const snippets = [...container.querySelectorAll("pre")];
+    const copyButtons = screen.getAllByRole("button", { name: "Copy code" });
+    expect(snippets).toHaveLength(2);
+    snippets.forEach((snippet, index) => {
+      expect(snippet).toHaveStyle({ whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" });
+      expect(snippet.textContent).not.toContain("\n");
+      expect(snippet.textContent).toContain("&& rm");
+      fireEvent.click(copyButtons[index]);
+      expect(writeText).toHaveBeenLastCalledWith(snippet.textContent);
+    });
+  });
   it("uses HOST_API and environment variables, with an API keys settings link", () => {
     const { container } = show();
     const command = container.querySelector("pre").textContent;

@@ -87,7 +87,22 @@ try {
       await page.evaluate(() => [...document.querySelectorAll('button')].find((button) => button.textContent === 'refund policy').click());
       assert.match(await page.$eval('[data-testid="selected"]', (node) => node.textContent), /references\/policy.md/);
       await page.screenshot({ path: path.join(screenshotDir, `${mode}-${width}.png`), fullPage: true });
-      await page.evaluate(() => [...document.querySelectorAll('button')].find((button) => button.textContent === 'New file').click());
+      const actions = await page.$eval('[aria-label="File actions"]', (node) => {
+        const buttons = [...node.querySelectorAll('button')];
+        return {
+          wrap: getComputedStyle(node).flexWrap,
+          tops: buttons.map((button) => button.getBoundingClientRect().top),
+          icons: buttons.filter((button) => button.querySelector('svg')).length,
+          labels: buttons.map((button) => button.getAttribute('aria-label')),
+          fits: buttons.every((button) => button.getBoundingClientRect().right <= node.getBoundingClientRect().right),
+        };
+      });
+      assert.equal(actions.wrap, 'nowrap');
+      assert.equal(new Set(actions.tops).size, 1, 'File actions must stay on one row.');
+      assert.equal(actions.icons, 4, 'All file-action Solar icons must render offline.');
+      assert.deepEqual(actions.labels, ['New file', 'New folder', 'Rename', 'Delete']);
+      assert(actions.fits, 'File actions must fit inside the tree pane.');
+      await page.click('button[aria-label="New file"]');
       await page.waitForSelector('[role="dialog"] input');
       await page.type('[role="dialog"] input', 'references/new.md');
       await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((button) => button.textContent === 'Create file').click());

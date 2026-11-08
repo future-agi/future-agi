@@ -32562,10 +32562,15 @@ export const ModelHubSkillsPublishCreateResponse = zod.object({
 });
 
 /**
- * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back.
+ * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.
  */
 
 export const modelHubSkillsResolveListQueryIncludeContentDefault = false;
+export const modelHubSkillsResolveListQueryFileOffsetDefault = 0;
+export const modelHubSkillsResolveListQueryFileOffsetMin = 0;
+export const modelHubSkillsResolveListQueryFileOffsetMax = 200;
+
+export const modelHubSkillsResolveListQueryFileLimitMax = 25;
 
 export const ModelHubSkillsResolveListQueryParams = zod.object({
   label: zod.string().min(1).optional(),
@@ -32574,6 +32579,22 @@ export const ModelHubSkillsResolveListQueryParams = zod.object({
   include_content: zod
     .boolean()
     .default(modelHubSkillsResolveListQueryIncludeContentDefault),
+  file_offset: zod
+    .number()
+    .min(modelHubSkillsResolveListQueryFileOffsetMin)
+    .max(modelHubSkillsResolveListQueryFileOffsetMax)
+    .default(modelHubSkillsResolveListQueryFileOffsetDefault)
+    .describe(
+      "Zero-based file offset. Pin version when following next_file_offset.",
+    ),
+  file_limit: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsResolveListQueryFileLimitMax)
+    .optional()
+    .describe(
+      "Files per manifest page (1–25). REST defaults to all files; MCP defaults to 25.",
+    ),
 });
 
 export const ModelHubSkillsResolveListResponse = zod.object({
@@ -32589,7 +32610,13 @@ export const ModelHubSkillsResolveListResponse = zod.object({
       label: zod.string().min(1).optional(),
       version: zod.number().optional(),
     }),
-    frontmatter: zod.object({}).passthrough(),
+    frontmatter: zod
+      .object({})
+      .passthrough()
+      .optional()
+      .describe(
+        "REST only. MCP callers read the original frontmatter from SKILL.md in chunks.",
+      ),
     files: zod.array(
       zod.object({
         path: zod.string().min(1),
@@ -32598,6 +32625,9 @@ export const ModelHubSkillsResolveListResponse = zod.object({
         content: zod.string().optional(),
       }),
     ),
+    file_count: zod.number(),
+    file_offset: zod.number(),
+    next_file_offset: zod.number().nullable(),
     created_at: zod.string().datetime({ offset: true }),
   }),
 });
@@ -33078,6 +33108,47 @@ export const ModelHubSkillsLabelsHistoryListResponse = zod.object({
       }),
     ),
   }),
+});
+
+export const ModelHubSkillsLabelsHistoryUpdateParams = zod.object({
+  skill_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsLabelsHistoryUpdateBodyNoteDefault = ``;
+export const modelHubSkillsLabelsHistoryUpdateBodyNoteMax = 500;
+
+export const ModelHubSkillsLabelsHistoryUpdateBody = zod.object({
+  expected_version: zod.number().min(1).nullish(),
+  version: zod.number().min(1),
+  note: zod
+    .string()
+    .max(modelHubSkillsLabelsHistoryUpdateBodyNoteMax)
+    .default(modelHubSkillsLabelsHistoryUpdateBodyNoteDefault),
+});
+
+export const ModelHubSkillsLabelsHistoryUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    name: zod.string().min(1),
+    version: zod.number(),
+    version_id: zod.string().uuid(),
+    updated_at: zod.string().datetime({ offset: true }),
+    updated_by: zod.union([
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string(),
+      }),
+      zod.null(),
+    ]),
+  }),
+});
+
+export const ModelHubSkillsLabelsHistoryDeleteParams = zod.object({
+  skill_id: zod.string().uuid(),
+});
+
+export const ModelHubSkillsLabelsHistoryDeleteBody = zod.object({
+  expected_version: zod.number().min(1).nullish(),
 });
 
 export const ModelHubSkillsLabelsUpdateParams = zod.object({

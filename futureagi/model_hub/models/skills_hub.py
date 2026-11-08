@@ -205,7 +205,17 @@ class HubSkillLabelEvent(models.Model):
         ]
 
 
+class LiveDraftManager(models.Manager["HubSkillDraft"]):
+    """Hide revision tombstones from ordinary draft readers and relations."""
+
+    def get_queryset(self) -> "models.QuerySet[HubSkillDraft]":
+        return super().get_queryset().filter(discarded_at__isnull=True)
+
+
 class HubSkillDraft(models.Model):
+    objects = LiveDraftManager()
+    all_objects = models.Manager()
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     skill = models.ForeignKey(HubSkill, on_delete=models.CASCADE, related_name="drafts")
     user = models.ForeignKey(
@@ -218,6 +228,7 @@ class HubSkillDraft(models.Model):
     source = models.JSONField(default=dict)
     note = models.TextField(blank=True)
     revision = models.PositiveIntegerField(default=1)
+    discarded_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

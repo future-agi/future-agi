@@ -44,9 +44,9 @@ def test_missing_label_never_falls_back(
         "workspace": workspace,
         "name": hub_skill.name,
     }
-    for selector in ({}, {"label": "production"}, {"label": "staging"}):
+    for label in (None, "production", "staging"):
         with pytest.raises(SkillsHubError) as exc:
-            resolve(**scope, **selector)
+            resolve(**scope, label=label)
         assert (exc.value.code, exc.value.status) == ("label_not_found", 404)
     with pytest.raises(SkillsHubError) as exc:
         resolve(**scope, version=123)

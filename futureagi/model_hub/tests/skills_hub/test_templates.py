@@ -78,7 +78,9 @@ def test_template_calls_return_fresh_files_and_do_not_mutate_sources():
     second = get_template_files(
         "blank", name="second", description="Second description"
     )
-    assert parse_frontmatter(second[0]["content"])[0]["name"] == "second"
+    frontmatter, _, _ = parse_frontmatter(second[0]["content"])
+    assert frontmatter is not None
+    assert frontmatter["name"] == "second"
 
 
 @pytest.mark.parametrize("template_id", ["unknown", "../blank", "blank/SKILL.md", ""])

@@ -8,13 +8,8 @@ from inspect import signature
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import F
 from django.http import HttpResponse
-from django.http.multipartparser import MultiPartParser as DjangoMultipartParser
-from django.http.multipartparser import MultiPartParserError
-from django.utils.datastructures import MultiValueDict
 from django.utils.http import parse_etags
 from drf_yasg import openapi
-from rest_framework.exceptions import ParseError
-from rest_framework.parsers import DataAndFiles, MultiPartParser
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -43,6 +38,7 @@ from model_hub.services.skills_hub.v11.principals import (
     require_private_principal,
     require_scope_access,
 )
+from model_hub.views.skills_uploads import SkillMultipartParser
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -324,55 +320,41 @@ class SkillResolveView(SkillsView):
         s.Manifest,
         query=s.ResolveQuery,
         responses={304: openapi.Response("Not modified")},
-        operation_description='Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back.',
+        operation_description='Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.',
     )
     def get(self, request):
         query = dict(request.validated_query_data)
-        include_content = query.pop("include_content") and not getattr(
-            request, "_force_auth_user", None
+        in_process = getattr(request, "_force_auth_user", None) is not None
+        include_content = query.pop("include_content") and not in_process
+        file_offset = query.pop("file_offset")
+        file_limit = query.pop(
+            "file_limit", resolve.MANIFEST_PAGE_SIZE if in_process else None
         )
         resolved = resolve.resolve(
             organization=request.organization, workspace=request.workspace, **query
         )
         version = resolved.version
         etag = f'"{version.digest}"'
-        fetch(request, version)
         candidates = parse_etags(request.headers.get("If-None-Match", ""))
         if "*" in candidates or any(
             candidate.removeprefix("W/") == etag for candidate in candidates
         ):
             response = HttpResponse(status=304)
         else:
-            rows = (
-                version.files.select_related("blob")
-                if include_content
-                else version.files.all()
-            )
-            files = [
-                {
-                    "path": row.path,
-                    "size_bytes": row.size_bytes,
-                    "sha256": row.sha256,
-                    **({"content": row.blob.content} if include_content else {}),
-                }
-                for row in rows.order_by("path")
-            ]
             response = self.output(
                 request,
                 s.Manifest,
-                {
-                    "skill_id": resolved.skill.pk,
-                    "name": resolved.skill.name,
-                    "description": version.frontmatter["description"],
-                    "version": version.number,
-                    "version_id": version.pk,
-                    "digest": version.digest,
-                    "requested": resolved.requested,
-                    "frontmatter": version.frontmatter,
-                    "files": files,
-                    "created_at": version.created_at,
-                },
+                resolve.manifest(
+                    resolved,
+                    include_content=include_content,
+                    # YAML aliases can expand even a small frontmatter block. MCP
+                    # reads its original bytes from SKILL.md, not an unbounded DTO.
+                    include_frontmatter=not in_process,
+                    file_offset=file_offset,
+                    file_limit=file_limit,
+                ),
             )
+        fetch(request, version)
         response["ETag"] = etag
         response["Cache-Control"] = "private, no-cache"
         response["Vary"] = (
@@ -602,7 +584,17 @@ class SkillLabelView(SkillsView):
         return Response(status=204)
 
 
-class SkillLabelHistoryView(SkillsView):
+class SkillLabelHistoryView(SkillLabelView):
+    # The literal history route also names a valid mutable label. Keep GET for
+    # audit events and delegate writes to exactly the ordinary label policy.
+    @contract(s.LabelOut, body=s.SetLabelRequest)
+    def put(self, request, skill_id):
+        return super().put(request, skill_id, label="history")
+
+    @contract(body=s.RemoveLabelRequest, status=204)
+    def delete(self, request, skill_id):
+        return super().delete(request, skill_id, label="history")
+
     @contract(s.HistoryPage, query=s.HistoryQuery)
     def get(self, request, skill_id):
         query = request.validated_query_data
@@ -664,45 +656,6 @@ class SkillUsageView(SkillsView):
                 self.skill(request, skill_id), request.validated_query_data["days"]
             ),
         )
-
-
-class RelativePathMultipartParser(DjangoMultipartParser):
-    """Keep original paths for the package validator, never for disk filenames.
-
-    Django normally strips directories before exposing UploadedFile.name, losing
-    folder structure and hiding traversal attempts. Upload handlers still own safe
-    temporary filenames; only the logical name is restored after parsing.
-    """
-
-    _files: MultiValueDict[str, UploadedFile]
-
-    def sanitize_file_name(self, file_name):
-        self.skill_relative_path = file_name
-        return super().sanitize_file_name(file_name) or "invalid-upload"
-
-    def handle_file_complete(self, old_field_name, counters):
-        before = len(self._files.getlist(old_field_name))
-        super().handle_file_complete(old_field_name, counters)
-        uploads = self._files.getlist(old_field_name)
-        if len(uploads) > before:
-            # UploadedFile.name's setter also strips directories. Package parsing
-            # consumes this attribute only; storage never uses the logical path.
-            uploads[-1].skill_relative_path = self.skill_relative_path  # type: ignore[attr-defined]
-
-
-class SkillMultipartParser(MultiPartParser):
-    def parse(self, stream, media_type=None, parser_context=None):
-        context = parser_context or {}
-        request = context["request"]
-        meta = request.META.copy()
-        meta["CONTENT_TYPE"] = media_type
-        try:
-            data, files = RelativePathMultipartParser(
-                meta, stream, request.upload_handlers, context.get("encoding")
-            ).parse()
-        except MultiPartParserError as exc:
-            raise ParseError("Invalid multipart upload.") from exc
-        return DataAndFiles(data, files)
 
 
 def parse_uploads(uploads: list[UploadedFile]):

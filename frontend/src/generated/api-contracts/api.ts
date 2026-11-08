@@ -54668,7 +54668,7 @@ export const getModelHubSkillsResolveListUrl = (
 };
 
 /**
- * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back.
+ * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.
  */
 export const modelHubSkillsResolveList = async (
   params: ModelHubSkillsResolveListParams,
@@ -55686,6 +55686,184 @@ export const modelHubSkillsLabelsHistoryList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse200 = {
+  data: SkillsLabelOutResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 422
+  >;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponseSuccess =
+  modelHubSkillsLabelsHistoryUpdateResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsLabelsHistoryUpdateResponseError = (
+  | modelHubSkillsLabelsHistoryUpdateResponse400
+  | modelHubSkillsLabelsHistoryUpdateResponse401
+  | modelHubSkillsLabelsHistoryUpdateResponse403
+  | modelHubSkillsLabelsHistoryUpdateResponse404
+  | modelHubSkillsLabelsHistoryUpdateResponse409
+  | modelHubSkillsLabelsHistoryUpdateResponse413
+  | modelHubSkillsLabelsHistoryUpdateResponse422
+  | modelHubSkillsLabelsHistoryUpdateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsLabelsHistoryUpdateResponse =
+  | modelHubSkillsLabelsHistoryUpdateResponseSuccess
+  | modelHubSkillsLabelsHistoryUpdateResponseError;
+
+export const getModelHubSkillsLabelsHistoryUpdateUrl = (skillId: string) => {
+  return `/model-hub/skills/${skillId}/labels/history/`;
+};
+
+export const modelHubSkillsLabelsHistoryUpdate = async (
+  skillId: string,
+  skillsHubSetLabelRequestApi: SkillsHubSetLabelRequestApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsLabelsHistoryUpdateResponse> => {
+  return apiMutator<modelHubSkillsLabelsHistoryUpdateResponse>(
+    getModelHubSkillsLabelsHistoryUpdateUrl(skillId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsHubSetLabelRequestApi),
+    },
+  );
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    204 | 400 | 401 | 403 | 404 | 409 | 413 | 422
+  >;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponseSuccess =
+  modelHubSkillsLabelsHistoryDeleteResponse204 & {
+    headers: Headers;
+  };
+export type modelHubSkillsLabelsHistoryDeleteResponseError = (
+  | modelHubSkillsLabelsHistoryDeleteResponse400
+  | modelHubSkillsLabelsHistoryDeleteResponse401
+  | modelHubSkillsLabelsHistoryDeleteResponse403
+  | modelHubSkillsLabelsHistoryDeleteResponse404
+  | modelHubSkillsLabelsHistoryDeleteResponse409
+  | modelHubSkillsLabelsHistoryDeleteResponse413
+  | modelHubSkillsLabelsHistoryDeleteResponse422
+  | modelHubSkillsLabelsHistoryDeleteResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsLabelsHistoryDeleteResponse =
+  | modelHubSkillsLabelsHistoryDeleteResponseSuccess
+  | modelHubSkillsLabelsHistoryDeleteResponseError;
+
+export const getModelHubSkillsLabelsHistoryDeleteUrl = (skillId: string) => {
+  return `/model-hub/skills/${skillId}/labels/history/`;
+};
+
+export const modelHubSkillsLabelsHistoryDelete = async (
+  skillId: string,
+  skillsHubRemoveLabelRequestApi: SkillsHubRemoveLabelRequestApi,
+  options?: RequestInit,
+): Promise<modelHubSkillsLabelsHistoryDeleteResponse> => {
+  return apiMutator<modelHubSkillsLabelsHistoryDeleteResponse>(
+    getModelHubSkillsLabelsHistoryDeleteUrl(skillId),
+    {
+      ...options,
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(skillsHubRemoveLabelRequestApi),
     },
   );
 };

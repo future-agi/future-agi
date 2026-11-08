@@ -16228,6 +16228,9 @@ export interface SkillsHubManifestFileApi {
   content?: string;
 }
 
+/**
+ * REST only. MCP callers read the original frontmatter from SKILL.md in chunks.
+ */
 export type SkillsHubManifestApiFrontmatter = { [key: string]: unknown };
 
 export interface SkillsHubManifestApi {
@@ -16241,8 +16244,12 @@ export interface SkillsHubManifestApi {
   /** @minLength 1 */
   digest: string;
   requested: SkillsHubRequestedApi;
-  frontmatter: SkillsHubManifestApiFrontmatter;
+  /** REST only. MCP callers read the original frontmatter from SKILL.md in chunks. */
+  frontmatter?: SkillsHubManifestApiFrontmatter;
   files: SkillsHubManifestFileApi[];
+  file_count: number;
+  file_offset: number;
+  next_file_offset: number | null;
   created_at: string;
 }
 
@@ -39812,6 +39819,18 @@ export type ModelHubSkillsResolveListParams = {
    */
   name: string;
   include_content?: boolean;
+  /**
+   * Zero-based file offset. Pin version when following next_file_offset.
+   * @minimum 0
+   * @maximum 200
+   */
+  file_offset?: number;
+  /**
+   * Files per manifest page (1–25). REST defaults to all files; MCP defaults to 25.
+   * @minimum 1
+   * @maximum 25
+   */
+  file_limit?: number;
 };
 
 export type ModelHubSkillsCompareListParams = {

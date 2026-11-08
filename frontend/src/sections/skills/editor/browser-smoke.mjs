@@ -37,7 +37,8 @@ export const useSkillFile = (_id, _number, file) => ({ data: { text: draft.files
 export const useSaveSkillDraft = () => ({ mutateAsync: save });
 export const useDiscardSkillDraft = () => ({ mutateAsync: async () => undefined, isPending: false });
 export const useRunSkillChecks = () => ({ mutateAsync: runChecks });
-export const useSkillCompare = () => ({ data: { files: draft.files.map((file) => ({ path: file.path, status: 'modified', fromText: 'Earlier instructions', toText: file.content })) } });
+const refetchComparison = async () => ({ data: { files: draft.files.map((file) => ({ path: file.path, status: 'modified', fromText: 'Earlier instructions', toText: file.content })) }, isError: false });
+export const useSkillCompare = () => ({ refetch: refetchComparison });
 export const usePublishSkillDraft = () => ({ mutateAsync: publish });
 export const getSkillErrorCode = (error) => error.code;
 `;
@@ -52,9 +53,10 @@ import '@fontsource/inter/600.css';
 import ThemeProvider from 'src/theme';
 import { SettingsProvider } from 'src/components/settings/context/settings-provider';
 import SkillEditorView from 'src/sections/skills/editor/SkillEditorView';
+import Main from 'src/layouts/dashboard/main';
 const themeMode = new URLSearchParams(location.search).get('theme') || 'light';
 localStorage.removeItem('settings');
-createRoot(document.getElementById('root')).render(<SettingsProvider defaultSettings={{ themeMode, themeDirection: 'ltr', themeContrast: 'default', themeColorPresets: 'default' }}><ThemeProvider><SnackbarProvider><BrowserRouter><Routes><Route path='/dashboard/skills/:skillId/edit' element={<SkillEditorView />} /><Route path='/dashboard/skills/:skillId' element={<div>Published skill detail</div>} /></Routes></BrowserRouter></SnackbarProvider></ThemeProvider></SettingsProvider>);
+createRoot(document.getElementById('root')).render(<SettingsProvider defaultSettings={{ themeMode, themeDirection: 'ltr', themeContrast: 'default', themeColorPresets: 'default' }}><ThemeProvider><SnackbarProvider><BrowserRouter><Routes><Route path='/dashboard/skills/:skillId/edit' element={<Main><SkillEditorView /></Main>} /><Route path='/dashboard/skills/:skillId' element={<div>Published skill detail</div>} /></Routes></BrowserRouter></SnackbarProvider></ThemeProvider></SettingsProvider>);
 `;
 const server = await createServer({
   configFile: false,
@@ -123,7 +125,7 @@ try {
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
-  const click = (text) => evaluate(`(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent.trim() === ${JSON.stringify(text)} && !item.disabled); if (!button) throw new Error('Missing enabled button: ${text}'); button.click(); return true; })()`);
+  const click = (text) => evaluate(`(() => { const button = [...document.querySelectorAll('button')].find((item) => (item.textContent.trim() === ${JSON.stringify(text)} || item.getAttribute('aria-label') === ${JSON.stringify(text)}) && !item.disabled); if (!button) throw new Error('Missing enabled button: ${text}'); button.click(); return true; })()`);
   const screenshot = async (name) => {
     await pause(400);
     const shot = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
@@ -135,7 +137,29 @@ try {
   };
   await command('Runtime.enable');
   await command('Page.enable');
-  await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  for (const theme of ['light', 'dark']) {
+    for (const width of [1440, 390]) {
+      const height = width === 1440 ? 900 : 844;
+      await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width === 390 });
+      await command('Page.navigate', { url: `http://127.0.0.1:5414/dashboard/skills/synthetic/edit?theme=${theme}` });
+      await wait(() => evaluate("Boolean(document.querySelector('.monaco-editor')) && document.body.textContent.includes('Review the description')"), `${theme} ${width} editor`);
+      await pause(500);
+      assert(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), `${theme} ${width} editor fits horizontally`);
+      if (width === 1440) {
+        const bounds = await evaluate("(() => { const rect = document.querySelector('.monaco-editor').getBoundingClientRect(); return { height: rect.height, bottom: rect.bottom }; })()");
+        assert(height - bounds.bottom <= 32 && height - bounds.bottom >= 16, `Editor must fill its pane, not leave unused space: ${JSON.stringify(bounds)}`);
+        await command('Emulation.setDeviceMetricsOverride', { width, height: height + 150, deviceScaleFactor: 1, mobile: false });
+        await wait(async () => (await evaluate("document.querySelector('.monaco-editor').getBoundingClientRect().height")) >= bounds.height + 145, 'Monaco grows with the available pane');
+        await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      }
+      await screenshot(`editor-${width}-${theme}`);
+      await click('Publish');
+      await wait(() => evaluate("document.body.textContent.includes('I reviewed the warnings')"), `${theme} ${width} publish review`);
+      assert(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), `${theme} ${width} publish dialog fits horizontally`);
+      await screenshot(`publish-${width}-${theme}`);
+    }
+  }
+  await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   await command('Page.navigate', { url: 'http://127.0.0.1:5414/dashboard/skills/synthetic/edit' });
   await wait(() => evaluate("Boolean(document.querySelector('.monaco-editor')) && document.body.textContent.includes('Review the description')"), 'editor and checks');
   await screenshot('editor-light');

@@ -16,13 +16,13 @@ import VersionDraftLoader from "./VersionDraftLoader";
 function DraftInitializer({ skill }) {
   const query = useSkillDraft(skill.id);
   const [source, setSource] = useState(null);
-  // Latch the starting snapshot. Refetches must not replace unsaved local edits.
+  // Revalidate stale cache before starting; later refetches must not replace local edits.
   useEffect(() => {
-    if (source || query.data === undefined || query.isError) return;
+    if (source || query.data === undefined || query.isError || query.isFetching || query.isPaused) return;
     if (query.data) setSource({ draft: query.data });
     else if (skill.latestVersion) setSource({ number: skill.latestVersion });
     else setSource({ draft: { files: [{ path: "SKILL.md", content: "" }], note: "", baseVersion: null, revision: 0 } });
-  }, [source, query.data, query.isError, skill.latestVersion]);
+  }, [source, query.data, query.isError, query.isFetching, query.isPaused, skill.latestVersion]);
 
   if (source?.draft) return <SkillEditorSession skill={skill} initialDraft={source.draft} refetchDraft={query.refetch} />;
   if (source?.number) return (
@@ -54,5 +54,5 @@ export default function SkillEditorView() {
   else if (preview === "error" || (!preview && query.isError && !query.data)) content = <ErrorState title="Couldn't load this skill" onRetry={retry} />;
   else if (preview === "empty" || !query.data) content = <EmptyState title="No skill to edit" description="Open a skill from your library or create one to start a draft." action={<Button variant="contained" onClick={() => navigate(paths.dashboard.skills.root)}>Back to Skills</Button>} />;
   else content = <DraftInitializer key={`${identity}:${skillId}`} skill={query.data} />;
-  return <Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>{content}</Box>;
+  return <Box sx={{ p: { xs: 2, md: 3 }, minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column", overflowY: { xs: "auto", md: "hidden" } }}>{content}</Box>;
 }

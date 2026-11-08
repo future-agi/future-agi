@@ -133,6 +133,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Files tab", () => {
+  it("keeps the version selector content-sized beside the immutable-version note", () => {
+    show("?version=1");
+    const selector = screen.getByRole("combobox", { name: "Version" });
+    expect(selector.parentElement).toHaveStyle({ width: "max-content" });
+    expect(selector.parentElement.parentElement).toHaveStyle({ flexDirection: "row" });
+    expect(selector.parentElement.parentElement).toContainElement(
+      screen.getByText("Viewing immutable version v1"),
+    );
+  });
   it("opens the pinned version and file from the URL", () => {
     show("?version=1&path=references%2Fpolicy.md&tab=files");
     expect(useSkillVersion).toHaveBeenCalledWith("skill-a", 1);

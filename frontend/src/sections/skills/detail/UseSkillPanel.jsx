@@ -76,7 +76,13 @@ export default function UseSkillPanel({ skill }) {
   }
 
   return (
-    <Stack spacing={3}>
+    <Stack
+      spacing={3}
+      sx={{
+        minWidth: 0,
+        "& pre": { overflowWrap: "anywhere", wordBreak: "break-word" },
+      }}
+    >
       <Section
         title="Choose what agents receive"
         description="A label follows promotions. A pinned version stays unchanged."
@@ -159,7 +165,7 @@ export default function UseSkillPanel({ skill }) {
             not make them read-only. Keep credentials out of source control.
           </Typography>
           {selectorReady ? (
-            <CodeBlock code={snippet()} />
+            <CodeBlock code={snippet()} wrap />
           ) : (
             <Alert severity="info">
               Choose a published version to see the command.
@@ -201,6 +207,7 @@ export default function UseSkillPanel({ skill }) {
               </Alert>
             ) : (
               <CodeBlock
+                wrap
                 code={buildInstallCommand({ ...args, names: [], tag })}
               />
             )}

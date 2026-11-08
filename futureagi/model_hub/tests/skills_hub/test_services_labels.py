@@ -74,6 +74,7 @@ def test_label_cas_and_history(hub_skill, publish_skill, hub_actor, make_skill_f
     )
     assert not hub_skill.labels.exists()
     removed = label_history(skill=hub_skill).first()
+    assert removed is not None
     assert (removed.from_version, removed.to_version) == (2, None)
 
 

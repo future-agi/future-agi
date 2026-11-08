@@ -7,6 +7,7 @@ import posixpath
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Iterator
 from typing import cast
 from urllib.parse import unquote, urlsplit
 
@@ -132,6 +133,19 @@ def path_is_valid(path: str) -> bool:
     )
 
 
+def path_directory_collisions(paths: list[str]) -> set[str]:
+    """Find files with a file ancestor, including case-insensitive collisions."""
+    folded = {path.casefold() for path in paths}
+    return {
+        path
+        for path in paths
+        if any(
+            "/".join(path.casefold().split("/")[:index]) in folded
+            for index in range(1, len(path.split("/")))
+        )
+    }
+
+
 def text_is_valid(text: str) -> bool:
     """Only UTF-8 text with printable characters and ordinary whitespace is allowed."""
     return isinstance(text, str) and not any(
@@ -146,7 +160,11 @@ def _json_frontmatter(value: object, ancestors: set[int], budget: list[int]) -> 
     budget[0] -= 1
     if budget[0] < 0 or len(ancestors) > 64:
         raise ValueError("Frontmatter is too deeply nested.")
-    if value is None or isinstance(value, (str, bool, int)):
+    if isinstance(value, str):
+        if "\x00" in value or any(unicodedata.category(char) == "Cs" for char in value):
+            raise ValueError("Frontmatter text must contain valid Unicode without NUL.")
+        return value
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float) and math.isfinite(value):
         return value
@@ -162,7 +180,10 @@ def _json_frontmatter(value: object, ancestors: set[int], budget: list[int]) -> 
         ):
             raise ValueError("Frontmatter keys must be JSON-compatible scalars.")
         return {
-            key: _json_frontmatter(item, parents, budget) for key, item in value.items()
+            _json_frontmatter(key, parents, budget): _json_frontmatter(
+                item, parents, budget
+            )
+            for key, item in value.items()
         }
     raise ValueError("Frontmatter must contain finite JSON-compatible values.")
 
@@ -379,6 +400,28 @@ def _link_checks(path: str, content: str, paths: set[str]) -> list[dict]:
     return items
 
 
+def _frontmatter_secrets(
+    value: object, *, key: str | None = None
+) -> Iterator[tuple[str, str]]:
+    """Rescan decoded scalars with their mapping key, not YAML source syntax.
+
+    Escapes, quoted keys, block scalars and aliases can hide assignments from the
+    raw-text scan. Keep the same provider patterns/entropy threshold and collect
+    values globally so copies elsewhere in the diagnostic DTO are redacted too.
+    """
+    if isinstance(value, str):
+        text = f"{key}: {value}" if key is not None else value
+        for start, end, kind in _secret_matches(text):
+            yield text[start:end], kind
+    elif isinstance(value, list):
+        for item in value:
+            yield from _frontmatter_secrets(item, key=key)
+    elif isinstance(value, dict):
+        for name, item in value.items():
+            yield from _frontmatter_secrets(name)
+            yield from _frontmatter_secrets(item, key=str(name))
+
+
 def _redacted_frontmatter(value: object, secrets: set[str]) -> object:
     if isinstance(value, str):
         return _redact(value, secrets)
@@ -403,8 +446,18 @@ def run_checks(files: list[FileInput], *, expected_name: str | None = None) -> d
         items.append(
             _item("too_many_files", "error", "Keep each skill to 200 files or fewer.")
         )
+    collisions = path_directory_collisions([file["path"] for file in files])
     for file in files:
         path, content = file["path"], file["content"]
+        if path in collisions:
+            items.append(
+                _item(
+                    "path_invalid",
+                    "error",
+                    "A file path cannot also be a directory, even with different letter case.",
+                    path=path,
+                )
+            )
         if not path_is_valid(path):
             items.append(
                 _item(
@@ -496,6 +549,18 @@ def run_checks(files: list[FileInput], *, expected_name: str | None = None) -> d
         items.extend(parsed_items)
         if frontmatter is not None:
             items.extend(_frontmatter_checks(frontmatter, expected_name))
+            for secret, kind in _frontmatter_secrets(frontmatter):
+                if secret not in secrets:
+                    secrets.add(secret)
+                    items.append(
+                        _item(
+                            "secret_suspected",
+                            "warning",
+                            f"A possible {kind} was found. Remove it and use an environment variable instead.",
+                            path="SKILL.md",
+                            detail={"redacted": f"[redacted, {len(secret)} chars]"},
+                        )
+                    )
         if len(texts["SKILL.md"].splitlines()) > 500:
             items.append(
                 _item(

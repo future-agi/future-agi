@@ -57,7 +57,23 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const [selectedPath, setSelectedPath] = useState(null);
   const live = useDraftChecks(draft.files, skill.name, 0);
   const checks = serverChecks ?? live.checks;
-  const comparison = useSkillCompare(skill.id, draft.baseVersion, "draft");
+  const liveComparison = useSkillCompare(skill.id, draft.baseVersion, "draft");
+  const { refetch: refetchComparison } = liveComparison;
+  const [comparison, setComparison] = useState({ isPending: true });
+  const [comparisonAttempt, setComparisonAttempt] = useState(0);
+  useEffect(() => {
+    if (draft.baseVersion === null) return undefined;
+    let active = true;
+    setComparison({ isPending: true });
+    // The shared draft comparison cache has no revision. Review only a fresh
+    // response for this mounted, saved revision, never the previous review's data.
+    refetchComparison().then((result) => {
+      if (active) setComparison(result);
+    }).catch(() => {
+      if (active) setComparison({ isError: true });
+    });
+    return () => { active = false; };
+  }, [refetchComparison, draft.baseVersion, draft.revision, comparisonAttempt]);
   const [compared, setCompared] = useState(null);
   useEffect(() => {
     let active = true;
@@ -81,7 +97,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const selected = files.find((file) => file.path === selectedPath) ?? orderedFiles[0];
   const comparisonVerified = Boolean(compared && compared.data === comparison.data && digest);
   const comparisonMismatch = draft.baseVersion !== null && comparisonVerified && compared.digest !== digest;
-  const comparisonReady = draft.baseVersion === null || Boolean(comparisonVerified && compared.digest === digest && !comparison.isError && !comparison.isFetching);
+  const comparisonReady = draft.baseVersion === null || Boolean(comparisonVerified && compared.digest === digest && !comparison.isError && !comparison.isPending && !liveComparison.isFetching);
   const canPublish = Boolean(digest && !releaseConflict && labels.every(canMove) && checks && !live.pending && !live.error && comparisonReady
     && checks.summary.errors === 0 && (checks.summary.warnings === 0 || acknowledged) && note.length <= 2000);
 
@@ -159,8 +175,8 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         {stale && <Alert severity="warning">A newer version was published after this draft started. Publishing anyway creates a version from your draft, not from the newer files. Selected labels will move to your version.</Alert>}
         {failure && <Alert severity="error" action={releaseConflict ? <Button color="inherit" onClick={reloadRelease}>Reload release state</Button> : undefined}>{failure}</Alert>}
         <Section title={draft.baseVersion === null ? "Files in the first version" : `Changes from v${draft.baseVersion}`}>
-          {draft.baseVersion !== null && !comparison.isError && (!comparisonVerified || comparison.isFetching) && <ContentSkeleton variant="panel" label="Verifying reviewed file changes" />}
-          {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => comparison.refetch()} />}
+          {draft.baseVersion !== null && comparison.isPending && <ContentSkeleton variant="panel" label="Loading changes" />}
+          {draft.baseVersion !== null && comparison.isError && <ErrorState title="Couldn't load file changes" onRetry={() => setComparisonAttempt((attempt) => attempt + 1)} />}
           {comparisonMismatch && <Alert severity="warning" action={<Button color="inherit" onClick={() => setConflict(true)}>Review changed draft</Button>}>The server draft changed after this review opened. Reload or overwrite it before reviewing the diff.</Alert>}
           {comparisonReady && (
             <Stack spacing={1.5}>
@@ -217,7 +233,7 @@ const reviewPropTypes = {
 PublishReview.propTypes = reviewPropTypes;
 
 export default function PublishDialog({ open, onClose, onDraftChange, skill, draft }) {
-  return open ? <PublishReview onClose={onClose} onDraftChange={onDraftChange} skill={skill} draft={draft} /> : null;
+  return open ? <PublishReview key={`${skill.id}:${draft.baseVersion}:${draft.revision}`} onClose={onClose} onDraftChange={onDraftChange} skill={skill} draft={draft} /> : null;
 }
 
 PublishDialog.propTypes = { ...reviewPropTypes, open: PropTypes.bool.isRequired };

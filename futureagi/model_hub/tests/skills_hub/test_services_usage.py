@@ -1,6 +1,7 @@
 """Atomic daily increments, window aggregation and fail-open telemetry."""
 
 from datetime import timedelta
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -115,7 +116,9 @@ def test_actual_integrity_error_does_not_poison_outer_transaction(
             version=version,
             channel="api",
             consumer_key=f"user:{user.pk}",
-            consumer_label=None,
+            consumer_label=cast(
+                str, None
+            ),  # Deliberately violate the typed API/DB constraint.
         )
         assert hub_skill.versions.count() == 1
     assert "Could not record a Skills fetch" in caplog.text

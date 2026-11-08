@@ -56,6 +56,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("skill editor", () => {
+  it("waits for stale cached draft revalidation before latching the editing snapshot", async () => {
+    api.draft = { data: initial, isFetching: true };
+    const view = mount();
+    expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    api.draft = { data: { ...initial, revision: 5, files: [{ path: "SKILL.md", content: "Newer saved instructions" }] }, isFetching: false };
+    view.refresh();
+    expect(await screen.findByLabelText("File content")).toHaveValue("Newer saved instructions");
+    fireEvent.click(screen.getByRole("button", { name: "Publish", exact: true }));
+    await screen.findByRole("dialog", { name: "Publish review" });
+    expect(api.save).toHaveBeenCalledExactlyOnceWith(api.draft.data);
+  });
+
+  it("does not initialize from stale cache when revalidation is paused or fails", async () => {
+    api.draft = { data: initial, isFetching: false, isPaused: true };
+    const view = mount();
+    expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
+    api.draft = { data: initial, isFetching: false, isError: true };
+    view.refresh();
+    expect(screen.getByText("Couldn't load your draft")).toBeInTheDocument();
+    expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(api.refetch).toHaveBeenCalledOnce();
+  });
+
+  it("resolves a stale cached absence before loading a published version", async () => {
+    api.draft = { data: null, isFetching: true };
+    const view = mount();
+    expect(api.file).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("File content")).not.toBeInTheDocument();
+    api.draft = { data: initial, isFetching: false };
+    view.refresh();
+    expect(await screen.findByLabelText("File content")).toHaveValue("Saved instructions");
+    expect(api.file).not.toHaveBeenCalled();
+  });
+
   it("saves local edits before opening the publish review", async () => {
     mount();
     fireEvent.change(await screen.findByLabelText("File content"), { target: { value: "My edits" } });

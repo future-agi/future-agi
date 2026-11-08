@@ -652,7 +652,7 @@ tools:
       page_size: {maximum: 100}
   - name: get_skill
     group: skills
-    description: Resolve a skill manifest without file contents. Choose label or version; neither means production and missing labels never fall back. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed.
+    description: Resolve a bounded skill manifest without file contents or frontmatter. Choose label or version; neither means production and missing labels never fall back. Files are sorted by path and paged (file_limit 1–25, default 25). Until next_file_offset is null, call get_skill again with file_offset=next_file_offset, the same name and the returned version pinned (omit label); file_count is the total inventory size. Never treat one page as the complete inventory. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed. SKILL.md contains the full original frontmatter. Every response stays within the 64 KiB MCP limit.
     operation: {method: GET, path: "/model-hub/skills/resolve/"}
     access: read
   - name: read_skill_file

@@ -15,3 +15,18 @@ headers {
   X-Secret-Key: {{secret_key}}
   X-Workspace-Id: {{workspace_id}}
 }
+
+docs {
+  REST returns all file metadata and frontmatter by default. Add file_limit (1–25)
+  and file_offset (starting at 0) to page the inventory. Each response includes
+  file_count, file_offset and next_file_offset. Until next_file_offset is null,
+  request the next page with that offset and pin version to the returned immutable
+  version number instead of sending label. Do not send If-None-Match when fetching
+  a new page; the ETag identifies the immutable version, not the page.
+
+  MCP get_skill always pages (default 25) and omits file contents and frontmatter
+  to preserve its 64 KiB response limit even for 200 maximum-length paths or
+  expanded YAML metadata. Read SKILL.md with read_skill_file, following next_offset
+  until eof, for the original frontmatter and instructions. No file metadata is
+  truncated; discover every file by following next_file_offset.
+}

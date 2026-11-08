@@ -12,19 +12,27 @@ def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
     assert registry.count() == 113
-    assert registry.get("list_datasets").group == "datasets"
-    assert registry.get("get_dashboard").group == "dashboards"
-    assert registry.get("get_gateway_config").group == "gateway"
+    for name, group in [
+        ("list_datasets", "datasets"),
+        ("get_dashboard", "dashboards"),
+        ("get_gateway_config", "gateway"),
+    ]:
+        tool = registry.get(name)
+        assert tool is not None
+        assert tool.group == group
     assert registry.get("missing") is None
 
 
 def test_registry_returns_mcp_protocol_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    tool = registry.get("create_prompt_template").to_mcp_tool()
+    generated = registry.get("create_prompt_template")
+    assert generated is not None
+    tool = generated.to_mcp_tool()
 
     assert tool.name == "create_prompt_template"
     assert tool.inputSchema["type"] == "object"
+    assert tool.annotations is not None
     assert tool.annotations.readOnlyHint is False
 
 

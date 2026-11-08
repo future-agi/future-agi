@@ -47215,7 +47215,7 @@
         "/model-hub/skills/resolve/": {
             "get": {
                 "operationId": "model-hub_skills_resolve_list",
-                "description": "Resolve an immutable skill manifest. Returns ETag: \"<digest>\". Send If-None-Match with that value for HTTP 304; a missing label never falls back.",
+                "description": "Resolve an immutable skill manifest. Returns ETag: \"<digest>\". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.",
                 "parameters": [
                     {
                         "name": "label",
@@ -47244,6 +47244,25 @@
                         "required": false,
                         "type": "boolean",
                         "default": false
+                    },
+                    {
+                        "name": "file_offset",
+                        "in": "query",
+                        "description": "Zero-based file offset. Pin version when following next_file_offset.",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 200,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "file_limit",
+                        "in": "query",
+                        "description": "Files per manifest page (1–25). REST defaults to all files; MCP defaults to 25.",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 25,
+                        "minimum": 1
                     }
                 ],
                 "responses": {
@@ -48235,6 +48254,167 @@
                         "schema": {
                             "$ref": "#/definitions/SkillsHistoryPageResponse"
                         }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "model-hub_skills_labels_history_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubSetLabelRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsLabelOutResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "model-hub_skills_labels_history_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SkillsHubRemoveLabelRequest"
+                        }
+                    },
+                    {
+                        "name": "skill_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "204": {
+                        "description": "No content"
                     },
                     "default": {
                         "description": "Default error response",
@@ -135111,8 +135291,10 @@
                 "version_id",
                 "digest",
                 "requested",
-                "frontmatter",
                 "files",
+                "file_count",
+                "file_offset",
+                "next_file_offset",
                 "created_at"
             ],
             "type": "object",
@@ -135151,6 +135333,7 @@
                 },
                 "frontmatter": {
                     "title": "Frontmatter",
+                    "description": "REST only. MCP callers read the original frontmatter from SKILL.md in chunks.",
                     "type": "object"
                 },
                 "files": {
@@ -135158,6 +135341,19 @@
                     "items": {
                         "$ref": "#/definitions/SkillsHubManifestFile"
                     }
+                },
+                "file_count": {
+                    "title": "File count",
+                    "type": "integer"
+                },
+                "file_offset": {
+                    "title": "File offset",
+                    "type": "integer"
+                },
+                "next_file_offset": {
+                    "title": "Next file offset",
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "created_at": {
                     "title": "Created at",
