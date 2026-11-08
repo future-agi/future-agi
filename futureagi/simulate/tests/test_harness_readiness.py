@@ -16,6 +16,7 @@ from simulate.serializers.harness_environment import (
     HarnessCapabilityCasesQuerySerializer,
     HarnessCapabilityReportSerializer,
     HarnessCapabilitySelectionReportSerializer,
+    HarnessCertifiedPairingPageSerializer,
 )
 from simulate.services import harness_readiness
 from simulate.services.agent_setup import store_agent
@@ -2255,3 +2256,185 @@ class TestObservedRouting:
         )
 
         assert reading.finding == "not_run"
+
+
+class TestReleaseChecks:
+    """B8: a release is Ready only once all five release checks passed."""
+
+    def _version(self, environment, *, checks=None, recorded=None):
+        _built(environment, checks=checks)
+        version = environment.environment_version
+        if recorded is not None:
+            HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+                documents={**version.documents, "release_checks": recorded}
+            )
+        return HarnessEnvironmentVersion.no_workspace_objects.get(id=version.id)
+
+    def test_starts_and_resets_from_the_certificate_the_rest_pending(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_readiness.release import release_checks
+
+        environment = _environment(user, workspace, storage, "rc-pending")
+
+        found = release_checks(self._version(environment))
+
+        assert found == {
+            "status": "checks_pending",
+            "checks": {
+                "starts": "passed",
+                "resets": "passed",
+                "reference_passes": "pending",
+                "wrong_answer_fails": "pending",
+                "hidden_checks_kept": "pending",
+            },
+        }
+
+    def test_all_five_passed_is_ready_and_one_failed_is_failed(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_readiness.release import release_checks
+
+        environment = _environment(user, workspace, storage, "rc-ready")
+        passed = dict.fromkeys(
+            ("reference_passes", "wrong_answer_fails", "hidden_checks_kept"), "passed"
+        )
+
+        assert release_checks(self._version(environment, recorded=passed))[
+            "status"
+        ] == ("ready")
+        failed = {**passed, "hidden_checks_kept": "failed"}
+        assert release_checks(self._version(environment, recorded=failed))[
+            "status"
+        ] == ("failed")
+        no_reset = self._version(
+            environment,
+            checks={**PASSED, "reset_equivalence": "not_run"},
+            recorded=passed,
+        )
+        assert release_checks(no_reset)["status"] == "checks_pending"
+
+    def test_the_version_list_carries_them_on_environment_versions_only(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _environment(user, workspace, storage, "rc-api")
+        _built(environment)
+
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        assert {one["release_checks"]["status"] for one in body["environment"]} == {
+            "checks_pending"
+        }
+        assert {one["release_checks"] for one in body["suite"]} == {None}
+
+
+class TestCertifiedPairings:
+    """B9: the pairings certified on an environment, with their exact versions."""
+
+    def test_newest_first_with_exact_versions_and_paged(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        from simulate.services.harness_readiness import release
+
+        environment, a2 = _with_a2(user, workspace, storage, "cp-list")
+        _certify(environment, storage, agent=a2)
+        monkeypatch.setattr(release, "HISTORY_PAGE", 1)
+
+        first = auth_client.get(f"{BASE}/{environment.id}/capabilities/history/")
+        second = auth_client.get(
+            f"{BASE}/{environment.id}/capabilities/history/",
+            {"cursor": first.json()["next"]},
+        )
+
+        assert first.status_code == second.status_code == 200, first.content
+        assert first.json()["items"][0]["agent_version"]["id"] == str(a2.id)
+        assert first.json()["items"][0]["environment_version"]["id"] == str(
+            environment.environment_version_id
+        )
+        assert first.json()["next"] == "1"
+        assert second.json()["items"][0]["agent_version"]["id"] == str(
+            environment.agent_version_id
+        )
+        assert second.json()["next"] is None
+        HarnessCertifiedPairingPageSerializer(data=first.json()).is_valid(
+            raise_exception=True
+        )
+
+    def test_a_failed_or_pending_pairing_is_not_listed(self, user, workspace, storage):
+        from simulate.services.harness_readiness.release import certified_pairings
+
+        environment = _environment(user, workspace, storage, "cp-failed")
+        HarnessAssembledBundle._base_manager.filter(job_id=environment.id).update(
+            state="failed"
+        )
+
+        assert certified_pairings(environment, cursor=None)["items"] == []
+
+    def test_another_workspace_cannot_read_the_list(
+        self, user, workspace, storage, auth_client
+    ):
+        from accounts.models import Workspace
+
+        environment = _environment(user, workspace, storage, "cp-tenant")
+        elsewhere = Workspace.objects.create(
+            name="Other workspace",
+            organization=user.organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        auth_client.set_workspace(elsewhere)
+
+        response = auth_client.get(f"{BASE}/{environment.id}/capabilities/history/")
+
+        assert response.status_code == 404
+
+
+class TestReportCache:
+    def test_a_report_is_read_once_while_nothing_changes(
+        self, user, workspace, storage, monkeypatch
+    ):
+        environment = _environment(user, workspace, storage, "cache-hit")
+        _certify(environment, storage)
+        computed = []
+        real = report_module._computed_report
+        monkeypatch.setattr(
+            report_module,
+            "_computed_report",
+            lambda *args: computed.append(1) or real(*args),
+        )
+
+        first = _report(environment)
+        second = _report(environment)
+
+        assert first == second
+        assert len(computed) == 1
+
+    @pytest.mark.parametrize("change", ["bundle", "run", "document", "environment"])
+    def test_a_change_it_is_read_from_reads_it_again(
+        self, user, workspace, storage, monkeypatch, change
+    ):
+        environment = _environment(user, workspace, storage, f"cache-{change}")
+        _certify(environment, storage)
+        computed = []
+        real = report_module._computed_report
+        monkeypatch.setattr(
+            report_module,
+            "_computed_report",
+            lambda *args: computed.append(1) or real(*args),
+        )
+        _report(environment)
+
+        if change == "bundle":
+            HarnessAssembledBundle._base_manager.filter(job_id=environment.id).update(
+                state="failed"
+            )
+        elif change == "run":
+            _run(environment, key="cache-run")
+        elif change == "document":
+            _read_tools(environment.agent_version, [_tool("lookup_order", "order_id")])
+        else:
+            _built(environment, contract=PRODUCTION_ONLY)
+        _report(environment)
+
+        assert len(computed) == 2

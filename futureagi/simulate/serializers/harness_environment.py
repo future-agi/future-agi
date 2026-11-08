@@ -528,6 +528,25 @@ class HarnessVersionPersonSerializer(serializers.Serializer):
     name = serializers.CharField(allow_blank=True)
 
 
+_RELEASE_RESULTS = ("passed", "failed", "pending")
+
+
+class HarnessReleaseCheckResultsSerializer(serializers.Serializer):
+    starts = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    resets = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    reference_passes = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    wrong_answer_fails = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    hidden_checks_kept = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+
+
+class HarnessReleaseChecksSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("ready", "checks_pending", "failed"),
+        help_text="checks_pending until every release check has passed.",
+    )
+    checks = HarnessReleaseCheckResultsSerializer()
+
+
 class HarnessVersionSerializer(serializers.Serializer):
     """One agent, environment or suite version, as the version lists show it."""
 
@@ -592,6 +611,14 @@ class HarnessVersionSerializer(serializers.Serializer):
     discardable = serializers.BooleanField(
         allow_null=True,
         help_text="Whether this environment can discard an agent version.",
+    )
+    release_checks = HarnessReleaseChecksSerializer(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "An environment version's five release checks; null for other versions."
+            " Ready only once all five passed; a pairing still needs its own readiness."
+        ),
     )
 
 
@@ -992,6 +1019,27 @@ class HarnessCapabilityCasesQuerySerializer(HarnessCapabilitySelectionQuerySeria
         required=False,
         help_text="The previous page's next: the number it ended on.",
     )
+
+
+class HarnessCapabilityHistoryQuerySerializer(serializers.Serializer):
+    cursor = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="The previous page's next.",
+    )
+
+
+class HarnessCertifiedPairingSerializer(serializers.Serializer):
+    bundle_id = serializers.UUIDField()
+    agent_version = RunVersionLabelSerializer(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True)
+    suite_version = RunVersionLabelSerializer(allow_null=True)
+    certified_at = serializers.DateTimeField()
+
+
+class HarnessCertifiedPairingPageSerializer(serializers.Serializer):
+    items = HarnessCertifiedPairingSerializer(many=True)
+    next = serializers.CharField(allow_null=True)
 
 
 class HarnessCapabilityCaseListSerializer(serializers.Serializer):

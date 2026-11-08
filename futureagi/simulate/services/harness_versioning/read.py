@@ -188,7 +188,14 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
+        "release_checks": None if suite else _release_checks(version),
     }
+
+
+def _release_checks(version: Any) -> dict[str, Any]:
+    from simulate.services.harness_readiness.release import release_checks
+
+    return dict(release_checks(version))
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
