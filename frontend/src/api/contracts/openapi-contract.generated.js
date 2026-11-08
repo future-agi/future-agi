@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1172,
+  endpointCount: 1182,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -26012,6 +26012,682 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SkillsChecksError",
           },
           428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/consumption/resolve/": {
+      get: {
+        operationId: "model-hub_skills_consumption_resolve_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          name: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionManifestResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
+      {
+        post: {
+          operationId:
+            "model-hub_skills_consumption_versions_access-check_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/SkillsContextEmptyInput",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/SkillsAccessCheckResponse",
+            },
+            400: {
+              $ref: "#/definitions/SkillsError",
+            },
+            401: {
+              $ref: "#/definitions/SkillsError",
+            },
+            403: {
+              $ref: "#/definitions/SkillsError",
+            },
+            404: {
+              $ref: "#/definitions/SkillsError",
+            },
+            409: {
+              $ref: "#/definitions/SkillsConflictError",
+            },
+            410: {
+              $ref: "#/definitions/SkillsError",
+            },
+            413: {
+              $ref: "#/definitions/SkillsError",
+            },
+            422: {
+              $ref: "#/definitions/SkillsChecksError",
+            },
+            428: {
+              $ref: "#/definitions/SkillsError",
+            },
+            503: {
+              $ref: "#/definitions/SkillsError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/model-hub/skills/consumption/{resource_id}/versions/{number}/files/": {
+      get: {
+        operationId: "model-hub_skills_consumption_versions_files_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          path: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          max_bytes: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 4,
+              maximum: 49152,
+              default: 32768,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionChunkResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/consumption/{resource_id}/versions/{number}/manifest/": {
+      get: {
+        operationId: "model-hub_skills_consumption_versions_manifest_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          file_offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          file_limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 25,
+              default: 25,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionManifestResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/contexts/credentials/": {
+      get: {
+        operationId: "model-hub_skills_contexts_credentials_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              default: 1,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 25,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsCredentialPageResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "model-hub_skills_contexts_credentials_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SkillsContextCredentialInput",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsCredentialIssuedResponse",
+          },
+          201: {
+            $ref: "#/definitions/SkillsCredentialIssuedResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/contexts/credentials/{credential_id}/": {
+      delete: {
+        operationId: "model-hub_skills_contexts_credentials_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/contexts/resolve/": {
+      get: {
+        operationId: "model-hub_skills_contexts_resolve_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          name: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionManifestResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/contexts/{resource_id}/versions/{number}/access-check/":
+      {
+        post: {
+          operationId: "model-hub_skills_contexts_versions_access-check_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/SkillsContextEmptyInput",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/SkillsAccessCheckResponse",
+            },
+            400: {
+              $ref: "#/definitions/SkillsError",
+            },
+            401: {
+              $ref: "#/definitions/SkillsError",
+            },
+            403: {
+              $ref: "#/definitions/SkillsError",
+            },
+            404: {
+              $ref: "#/definitions/SkillsError",
+            },
+            409: {
+              $ref: "#/definitions/SkillsConflictError",
+            },
+            410: {
+              $ref: "#/definitions/SkillsError",
+            },
+            413: {
+              $ref: "#/definitions/SkillsError",
+            },
+            422: {
+              $ref: "#/definitions/SkillsChecksError",
+            },
+            428: {
+              $ref: "#/definitions/SkillsError",
+            },
+            503: {
+              $ref: "#/definitions/SkillsError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/model-hub/skills/contexts/{resource_id}/versions/{number}/files/": {
+      get: {
+        operationId: "model-hub_skills_contexts_versions_files_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          path: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          max_bytes: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 4,
+              maximum: 49152,
+              default: 32768,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionChunkResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/contexts/{resource_id}/versions/{number}/manifest/": {
+      get: {
+        operationId: "model-hub_skills_contexts_versions_manifest_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          file_offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          file_limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 25,
+              default: 25,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsConsumptionManifestResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
             $ref: "#/definitions/SkillsError",
           },
           default: {
@@ -87580,6 +88256,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsAccessCheckResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextAccessCheck",
+        },
+      },
+    },
     SkillsAdoptionOutResponse: {
       required: ["status", "result"],
       type: "object",
@@ -87834,6 +88523,92 @@ export const OPENAPI_CONTRACT = Object.freeze({
               minLength: 1,
             },
           },
+        },
+      },
+    },
+    SkillsConsumptionChunkResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextConsumptionChunk",
+        },
+      },
+    },
+    SkillsConsumptionManifestResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextConsumptionManifest",
+        },
+      },
+    },
+    SkillsContextCredentialInput: {
+      required: ["purpose", "grants", "binding_ids", "expires_at"],
+      type: "object",
+      properties: {
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: ["consume", "report"],
+        },
+        grants: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextConsumeGrant",
+          },
+        },
+        binding_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SkillsContextEmptyInput: {
+      type: "object",
+      properties: {},
+    },
+    SkillsCredentialIssuedResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextCredentialIssued",
+        },
+      },
+    },
+    SkillsCredentialPageResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SkillsContextCredentialPage",
         },
       },
     },
@@ -117565,6 +118340,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextAccessCheck: {
+      required: ["allowed", "version_id", "digest", "checked_at"],
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        checked_at: {
+          title: "Checked at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     SkillsHubV11AdoptionOut: {
       required: [
         "target",
@@ -118103,6 +118904,271 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       additionalProperties: false,
+    },
+    SkillsContextConsumptionChunk: {
+      required: [
+        "path",
+        "sha256",
+        "size_bytes",
+        "total_chars",
+        "offset",
+        "next_offset",
+        "eof",
+        "text",
+        "resource_id",
+        "version_id",
+        "digest",
+      ],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        size_bytes: {
+          title: "Size bytes",
+          type: "integer",
+        },
+        total_chars: {
+          title: "Total chars",
+          type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        next_offset: {
+          title: "Next offset",
+          type: "integer",
+          "x-nullable": true,
+        },
+        eof: {
+          title: "Eof",
+          type: "boolean",
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+        resource_id: {
+          title: "Resource id",
+          type: "string",
+          format: "uuid",
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+      },
+    },
+    SkillsContextConsumptionManifest: {
+      required: [
+        "resource_id",
+        "kind",
+        "name",
+        "description",
+        "version",
+        "version_id",
+        "digest",
+        "requested",
+        "entrypoint",
+        "descriptor_path",
+        "files",
+        "file_count",
+        "file_offset",
+        "next_file_offset",
+        "created_at",
+        "resolution_id",
+        "resolution_expires_at",
+      ],
+      type: "object",
+      properties: {
+        resource_id: {
+          title: "Resource id",
+          type: "string",
+          format: "uuid",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "agent_context"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        requested: {
+          $ref: "#/definitions/SkillsContextSelector",
+        },
+        entrypoint: {
+          title: "Entrypoint",
+          type: "string",
+          minLength: 1,
+        },
+        descriptor_path: {
+          title: "Descriptor path",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextFileMeta",
+          },
+        },
+        file_count: {
+          title: "File count",
+          type: "integer",
+          minimum: 1,
+        },
+        file_offset: {
+          title: "File offset",
+          type: "integer",
+          minimum: 0,
+        },
+        next_file_offset: {
+          title: "Next file offset",
+          type: "integer",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        resolution_id: {
+          title: "Resolution id",
+          type: "string",
+          format: "uuid",
+        },
+        resolution_expires_at: {
+          title: "Resolution expires at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SkillsContextConsumeGrant: {
+      required: ["kind", "resource_id", "labels", "version_ids"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "agent_context"],
+        },
+        resource_id: {
+          title: "Resource id",
+          type: "string",
+          format: "uuid",
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            pattern: "^[a-z0-9][a-z0-9-]{0,39}$",
+            minLength: 1,
+          },
+          maxItems: 20,
+        },
+        version_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+      },
+    },
+    SkillsContextCredentialIssued: {
+      required: ["id", "secret", "secret_available", "metadata"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        secret: {
+          title: "Secret",
+          description: "Returned once; never available on replay or list.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        secret_available: {
+          title: "Secret available",
+          type: "boolean",
+        },
+        metadata: {
+          $ref: "#/definitions/SkillsContextCredentialMetadata",
+        },
+      },
+    },
+    SkillsContextCredentialPage: {
+      required: ["results", "count", "page", "page_size", "total_pages"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextCredentialMetadata",
+          },
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+      },
     },
     SkillsHubDraftOut: {
       required: [
@@ -134774,6 +135840,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextFileMeta: {
+      required: ["path", "sha256", "size_bytes", "origin"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          pattern: "^[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        size_bytes: {
+          title: "Size bytes",
+          type: "integer",
+          minimum: 0,
+        },
+        origin: {
+          $ref: "#/definitions/SkillsContextFileOrigin",
+        },
+      },
+    },
+    SkillsContextSelector: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          pattern: "^[a-z0-9][a-z0-9-]{0,39}$",
+          minLength: 1,
+        },
+      },
+    },
+    SkillsContextCredentialMetadata: {
+      required: [
+        "purpose",
+        "grants",
+        "binding_ids",
+        "expires_at",
+        "id",
+        "created_at",
+        "revoked_at",
+        "last_used_at",
+      ],
+      type: "object",
+      properties: {
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: ["consume", "report"],
+        },
+        grants: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextConsumeGrant",
+          },
+        },
+        binding_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        revoked_at: {
+          title: "Revoked at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        last_used_at: {
+          title: "Last used at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
     SkillsHubV11ConsumedPreview: {
       required: ["skill_id", "draft_revision"],
       type: "object",
@@ -140389,6 +141557,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SkillsHubV11AttemptSummary",
           },
+        },
+      },
+    },
+    SkillsContextFileOrigin: {
+      required: ["kind", "skill_id", "version_id", "source_path"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["owned", "linked", "generated"],
+        },
+        skill_id: {
+          title: "Skill id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_path: {
+          title: "Source path",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
