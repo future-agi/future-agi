@@ -2519,7 +2519,7 @@
 2. review the exact files and inherited LICENSE/NOTICE, confirm rights and import an unpublished draft
 3. publish explicitly, then author and publish a local customization with honest source provenance
 4. create a personal draft, check upstream updates and inspect the replacement diff and divergence
-5. verify that staging is blocked and preserves the personal draft, then explicitly discard it through the editor confirmation
+5. verify that staging is blocked and preserves the personal draft, then explicitly discard it and refresh draft status without replacing the reviewed preview
 6. review replacement consequences, stage the retained update and inspect unchanged releases and the replay receipt
 
 **Backend state verified:**

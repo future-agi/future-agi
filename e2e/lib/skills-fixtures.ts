@@ -12,6 +12,7 @@ export type FixtureRule = {
 export type GitHubRecording = { url: string; status: number; headers: Record<string, string>; body_base64: string };
 export type FixtureReceipt = { kind: 'model' | 'github'; request?: string; turn?: number;
   request_sha256: string; response_sha256?: string; status: number; url?: string; body_sha256?: string;
+  clock?: number; if_none_match?: string | null;
   messages?: { role: string; content: string | null; tool_call_id?: string; tool_calls?: unknown[] }[]; tools?: unknown[] };
 
 /** Approved test-image-only service. No arbitrary URL or real credential accepted. */
@@ -51,6 +52,14 @@ export class SkillsFixtures {
 
   async replaceRecording(recording: GitHubRecording): Promise<void> {
     await this.send(`/scenarios/${this.namespace}/github`, 'PUT', recording);
+  }
+
+  /** Advance only this recording owner's cache/rate-policy clock after work settles.
+   * 60 seconds expires refs; 3600 starts a fresh real-policy REST budget period.
+   * Does not advance job deadlines, previews, locks or any other scenario.
+   */
+  async advanceGitHubTime(seconds: number): Promise<number> {
+    return (await this.send<{ now: number }>(`/scenarios/${this.namespace}/clock`, 'POST', { advance_seconds: seconds })).now;
   }
 
   async dispose(): Promise<void> {

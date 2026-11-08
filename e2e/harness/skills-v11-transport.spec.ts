@@ -119,6 +119,9 @@ test('Skills v1.1 harness: recorded multi-root continuation preserves the origin
     expect(parent.outcome).toBe('needs_path');
     expect(parent.roots).toEqual(['first', 'second']);
     await fake.replaceRecording(source.ref('b'.repeat(40)));
+    // Expire the ref cache and enter the next unchanged budget period. A broken
+    // continuation that re-resolves main must now observe B rather than pass by cache.
+    await fake.advanceGitHubTime(3600);
     const child = await start({ parent_preview_id: parent.id, path: 'first' });
     expect(child.outcome).toBe('ready');
     expect(child.source).toMatchObject({ commit_sha: 'a'.repeat(40), ref: 'main', ref_kind: 'branch' });
@@ -129,5 +132,52 @@ test('Skills v1.1 harness: recorded multi-root continuation preserves the origin
     const ledger = await fake.ledger();
     expect(ledger.map(row => row.url)).toEqual(source.recordings.slice(0, 3).map(row => row.url));
     await testInfo.attach('recorded-source-receipt', { body: JSON.stringify({ parent, child, ledger, fixtureHash: fake.fixtureHash }), contentType: 'application/json' });
+  } finally { await fake.dispose(); }
+});
+
+test('Skills v1.1 harness: scoped clock preserves ref freshness and REST caps until period rollover', async ({ scopeActors, request }, testInfo) => {
+  test.setTimeout(420_000); // setup and six generic Temporal boundaries <=60s each
+  const actor = scopeActors.ownerB;
+  const fake = new SkillsFixtures();
+  const name = `e2e-skills-clock-${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const repo = `synthetic/${name}`;
+  const root = `---\nname: ${name}\ndescription: Use when qualifying scoped cache freshness and REST budgets with synthetic files.\n---\n# Synthetic instructions\n`;
+  const files = { 'SKILL.md': root, LICENSE: 'MIT License\nPermission is hereby granted, free of charge, to any person obtaining a copy.\n' };
+  const source = githubRepository(repo, [{ sha: 'a'.repeat(40), files }, { sha: 'b'.repeat(40), files }]);
+  await fake.register([], source.recordings);
+  type Preview = { id: string; status: string; source: { commit_sha: string }; error: { code: string } | null };
+  const start = async () => {
+    const response = await request.post(`${E2E.apiUrl}${SKILLS}github/previews/`, {
+      headers: { ...scopeActors.headers(actor), 'Idempotency-Key': randomUUID() },
+      data: { url: `https://github.com/${repo}`, path: null, ref: 'main' },
+    });
+    expect(response.status(), await response.text()).toBe(202);
+    const id = (await response.json()).result.id;
+    const read = async () => (await actor.api.get<Envelope<Preview>>(`${SKILLS}github/previews/${id}/`)).result;
+    await expect.poll(async () => (await read()).status, POLL.ASYNC_JOB).toMatch(/^(completed|failed)$/);
+    return read();
+  };
+  try {
+    const initial = await start();
+    expect(initial).toMatchObject({ status: 'completed', source: { commit_sha: 'a'.repeat(40) } });
+    await fake.replaceRecording(source.ref('b'.repeat(40)));
+    await fake.advanceGitHubTime(59);
+    const cached = await start();
+    expect(cached).toMatchObject({ status: 'completed', source: { commit_sha: 'a'.repeat(40) } });
+    expect((await fake.ledger()).map(row => row.url)).toEqual(source.recordings.slice(0, 3).map(row => row.url));
+    await fake.advanceGitHubTime(1);
+    const limited = await start(); // metadata is call 3; the conditional ref would be call 4
+    expect(limited).toMatchObject({ status: 'failed', error: { code: 'github_rate_limited' } });
+    expect((await fake.ledger()).map(row => row.url)).toEqual([...source.recordings.slice(0, 3).map(row => row.url), source.recordings[0].url]);
+    await fake.advanceGitHubTime(3540);
+    const refreshed = await start();
+    expect(refreshed).toMatchObject({ status: 'completed', source: { commit_sha: 'b'.repeat(40) } });
+    const ledger = await fake.ledger();
+    expect(ledger.map(row => row.url)).toEqual([...source.recordings.slice(0, 3).map(row => row.url), source.recordings[0].url,
+      source.recordings[0].url, source.recordings[1].url, source.recordings[3].url]);
+    expect(ledger.filter(row => row.url === source.recordings[1].url).map(row => row.if_none_match)).toEqual([null, source.recordings[1].headers.ETag]);
+    expect((await start()).source.commit_sha).toBe('b'.repeat(40));
+    expect(await fake.ledger()).toEqual(ledger);
+    await testInfo.attach('scoped-clock-receipts', { body: JSON.stringify({ initial, cached, limited, refreshed, ledger, fixtureHash: fake.fixtureHash }), contentType: 'application/json' });
   } finally { await fake.dispose(); }
 });

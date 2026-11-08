@@ -100,6 +100,41 @@ test('bounded delays, HTTP errors, missing usage and malformed tool protocol are
   }
 });
 
+test('GitHub clock is owned, bounded, monotonic and separate from recording replacement', async t => {
+  const send = await fixture(t);
+  const other = namespace + '-other';
+  const second = { ...recording, url: recording.url + '-other' };
+  await send('/scenarios', { namespace, rules: [], github: [recording] });
+  await send('/scenarios', { namespace: other, rules: [], github: [second] });
+  const clock = repo => send('/github/clock', { repo });
+  const initial = (await clock('synthetic/example')).body;
+  const otherInitial = (await clock('synthetic/example-other')).body;
+  assert.equal(initial.now, 1893456000);
+  assert.match(initial.namespace, /^e2e-skills-[a-f0-9-]{36}$/);
+  assert.notEqual(initial.namespace, otherInitial.namespace);
+  await send('/scenarios/' + namespace + '/github', recording, 'PUT');
+  assert.equal((await clock('synthetic/example')).body.now, 1893456000);
+  for (const advance_seconds of [-1, 0, 0.5, '60', null, 604801]) {
+    assert.equal((await send('/scenarios/' + namespace + '/clock', { advance_seconds })).status, 400);
+  }
+  assert.equal((await send('/scenarios/' + namespace + '/clock', { advance_seconds: 60, budget: 99 })).status, 400);
+  assert.equal((await send('/scenarios/' + namespace + '/clock', { advance_seconds: 60 })).body.now, 1893456060);
+  assert.equal((await send('/scenarios/' + namespace + '/clock', { advance_seconds: 3540 })).body.now, 1893459600);
+  assert.deepEqual((await clock('synthetic/example-other')).body, otherInitial);
+  const state = (await send('/scenarios/' + namespace, undefined, 'GET')).body;
+  assert.deepEqual(state.clockEvents, [{ advance_seconds: 60, now: 1893456060 }, { advance_seconds: 3540, now: 1893459600 }]);
+  assert.deepEqual(state.ledger, []);
+  assert.equal((await clock('synthetic/unknown')).status, 404);
+  assert.equal((await clock('real/repository')).status, 400);
+  await send('/scenarios/' + namespace, undefined, 'DELETE');
+  assert.equal((await clock('synthetic/example')).status, 404);
+  assert.equal((await send('/scenarios/' + namespace + '/clock', { advance_seconds: 1 })).status, 404);
+  await send('/scenarios', { namespace, rules: [], github: [recording] });
+  const recreated = (await clock('synthetic/example')).body;
+  assert.equal(recreated.now, initial.now);
+  assert.notEqual(recreated.namespace, initial.namespace); // no stale Redis state on reuse
+});
+
 test('recorded GitHub responses preserve bytes and isolate mutable refs from immutable archives', async t => {
   const send = await fixture(t);
   const archive = { ...recording, url: 'https://codeload.github.com/synthetic/example/zip/' + 'a'.repeat(40),

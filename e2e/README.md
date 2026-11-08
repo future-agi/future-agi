@@ -495,11 +495,26 @@ inertness, unchanged real endpoint selection and preservation of no-retry flags.
 Mount only that probe file read-only, set `PYTHONPATH=/app/backend` and
 `NO_STARTUP_DB_MUTATIONS=true`, and invoke it with the container's Python. A fake
 run is not real-provider verification, GitHub conformance or native-agent evidence.
-The GitHub seam deliberately keeps the production 60-second ref/metadata caches
-and anonymous hourly budgets. It does not provide a clock/period-control seam.
-Advancing a recording alone therefore cannot make an immediate update check see
-a fresh branch. Do not clear shared counters, bypass cache policy or reinterpret
-`unchanged_commit` as proof of a changed-source replacement.
+The GitHub seam keeps the production **60-second ref/metadata freshness** and
+**3/org, 10/Skills, 50/global REST calls per hour** (including lower deployment
+limits). `SkillsFixtures.advanceGitHubTime(seconds)` advances only that scenario's
+GitHub cache/rate-policy time, by a positive integer up to seven days in total.
+Every operation reads a frozen clock from the owner of its recorded repository.
+Real Redis counters and single-flight leases remain in use, namespaced per scenario;
+no shared cache is cleared and no limit is raised. The clock starts at a fixed hour.
+Advancing 60 seconds expires freshness; advancing 3600 seconds also opens the next
+budget period. The real socket/job deadlines, preview expiry and all other scenarios
+are unaffected. Call the control only after prior work has settled; it is not a
+concurrent clock scheduler. Unknown/disposed fixture policies fail closed.
+
+Changing a recording alone must still return the cached SHA. The transport harness
+checks that behavior at 59 seconds, refusal of the fourth organization REST request
+at 60 seconds, then fresh resolution with the paired ETag after period rollover.
+The update flow advances one period before root continuation and the later update,
+so the continuation cannot pass merely by hitting a fresh ref cache. This models
+a later user check without sleeps, SQL changes or treating `unchanged_commit` as
+proof of replacement. Only the E2E overlay installs the clock/cache adapters; the
+normal image and the disabled overlay retain the original clock and cache policy.
 
 ### Harness self-tests
 

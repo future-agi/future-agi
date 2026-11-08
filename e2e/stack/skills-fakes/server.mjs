@@ -1,6 +1,6 @@
 // Test-only transport. Unknown scenarios/routes fail closed; nothing proxies the internet.
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -8,6 +8,8 @@ const MAX_BODY = 15 * 1024 * 1024;
 const MAX_LEDGER = 512;
 const MAX_SCENARIOS = 128;
 const TTL = 60 * 60 * 1000;
+const CLOCK_START = 1893456000; // 2030-01-01T00:00:00Z; scoped to GitHub policy only
+const MAX_CLOCK_ADVANCE = 7 * 24 * 3600;
 const namespacePattern = /^e2e-skills-[a-z0-9-]{8,80}$/;
 const json = (res, status, value) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -38,7 +40,9 @@ function validateScenario(body) {
         (!rule.response && !rule.status)) throw new Error('invalid response rule');
   }
   body.github.forEach(validateRecording);
-  return { ...structuredClone(body), ledger: [], created: Date.now() };
+  // A new incarnation never sees cached bytes/counters left by a disposed test or restart.
+  return { ...structuredClone(body), ledger: [], clock: CLOCK_START, clockNamespace: `e2e-skills-${randomUUID()}`,
+    clockEvents: [], created: Date.now() };
 }
 
 function requestInput(messages) {
@@ -102,7 +106,16 @@ export function createFixtureHandler() {
         scenarios.set(scenario.namespace, scenario);
         return json(res, 201, { namespace: scenario.namespace, fixture_sha256: hash(raw) });
       }
-      const match = url.pathname.match(/^\/scenarios\/(e2e-skills-[a-z0-9-]+)(\/github)?$/);
+      if (req.method === 'POST' && url.pathname === '/github/clock') {
+        if (typeof body.repo !== 'string' || !/^synthetic\/[a-z0-9-]+$/.test(body.repo)) {
+          return json(res, 400, { error: 'expected a synthetic repository' });
+        }
+        const metadataUrl = `https://api.github.com/repos/${body.repo}`;
+        const owners = [...scenarios.values()].filter(scenario => scenario.github.some(row => row.url === metadataUrl));
+        if (owners.length !== 1) return json(res, 404, { error: 'unrecorded repository clock' });
+        return json(res, 200, { namespace: owners[0].clockNamespace, now: owners[0].clock });
+      }
+      const match = url.pathname.match(/^\/scenarios\/(e2e-skills-[a-z0-9-]+)(\/github|\/clock)?$/);
       if (match) {
         const scenario = scenarios.get(match[1]);
         if (!scenario) return json(res, 404, { error: 'unknown scenario' });
@@ -110,8 +123,17 @@ export function createFixtureHandler() {
           scenarios.delete(match[1]);
           return json(res, 200, { deleted: true });
         }
-        if (req.method === 'GET' && !match[2]) return json(res, 200, { ledger: scenario.ledger });
-        if (req.method === 'PUT' && match[2]) {
+        if (req.method === 'GET' && !match[2]) return json(res, 200, { ledger: scenario.ledger, clock: scenario.clock, clockEvents: scenario.clockEvents });
+        if (req.method === 'POST' && match[2] === '/clock') {
+          if (Object.keys(body).length !== 1 || !Number.isInteger(body.advance_seconds) || body.advance_seconds <= 0 ||
+              scenario.clock + body.advance_seconds > CLOCK_START + MAX_CLOCK_ADVANCE || scenario.clockEvents.length >= MAX_LEDGER) {
+            return json(res, 400, { error: 'expected a bounded positive clock advance' });
+          }
+          scenario.clock += body.advance_seconds;
+          scenario.clockEvents.push({ advance_seconds: body.advance_seconds, now: scenario.clock });
+          return json(res, 200, { now: scenario.clock });
+        }
+        if (req.method === 'PUT' && match[2] === '/github') {
           validateRecording(body);
           const index = scenario.github.findIndex(row => row.url === body.url);
           if (index < 0) return json(res, 404, { error: 'recording not owned' });
@@ -126,7 +148,8 @@ export function createFixtureHandler() {
         const scenario = owners[0];
         if (scenario.ledger.length >= MAX_LEDGER) return json(res, 429, { error: 'fixture ledger full' });
         const recording = scenario.github.find(row => row.url === body.url);
-        scenario.ledger.push({ kind: 'github', url: body.url, status: recording.status,
+        scenario.ledger.push({ kind: 'github', url: body.url, status: recording.status, clock: scenario.clock,
+          if_none_match: body.headers?.['If-None-Match'] ?? null,
           body_sha256: hash(Buffer.from(recording.body_base64, 'base64')), request_sha256: hash(raw) });
         return json(res, 200, recording);
       }
