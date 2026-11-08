@@ -18,8 +18,7 @@ export interface UserInfo {
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
 export async function provisionActor(req: APIRequestContext, label: string): Promise<TestActor> {
-  // futureagi.com domain: belt (special-email recaptcha bypass) to the
-  // localhost-Host suspenders; also gives the auto-created org a stable name.
+  // The domain gives the auto-created organization a stable name.
   // Freshness must not depend on the caller's label: parallel workers can
   // provision in the same millisecond.
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -27,7 +26,8 @@ export async function provisionActor(req: APIRequestContext, label: string): Pro
   const password = `E2e-${label}-${runId}`;
   const anon = new ApiClient(req, E2E.apiUrl);
 
-  await anon.post('/accounts/signup/', { email, full_name: `E2E ${label}`, password });
+  // Only the test image exposes this route. Signup flows use the public route.
+  await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);

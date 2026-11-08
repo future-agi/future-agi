@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "585651e472a29ca4c0a0f6637b2282df9541b63f2f9b84f12a75e30bc333e7e0",
+  "source_contract_sha256": "7eff0d4ec2e8fb4c8a6d2dd011c98092627804da0cfc6fceae752ee99796b7ce",
   "tool_count": 107,
   "tools": [
     {
@@ -327,7 +327,7 @@
     },
     {
       "name": "add_dataset_rows",
-      "description": "Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.",
+      "description": "Add rows to an existing dataset using rows: [{cells: [{column_name: \"input\", value: \"hello\"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.",
       "group": "datasets",
       "inputSchema": {
         "type": "object",
@@ -363,7 +363,8 @@
                 "title": "Value",
                 "description": "Any valid JSON value."
               }
-            }
+            },
+            "additionalProperties": false
           },
           "DatasetRowRequest": {
             "type": "object",
@@ -373,6 +374,11 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "order": {
+                "title": "Order",
+                "description": "Legacy input accepted for compatibility; rows are appended in request order.",
+                "type": "integer"
+              },
               "cells": {
                 "type": "array",
                 "items": {
@@ -380,7 +386,8 @@
                 },
                 "default": []
               }
-            }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -2516,6 +2523,33 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "multi_choice": {
+            "title": "Multi choice",
+            "type": "boolean",
+            "default": false
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -2744,6 +2778,9 @@
           "path": [],
           "query": [],
           "body": [
+            "jev_mapping",
+            "multi_choice",
+            "input_data_types",
             "name",
             "is_draft",
             "eval_type",
@@ -2785,6 +2822,28 @@
         "properties": {
           "template_id": {
             "type": "string"
+          },
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "anyOf": [
@@ -3099,6 +3158,8 @@
           ],
           "query": [],
           "body": [
+            "jev_mapping",
+            "input_data_types",
             "name",
             "eval_type",
             "instructions",

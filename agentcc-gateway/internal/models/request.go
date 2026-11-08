@@ -1,6 +1,8 @@
 package models
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 )
@@ -132,6 +134,14 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+}
+
+// NewToolCallID returns a random tool call id in the format call_{hex16}, for
+// providers whose function calls carry no id of their own.
+func NewToolCallID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "call_" + hex.EncodeToString(b)
 }
 
 type FunctionCall struct {

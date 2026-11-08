@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Drawer } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 import ChatCallDrawer from "./ChatCallDrawer";
 import VoiceCallDrawer from "./VoiceCallDrawer";
@@ -26,12 +27,14 @@ export default function CallDrawer({
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
   const { traceOpen, onTracePanelMountedChange } = useCallTraceOpen();
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           // Voice lets `VoiceDetailDrawerV2` drive its own (draggable) width; the

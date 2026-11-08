@@ -71,19 +71,19 @@ const VoiceLeftPanel = ({
       {
         label: "Transcript",
         value: TABS.TRANSCRIPT,
-        icon: "mdi:file-document-outline",
+        icon: "solar:document-text-linear",
       },
     ];
     if (showPathTabs) {
       t.push({
         label: "Checklist",
         value: TABS.CHECKLIST,
-        icon: "mdi:format-list-checks",
+        icon: "solar:list-check-linear",
       });
       t.push({
         label: "Graph",
         value: TABS.GRAPH,
-        icon: "mdi:graph-outline",
+        icon: "solar:graph-linear",
       });
     }
     extraTabs.forEach(({ label, value, icon }) =>
@@ -172,11 +172,11 @@ const VoiceLeftPanel = ({
                   >
                     <Typography
                       sx={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: "text.secondary",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
+                        textTransform: "none",
+                        letterSpacing: 0,
                         mb: 0.5,
                       }}
                     >

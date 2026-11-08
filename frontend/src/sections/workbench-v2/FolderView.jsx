@@ -107,9 +107,6 @@ export default function FolderView() {
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "40.8px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"
@@ -121,7 +118,6 @@ export default function FolderView() {
           <Button
             onClick={handleUseTemplate}
             color="primary"
-            sx={{ height: "40.8px" }}
             variant="outlined"
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
@@ -131,7 +127,6 @@ export default function FolderView() {
             onClick={handleCreateTemplate}
             variant="contained"
             color="primary"
-            sx={{ height: "40.8px" }}
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
             Create prompt

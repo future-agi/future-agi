@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import axios from "src/utils/axios";
@@ -53,10 +53,10 @@ const MetricChip = ({ label, value }) => {
           bgcolor: "background.neutral",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "2px",
+          borderRadius: "4px",
           minWidth: 64,
           maxWidth: "100%",
-          fontSize: 11,
+          fontSize: 12,
           color: "text.primary",
           lineHeight: "16px",
         }}
@@ -142,8 +142,8 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
       sx={{ flexWrap: "wrap", gap: 0.5, alignItems: "center" }}
     >
       <Iconify
-        icon="mdi:tag-outline"
-        width={13}
+        icon="solar:tag-linear"
+        width={14}
         sx={{ color: "text.disabled" }}
       />
       {normalized.map((tag, idx) => (
@@ -184,27 +184,15 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
           />
         </Box>
       ) : (
-        <Box
+        <Button
+          size="small"
+          color="inherit"
           onClick={() => setIsAdding(true)}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            px: 0.5,
-            py: "1px",
-            borderRadius: "3px",
-            border: "1px dashed",
-            borderColor: "divider",
-            fontSize: 11,
-            color: "text.disabled",
-            cursor: "pointer",
-            lineHeight: "16px",
-            "&:hover": { borderColor: "primary.main", color: "primary.main" },
-          }}
+          startIcon={<Iconify icon="solar:add-linear" width={12} />}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:plus" width={12} />
           tag
-        </Box>
+        </Button>
       )}
     </Stack>
   );

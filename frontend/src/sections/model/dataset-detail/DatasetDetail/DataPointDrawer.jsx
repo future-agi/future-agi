@@ -23,6 +23,7 @@ import {
 } from "src/utils/utils";
 import DetailItem from "src/components/drawer-detail-item/drawer-detail-item";
 import Image from "src/components/image";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const DataPointDrawer = ({
   selectedRow,
@@ -82,18 +83,21 @@ const DataPointDrawer = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -107,7 +111,7 @@ const DataPointDrawer = ({
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <Box sx={{ padding: "20px" }}>
         <Box>
