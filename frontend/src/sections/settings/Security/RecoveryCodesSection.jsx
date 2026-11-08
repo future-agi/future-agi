@@ -132,10 +132,7 @@ const RecoveryCodesSection = ({ remaining, hasTotp, onStatusChange }) => {
               {isLow && (
                 <Chip
                   icon={
-                    <Iconify
-                      icon="mdi:alert"
-                      sx={{ width: "14px", height: "14px" }}
-                    />
+                    <Iconify width={14} icon="solar:danger-triangle-linear" />
                   }
                   label="Low"
                   color="warning"
@@ -163,7 +160,8 @@ const RecoveryCodesSection = ({ remaining, hasTotp, onStatusChange }) => {
       <Dialog
         open={regenOpen}
         onClose={handleRegenClose}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>

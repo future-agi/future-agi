@@ -1,6 +1,11 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from simulate.views.agent_fix import (
+    AgentFixEngineViewSet,
+    AgentFixModelView,
+    AgentFixRunViewSet,
+)
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -73,6 +78,7 @@ from .views import (
     AgentDefinitionDetailView,
     AgentDefinitionOperationsViewSet,
     AgentDefinitionView,
+    AgentRunsView,
     CreateAgentDefinitionView,
     CreateRunTestView,
     CreateScenarioView,
@@ -90,6 +96,7 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
     AgentVersionCallExecutionView,
@@ -102,6 +109,7 @@ from .views.agent_version import (
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
+from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -124,6 +132,8 @@ from .views.run_results_v3 import (
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
+    RunReliabilityV3View,
+    RunTracesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
 
@@ -138,6 +148,8 @@ router.register(
     basename="agent-definition-operations",
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
+router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
@@ -161,6 +173,11 @@ router.register(
 urlpatterns = [
     path("api/", include(router.urls)),
     path(
+        "api/agent-fix-engine/<uuid:pk>/v1/chat/completions",
+        AgentFixModelView.as_view(),
+        name="agent-fix-engine-model",
+    ),
+    path(
         "test-executions/<uuid:test_execution_id>/debug-analysis/",
         TestExecutionDebugAnalysisView.as_view(),
         name="test-execution-debug-analysis",
@@ -171,6 +188,11 @@ urlpatterns = [
         name="v3-test-execution-calls",
     ),
     path(
+        "v3/test-executions/<uuid:test_execution_id>/traces/",
+        RunTracesV3View.as_view(),
+        name="v3-test-execution-traces",
+    ),
+    path(
         "v3/call-executions/<uuid:call_execution_id>/",
         CallExecutionV3DetailView.as_view(),
         name="v3-call-execution-detail",
@@ -179,6 +201,11 @@ urlpatterns = [
         "v3/test-executions/<uuid:test_execution_id>/analytics/",
         RunAnalyticsV3View.as_view(),
         name="v3-test-execution-analytics",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/reliability/",
+        RunReliabilityV3View.as_view(),
+        name="v3-test-execution-reliability",
     ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/export/",
@@ -194,6 +221,11 @@ urlpatterns = [
         "api/harness/ingress/<str:token>/<path:target_path>",
         HostedHarnessIngressProxyView.as_view(),
         name="hosted-harness-ingress-proxy-path",
+    ),
+    path(
+        "api/harness/github/webhook/",
+        HarnessGitHubWebhookView.as_view(),
+        name="hosted-harness-github-webhook",
     ),
     # Persona duplicate endpoint with custom URL pattern
     path(
@@ -257,6 +289,11 @@ urlpatterns = [
         name="agent-definitions-detail",
     ),
     path(
+        "agent-definitions/<uuid:agent_id>/runs/",
+        AgentRunsView.as_view(),
+        name="agent-definitions-runs",
+    ),
+    path(
         "agent-definitions/<uuid:agent_id>/edit/",
         EditAgentDefinitionView.as_view(),
         name="agent-definitions-edit",
@@ -306,6 +343,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/call-executions/",
         AgentVersionCallExecutionView.as_view(),
         name="agent-versions-call-executions",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/agent/",
+        StoredAgentView.as_view(),
+        name="agent-versions-stored-agent",
     ),
     # Simulator Agent API endpoints
     path(

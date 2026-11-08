@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
   IconButton, Tooltip, Checkbox,
@@ -9,9 +8,20 @@ import {
 import Iconify from "src/components/iconify";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { ClampCell, SubTasksCell, TruncTooltip } from "./ScenarioTableCells";
-import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
+import {
+  ClampCell,
+  SubTasksCell,
+  TruncTooltip,
+  UnsavedMark,
+} from "./ScenarioTableCells";
+import {
+  ROW_HEIGHTS,
+  SCENARIOS_COPY,
+  isUnsavedAddition,
+  unsavedCheckboxProps,
+} from "./scenarios.constants";
+import { personaSubline } from "./personaLabels";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
@@ -19,9 +29,23 @@ import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 // intentional rather than broken.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-// Height of the sticky column-header row (size="small" + s3 type ≈ 28.5px).
-// The group headers pin at this offset so they rest just under it, not on top.
-const HEAD_OFFSET = 28;
+// Body cells pinned to an edge need an opaque base (rows scroll under them)
+// and the row's hover tint layered on top. The actions column on the right is
+// set off by a hairline; the checkbox column sits flat beside the row.
+const pinnedBodyCellSx = (side) => ({
+  position: "sticky", [side]: 0, zIndex: 1,
+  bgcolor: "background.paper",
+  ...(side === "right" && { borderLeft: "1px solid", borderLeftColor: "divider" }),
+  transition: "background-image 120ms ease",
+  ".MuiTableRow-hover:hover &": {
+    backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
+  },
+});
+const pinnedSelectCellSx = { ...pinnedBodyCellSx("left"), pl: 1.5, verticalAlign: "top" };
+
+// Height of the sticky column-header row, set on its cells. The group headers
+// pin at this offset so they rest just under it, not on top.
+const HEAD_OFFSET = TABLE_HEADER_HEIGHT.default;
 
 const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };
@@ -46,19 +70,17 @@ function readWidths() {
   );
 }
 
-// Neutral white-on-selected checkbox — no primary colour, keeps the table's
-// monochrome treatment.
-const selectableCheckboxSx = {
-  p: 0,
-  color: "text.disabled",
-  "&.Mui-checked": { color: "text.primary" },
-  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
-};
+// The theme's checkbox, without its padding.
+const selectableCheckboxSx = { p: 0 };
 
-// The per-row edit pencil opens the scenario editor through onEdit. Stripped
-// from the source: the twin-seed override icon (twinSeedPrompt) — twin-only, not
-// on either entry path.
-export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
+// Stop a click inside a cell (checkbox, row actions) from also opening the row.
+const stopRowClick = (e) => e.stopPropagation();
+
+// The per-row edit pencil opens the scenario editor through onEdit; a click
+// anywhere else on the row opens it in full through onOpen. Stripped from the
+// source: the twin-seed override icon (twinSeedPrompt) — twin-only, not on
+// either entry path.
+export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
@@ -172,23 +194,26 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                   align={isActions ? "right" : "left"}
                   padding={isSelect ? "checkbox" : "normal"}
                   sx={{
-                    typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle",
-                    textTransform: "uppercase", letterSpacing: 0.4,
-                    bgcolor: "background.neutral",
+                    typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
+                    bgcolor: "background.paper",
                     borderBottom: "1px solid", borderColor: "divider",
-                    whiteSpace: "nowrap",
+                    whiteSpace: "nowrap", height: HEAD_OFFSET,
                     // Sticky column header — pins to the top of the scroll box so
                     // the columns stay labelled while the rows scroll. The group
                     // headers (in the body) pin just below it (top = HEAD_OFFSET).
                     position: "sticky", top: 0, zIndex: 3,
                     ...(h !== FILLER && { width: widthOf(h) }),
                     ...(!isActions && h !== FILLER && { borderRight: "1px solid" }),
-                    ...(isSelect && { "&.MuiTableCell-paddingCheckbox": { width: FIXED_WIDTHS.select } }),
+                    ...(isSelect && {
+                      "&.MuiTableCell-paddingCheckbox": { width: FIXED_WIDTHS.select },
+                      // The top-left corner: sticky on both axes, above all.
+                      left: 0, zIndex: 4,
+                    }),
                     ...(isActions && {
                       // The top-right corner: sticky on both axes, above all.
                       right: 0, zIndex: 4,
                       width: 96, minWidth: 96,
-                      boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
+                      borderLeft: "1px solid", borderLeftColor: "divider",
                     }),
                   }}
                 >
@@ -227,24 +252,23 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                   <TableCell
                     colSpan={columns.length}
                     sx={{
-                      // Pinned directly beneath the sticky column header (~28px).
+                      // Pinned directly beneath the sticky column header.
                       // Opaque paper base + the group tint on top, so rows scroll
                       // cleanly under it instead of bleeding through the tint.
-                      position: "sticky", top: HEAD_OFFSET, zIndex: 1,
+                      // Above the pinned checkbox and action cells, which scroll
+                      // under it too.
+                      position: "sticky", top: HEAD_OFFSET, zIndex: 2,
                       bgcolor: "background.paper",
-                      backgroundImage: (t) => {
-                        const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
-                        return `linear-gradient(${tint}, ${tint})`;
-                      },
+                      backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
                       borderTop: "1px solid", borderBottom: "1px solid", borderColor: "divider",
-                      py: 1.125, px: 2,
+                      height: ROW_HEIGHT.default, py: 0, px: 1.5,
                     }}
                   >
                     <Stack direction="row" alignItems="center" spacing={1.25}>
-                      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", flex: 1, minWidth: 0 }}>
+                      <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary", flex: 1, minWidth: 0 }}>
                         {section.label}
                       </Typography>
-                      <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      <Typography sx={{ typography: "s3", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
                         {/* Under paging the header shows the whole-match count
                             (from the backend's groupCounts) even though only a
                             slice of the group is on this page. */}
@@ -274,42 +298,61 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                 const idx = row.number;
                 const p = row.persona;
                 const subTasks = row.subTasks || [];
-                const personaSubline = [
-                  p?.gender && p.gender.charAt(0).toUpperCase() + p.gender.slice(1),
-                  p?.ageGroup,
-                  !p?.gender && !p?.ageGroup && p?.role,
-                ].filter(Boolean).join(" · ");
+                const personaLine = personaSubline(p);
                 const situationText = row.situation || row.task || "";
                 const idealOutcomeText = row.outcome || row.expected || "";
 
                 return (
-                  <TableRow key={row.id} hover>
+                  <TableRow
+                    key={row.id}
+                    hover
+                    onClick={onOpen ? () => onOpen(row) : undefined}
+                    // Reachable from the keyboard too: Tab to the row, Enter opens it.
+                    tabIndex={onOpen ? 0 : undefined}
+                    onKeyDown={onOpen ? (e) => {
+                      if (e.target !== e.currentTarget || e.key !== "Enter") return;
+                      e.preventDefault();
+                      onOpen(row);
+                    } : undefined}
+                    aria-label={onOpen ? SCENARIOS_COPY.openRow(row.name || row.title) : undefined}
+                    sx={{
+                      height: ROW_HEIGHT.twoLine,
+                      ...(onOpen && {
+                        cursor: "pointer",
+                        "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 },
+                      }),
+                    }}
+                  >
                     {!locked && (
-                      <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
+                      // Pinned to the left edge so the selection stays in reach
+                      // while the table scrolls sideways.
+                      <TableCell padding="checkbox" sx={pinnedSelectCellSx} onClick={stopRowClick}>
                         <Checkbox
                           size="small"
-                          checked={rowChecked(row.id)}
+                          checked={!isUnsavedAddition(row) && rowChecked(row.id)}
+                          {...unsavedCheckboxProps(row)}
                           onChange={() => toggle(row.id)}
                           sx={selectableCheckboxSx}
                         />
                       </TableCell>
                     )}
-                    <TableCell sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
+                    <TableCell sx={{ typography: "s1", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
                       {idx}
                     </TableCell>
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <Stack direction="row" alignItems="center" spacing={0.75}>
                         <TruncTooltip title={row.name || row.title}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{row.name || row.title}</Typography>
+                          <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>{row.name || row.title}</Typography>
                         </TruncTooltip>
                         {row.critical && (
                           <Tooltip arrow title={SCENARIOS_COPY.critical}>
                             <Box sx={{ display: "flex" }}>
-                              <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: BUILD_TONES.red }} />
+                              <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: "status.danger.solid" }} />
                             </Box>
                           </Tooltip>
                         )}
+                        <UnsavedMark row={row} />
                       </Stack>
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
@@ -318,10 +361,10 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <TruncTooltip title={p?.name || ""}>
-                        <Typography noWrap sx={{ typography: "s2" }}>{p?.name}</Typography>
+                        <Typography noWrap sx={{ typography: "s1" }}>{p?.name}</Typography>
                       </TruncTooltip>
-                      {personaSubline && (
-                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{personaSubline}</Typography>
+                      {personaLine && (
+                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{personaLine}</Typography>
                       )}
                     </TableCell>
 
@@ -341,16 +384,11 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
 
                     <TableCell
                       align="right"
+                      onClick={stopRowClick}
                       sx={{
+                        ...pinnedBodyCellSx("right"),
                         whiteSpace: "nowrap", verticalAlign: "top",
-                        position: "sticky", right: 0, zIndex: 1,
                         width: 96, minWidth: 96,
-                        bgcolor: "background.paper",
-                        boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
-                        transition: "background-image 120ms ease",
-                        ".MuiTableRow-hover:hover &": {
-                          backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
-                        },
                       }}
                     >
                       <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>
@@ -383,6 +421,8 @@ ScenarioTable.propTypes = {
   groups: PropTypes.arrayOf(GROUP_SHAPE),
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  // Opens a row in full (the scenario drawer).
+  onOpen: PropTypes.func,
   onHideGroup: PropTypes.func,
   selectedIds: PropTypes.arrayOf(PropTypes.string),
   onSelectionChange: PropTypes.func,
@@ -394,3 +434,4 @@ ScenarioTable.propTypes = {
   locked: PropTypes.bool,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };
+

@@ -254,7 +254,7 @@ const CompositeDetailPanel = ({
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
             Name
-            <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+            <Box component="span" sx={{ color: "status.danger.fg", ml: 0.25 }}>
               *
             </Box>
           </Typography>
@@ -361,7 +361,6 @@ const CompositeDetailPanel = ({
               size="small"
               label={aggregationEnabled ? "ON" : "OFF"}
               color={aggregationEnabled ? "success" : "default"}
-              sx={{ fontWeight: 600 }}
             />
           )}
         </Box>
@@ -380,11 +379,7 @@ const CompositeDetailPanel = ({
                 disabled={disabled}
               >
                 {AGGREGATION_OPTIONS.map((opt) => (
-                  <MenuItem
-                    key={opt.value}
-                    value={opt.value}
-                    sx={{ fontSize: "13px" }}
-                  >
+                  <MenuItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </MenuItem>
                 ))}
@@ -562,14 +557,12 @@ const CompositeDetailPanel = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setPickerOpen(true)}
               disabled={disabled}
               sx={{
                 mt: 0.5,
                 alignSelf: "flex-start",
-                textTransform: "none",
-                fontSize: "12px",
               }}
             >
               Add evaluation
@@ -600,7 +593,8 @@ const CompositeDetailPanel = ({
       <Dialog
         open={Boolean(pendingAxis)}
         onClose={() => setPendingAxis(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
       >
         <DialogTitle sx={{ fontSize: "16px", fontWeight: 600 }}>
           Change child evaluation type?
@@ -614,11 +608,7 @@ const CompositeDetailPanel = ({
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button
-            size="small"
-            onClick={() => setPendingAxis(null)}
-            sx={{ textTransform: "none" }}
-          >
+          <Button size="small" onClick={() => setPendingAxis(null)}>
             Cancel
           </Button>
           <Button
@@ -626,7 +616,6 @@ const CompositeDetailPanel = ({
             variant="contained"
             color="warning"
             onClick={confirmAxisSwitch}
-            sx={{ textTransform: "none" }}
           >
             Clear &amp; switch
           </Button>

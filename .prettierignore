@@ -5,3 +5,6 @@ deploy/helm/*/templates/
 # helm-ci) fails on any other formatting.
 deploy/helm/futureagi/values.schema.json
 deploy/helm/futureagi/README.md
+# Written by scripts/generate-mcp-tools.py; its `--check` (backend-contracts CI)
+# fails on any other formatting.
+futureagi/mcp_server/catalog/tools.generated.json

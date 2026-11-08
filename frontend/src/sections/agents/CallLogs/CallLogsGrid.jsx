@@ -48,8 +48,10 @@ import {
   pagerMetadataEquals,
 } from "src/sections/projects/LLMTracing/listPagerState";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
+import { useUrlState } from "src/routes/hooks/use-url-state";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
-const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
+const CELL_HEIGHT_MAP = { Short: ROW_HEIGHT.default, Medium: 52, Large: 68, "Extra Large": 88 };
 
 // Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
 // the rest of the row.
@@ -66,7 +68,7 @@ const CustomColCellRenderer = (params) => {
         height: "100%",
       }}
     >
-      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+      <Typography variant="body2" sx={{ fontSize: 12 }} noWrap>
         {String(display)}
       </Typography>
     </Box>
@@ -78,7 +80,7 @@ const CustomColLoadingSkeleton = () => (
     variant="rectangular"
     width="80%"
     height={15}
-    sx={{ mx: 1, borderRadius: 0.5 }}
+    sx={{ mx: 1, borderRadius: "4px" }}
   />
 );
 
@@ -125,17 +127,18 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       headerColumnBorder: false,
       wrapperBorder: { width: 0 },
       wrapperBorderRadius: 0,
-      rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+      rowBorder: { width: 1, color: theme.palette.divider },
       headerFontSize: "13px",
       headerFontWeight: 500,
       headerBackgroundColor: "transparent",
       headerTextColor: theme.palette.text.primary,
-      rowHoverColor: "rgba(120,87,252,0.04)",
+      rowHoverColor: theme.palette.action.hover,
     }),
     [theme],
   );
   const agTheme = useAgThemeWith(gridThemeParams);
   const queryClient = useQueryClient();
+  const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
   const [pagerState, setPagerState] = useState({
@@ -191,13 +194,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const rowId = params.data?.id || params.data?.trace_id;
       if (rowId && activeCallId && rowId === activeCallId) {
         return {
-          backgroundColor: "rgba(120, 87, 252, 0.08)",
+          backgroundColor: theme.palette.action.selected,
           cursor: "pointer",
         };
       }
       return { cursor: "pointer" };
     },
-    [activeCallId],
+    [activeCallId, theme.palette.action.selected],
   );
   // Reset the opaque chain synchronously whenever any query-shaping input
   // changes. A cursor is signed against the complete normalized request, not
@@ -794,10 +797,10 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               px: 1.5,
               py: 0.75,
               fontSize: 12,
-              color: "warning.main",
-              bgcolor: "warning.lighter",
+              color: "status.warning.fg",
+              bgcolor: "status.warning.bg",
               borderBottom: "1px solid",
-              borderColor: "warning.light",
+              borderColor: "status.warning.border",
             }}
           >
             {readMessage}
@@ -831,19 +834,23 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               cursorContinuationPaused
                 ? null
                 : NoRowsOverlay(
-                    <Typography
-                      sx={{
-                        fontSize: 14,
-                        fontWeight: 400,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {readMessage ||
-                        (showErrors ? "No error found" : "No calls found")}
-                    </Typography>,
+                    readMessage ||
+                      (showErrors ? "No error found" : "No calls found"),
                   )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              const colDef = params?.column?.getColDef?.();
+              const sourceColumn = colDef?.context?.sourceColumn;
+              const isEvalCell =
+                sourceColumn?.groupBy === "Evaluation Metrics" ||
+                String(colDef?.field || "").startsWith("eval_outputs.");
+              if (isEvalCell) {
+                setEvalFocus(true);
+              } else {
+                removeEvalFocus();
+              }
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}

@@ -46,6 +46,9 @@ export const REPLAY_ITEMS = [
   // },
 ];
 
+// Bulk-action id of "Replay Sessions" / "Replay Calls" in the Observe toolbar.
+export const REPLAY_ACTION_ID = "replay";
+
 export const REPLAY_TYPES = {
   NEW_GROUP: "new_group",
   EXISTING_GROUP: "existing_group",
