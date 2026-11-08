@@ -50,6 +50,35 @@ const request = () => ({
 });
 
 describe('principal-scoped reads', () => {
+  it('keeps the page query healthy when a same-scope dialog unmounts during its shared refetch', async () => {
+    let finishRefresh;
+    axios.get.mockResolvedValueOnce(envelope(suite))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+    const page = renderHook(() => api.useSkillTestSuite('skill'), { wrapper });
+    await waitFor(() => expect(page.result.current.isSuccess).toBe(true));
+    const dialog = renderHook(() => api.useSkillTestSuite('skill'), { wrapper });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    const signal = axios.get.mock.calls[1][1].signal;
+    dialog.unmount();
+    expect(signal.aborted).toBe(false);
+    await act(async () => { finishRefresh(envelope({ ...suite, revision: 2 })); });
+    await waitFor(() => expect(page.result.current.data?.revision).toBe(2));
+    expect(page.result.current.isError).toBe(false);
+  });
+  it('still aborts a shared read after the last observer unmounts', async () => {
+    let finish;
+    axios.get.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const first = renderHook(() => api.useSkillTestSuite('skill'), { wrapper });
+    const second = renderHook(() => api.useSkillTestSuite('skill'), { wrapper });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    const signal = axios.get.mock.calls[0][1].signal;
+    first.unmount();
+    expect(signal.aborted).toBe(false);
+    second.unmount();
+    expect(signal.aborted).toBe(true);
+    await act(async () => { finish(envelope({ ...suite, revision: 99 })); });
+    expect(client.getQueryData(skillsKeys.v11({ organizationId: 'org-a', workspaceId: 'ws-a', userId: 'author' }, 'skill', 'suite'))).toBeUndefined();
+  });
   it('carries explicit tenant headers and an AbortSignal and maps the absent suite', async () => {
     axios.get.mockResolvedValue(envelope(suite));
     const { result } = renderHook(() => api.useSkillTestSuite('skill'), { wrapper });
@@ -87,6 +116,19 @@ describe('principal-scoped reads', () => {
 });
 
 describe('paid starts and polling', () => {
+  it('does not deliver a late mutation result or cache invalidations after its owner unmounts', async () => {
+    let finish;
+    axios.post.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const hook = renderHook(() => api.useCancelSkillTestRun('skill', 'run'), { wrapper });
+    let settled;
+    await act(async () => { settled = hook.result.current.mutateAsync().catch((error) => error); });
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    hook.unmount();
+    await act(async () => { finish(envelope({ id: 'run', status: 'cancelled' })); });
+    expect((await settled).message).toContain('scope changed');
+    expect(invalidate).not.toHaveBeenCalled();
+  });
   it('preserves the caller key on explicit retry and never auto-retries paid mutations', async () => {
     axios.post.mockRejectedValueOnce(new Error('Response lost')).mockResolvedValueOnce(envelope({ id: 'run', status: 'queued', poll_after_ms: 2000, deadline_at: 'date', visibility: 'private', attempt_count: 2, execution_fingerprint: 'execution' }));
     const { result } = renderHook(() => api.useCreateSkillTestRun('skill'), { wrapper });

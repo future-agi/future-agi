@@ -670,7 +670,9 @@ def _resolve_plan(
         resolve_test_connection,
     )
 
-    if not settings.SKILLS_TESTING_ENABLED:
+    if not settings.SKILLS_TESTING_ENABLED or not getattr(
+        settings, "SKILLS_ASSIST_ENABLED", False
+    ):
         raise SkillsHubError(
             "skills_unavailable", "Skills assistance is not enabled.", status=503
         )
@@ -948,6 +950,14 @@ def apply_assist_proposal(
                     if hasattr(HubSkillDraft, "source")
                     else {}
                 ),
+            )
+        if not settings.SKILLS_TESTING_ENABLED or not getattr(
+            settings, "SKILLS_ASSIST_ENABLED", False
+        ):
+            raise SkillsHubError(
+                "skills_unavailable",
+                "Assistance application is not enabled.",
+                status=503,
             )
         if revision != proposal.base_revision:
             raise _invalid(

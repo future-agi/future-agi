@@ -150,6 +150,7 @@ function AssistForm({ skill, draft, kind, sourceRunId, onApplied, onUseSummary, 
   if (previewState === 'error' || options.isError) return <ErrorState title="Could not load assistance options" onRetry={options.refetch} />;
   if (!draft) return <EmptyState variant="no-results" title="Save a draft first" description="Assistance belongs to your private saved draft. Create or open a draft to continue." />;
   if (previewState === 'forbidden' || skill.permissions?.canRunTests !== true) return <ErrorState title="Write access is required" detail="A current workspace member can request and apply a private proposal." />;
+  if (!options.data?.assistEnabled) return <EmptyState variant="no-results" title="Paid assistance is unavailable" description="Generation stays disabled until recovery and non-destructive apply are qualified. You can continue editing and running enabled comparisons." />;
   if (!options.data?.enabled || previewState === 'missing-key' || !options.data.models.some((model) => model.canRun)) return <EmptyState variant="no-results" title="Connect a supported workspace model" description="Assistance uses your workspace provider connection. No managed model or organization-global key is substituted." />;
 
   return (

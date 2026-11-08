@@ -62,6 +62,38 @@ it('does not return runnable content after dependency conflict', async () => {
   expect(result.current.resolvedLock).toEqual(initial.resolvedLock);
 });
 
+it('keeps an omitted mutation blocking after its prerequisite save fails', async () => {
+  let rejectSave;
+  api.save.mockImplementationOnce(() => new Promise((resolve, reject) => { rejectSave = reject; }));
+  api.save.mockImplementation(async (request) => ({ ...initial, ...request, revision: request.revision + 1 }));
+  const apply = vi.fn(async (draft) => ({ ...draft, resolvedLock: { links: ['v9'] }, revision: draft.revision + 1 }));
+  const { result } = renderHook(() => useDraftSession('context', initial, true, resourceApi));
+  let mutation;
+  let flushing;
+  await act(async () => {
+    result.current.editFields({ note: 'Needs dependency update' });
+    mutation = result.current.mutateDraft(apply);
+    flushing = result.current.flush();
+  });
+  await act(async () => {
+    rejectSave(new Error('Synthetic transient failure'));
+    expect(await mutation).toBeNull();
+    expect(await flushing).toBeNull();
+  });
+  expect(apply).not.toHaveBeenCalled();
+  expect(result.current.mutationError).toBeTruthy();
+  // Even a successful explicit ordinary save cannot acknowledge the lost update.
+  await act(async () => { await result.current.save(); });
+  expect(await result.current.flush()).toBeNull();
+  expect(result.current.dirty).toBe(true);
+  expect(result.current.resolvedLock).toEqual(initial.resolvedLock);
+  await act(async () => { await result.current.mutateDraft(apply); });
+  await act(async () => { expect(await result.current.flush()).not.toBeNull(); });
+  expect(apply).toHaveBeenCalledTimes(1);
+  expect(result.current.resolvedLock).toEqual({ links: ['v9'] });
+  expect(result.current.dirty).toBe(false);
+});
+
 it('refuses local edits to server-owned accepted locks', () => {
   const { result } = renderHook(() => useDraftSession('context', initial, true, resourceApi));
   expect(() => result.current.editFields({ resolvedLock: { links: [] } })).toThrow('mutateDraft');
