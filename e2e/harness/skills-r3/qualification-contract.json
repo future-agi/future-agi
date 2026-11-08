@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "status": "harness_primitives_only_public_interface_integration_blocked",
+  "foundation_base": "dbb78272e92cdb06fc0fdffc9c2dc9d8150d6d30",
+  "foundation_contract": "F12-interfaces.md was absent at lane kickoff; supplied base contains v1.1, no v12 service package",
+  "test_command": "CTXHUB_DOCS_ROOT=/absolute/isolated/docs node --test e2e/harness/skills-r3/*.test.mjs",
+  "baseline_command": "node e2e/benchmarks/context-hub/cli.mjs baseline /absolute/new-report.json",
+  "driver_export": "async createDriver({jobId, runId, registration}) -> {mode, provenance, perform, observe, teardown}",
+  "driver_contract": {
+    "perform": "async perform(stage, {ledger, signal}); drive only frozen public UI/CLI interfaces; instrument every meaningful primitive inside each stage, plus S/H/R separately; respect cancellation",
+    "observe": "async observe(check, {signal}) -> {source, value, artifact_sha256}; read independent API/PG/filesystem/model-boundary/external evidence, never a product toast",
+    "teardown": "async teardown() -> {qualified}; qualified only after owned resources are cancelled, settled or explicitly uncertain, terminated and destruction verified",
+    "raw_evidence": "Raw customer evidence stays in separately authorized redacted artifacts; the ledger retains opaque IDs and hashes only",
+    "comparator": "Use the strongest applicable customer-configured workflow; independent review receipt binds both ledger hashes. Documentation and synthetic runs cannot establish a ratio."
+  },
+  "harness_interfaces": [
+    "ActionLedger.measure({dimension,primitive,actor,step,phase,target,items,exceptionItems}, effect)",
+    "ActionLedger.observation({step,id,artifactHash}), fault(id,scenarioId), outcome(id,status,artifactHash)",
+    "MeasuredOperator.click/fill/review/approve/command/configurationEdit/recoveryDecision/transition/handoff/reconcile: primitive instrumentation without payload logging",
+    "ProgrammableProvider.register(steps), listen(), ledger(capability), remaining(capability), close()",
+    "GitFixture.fetch(input,init), inventory(), pulls(repositoryId), advanceBase(repositoryId,base), faultNext(fault)",
+    "Barriers.wait(name), reached(name), release(name), state(name), close()",
+    "ScopedClock.advance(scope,milliseconds)",
+    "OwnedResources.register({id,ownerCapability,cancel,settle,terminate,destroyed}), teardown()",
+    "writeUploadFixtures(destination)",
+    "runJourney({jobId,runId,driver,registration,outputDir,deadlineMs})",
+    "qualifyNative({attestationPath,root,authToken})"
+  ],
+  "operational_matrix": [
+    {"id":"commit-dispatch-gap","barrier":"committed-before-dispatch","oracle":"same durable job/workflow, one accepted dispatch"},
+    {"id":"duplicate-dispatch","barrier":"before-dispatch","oracle":"same workflow identity; no duplicate provider request"},
+    {"id":"unknown-paid-call","barrier":"received-before-response","oracle":"unknown reservation retained; no resend"},
+    {"id":"stale-settlement","barrier":"before-settlement","oracle":"older generation cannot overwrite result or release live sender"},
+    {"id":"cancel-before-call","barrier":"before-transmit","oracle":"zero provider requests; provably unsent allowance released"},
+    {"id":"cancel-between-calls","barrier":"before-next-turn","oracle":"no subsequent provider request"},
+    {"id":"cancel-in-flight","barrier":"received-before-response","oracle":"retain completed/unknown spend; no false cancellation of provider work"},
+    {"id":"native-text-budget","barrier":"before-reservation","oracle":"one workspace period authority; no independent remaining balances"},
+    {"id":"period-rollover","barrier":"before-settlement","oracle":"unknown charge remains in original period and holds live-sender capacity"},
+    {"id":"private-retention","barrier":"before-purge","oracle":"all Simulation/trace/artifact/export projections inaccessible after scoped clock expiry"},
+    {"id":"guest-termination-unknown","barrier":"before-destruction-check","oracle":"uncertain guest never marked destroyed/qualified"},
+    {"id":"assist-original-operation","barrier":"received-before-response","oracle":"if assistance ever enables, recover original key/job with no second paid generation"}
+  ],
+  "integration_blockers": [
+    "Callable F12 interfaces and product test-image-only scoped transport, clock and worker seams",
+    "Approved browser flow plans with real routes, serializer pins and locators; no new flow IDs reserved",
+    "Actual Simulation launch/ingestion path and private-native/shared-budget controls",
+    "Released SDK/application wheel and npm artifacts with hashes; actual native binaries and observable delivery",
+    "Customer environment, retained external tracing/CI access, independent competitor reviewer and measured comparator runs",
+    "Checkpoint P before J5 campaigns; separately authorized bounded real-GitHub conformance",
+    "Human-time/success/comprehension/cost study before product acceptance"
+  ],
+  "limitations": [
+    "No new browser flows or FLOWS.md edits: plan approval and usable foundation are absent",
+    "44 one-sided oracle self-tests prove harness fallibility, not backend product coverage",
+    "Provider/Git fixtures do not qualify real provider transport, permissions, GitHub semantics or business behavior",
+    "Worker barriers/clock are injection primitives, not production state mutations or an alternative scheduler",
+    "Native preflight qualifies topology/pins only; it does not launch a guest or manufacture release evidence",
+    "Cold/configured measurements, failed attempts and human review remain separate; no overall 10x claim"
+  ]
+}
