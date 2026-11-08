@@ -951,6 +951,14 @@ def apply_assist_proposal(
                     else {}
                 ),
             )
+        if not settings.SKILLS_TESTING_ENABLED or not getattr(
+            settings, "SKILLS_ASSIST_ENABLED", False
+        ):
+            raise SkillsHubError(
+                "skills_unavailable",
+                "Assistance application is not enabled.",
+                status=503,
+            )
         if revision != proposal.base_revision:
             raise _invalid(
                 "The proposal is for an earlier draft revision.",
