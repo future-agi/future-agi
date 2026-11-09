@@ -267,12 +267,7 @@ func redactMessages(msgs []models.Message, r *privacy.Redactor, mode string) []m
 
 	out := make([]models.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = m
-
-		// Redact content (json.RawMessage — could be string or structured).
-		if len(m.Content) > 0 {
-			out[i].Content = redactContent(m.Content, r, mode)
-		}
+		out[i] = redactMessage(m, r, mode)
 	}
 	return out
 }
@@ -285,11 +280,27 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	out := make([]models.Choice, len(choices))
 	for i, c := range choices {
 		out[i] = c
-		if len(c.Message.Content) > 0 {
-			out[i].Message.Content = redactContent(c.Message.Content, r, mode)
-		}
+		out[i].Message = redactMessage(c.Message, r, mode)
 	}
 	return out
+}
+
+func redactMessage(m models.Message, r *privacy.Redactor, mode string) models.Message {
+	if len(m.Content) > 0 {
+		m.Content = redactContent(m.Content, r, mode)
+	}
+	if len(m.ToolCalls) > 0 {
+		// A shallow message copy still shares the live tool-call slice. Keep
+		// redaction private to this record, including assembled stream calls.
+		m.ToolCalls = append([]models.ToolCall(nil), m.ToolCalls...)
+		for i := range m.ToolCalls {
+			tc := &m.ToolCalls[i]
+			tc.ID = r.RedactForMode(tc.ID, mode)
+			tc.Function.Name = r.RedactForMode(tc.Function.Name, mode)
+			tc.Function.Arguments = redactToolArguments(tc.Function.Arguments, r, mode)
+		}
+	}
+	return m
 }
 
 // sanitizeHeaders is h as the request log keeps it: the value of every

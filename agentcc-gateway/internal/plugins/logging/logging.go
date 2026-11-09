@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -166,9 +167,6 @@ func (p *Plugin) contentMode(rc *models.RequestContext) models.ContentMode {
 // on the record, not on rc: this runs inside the parallel post-plugin window
 // where rc is read-only, and the record is already a copy.
 func (p *Plugin) redact(record *TraceRecord, rc *models.RequestContext) {
-	if record.RequestBody == nil {
-		return
-	}
 	// Determine effective privacy mode: per-org > per-key > global.
 	// Fix key mismatch: handler sets "org_privacy_mode", read both keys.
 	mode := rc.Metadata["privacy_mode"]
@@ -179,10 +177,27 @@ func (p *Plugin) redact(record *TraceRecord, rc *models.RequestContext) {
 	if r == nil || !r.ShouldRedact() {
 		r = p.redactor
 	}
-	if r != nil && r.ShouldRedact() {
-		*record = redactRecord(*record, r, mode)
-		markRedacted(record)
+	if r == nil || !r.ShouldRedact() {
+		return
 	}
+	if record.RequestBody == nil && record.ResponseBody == nil && len(record.RequestBodyJSON) == 0 && len(record.ResponseBodyJSON) == 0 {
+		return
+	}
+
+	// The chat redactor cannot safely walk arbitrary endpoint JSON: content
+	// may be escaped text, token IDs, object keys or encoded media. Until an
+	// endpoint has a structured redactor, suppress its whole body under
+	// either full or pattern masking rather than leaking unrecognized data.
+	// Keep a valid JSON indication for the request-detail UI, and leave the
+	// record's model, status, usage and other request metadata intact.
+	if len(record.RequestBodyJSON) > 0 {
+		record.RequestBodyJSON = json.RawMessage(`"[REDACTED]"`)
+	}
+	if len(record.ResponseBodyJSON) > 0 {
+		record.ResponseBodyJSON = json.RawMessage(`"[REDACTED]"`)
+	}
+	*record = redactRecord(*record, r, mode)
+	markRedacted(record)
 }
 
 // markRedacted records on the log record that its bodies were redacted.

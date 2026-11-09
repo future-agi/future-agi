@@ -30,7 +30,7 @@ func (p *Plugin) attachBodies(span *otelpkg.Span, rc *models.RequestContext) {
 
 	p.attachMessages(span, rc, redactor, mode)
 
-	in, out := bodyJSON(rc)
+	in, out := bodyJSON(rc, redactor)
 	if in != "" {
 		setBodyAttr(span, "input", prepareBody(in, redactor, mode))
 	}
@@ -40,11 +40,22 @@ func (p *Plugin) attachBodies(span *otelpkg.Span, rc *models.RequestContext) {
 }
 
 // bodyJSON renders whatever this request was — chat, embedding, image, audio,
-// OCR, rerank, search — into request and response JSON. Non-chat endpoints go
-// through the same builder the request log uses, so a span and a log row of
-// the same request never disagree about what was sent.
-func bodyJSON(rc *models.RequestContext) (in, out string) {
+// OCR, rerank, search — into request and response JSON. Non-chat endpoints use
+// the request log's builder and its whole-body suppression under masking.
+func bodyJSON(rc *models.RequestContext, r *privacy.Redactor) (in, out string) {
 	if req, resp := payloads.ForEndpoint(rc); req != nil || resp != nil {
+		// Pattern matching serialized JSON misses escaped text and encoded media.
+		// Until endpoint-aware redaction exists, suppress these opaque bodies in
+		// both masking modes, just as the independent request-log copy does.
+		// Keep absent bodies absent and never mutate the live request context.
+		if r != nil && r.ShouldRedact() {
+			if len(req) > 0 {
+				req = json.RawMessage(`"[REDACTED]"`)
+			}
+			if len(resp) > 0 {
+				resp = json.RawMessage(`"[REDACTED]"`)
+			}
+		}
 		return string(req), string(resp)
 	}
 
