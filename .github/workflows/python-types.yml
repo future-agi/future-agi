@@ -1,0 +1,50 @@
+name: Python types (advisory)
+
+# Independent of the required backend job. Old errors are not a PR's debt.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - "futureagi/**/*.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-types-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # futureagi/uv.lock; the self-test checks this pin.
+  MYPY_VERSION: "1.19.1"
+
+jobs:
+  mypy-delta:
+    name: Mypy (new errors only, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install backend and typing dependencies
+        working-directory: futureagi
+        # Same frozen OSS install as backend-ci, plus its typing extra. No ML extras or test services.
+        run: uv sync --frozen --no-dev --extra dev
+      - name: Self-test the delta gate
+        run: futureagi/.venv/bin/python -I scripts/test_check_python_types_delta.py
+      - name: Report new type errors and wall time
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          futureagi/.venv/bin/python -I scripts/check_python_types_delta.py \
+            --base "$PR_BASE_SHA" --expect-mypy-version "$MYPY_VERSION"
