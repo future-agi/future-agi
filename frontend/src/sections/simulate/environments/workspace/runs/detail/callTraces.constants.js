@@ -51,6 +51,9 @@ export const CALL_WORKERS_COPY = {
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
+  // What multi-agent testing covers, said where a call went past it, so nothing reads as more than it is.
+  beyondBoundary:
+    "Multi-agent testing covers a coordinator handing work to its workers one at a time, one level deep. This call also had nested or parallel hand-offs: they are shown as recorded, outside that support.",
   noResult: "No result recorded",
   noReturn: (name) => `No return from ${name} before the call ended`,
   returnCutOff: (name) =>

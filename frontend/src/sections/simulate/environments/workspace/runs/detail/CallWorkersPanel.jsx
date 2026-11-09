@@ -846,6 +846,14 @@ export default function CallWorkersPanel({
           {C.sandboxOnly}
         </Typography>
       ) : null}
+      {data.depth > 1 || data.parallel > 0 ? (
+        <Typography
+          data-testid="beyond-boundary"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.beyondBoundary}
+        </Typography>
+      ) : null}
       {showSteps ? (
         events.length ? (
           <EventList

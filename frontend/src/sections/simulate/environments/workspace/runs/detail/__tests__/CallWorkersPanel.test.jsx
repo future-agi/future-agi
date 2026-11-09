@@ -154,6 +154,19 @@ describe("CallWorkersPanel", () => {
   const steps = () =>
     screen.getAllByTestId("raw-event").map((one) => one.dataset.type);
 
+  it.each([
+    [{ depth: 1, parallel: 0 }, false],
+    [{ depth: 2, parallel: 0 }, true],
+    [{ depth: 1, parallel: 1 }, true],
+  ])(
+    "says what multi-agent testing covers only when a call went past it (%o)",
+    (shape, shown) => {
+      result = { data: timeline(shape), isLoading: false, isError: false };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.queryByTestId("beyond-boundary") !== null).toBe(shown);
+    },
+  );
+
   it("lists every step in order, from the request through each hand-off and its calls to the reply", () => {
     renderSteps(<CallWorkersPanel callExecutionId="c1" />);
     expect(steps()).toEqual([
