@@ -46,9 +46,13 @@ describe('retained decisions and checkpoints', () => {
   it('does not confuse keep with replacement or omitted tags with an explicit clear', () => {
     const input = { planId: 'plan', expectedFingerprint: digest, itemKey: 'item', mode: 'snapshot', expectedHeadVersion: 4, expectedHeadDigest: digest, rightsConfirmed: true };
     expect(retainedPlanKeepInput(input).decision).toBe('keep');
-    expect(retainedPlanAcceptanceInput(input)).not.toHaveProperty('decision');
+    expect(retainedPlanAcceptanceInput(input).decision).toBe('replace');
+    expect(retainedPlanAcceptanceInput({ ...input, decision: 'replace' })).toEqual(retainedPlanAcceptanceInput(input));
     expect(retainedPlanAcceptanceInput(input)).not.toHaveProperty('tags');
     expect(retainedPlanAcceptanceInput({ ...input, tags: [] }).tags).toEqual([]);
+  });
+  it.each(['keep', 'manual', undefined, null])('never changes an explicit %s decision into replacement', (decision) => {
+    expect(() => retainedPlanAcceptanceInput({ decision })).toThrow('separate reviewed decision');
   });
 });
 

@@ -211,6 +211,7 @@
     "invocation_mode": "natural"
   },
   "RetainedPlanAcceptance": {
+    "decision": "replace",
     "plan_id": "00000000-0000-4000-8000-000000000001",
     "expected_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "item_key": "source/policy",

@@ -4,17 +4,23 @@ import { idempotencyHeaders, skillV11Result, useSkillV11Mutation, useSkillV11Que
 import { mapV11Page } from './v11-mappers';
 
 // Retained intake operations use the server's reviewed plan, never fresh bytes.
-export const retainedPlanAcceptanceInput = (value) => ({
-  plan_id: value.planId, expected_fingerprint: value.expectedFingerprint, item_key: value.itemKey,
-  mode: value.mode, expected_head_version: value.expectedHeadVersion, expected_head_digest: value.expectedHeadDigest,
-  rights_confirmed: value.rightsConfirmed,
-  ...(Object.hasOwn(value, 'tags') ? { tags: value.tags } : {}),
-});
+export function retainedPlanAcceptanceInput(value) {
+  if (Object.hasOwn(value, 'decision') && value.decision !== 'replace') {
+    throw new Error('Use the separate reviewed decision instead of replacing this item.');
+  }
+  return {
+    decision: 'replace',
+    plan_id: value.planId, expected_fingerprint: value.expectedFingerprint, item_key: value.itemKey,
+    mode: value.mode, expected_head_version: value.expectedHeadVersion, expected_head_digest: value.expectedHeadDigest,
+    rights_confirmed: value.rightsConfirmed,
+    ...(Object.hasOwn(value, 'tags') ? { tags: value.tags } : {}),
+  };
+}
 export const checkpointRestoreInput = (value) => ({
   checkpoint_id: value.checkpointId, revision: value.revision, expected_digest: value.expectedDigest,
 });
-// Keep is a separate explicit decision. Never pass it through the replacement
-// mapper, which intentionally accepts no decision field.
+// Keep is a separate explicit decision. The replacement mapper rejects other
+// decisions rather than silently converting a non-destructive choice to replace.
 export const retainedPlanKeepInput = (value) => ({
   plan_id: value.planId, expected_fingerprint: value.expectedFingerprint, item_key: value.itemKey,
   expected_head_version: value.expectedHeadVersion, expected_head_digest: value.expectedHeadDigest,

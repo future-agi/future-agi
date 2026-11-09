@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1182,
+  endpointCount: 1199,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -762,9 +762,28 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/model-hub/skills/consumption/{resource_id}/versions/{number}/manifest/":
         ["get"],
+      "/model-hub/skills/contexts/bindings/{binding_id}/": ["delete", "patch"],
+      "/model-hub/skills/contexts/bindings/{binding_id}/receipts/": ["post"],
+      "/model-hub/skills/contexts/bindings/{binding_id}/sessions/": ["post"],
+      "/model-hub/skills/contexts/bindings/{binding_id}/sessions/{session_id}/access-check/":
+        ["post"],
       "/model-hub/skills/contexts/credentials/": ["get", "post"],
       "/model-hub/skills/contexts/credentials/{credential_id}/": ["delete"],
       "/model-hub/skills/contexts/resolve/": ["get"],
+      "/model-hub/skills/contexts/{context_id}/bindings/": ["get", "post"],
+      "/model-hub/skills/contexts/{context_id}/consumers/": ["get"],
+      "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
+      "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/files/":
+        ["get"],
+      "/model-hub/skills/contexts/{resource_id}/draft/checkpoints/": [
+        "get",
+        "post",
+      ],
+      "/model-hub/skills/contexts/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
+        ["post"],
       "/model-hub/skills/contexts/{resource_id}/versions/{number}/access-check/":
         ["post"],
       "/model-hub/skills/contexts/{resource_id}/versions/{number}/files/": [
@@ -781,8 +800,17 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/import/preview/": ["post"],
       "/model-hub/skills/publish/": ["post"],
       "/model-hub/skills/resolve/": ["get"],
+      "/model-hub/skills/spend-policy/": ["get", "put"],
       "/model-hub/skills/templates/": ["get"],
       "/model-hub/skills/testing-options/": ["get"],
+      "/model-hub/skills/version-safety/{version_id}/": ["get", "put"],
+      "/model-hub/skills/{context_id}/versions/{number}/inspection/": ["get"],
+      "/model-hub/skills/{context_id}/versions/{number}/inspection/files/": [
+        "get",
+      ],
+      "/model-hub/skills/{resource_id}/draft/checkpoints/": ["get", "post"],
+      "/model-hub/skills/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
+        ["post"],
       "/model-hub/skills/{skill_id}/": ["delete", "get", "patch"],
       "/model-hub/skills/{skill_id}/adoption/": ["get"],
       "/model-hub/skills/{skill_id}/assist/": ["post"],
@@ -2193,9 +2221,28 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/consumption/{resource_id}/versions/{number}/manifest/": [
     "get",
   ],
+  "/model-hub/skills/contexts/bindings/{binding_id}/": ["delete", "patch"],
+  "/model-hub/skills/contexts/bindings/{binding_id}/receipts/": ["post"],
+  "/model-hub/skills/contexts/bindings/{binding_id}/sessions/": ["post"],
+  "/model-hub/skills/contexts/bindings/{binding_id}/sessions/{session_id}/access-check/":
+    ["post"],
   "/model-hub/skills/contexts/credentials/": ["get", "post"],
   "/model-hub/skills/contexts/credentials/{credential_id}/": ["delete"],
   "/model-hub/skills/contexts/resolve/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/bindings/": ["get", "post"],
+  "/model-hub/skills/contexts/{context_id}/consumers/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
+    "get",
+  ],
+  "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/files/":
+    ["get"],
+  "/model-hub/skills/contexts/{resource_id}/draft/checkpoints/": [
+    "get",
+    "post",
+  ],
+  "/model-hub/skills/contexts/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
+    ["post"],
   "/model-hub/skills/contexts/{resource_id}/versions/{number}/access-check/": [
     "post",
   ],
@@ -2211,8 +2258,15 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/import/preview/": ["post"],
   "/model-hub/skills/publish/": ["post"],
   "/model-hub/skills/resolve/": ["get"],
+  "/model-hub/skills/spend-policy/": ["get", "put"],
   "/model-hub/skills/templates/": ["get"],
   "/model-hub/skills/testing-options/": ["get"],
+  "/model-hub/skills/version-safety/{version_id}/": ["get", "put"],
+  "/model-hub/skills/{context_id}/versions/{number}/inspection/": ["get"],
+  "/model-hub/skills/{context_id}/versions/{number}/inspection/files/": ["get"],
+  "/model-hub/skills/{resource_id}/draft/checkpoints/": ["get", "post"],
+  "/model-hub/skills/{resource_id}/draft/checkpoints/{checkpoint_id}/restore/":
+    ["post"],
   "/model-hub/skills/{skill_id}/": ["delete", "get", "patch"],
   "/model-hub/skills/{skill_id}/adoption/": ["get"],
   "/model-hub/skills/{skill_id}/assist/": ["post"],
