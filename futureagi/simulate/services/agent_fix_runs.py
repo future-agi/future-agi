@@ -434,9 +434,11 @@ def _drop_variation_rows(fix_run: AgentFixRun) -> None:
             now = timezone.now()
             rows = [one.dataset_row_id for one in bound if one.dataset_row_id]
             Row.all_objects.filter(id__in=rows).update(deleted=True, deleted_at=now)
-            # A legacy environment gave each persona a scenario of its own.
+            # A legacy environment gave each persona a scenario of its own; a grouped
+            # one's shared scenario stays.
             Scenarios.all_objects.filter(
-                id__in=[one.scenario_id for one in bound if not one.dataset_row_id]
+                id__in=[one.scenario_id for one in bound if not one.dataset_row_id],
+                dataset__isnull=True,
             ).update(deleted=True, deleted_at=now)
             for scenario in Scenarios.all_objects.filter(
                 id__in={one.scenario_id for one in bound if one.dataset_row_id}

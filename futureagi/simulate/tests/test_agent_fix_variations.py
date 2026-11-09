@@ -242,6 +242,31 @@ class TestTheBuilderMessage:
             "fix_variations_failed",
         )
 
+    def test_an_error_a_later_look_would_hit_again_ends_the_fix(
+        self, source_run, user, settings
+    ):
+        settings.HARNESS_PUBLIC_BASE_URL = "http://platform.example.test"
+        fix_run = launch_fix_run(
+            source_run,
+            target_scenario_keys=[PARENT],
+            surfaces=[Surface.PROMPT],
+            locked_paths=[],
+            budget_usd=5.0,
+            max_minutes=30,
+            user=user,
+        )
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.failure["code"]) == (
+            AgentFixRun.State.FAILED,
+            "fix_variations_failed",
+        )
+        assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            client_request_id=f"fix-{fix_run.id}-variations"
+        ).exists()
+
 
 class TestThePrivateSuite:
     def test_holds_the_run_s_suite_and_the_renamed_variations_with_their_case_s_sub_goals(
@@ -444,6 +469,22 @@ class TestSettle:
         assert not HostedHarnessScenario._base_manager.filter(
             id__in=[one.id for one in bound], scenario__isnull=False
         ).exists()
+
+    def test_the_environment_s_shared_scenario_stays_whatever_a_variation_holds(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _base_run(fix_run)
+        shared = environment.run_test.scenarios.get()
+        # Bound to the shared scenario without a row of its own.
+        HostedHarnessScenario._base_manager.filter(
+            job=environment, scenario_key=_named(fix_run, 1)
+        ).update(dataset_row=None)
+
+        close_fix_run(fix_run.id, AgentFixRun.State.STOPPED)
+
+        shared.refresh_from_db()
+        assert shared.deleted is False
 
     def test_a_retry_keeps_the_variations_and_writes_none(
         self, environment, fix_run, storage, user, builder

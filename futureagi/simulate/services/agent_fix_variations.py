@@ -16,8 +16,10 @@ from typing import Any
 
 import structlog
 from django.conf import settings
-from django.db import transaction
+from django.db import InterfaceError, OperationalError, transaction
 from django.utils import timezone
+from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     AgentFixRun,
@@ -68,6 +70,8 @@ _CLAIMED = {
     Observation.ENDED: VariationsStep.ENDED,
     Observation.STOPPING: VariationsStep.STOPPING,
 }
+# What a later look can outlive: the database or object storage briefly unavailable.
+_TRANSIENT = (OperationalError, InterfaceError, S3Error, HTTPError)
 
 
 def is_fix_command(command: HostedHarnessConversationMessage | None) -> bool:
@@ -87,7 +91,30 @@ def failing_targets(fix_run: AgentFixRun) -> dict[str, list[str]]:
 
 def advance(fix_run_id: str) -> VariationsStep:
     """One look at a fix's first step, which also takes it as far as it can go now. Each
-    part is done once and found done on the next look, so a look is safe to repeat."""
+    part is done once and found done on the next look, so a look is safe to repeat.
+    Raises only what a later look can outlive; any other error ends the fix as failed,
+    since looking again would hit it again."""
+    try:
+        return _advance(fix_run_id)
+    except Exception as exc:
+        if isinstance(exc, _TRANSIENT) or (
+            isinstance(exc, HostedHarnessError) and exc.retryable
+        ):
+            raise
+        logger.exception("agent_fix_variations_failed", fix_run=str(fix_run_id))
+        close_fix_run(
+            fix_run_id,
+            AgentFixRun.State.FAILED,
+            failure={
+                "code": "fix_variations_failed",
+                "message": "the platform could not write variations of the failing"
+                " cases",
+            },
+        )
+        return VariationsStep.ENDED
+
+
+def _advance(fix_run_id: str) -> VariationsStep:
     fix_run = AgentFixRun.no_workspace_objects.get(id=fix_run_id)
     if not FixRequest.model_validate(fix_run.request).variations_pending:
         return VariationsStep.DONE
@@ -183,6 +210,8 @@ def _ask_builder(fix_run: AgentFixRun) -> None:
         schedule_conversation_runtime,
     )
 
+    # Before the message: a platform without a callback address cannot run the builder.
+    base_url = _public_base_url(None)
     conversation, _command, created = enqueue_message(
         fix_run.environment,
         content=_message(failing_targets(fix_run)),
@@ -193,7 +222,7 @@ def _ask_builder(fix_run: AgentFixRun) -> None:
     if not created:
         return
     try:
-        schedule_conversation_runtime(str(conversation.id), _public_base_url(None))
+        schedule_conversation_runtime(str(conversation.id), base_url)
     except Exception:  # noqa: BLE001 - the queued message waits for chat recovery
         logger.exception(
             "agent_fix_variations_not_scheduled",
@@ -278,12 +307,13 @@ def land(
     archives.put_archive(prepared.suite_key, prepared.suite_body)
     source_run = fix_run.source_run
     with transaction.atomic():
+        # The fix first, then the environment, as a check run of the fix takes them.
+        locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run.id)
         locked_environment = (
             HostedHarnessJob.no_workspace_objects.select_for_update().get(
                 id=environment.id
             )
         )
-        locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run.id)
         if locked.state != AgentFixRun.State.RUNNING or locked.suite_version_id:
             return
         version = HarnessSuiteVersion.no_workspace_objects.create(
