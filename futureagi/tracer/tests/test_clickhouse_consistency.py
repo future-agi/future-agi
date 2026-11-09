@@ -196,13 +196,16 @@ class TestSchemaAwareHealth:
     @pytest.mark.parametrize(
         "sample,expected",
         [
-            ((0, datetime(1970, 1, 1)), "healthy"),
-            ((1, None), "unhealthy"),
-            ((1, datetime.now(UTC) - timedelta(minutes=5)), "degraded"),
-            ((1, datetime.utcnow()), "healthy"),
+            ((0, lambda: datetime(1970, 1, 1)), "healthy"),
+            ((1, lambda: None), "unhealthy"),
+            ((1, lambda: datetime.now(UTC) - timedelta(minutes=5)), "degraded"),
+            ((1, lambda: datetime.now(UTC).replace(tzinfo=None)), "healthy"),
         ],
     )
     def test_empty_invalid_stale_and_naive_samples(self, configure, sample, expected):
+        # Timestamps are built when the test runs, not at collection, so a long
+        # suite cannot age the "fresh" samples into the stale branch.
+        sample = (sample[0], sample[1]())
         checker = configure(
             fake_client(dict.fromkeys(CDC_TABLES, CDC_COLUMNS), sample=sample)
         )
