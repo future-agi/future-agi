@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.services.hosted_harness_validation import receipt_timestamp
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -170,6 +171,10 @@ def ingest_result_receipt(
             "digest_mismatch", "result receipt digest did not match", status_code=422
         )
     _assert_body_binding(attempt, body)
+    # Offline spool replay bypasses DRF's datetime conversion. Reject malformed
+    # call timestamps before receipt writes, while retaining the signed wire body.
+    if body.get("call") is not None:
+        _receipt_call_times(body["call"])
     with transaction.atomic():
         attempt = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
@@ -863,6 +868,13 @@ def _merge_recovered_call_artifacts(artifacts, recovered):
     return result
 
 
+def _receipt_call_times(call_data: dict[str, Any]) -> tuple[datetime, datetime]:
+    return (
+        receipt_timestamp(call_data.get("started_at"), field="call.started_at"),
+        receipt_timestamp(call_data.get("ended_at"), field="call.ended_at"),
+    )
+
+
 def _apply_receipt_to_call(
     allocation: Any,
     body: dict[str, Any],
@@ -888,9 +900,8 @@ def _apply_receipt_to_call(
         resolved_modality = CallExecution.SimulationCallType.VOICE
     call.simulation_call_type = resolved_modality
     if call_data:
-        call.started_at = call_data["started_at"]
-        call.ended_at = call_data["ended_at"]
-        call.completed_at = call_data["ended_at"]
+        call.started_at, call.ended_at = _receipt_call_times(call_data)
+        call.completed_at = call.ended_at
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()

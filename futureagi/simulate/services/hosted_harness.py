@@ -1959,7 +1959,24 @@ def finish_deferred_delete(job: HostedHarnessJob) -> list[str]:
     return ["deleted", "deleted_at"]
 
 
+def validate_cancellation_reason(reason: str) -> None:
+    # Both job.cancel_reason and attempt.terminal_reason are varchar(32).
+    # Keep operator explanations out of these machine-readable fields.
+    if not isinstance(reason, str) or reason not in {
+        "user_canceled",
+        "ttl_exceeded",
+        DELETE_CANCEL_REASON,
+        "fix_ended",
+    }:
+        raise HostedHarnessError(
+            "invalid_cancellation_reason",
+            "Unsupported cancellation reason",
+            status_code=400,
+        )
+
+
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
+    validate_cancellation_reason(reason)
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
