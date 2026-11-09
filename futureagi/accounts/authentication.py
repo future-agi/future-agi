@@ -153,6 +153,12 @@ def _is_workspace_write_exempt_view(request):
     )
 
 
+def is_coding_agent_key(request) -> bool:
+    """Whether ``request`` authenticated with a coding agent's key."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
@@ -237,7 +243,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         try:
             org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
+                "organization", "workspace", "minted_by"
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
@@ -251,6 +257,14 @@ class APIKeyAuthentication(BaseAuthentication):
             # so it can never act as the organisation's system user.
             if org_api_key.type == "ingest":
                 raise AuthenticationFailed("ingest keys cannot call the API")
+            # A coding agent's key runs on the developer's machine beside the
+            # agent being fixed; it may make only its loop's calls, on its own
+            # environment.
+            if org_api_key.type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import refuse_coding_agent_request
+
+                refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -268,8 +282,13 @@ class APIKeyAuthentication(BaseAuthentication):
                     .order_by("created_at")
                     .first()
                 )
+            elif org_api_key.type == "coding_agent":
+                # Its user is null, so an older build refuses it; its minter acts.
+                user = org_api_key.minted_by
             else:
                 user = org_api_key.user
+            if user is None:
+                raise AuthenticationFailed("No user found for API key")
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key
@@ -745,6 +764,10 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         # to the collector, even if a user was attached to it.
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
+        if org_api_key.type == "coding_agent":
+            from simulate.authentication import refuse_coding_agent_request
+
+            refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":

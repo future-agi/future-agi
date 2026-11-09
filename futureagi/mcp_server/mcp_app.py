@@ -115,6 +115,13 @@ def _authenticate_and_set_context(
     if org_api_key.type == "ingest":
         logger.warning("mcp_auth_ingest_key_refused", org=str(org_api_key.organization))
         return None
+    # A coding agent's key may make only the simulate calls its loop needs, and no
+    # MCP tool is one of them.
+    if org_api_key.type == "coding_agent":
+        logger.warning(
+            "mcp_auth_coding_agent_key_refused", org=str(org_api_key.organization)
+        )
+        return None
 
     if org_api_key.type == "system":
         user = (
