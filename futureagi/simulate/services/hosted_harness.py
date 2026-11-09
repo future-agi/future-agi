@@ -4,9 +4,10 @@ import hashlib
 import json
 import secrets
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -279,6 +280,23 @@ def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> 
     return f"run:{environment.id}:{idempotency_digest}"
 
 
+# The environment's own bookkeeping, which a job made from its payload must not carry:
+# its build spend would be billed again and its markers would act on the new job.
+RUN_DROPPED_METADATA = (
+    "scenario_extend",
+    "usage_limit",
+    "harness_spend",
+    "authoring_usage_reports",
+    "usage_reports",
+    "sandbox_runtime",
+    "default_pairs",
+    "default_pair_sealed",
+    "conversation_checkpoints",
+    "draft_saves",
+    "observability_refusal",
+)
+
+
 def create_selected_harness_run(
     environment: HostedHarnessJob,
     *,
@@ -347,6 +365,14 @@ def create_selected_harness_run(
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
         )
+    # Before the lock: reading the evidence may download an archive.
+    planned = _readiness_plan(
+        environment,
+        rerun_of=rerun_of,
+        picks=picks,
+        scenario_keys=scenario_keys,
+        trials=trials,
+    )
 
     with transaction.atomic():
         try:
@@ -386,6 +412,14 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+        if resolved is not None:
+            from simulate.services.harness_versioning.validation import (
+                require_pair_runnable,
+            )
+
+            # Before the pins are made: making them resets a failed bundle.
+            require_pair_runnable(environment, resolved)
+        run_keys = _held_back_checked(planned, resolved, scenario_keys)
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(
@@ -442,7 +476,7 @@ def create_selected_harness_run(
             _refuse_ungradable(pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
-        for scenario_key in scenario_keys:
+        for scenario_key in run_keys:
             registration = by_key[scenario_key]
             for trial_index in range(1, trials + 1):
                 execution_key = uuid.uuid5(
@@ -504,17 +538,7 @@ def create_selected_harness_run(
             runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
         for key in (
-            "scenario_extend",
-            "usage_limit",
-            "harness_spend",
-            "authoring_usage_reports",
-            "usage_reports",
-            "sandbox_runtime",
-            "default_pairs",
-            "default_pair_sealed",
-            "conversation_checkpoints",
-            "draft_saves",
-            "observability_refusal",
+            *RUN_DROPPED_METADATA,
             # The run's payload never names which cases are held back; its sandbox
             # still holds every case of the suite.
             HELD_BACK_METADATA_KEY,
@@ -532,10 +556,12 @@ def create_selected_harness_run(
                 "scenario_edits": (
                     _scenario_edits(environment, registrations)
                     if pins is None
-                    else _member_scenario_edits(pins, scenario_keys)
+                    else _member_scenario_edits(pins, run_keys)
                 ),
             }
         )
+        if planned is not None:
+            child_metadata["readiness_selection"] = planned.plan.view
         if pins is not None:
             child_metadata["version_pins"] = pins.as_metadata()
             if pins.assembly is not None:
@@ -559,7 +585,7 @@ def create_selected_harness_run(
             run_test=environment.run_test,
             status=TestExecution.ExecutionStatus.PENDING,
             started_at=timezone.now(),
-            total_scenarios=len(scenario_keys),
+            total_scenarios=len(run_keys),
             trials=trials,
             scenario_ids=scenario_ids,
             total_calls=len(manifest),
@@ -635,6 +661,22 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
+            from simulate.services.harness_readiness import store_run_snapshot
+
+            # Once committed: reading the evidence may download an archive, which
+            # never happens under the environment's lock.
+            transaction.on_commit(
+                partial(
+                    store_run_snapshot,
+                    child.id,
+                    environment,
+                    agent_version=pins.agent_version,
+                    environment_version=pins.environment_version,
+                    suite_version=pins.suite_version,
+                    runtime=pins.runtime,
+                    bundle=pins.assembled_bundle,
+                )
+            )
             pin_fields = [
                 "agent_version",
                 "environment_version",
@@ -810,6 +852,101 @@ def _replayable(bundle: Any) -> bool:
     return bundle.state == HarnessAssembledBundle.State.READY and bool(
         bundle.object_key
     )
+
+
+@dataclass(frozen=True)
+class _ReadinessPlan:
+    """The cases readiness holds back from a run, for the pins it was read with."""
+
+    pins: tuple[Any, Any, Any]
+    plan: Any
+
+
+def _pin_tuple(resolved: ResolvedPins | None) -> tuple[Any, Any, Any] | None:
+    if resolved is None:
+        return None
+    return (
+        resolved.agent_version_id,
+        getattr(resolved.environment_version, "id", None),
+        getattr(resolved.suite_version, "id", None),
+    )
+
+
+def _readiness_plan(
+    environment: HostedHarnessJob,
+    *,
+    rerun_of: HostedHarnessJob | None,
+    picks: VersionPicks | None,
+    scenario_keys: list[str],
+    trials: int,
+) -> _ReadinessPlan | None:
+    """Which requested cases this run's pairing holds back; ``None`` when runs are not
+    pinned to versions, when the selection is refused (the run refuses it too), or
+    when the evidence cannot be read, so a storage outage never stops a run."""
+    from simulate.services.harness_readiness import Pairing, select_for_run
+
+    resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+    if resolved is None:
+        return None
+    pairing = Pairing(
+        environment=environment,
+        agent_version=resolved.agent_version,
+        environment_version=resolved.environment_version,
+        suite_version=resolved.suite_version,
+        runtime=resolved.runtime,
+    )
+    try:
+        plan = select_for_run(pairing, keys=scenario_keys, trials=trials)
+    except HostedHarnessError as exc:
+        if exc.status_code != 400:
+            raise
+        return None
+    except Exception:  # noqa: BLE001 - unreadable evidence sends the run as asked
+        logger.exception(
+            "harness_run_readiness_unavailable", environment_id=str(environment.id)
+        )
+        return None
+    return _ReadinessPlan(pins=_pin_tuple(resolved), plan=plan)
+
+
+def _held_back_checked(
+    planned: _ReadinessPlan | None,
+    resolved: ResolvedPins | None,
+    scenario_keys: list[str],
+) -> list[str]:
+    """The requested keys the run sends: all but the ones readiness holds back.
+
+    Raises:
+        HostedHarnessError: 409 ``environment_not_ready`` when the pins moved since
+            readiness was read; 409 ``all_cases_blocked`` when every case is held back.
+    """
+    if planned is None:
+        return list(scenario_keys)
+    if planned.pins != _pin_tuple(resolved):
+        raise HostedHarnessError(
+            "environment_not_ready",
+            "environment changed while submitting this Run; submit it again",
+            status_code=409,
+            retryable=True,
+        )
+    held = planned.plan.held
+    if held and all(key in held for key in scenario_keys):
+        from simulate.services.harness_readiness import CATALOGUE
+
+        labels = {one.id: one.label for one in CATALOGUE}
+        reasons = planned.plan.view["reasons"]
+        named = "; ".join(
+            f"{labels.get(row, row)}: {reason}" for row, reason in reasons.items()
+        )
+        raise HostedHarnessError(
+            "all_cases_blocked",
+            "No run was created: every selected case is held back"
+            + (f" ({named})" if named else "")
+            + ". Fix it, or select cases it does not hold back.",
+            status_code=409,
+            details={"selection": planned.plan.view},
+        )
+    return [key for key in scenario_keys if key not in held]
 
 
 def resolve_run_pins(
@@ -1268,21 +1405,16 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
         for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
         if isinstance(goal, dict) and goal.get("name")
     }
-    if not catalogue:
-        return
-    ungradable = []
-    for key in scenario_keys:
-        sub_goals = (
-            (pins.members[key].content or {}) if key in pins.members else {}
-        ).get("sub_goals")
-        if not isinstance(sub_goals, list):
-            continue
-        names = {
-            str(goal.get("name") if isinstance(goal, dict) else goal)
-            for goal in sub_goals
-        }
-        if not names & catalogue:
-            ungradable.append(key)
+    ungradable = [
+        key
+        for key in scenario_keys
+        if grades_nothing(
+            ((pins.members[key].content or {}) if key in pins.members else {}).get(
+                "sub_goals"
+            ),
+            catalogue,
+        )
+    ]
     if ungradable:
         raise HostedHarnessError(
             "scenario_ungradable",
@@ -1291,6 +1423,19 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
+
+
+def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused."""
+    if not catalogue or not isinstance(sub_goals, list):
+        return False
+    names = {
+        str(goal.get("name") if isinstance(goal, Mapping) else goal)
+        for goal in sub_goals
+    }
+    return not names & set(catalogue)
 
 
 def _member_registrations(
@@ -2935,10 +3080,33 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
         logger.exception("builder_check_request_failed", job_id=job_id)
 
 
-def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
-    """Move a terminal job's Run, and the calls it left open, to their end states."""
-    from simulate.selectors.held_back import coding_agent_failure_message
+def fail_unscheduled(job: HostedHarnessJob, message: str) -> datetime | None:
+    """Fail a queued job whose workflow could not be started; returns when, or ``None``
+    once the job had moved on."""
+    now = timezone.now()
+    marked = HostedHarnessJob.no_workspace_objects.filter(
+        id=job.id, state=HostedHarnessJob.State.QUEUED
+    ).update(
+        state=HostedHarnessJob.State.FAILED,
+        current_stage="failed",
+        terminal_at=now,
+        failure={
+            "domain": "infrastructure",
+            "stage": "queued",
+            "code": "scheduler_unavailable",
+            "message": message,
+        },
+    )
+    return now if marked else None
 
+
+def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
+    """Move a terminal job's Run, and the calls it left open, to their end states; a
+    validation job's validation ends on commit."""
+    from simulate.selectors.held_back import coding_agent_failure_message
+    from simulate.services.harness_versioning.validation import on_terminal
+
+    on_terminal(job)
     if not job.test_execution_id:
         return
     message = (job.failure or {}).get("message")

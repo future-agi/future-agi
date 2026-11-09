@@ -191,6 +191,7 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
+        "release_checks": None,
     }
 
 
@@ -520,7 +521,19 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_readiness.release import release_checks_for
 
+    # Two documents of each environment version, read in one query; never the rest.
+    release = {
+        one: release_checks_for(
+            {"stage_outputs": outputs or [], "release_checks": recorded}
+        )
+        for one, outputs, recorded in HarnessEnvironmentVersion.no_workspace_objects.filter(
+            job=job
+        ).values_list(
+            "id", "documents__stage_outputs", "documents__release_checks"
+        )
+    }
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -538,7 +551,10 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             for version in agents
         ],
         "environment": [
-            _piece_item(version, job.environment_version_id, suite=False)
+            {
+                **_piece_item(version, job.environment_version_id, suite=False),
+                "release_checks": release.get(version.id),
+            }
             for version in environments
         ],
         "suite": [
@@ -768,32 +784,48 @@ def suite_members(job: HostedHarnessJob, version_id: Any) -> list[dict[str, Any]
     ]
 
 
-def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]]:
+def run_version_labels(
+    execution_ids: Iterable[Any], *, readiness: bool = False
+) -> dict[str, dict[str, Any]]:
     """Each hosted run's pinned agent, environment and suite version, by test execution.
 
     Read from the run job's own pins only, never the environment's defaults; an
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
-    not the one its environment version was built with.
+    not the one its environment version was built with. With ``readiness``, each also
+    carries ``capability_snapshot``: the readiness the run was created with, and
+    ``readiness_selection``: the cases it held back.
     """
     ids = [one for one in execution_ids if one]
     if not ids:
         return {}
-    rows = (
+    jobs = (
         HostedHarnessJob.no_workspace_objects.filter(test_execution_id__in=ids)
         .exclude(environment_version__isnull=True, suite_version__isnull=True)
         .order_by("created_at")
-        .values_list(
-            "test_execution_id",
-            "environment_version_id",
-            "environment_version__version_number",
-            "suite_version_id",
-            "suite_version__version_number",
-            "agent_version_id",
-            "agent_version__version_name",
-            "agent_version__version_number",
-            "environment_version__agent_version_id",
-        )
+    )
+    rows = jobs.values_list(
+        "test_execution_id",
+        "environment_version_id",
+        "environment_version__version_number",
+        "suite_version_id",
+        "suite_version__version_number",
+        "agent_version_id",
+        "agent_version__version_name",
+        "agent_version__version_number",
+        "environment_version__agent_version_id",
+    )
+    snapshots = (
+        {
+            str(one): (snapshot, selection)
+            for one, snapshot, selection in jobs.values_list(
+                "test_execution_id",
+                "capability_snapshot",
+                "payload__metadata__readiness_selection",
+            )
+        }
+        if readiness
+        else {}
     )
     return {
         str(execution_id): {
@@ -811,6 +843,16 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
                 else None
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
+            **(
+                {
+                    "capability_snapshot": snapshots.get(str(execution_id), (None,))[0],
+                    "readiness_selection": snapshots.get(
+                        str(execution_id), (None, None)
+                    )[1],
+                }
+                if readiness
+                else {}
+            ),
         }
         for (
             execution_id,

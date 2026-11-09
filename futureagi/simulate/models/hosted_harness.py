@@ -148,6 +148,8 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
+    # A run's capability report as it was computed when the run was created, kept so the run's view never moves.
+    capability_snapshot = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

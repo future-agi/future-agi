@@ -428,6 +428,25 @@ describe("useMoveDefault", () => {
     );
   });
 
+  it("seeds the versions from an agent move that waits for its check", async () => {
+    axios.post.mockResolvedValue({
+      data: { versions: RESPONSE, validation: { state: "validating" } },
+    });
+    const { result } = renderHook(() => useMoveDefault("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        piece: "agent",
+        versionId: "a2",
+        expectedDefaultId: "a1",
+      }),
+    );
+
+    expect(client.getQueryData(environmentVersionsKey("env-1"))).toEqual(
+      RESPONSE,
+    );
+  });
+
   it("refreshes the nested queries a move makes stale", async () => {
     axios.post.mockResolvedValue({ data: RESPONSE });
     const planKey = runPlanKey("env-1", { environment: "e1" });

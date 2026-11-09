@@ -1741,6 +1741,9 @@ class HostedHarnessProvider:
                 "total_calls": len(manifest),
                 "state": child.state,
                 "stage": child.current_stage,
+                "selection": (child.payload.get("metadata") or {}).get(
+                    "readiness_selection"
+                ),
                 **created_run(environment, child),
             },
             status=status.HTTP_202_ACCEPTED,

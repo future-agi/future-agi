@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { E2E } from './env';
 
 /**
@@ -169,29 +170,92 @@ export function resolveBackendContainer(
   return runtimes[0][0];
 }
 
+/** Copies a seed script into the backend container, runs it there with `env`, and
+ *  parses the JSON line it prints last. */
+function runSeedScript(container: string, scriptPath: string, name: string, env: Record<string, string>): unknown {
+  execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/${name}`]);
+  const stdout = execFileSync('docker', ['exec',
+    ...Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
+    container, 'sh', '-c',
+    `cd /app/backend && PYTHONPATH=/app/backend python /tmp/${name}`,
+  ], { encoding: 'utf-8' });
+  return JSON.parse(stdout.trim().split('\n').pop() ?? '');
+}
+
+function seedSuffix(): string {
+  return `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+}
+
 export function seedCallExecutions(opts: {
   organizationId: string;
   workspaceId: string;
   count?: number;
 }): CallExecutionSeed {
   const container = resolveBackendContainer();
-  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  const suffix = seedSuffix();
   const dir = mkdtempSync(join(tmpdir(), 'e2e-pag5-'));
   const scriptPath = join(dir, `seed-${suffix}.py`);
   writeFileSync(scriptPath, SEED_SCRIPT);
   try {
-    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
-    const stdout = execFileSync('docker', ['exec',
-      '-e', `SEED_ORG_ID=${opts.organizationId}`,
-      '-e', `SEED_WORKSPACE_ID=${opts.workspaceId}`,
-      '-e', `SEED_SUFFIX=${suffix}`,
-      '-e', `SEED_CALL_COUNT=${opts.count ?? 12}`,
-      container, 'sh', '-c',
-      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
-    ], { encoding: 'utf-8' });
-    const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as CallExecutionSeed;
+    return runSeedScript(container, scriptPath, `seed-${suffix}.py`, {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+      SEED_CALL_COUNT: String(opts.count ?? 12),
+    }) as CallExecutionSeed;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** A built, versioned Environment and the ids of its default pairing. */
+export interface HarnessEnvironmentSeed {
+  environmentId: string;
+  agentVersionId: string;
+  environmentVersionId: string;
+  suiteVersionId: string;
+  /** Every scenario key, in number order: the refunds, then the lookups. */
+  scenarioKeys: string[];
+  refundKeys: string[];
+  lookupKeys: string[];
+}
+
+/**
+ * Seeds an Environment as a finished build leaves it, then versions it with the
+ * real backfill: agent, environment and suite versions, suite members and, when
+ * `certified`, the pairing's certified bundle (every check passed, both tools
+ * certified). Uncertified, the pairing has no bundle and its first check is a
+ * validation. `productionOnly` names a tool the contract says reaches production.
+ * `failedCheck` names an action an uncertified pairing's last validation failed on,
+ * leaving its bundle failed by that check.
+ * Refund scenarios use `lookup_order` and `issue_refund`; lookups use only
+ * `lookup_order`. See e2e/lib/harness_environment_seed.py.
+ */
+export function seedHarnessEnvironment(opts: {
+  organizationId: string;
+  workspaceId: string;
+  refunds?: number;
+  lookups?: number;
+  certified?: boolean;
+  productionOnly?: 'lookup_order' | 'issue_refund';
+  failedCheck?: 'lookup_order' | 'issue_refund';
+}): HarnessEnvironmentSeed {
+  const suffix = seedSuffix();
+  return runSeedScript(
+    resolveBackendContainer(),
+    fileURLToPath(new URL('./harness_environment_seed.py', import.meta.url)),
+    `harness-seed-${suffix}.py`,
+    {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+      SEED_OPTIONS: JSON.stringify({
+        refunds: opts.refunds ?? 1,
+        lookups: opts.lookups ?? 1,
+        certified: opts.certified ?? true,
+        production_only: opts.productionOnly ?? null,
+        failed_check: opts.failedCheck ?? null,
+      }),
+    },
+  ) as HarnessEnvironmentSeed;
 }
