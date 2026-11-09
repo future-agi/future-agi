@@ -32,7 +32,9 @@ type Server struct {
 
 type ChatCompletionExecutor func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
 
-// syncTaskStore is a thread-safe task store.
+// syncTaskStore is a thread-safe task store. It keeps its own copy of every
+// task and hands out copies, so a returnImmediately worker filling in its task
+// never shares memory with tasks/get, tasks/cancel or a response being encoded.
 type syncTaskStore struct {
 	mu    sync.RWMutex
 	store *TaskStore
@@ -43,15 +45,45 @@ func newSyncTaskStore() *syncTaskStore {
 }
 
 func (s *syncTaskStore) Store(task *Task) {
+	snapshot := task.clone()
 	s.mu.Lock()
-	s.store.Store(task)
+	s.store.Store(snapshot)
 	s.mu.Unlock()
+}
+
+// StoreUnlessCanceled stores task unless the stored copy was already
+// canceled, so a worker that finishes after tasks/cancel cannot undo it.
+func (s *syncTaskStore) StoreUnlessCanceled(task *Task) {
+	snapshot := task.clone()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.store.Get(task.ID); ok && existing.Status.State == TaskStatusCanceled {
+		return
+	}
+	s.store.Store(snapshot)
 }
 
 func (s *syncTaskStore) Get(id string) (*Task, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.store.Get(id)
+	task, ok := s.store.Get(id)
+	if !ok {
+		return nil, false
+	}
+	return task.clone(), true
+}
+
+// Update applies fn to the stored task under the write lock and returns a
+// copy of the result.
+func (s *syncTaskStore) Update(id string, fn func(*Task)) (*Task, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.store.Get(id)
+	if !ok {
+		return nil, false
+	}
+	fn(task)
+	return task.clone(), true
 }
 
 func (s *syncTaskStore) Cleanup(maxAge time.Duration) {
@@ -213,7 +245,8 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 			s.tasks.Store(task)
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			s.taskCancels.Store(task.ID, cancel)
-			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), task, inputText, params)
+			// The worker gets its own copy; task stays with this handler for the response.
+			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), task.clone(), inputText, params)
 			writeA2AResult(w, msg.ID, task)
 			return
 		}
@@ -258,7 +291,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 	if model == "" {
 		task.Status.State = TaskStatusFailed
 		task.Status.Message = []MessagePart{{Type: "text", Text: "A2A request must include metadata.model"}}
-		s.tasks.Store(task)
+		s.tasks.StoreUnlessCanceled(task)
 		slog.Warn("a2a: missing metadata.model", "task_id", task.ID)
 		return
 	}
@@ -278,16 +311,16 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 				task.Status.State = TaskStatusCanceled
 				task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-				s.tasks.Store(task)
+				s.tasks.StoreUnlessCanceled(task)
 				return
 			}
 			task.Status.State = TaskStatusFailed
 			task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
-			s.tasks.Store(task)
+			s.tasks.StoreUnlessCanceled(task)
 			return
 		}
 		s.finishTaskFromResponse(task, resp)
-		s.tasks.Store(task)
+		s.tasks.StoreUnlessCanceled(task)
 		return
 	}
 
@@ -309,7 +342,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 		task.Status.Message = []MessagePart{
 			{Type: "text", Text: fmt.Sprintf("No provider for model %q: %s", model, err.Error())},
 		}
-		s.tasks.Store(task)
+		s.tasks.StoreUnlessCanceled(task)
 		slog.Warn("a2a: provider resolution failed", "model", model, "error", err)
 		return
 	}
@@ -331,21 +364,21 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			task.Status.State = TaskStatusCanceled
 			task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-			s.tasks.Store(task)
+			s.tasks.StoreUnlessCanceled(task)
 			slog.Info("a2a task canceled", "task_id", task.ID)
 			return
 		}
 
 		task.Status.State = TaskStatusFailed
 		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
-		s.tasks.Store(task)
+		s.tasks.StoreUnlessCanceled(task)
 		slog.Warn("a2a: pipeline error", "task_id", task.ID, "error", err)
 		return
 	}
 
 	s.finishTaskFromResponse(task, rc.Response)
 
-	s.tasks.Store(task)
+	s.tasks.StoreUnlessCanceled(task)
 	slog.Info("a2a task completed (pipeline)", "task_id", task.ID, "model", model, "provider", rc.Provider)
 }
 
@@ -413,12 +446,23 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message) {
 		return
 	}
 
-	if cancelFn, ok := s.taskCancels.Load(task.ID); ok {
+	id := task.ID
+	if cancelFn, ok := s.taskCancels.Load(id); ok {
 		cancelFn.(context.CancelFunc)()
 	}
-	task.Status.State = TaskStatusCanceled
-	task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-	s.tasks.Store(task)
+	// Update in place under the store lock; the worker may be recording its own
+	// result for this task at the same moment.
+	task, ok = s.tasks.Update(id, func(t *Task) {
+		t.Status = TaskStatus{
+			State:   TaskStatusCanceled,
+			Message: []MessagePart{{Type: "text", Text: "Task canceled"}},
+		}
+	})
+	if !ok {
+		// Cleanup dropped the task after the lookup above.
+		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "task not found: "+id)
+		return
+	}
 	writeA2AResult(w, msg.ID, task)
 }
 

@@ -36,7 +36,7 @@ const ImagesDatapointCard = ({ value, column }) => {
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Iconify
-            icon="material-symbols:art-track-outline"
+            icon="solar:gallery-linear"
             sx={{ width: 20, height: 20, color: "text.secondary" }}
           />
           <Typography

@@ -68,7 +68,7 @@ const LogDrawerRight = ({
             marginBottom: "25px",
           }}
         >
-          <Typography fontWeight={500} fontSize={14} color="text.primary">
+          <Typography fontWeight={500} fontSize={13} color="text.primary">
             Score
           </Typography>
           <Box>
@@ -124,7 +124,7 @@ const LogDrawerRight = ({
             overflowWrap: "break-word",
           }}
         >
-          <Typography fontWeight={500} fontSize={14} color="text.primary">
+          <Typography fontWeight={500} fontSize={13} color="text.primary">
             Explanation
           </Typography>
           <Box
@@ -136,7 +136,7 @@ const LogDrawerRight = ({
               overflowY: "auto",
             }}
           >
-            <Typography fontWeight={400} fontSize={14} color="text.primary">
+            <Typography fontWeight={400} fontSize={13} color="text.primary">
               {typeof output.reason === "string" ? (
                 output?.reason?.trim() ? (
                   <CellMarkdown spacing={0} text={output?.reason} />
@@ -163,7 +163,7 @@ const LogDrawerRight = ({
             position: "relative",
           }}
         >
-          <Typography fontWeight={500} fontSize={14} color="text.primary">
+          <Typography fontWeight={500} fontSize={13} color="text.primary">
             Possible Error
           </Typography>
           <Box
@@ -204,7 +204,7 @@ const LogDrawerRight = ({
               position: "relative",
             }}
           >
-            <Typography fontWeight={500} fontSize={14} color="text.primary">
+            <Typography fontWeight={500} fontSize={13} color="text.primary">
               Raw Data
             </Typography>
             <Box

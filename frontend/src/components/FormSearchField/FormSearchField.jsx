@@ -13,7 +13,11 @@ const FormSearchField = ({
   const defaultInputProps = {
     startAdornment: (
       <InputAdornment position="start">
-        <Iconify icon="eva:search-fill" sx={{ color: "text.secondary" }} />
+        <Iconify
+          icon="solar:magnifer-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
       </InputAdornment>
     ),
   };
@@ -30,23 +34,7 @@ const FormSearchField = ({
       placeholder="Search"
       value={searchQuery}
       onChange={onChange}
-      sx={{
-        "& .MuiOutlinedInput-root": {
-          "& input": {
-            // typography: "s2"
-          },
-          "& fieldset": {
-            borderColor: "text.disabled",
-          },
-          "&:hover fieldset": {
-            borderColor: "action.hover",
-          },
-          "&.Mui-focused fieldset": {
-            borderColor: "text.secondary",
-          },
-        },
-        ...sx,
-      }}
+      sx={sx}
       InputProps={mergedInputProps}
       {...rest}
     />

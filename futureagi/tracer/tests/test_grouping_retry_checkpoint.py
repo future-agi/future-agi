@@ -18,7 +18,11 @@ from tracer.services.grouping.control import (
     update_grouping_attempt,
 )
 from tracer.services.grouping.publish import _assign, _new_issue
-from tracer.tests.test_grouping_runtime import FakeFeatureStore, _prepare_runtime
+from tracer.tests.test_grouping_runtime import (
+    FakeFeatureStore,
+    _prepare_runtime,
+    nearest_to,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -97,7 +101,7 @@ def test_peer_participation_does_not_skip_candidate_checkpoint_invalidation(
 
     # An existing issue becomes visible in the index without a registry edit.
     monkeypatch.setattr(
-        FakeFeatureStore, "candidate_occurrences", lambda self, **kwargs: [owned_id]
+        FakeFeatureStore, "candidate_occurrences", nearest_to([owned_id])
     )
     TraceGroupingWork.no_workspace_objects.filter(report=report).update(not_before=now)
     latest = claim_grouping_work(worker_id="original-lead", limit=1)["claims"][0]
