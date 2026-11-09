@@ -1263,6 +1263,8 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
+                # A worker's own check, reported beside the task's: kept apart wherever results are listed.
+                **({"subject": str(goal["subject"])} if str(goal.get("subject") or "").startswith("worker:") else {}),
             }
         )
     for evaluation in body.get("evaluations") or []:

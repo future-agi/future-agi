@@ -2598,6 +2598,45 @@ def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
     ).is_valid()
 
 
+@pytest.mark.parametrize("subject", ["worker:Order lookup", "worker:order-lookup_2", "task"])
+def test_a_worker_subject_the_harness_accepts_is_accepted_on_the_receipt(subject):
+    """The harness keeps a worker's id as its source names it, spaces included; one refused subject would refuse the
+    whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue)."""
+    from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
+
+    goal = {"name": "g", "held": True, "reason": None, "judged": False, "subject": subject}
+    assert HarnessSubGoalSerializer(data=goal).is_valid()
+
+
+@pytest.mark.parametrize("subject", ["worker:", "worker:   ", "agent"])
+def test_a_blank_or_unknown_subject_is_still_refused(subject):
+    from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
+
+    goal = {"name": "g", "held": True, "reason": None, "judged": False, "subject": subject}
+    assert not HarnessSubGoalSerializer(data=goal).is_valid()
+
+
+def test_a_worker_s_own_failed_check_never_fails_the_scenario_and_is_labelled_as_the_worker_s():
+    from simulate.selectors.agent_fix import judged_sub_goals
+    from simulate.services.hosted_harness_ingestion import _receipt_evaluations
+
+    receipt = {
+        "status": "passed",
+        "sub_goals": [
+            {"name": "refund_issued", "held": True, "verdict": "pass"},
+            {"name": "lookup_read_only", "held": False, "verdict": "fail", "subject": "worker:order_lookup"},
+        ],
+        "evaluations": [],
+    }
+    # Fix my agent reads the task's checks only: the scenario passed.
+    assert judged_sub_goals(receipt) == {"refund_issued": True}
+    # The worker's check is still published, carrying whose it is.
+    worker = [one for one in _receipt_evaluations(receipt) if one["name"] == "lookup_read_only"]
+    assert worker == [
+        {"name": "lookup_read_only", "kind": "checkpoint", "passed": False, "reason": "", "subject": "worker:order_lookup"}
+    ]
+
+
 def _ended(trial, past_deadline=()):
     from simulate.services.harness_workers import worker_states
 

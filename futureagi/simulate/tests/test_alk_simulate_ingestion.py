@@ -1220,6 +1220,36 @@ class TestResultIngest:
         call = CallExecution.objects.get(id=call_ids[0])
         assert call.call_metadata["eval_completed"] is True
 
+    def test_a_worker_s_own_check_is_stored_as_that_worker_s(self, auth_client, run_test):
+        """A worker's check keeps its subject on the stored result and says whose it is in the reason."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        with patch("simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": True},
+                            {
+                                "name": "lookup_read_only",
+                                "passed": False,
+                                "reason": "it wrote an order",
+                                "subject": "worker:order_lookup",
+                            },
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs or {}
+        by_name = {one["name"]: one for one in outputs.values()}
+        assert by_name["lookup_read_only"]["subject"] == "worker:order_lookup"
+        assert by_name["lookup_read_only"]["reason"] == "Worker order_lookup's own check. it wrote an order"
+        assert "subject" not in by_name["ride_booked"]
+
     def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
         self, auth_client, run_test
     ):
