@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -244,6 +245,10 @@ type PricingOverrideConfig struct {
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token" json:"batch_output_per_token"`
 	InputPerSecond      *float64 `yaml:"input_per_second" json:"input_per_second"`
 	InputPerCharacter   *float64 `yaml:"input_per_character" json:"input_per_character"`
+	InputPerQuery       *float64 `yaml:"input_per_query" json:"input_per_query"`
+	PerPage             *float64 `yaml:"per_page" json:"per_page"`
+	OutputPerImage      *float64 `yaml:"output_per_image" json:"output_per_image"`
+	OutputPerSecond     *float64 `yaml:"output_per_second" json:"output_per_second"`
 }
 
 // CapOverrideConfig allows overriding individual capability flags.
@@ -381,6 +386,19 @@ type ProviderConfig struct {
 	// place of the default dialer. Set by the gateway, not in config.yaml: org
 	// providers use it to check every address they connect to.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
+
+	// Proxy, when set, picks the proxy for each upstream request, as
+	// http.Transport.Proxy does; unset, the provider connects directly. Set by
+	// the gateway, not in config.yaml: decision providers use the operator's
+	// HTTP_PROXY, HTTPS_PROXY and NO_PROXY. A DialContext that checks addresses
+	// needs a Proxy made to match it (netguard.Proxied), since through a proxy
+	// it would see only the proxy's address.
+	Proxy func(*http.Request) (*url.URL, error) `yaml:"-" json:"-"`
+
+	// Decision transport overrides let OpenAI Decisions use the operator's
+	// proxy without changing the same provider's chat connections.
+	DecisionDialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
+	DecisionProxy       func(*http.Request) (*url.URL, error)                             `yaml:"-" json:"-"`
 }
 
 type LoggingConfig struct {

@@ -63,6 +63,20 @@ type Server struct {
 	ready            atomic.Bool
 }
 
+// PriceTableName is the name the price table keys a provider's models under,
+// as the provider that served an org's request states it: the org's own
+// instance when the org has one, else the config.yaml provider with that ID.
+func (s *Server) PriceTableName(orgID, providerID string) string {
+	var p providers.Provider
+	if orgID != "" && s.OrgProviderCache != nil {
+		p = s.OrgProviderCache.Get(orgID, providerID)
+	}
+	if p == nil && s.registry != nil {
+		p, _ = s.registry.GetProvider(providerID)
+	}
+	return providers.PriceTableName(p)
+}
+
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
 // key revocation. Call after New() and before Start().
 func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
@@ -227,6 +241,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Set up Video Generation store.
 	handlers.videoStore = video.NewMemoryStore()
+	// Shared through Redis when there is one, so the pod that sees a run
+	// finish can charge it whichever pod started it.
+	if redisClient != nil {
+		handlers.runCharges = &redisRunCharges{client: redisClient}
+	} else {
+		handlers.runCharges = newMemoryRunCharges()
+	}
 
 	// Set up async inference support.
 	asyncStore := async.NewStore()
@@ -296,6 +317,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			"max_concurrent", cfg.Routing.Fastest.MaxConcurrent,
 		)
 	}
+
+	// Decision calls by internal callers take only a base_url from config.yaml.
+	handlers.decisionBaseURLs = providers.DecisionDialectBaseURLs(cfg.Providers)
 
 	// Provider locking.
 	handlers.providerLockResolver = routing.NewProviderLockResolver(cfg.Routing.ProviderLock)
@@ -388,6 +412,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	// Structured decisions, on the customer's own provider key only.
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
+	router.Handle("POST", "/v1/decisions", handlers.Decisions)
+	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
@@ -1286,6 +1314,10 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
 				InputPerSecond:      co.Pricing.InputPerSecond,
 				InputPerCharacter:   co.Pricing.InputPerCharacter,
+				InputPerQuery:       co.Pricing.InputPerQuery,
+				PerPage:             co.Pricing.PerPage,
+				OutputPerImage:      co.Pricing.OutputPerImage,
+				OutputPerSecond:     co.Pricing.OutputPerSecond,
 			}
 		}
 		if co.Capabilities != nil {

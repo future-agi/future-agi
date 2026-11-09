@@ -22,9 +22,5 @@ export const TaskOptionsSlider = styled(Slider)(({ theme }) => ({
     height: 20,
     backgroundColor: theme.palette.divider,
     border: "3px solid var(--bg-paper)",
-    boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
-    "&:hover, &.Mui-focusVisible": {
-      boxShadow: "0px 3px 6px rgba(0, 0, 0, 0.15)",
-    },
   },
 }));

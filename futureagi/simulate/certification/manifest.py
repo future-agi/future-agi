@@ -38,7 +38,7 @@ COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SCENARIO_REF_RE = re.compile(r"^scenarios:[A-Za-z0-9_.\-/]+$")
 
 SUITE_DIR = Path(__file__).resolve().parent / "suites"
-REPO_ROOT = SUITE_DIR.parents[2]
+REPO_ROOT = SUITE_DIR.parents[3]
 
 TARGET_KINDS = frozenset({"local_test", "hosted_service"})
 AGENT_CONNECTORS = frozenset(
@@ -541,6 +541,23 @@ def _validate_interaction(
             if field in raw and raw[field] is not None:
                 _assert_no_secret_material(raw[field], f"{w}.{field}")
                 out[field] = raw[field]
+        stable_assertions = raw.get("stable_assertions")
+        if stable_assertions is not None:
+            if (
+                not isinstance(stable_assertions, list)
+                or not all(
+                    isinstance(name, str) and name.strip()
+                    for name in stable_assertions
+                )
+            ):
+                _fail(
+                    "invalid_schema",
+                    w,
+                    "stable_assertions must be a list of non-empty evaluation names",
+                )
+            out["stable_assertions"] = list(
+                dict.fromkeys(name.strip() for name in stable_assertions)
+            )
     else:
         # Placeholder interactions keep only their declared count; scenario and
         # config material is filled in when the case is materialized.
@@ -556,7 +573,18 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
         _fail("invalid_schema", w, "case must be a mapping")
     case_key = _canonical_case_key(raw.get("case_key"), w)
     w = f"{w}({case_key})"
-    enabled = bool(raw.get("enabled", False))
+    enabled = raw.get("enabled", False)
+    if type(enabled) is not bool:
+        _fail("invalid_schema", w, "enabled must be a boolean")
+    tiers = raw.get("tiers", ["full"])
+    if (
+        not isinstance(tiers, list)
+        or not tiers
+        or not all(
+            isinstance(tier, str) and tier in {"quick", "full"} for tier in tiers
+        )
+    ):
+        _fail("invalid_schema", w, "tiers must contain quick and/or full")
 
     agent = raw.get("agent")
     if not isinstance(agent, Mapping):
@@ -667,6 +695,7 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
     out = {
         "case_key": case_key,
         "enabled": enabled,
+        "tiers": list(dict.fromkeys(tiers)),
         "agent": {
             "name": name.strip(),
             "connector": connector,
@@ -756,7 +785,9 @@ def validate_manifest(doc: Mapping[str, Any], *, repo_root: Path | None = None) 
 # ---------------------------------------------------------------------------
 
 
-def expand_enabled_cases(normalized_suite: Mapping[str, Any]) -> list[dict]:
+def expand_enabled_cases(
+    normalized_suite: Mapping[str, Any], *, tier: str = "full"
+) -> list[dict]:
     """Produce normalized case specs for enabled entries only.
 
     Disabled placeholders are skipped by construction — they can never reach a
@@ -765,7 +796,7 @@ def expand_enabled_cases(normalized_suite: Mapping[str, Any]) -> list[dict]:
 
     specs = []
     for case in normalized_suite["cases"]:
-        if not case["enabled"]:
+        if not case["enabled"] or tier not in case["tiers"]:
             continue
         specs.append(
             {

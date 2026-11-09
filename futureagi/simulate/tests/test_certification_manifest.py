@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from simulate.certification.manifest import (
+    REPO_ROOT,
     CertificationManifestError,
     campaign_idempotency_key,
     canonical_digest,
@@ -98,10 +99,42 @@ def test_production_suite_validates_and_is_all_placeholders():
     normalized = validate_manifest(doc)
     summary = pending_summary(normalized)
     assert summary["enabled"] == []
-    assert len(summary["disabled"]) == 26
+    assert len(summary["disabled"]) == 23
     for case in normalized["cases"]:
         assert case["enabled"] is False
         assert case["pending"], f"{case['case_key']} missing pending reasons"
+
+    repositories = {
+        case.get("agent", {}).get("source", {}).get("repository")
+        for case in normalized["cases"]
+    }
+    assert "https://github.com/KarthikAvinashFI/alderway-voice-agent" not in repositories
+    assert {case["case_key"] for case in normalized["cases"]}.isdisjoint(
+        {"uber_admin_phone__primary", "uber_guest_phone__primary"}
+    )
+
+
+def test_quick_tier_materializes_an_outbound_voice_case():
+    doc = load_suite("production_agents_v1")
+    case = next(item for item in doc["cases"] if item["case_key"] == "ride_booking__primary")
+    case["enabled"] = True
+    case.pop("pending")
+    case["agent"]["model"] = "gpt-x"
+    case["agent"]["source"]["commit_sha"] = SHA
+    case["target"]["ref"] = "local-ride-agent"
+    case["target"]["kind"] = "local_test"
+    case["run_test_id"] = "l1_chat_top_voice"
+    case["authorization"] = _enabled_case()["authorization"]
+    for seed, interaction in enumerate(case["interactions"], start=1):
+        interaction.update(
+            scenario_ref="scenarios:samples/agents.yaml",
+            seed=seed,
+            secret_ref_set=[],
+        )
+
+    normalized = validate_manifest(_doc([case]), repo_root=REPO_ROOT)
+    [spec] = expand_enabled_cases(normalized, tier="quick")
+    assert spec["interactions"][0]["agent_config"]["call_direction"] == "outbound"
 
 
 def test_production_suite_is_not_admission_ready():
@@ -222,6 +255,17 @@ def test_rejects_duplicate_yaml_keys():
 
 def test_rejects_enabled_with_pending_markers():
     case = _enabled_case(pending=["authorization_unverified"])
+    _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
+
+
+def test_rejects_invalid_tier():
+    case = _enabled_case(tiers=["smoke"])
+    _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
+
+
+def test_rejects_invalid_stable_assertion_names():
+    case = _enabled_case()
+    case["interactions"][0]["stable_assertions"] = [""]
     _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
 
 

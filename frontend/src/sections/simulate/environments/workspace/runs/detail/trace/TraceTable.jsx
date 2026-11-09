@@ -18,7 +18,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   defaultTraceColumns,
   headCellSx,
@@ -297,22 +297,19 @@ export default function TraceTable({
                       <Iconify
                         icon="solar:danger-triangle-bold"
                         width={12}
-                        sx={{ color: BUILD_TONES.red }}
+                        sx={{ color: "status.danger.solid" }}
                       />
                     </Box>
                   </CustomTooltip>
                 )}
               </Stack>
               <Stack direction="row" alignItems="center" spacing={0.75}>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    fontWeight: "fontWeightSemiBold",
-                    color: outcome.color,
-                  }}
-                >
-                  {outcome.label}
-                </Typography>
+                <StatusBadge
+                  status={t.status}
+                  label={outcome.label}
+                  role={outcome.role}
+                  variant="dot"
+                />
                 {t.durationMs != null && (
                   <>
                     <Box
@@ -367,7 +364,7 @@ export default function TraceTable({
                             sx={{ display: "flex", color: verdict.color }}
                           >
                             <Iconify
-                              icon={goal.passed ? "mdi:check" : "mdi:close"}
+                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
                               width={16}
                               aria-hidden="true"
                             />

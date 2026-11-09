@@ -56,7 +56,7 @@ class RecordingActivities:
     async def load(self, _input: CertificationCampaignInput):
         return CertificationCasesOutput(
             pending_case_ids=list(self.case_ids),
-            max_active_cases=4,
+            max_active_cases=2,
         )
 
     @activity.defn(name="certification_submit_case")
@@ -124,10 +124,10 @@ class RecordingActivities:
 
 
 @pytest.mark.asyncio
-async def test_caps_concurrency_at_four_and_completes_every_case(
+async def test_caps_concurrency_at_two_and_completes_every_case(
     temporal_test_server_options,
 ):
-    # Two polls per case forces overlap — with 8 cases, >4 concurrent would
+    # Two polls per case forces overlap. With 8 cases, more than two concurrent would
     # exceed the cap if the parent didn't gate dispatch.
     acts = RecordingActivities([f"case-{i}" for i in range(8)], done_after=2)
     async with await WorkflowEnvironment.start_time_skipping(
@@ -149,7 +149,7 @@ async def test_caps_concurrency_at_four_and_completes_every_case(
 
     assert result.cases_completed == 8
     assert result.cases_failed == 0
-    assert acts.max_in_flight <= 4
+    assert acts.max_in_flight <= 2
     assert sorted(acts.submitted) == sorted(acts.case_ids)  # exactly-once each
     assert len(acts.recorded) == 8
     assert acts.finalized
