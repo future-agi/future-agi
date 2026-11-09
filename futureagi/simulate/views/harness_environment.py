@@ -13,6 +13,7 @@ from simulate.selectors.held_back import (
     coding_agent_key,
     detail_without,
     members_without,
+    refusal_body,
     verify_result,
     verify_run,
 )
@@ -188,7 +189,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(refusal_body(exc, self.request), status=exc.status_code)
         response = _usage_limit_response(exc)
         if response is not None:
             return response
