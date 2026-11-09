@@ -312,7 +312,9 @@ class StandaloneEvalView_v2(APIView):
 
             if evaluation.status == StatusChoices.FAILED:
                 response_data["result"]["error_message"] = evaluation.error_message
-                if (evaluation.metadata or {}).get("denial"):
+                if isinstance(evaluation.metadata, dict) and evaluation.metadata.get(
+                    "denial"
+                ):
                     response_data["result"]["denial"] = evaluation.metadata["denial"]
 
             return self._gm.success_response(response_data)

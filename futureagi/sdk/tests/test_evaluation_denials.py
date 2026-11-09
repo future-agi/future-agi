@@ -1,5 +1,6 @@
 """Policy refusals must not execute, charge, or masquerade as server failures."""
 
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -217,6 +218,59 @@ def test_async_denial_survives_polling(
     assert response.status_code == 200
     assert response.data["result"]["eval_status"] == "failed"
     assert response.data["result"]["result"]["denial"]["code"] == "rate_limited"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param(
+            json.dumps({"usage": {"total_tokens": 12}, "explanation": "Fail verdict"}),
+            id="custom-prompt-json-string",
+        ),
+        pytest.param({"explanation": "Fail verdict"}, id="dictionary"),
+        pytest.param(["Fail verdict"], id="list"),
+        pytest.param(12, id="number"),
+        pytest.param(True, id="boolean"),
+        pytest.param(None, id="null"),
+        pytest.param("", id="empty-string"),
+    ],
+)
+def test_poll_failed_evaluation_preserves_metadata_shapes(
+    sdk_client, user, eval_template, metadata
+):
+    from sdk.utils.evaluations import _create_evaluation
+
+    # CustomPromptEvaluator uses JSON-string metadata for ordinary Fail verdicts.
+    # The JSONField also accepts other shapes; only dictionaries carry denials.
+    evaluation = _create_evaluation(
+        eval_template=eval_template,
+        inputs={"input": "hello", "output": "world"},
+        user=user,
+        eval_config={},
+        result={
+            "failure": True,
+            "data": {"result": "Fail"},
+            "value": "Fail",
+            "output": "choices",
+            "reason": "Fail verdict",
+            "metadata": metadata,
+        },
+        error_localizer_enabled=False,
+        trace_eval=False,
+        custom_eval_name=None,
+        span_id=None,
+    )
+    evaluation.refresh_from_db()
+    assert evaluation.status == "failed"
+    assert evaluation.metadata == metadata
+    response = sdk_client.get("/sdk/api/v1/new-eval/", {"eval_id": str(evaluation.id)})
+    assert response.status_code == 200, response.data
+    assert response.data["result"]["eval_status"] == "failed"
+    result = response.data["result"]["result"]
+    assert result["value"] == "Fail"
+    assert result["reason"] == "Fail verdict"
+    assert "denial" not in result
 
 
 @pytest.mark.parametrize(
@@ -475,5 +529,7 @@ def test_management_eval_preserves_typed_denials(
     ):
         response = call(auth_client, template)
     assert response.status_code == (429 if kind == "rate" else 402), response.data
-    assert response.data["code"] == ("rate_limited" if kind == "rate" else "BUDGET_PAUSED")
+    assert response.data["code"] == (
+        "rate_limited" if kind == "rate" else "BUDGET_PAUSED"
+    )
     logger.exception.assert_not_called()
