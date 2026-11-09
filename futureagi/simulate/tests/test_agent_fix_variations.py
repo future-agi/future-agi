@@ -228,6 +228,8 @@ class TestTheBuilderMessage:
         assert "<parent key>-var1, <parent key>-var2, <parent key>-var3" in (
             command.content
         )
+        # The builder's memory outlives its workspace: it must not answer from it.
+        assert "even if you remember writing variations before" in command.content
         assert fix_run.step == FixStep.VARIATIONS
         builder.assert_called_once()
         # Asked once, however often the step is looked at.
