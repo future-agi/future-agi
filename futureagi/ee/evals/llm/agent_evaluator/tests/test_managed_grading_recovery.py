@@ -203,7 +203,7 @@ def test_managed_interrupted_stream_cannot_be_graded_or_retried(managed_transpor
 @pytest.mark.parametrize("failure", TRANSIENT_FAILURES)
 def test_managed_chat_keeps_existing_error_propagation(managed_transport, failure):
     calls, sleep = managed_transport([failure, VALID])
-    client = FalconLLMClient(model="gpt-4o-mini")
+    client = FalconLLMClient()
 
     async def consume():
         return [
