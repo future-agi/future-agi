@@ -44,8 +44,15 @@ def carry_untouched_proofs(
     ).first()
     if earlier is None or not isinstance(earlier.proofs, dict):
         return
-    touched = {key for one in accepted for key in one.get("affects") or []}
-    kept = {key: proof for key, proof in earlier.proofs.items() if key not in touched}
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # A change names a scenario by its folder; a proof by the suite's key (`duplicate_refund` vs `duplicate-refund`).
+    touched = {_scenario_token(key) for one in accepted for key in one.get("affects") or []}
+    kept = {
+        key: proof
+        for key, proof in earlier.proofs.items()
+        if _scenario_token(key) not in touched
+    }
     if not kept:
         return
     holding = [
