@@ -381,29 +381,30 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.exception(f"Error in creating the project: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_PROJECT"))
 
-    @validated_request(responses={200: ProjectDetailResponseSerializer})
+    @validated_request(
+        responses={
+            200: ProjectDetailResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Get a single project by ID with sampling rate.
         """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        if instance.trace_type == "experiment" and not data.get("config"):
+            data["config"] = get_default_project_version_config()
+
         try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            data = serializer.data
-            if instance.trace_type == "experiment" and not data.get("config"):
-                data["config"] = get_default_project_version_config()
+            scan_config = TraceScanConfig.objects.get(project=instance)
+            data["sampling_rate"] = scan_config.sampling_rate
+        except TraceScanConfig.DoesNotExist:
+            data["sampling_rate"] = 0
 
-            try:
-                scan_config = TraceScanConfig.objects.get(project=instance)
-                data["sampling_rate"] = scan_config.sampling_rate
-            except TraceScanConfig.DoesNotExist:
-                data["sampling_rate"] = 0
-
-            return self._gm.success_response(data)
-
-        except Exception as e:
-            logger.exception(f"Error in retrieving the project: {str(e)}")
-            return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
+        return self._gm.success_response(data)
 
     def delete(self, request, *args, **kwargs):
         """
@@ -430,17 +431,16 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
 
+    @validated_request(
+        responses={404: ApiErrorResponseSerializer, 503: ApiErrorResponseSerializer}
+    )
     def destroy(self, request, *args, **kwargs):
-        try:
-            project = self.get_object()
-            self._soft_delete_projects(
-                self._project_scope_queryset().filter(id=project.id),
-                project.trace_type,
-            )
-            return self._gm.success_response("Successfully deleted the project")
-        except Exception as e:
-            logger.exception(f"Error in deleting the project: {str(e)}")
-            return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
+        project = self.get_object()
+        self._soft_delete_projects(
+            self._project_scope_queryset().filter(id=project.id),
+            project.trace_type,
+        )
+        return self._gm.success_response("Successfully deleted the project")
 
     @action(detail=False, methods=["post"])
     def update_project_config(self, request, *args, **kwargs):
@@ -872,24 +872,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("ERROR_FETCHING_PROJECT_LISTS")
             )
 
+    @validated_request(
+        responses={404: ApiErrorResponseSerializer, 503: ApiErrorResponseSerializer}
+    )
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a project."""
-        try:
-            project = self.get_object()
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
-            project.tags = tags
-            project.save(update_fields=["tags", "updated_at"])
-            return self._gm.success_response(
-                {"id": str(project.id), "tags": project.tags}
-            )
-        except Exception as e:
-            logger.exception(f"Error updating project tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        project = self.get_object()
+        tags = request.data.get("tags")
+        if tags is None:
+            return self._gm.bad_request("tags field is required")
+        if not isinstance(tags, list):
+            return self._gm.bad_request("tags must be a list")
+        project.tags = tags
+        project.save(update_fields=["tags", "updated_at"])
+        return self._gm.success_response(
+            {"id": str(project.id), "tags": project.tags}
+        )
 
     @validated_request(
         query_serializer=ProjectGraphDataQuerySerializer,

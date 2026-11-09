@@ -589,12 +589,12 @@ class TestProjectRetrieveAPI:
         assert data["sampling_rate"] == 0
 
     def test_retrieve_project_not_found(self, auth_client):
-        """Retrieve non-existent project returns error."""
+        """Retrieve non-existent project returns not found."""
         import uuid
 
         fake_id = uuid.uuid4()
         response = auth_client.get(f"/tracer/project/{fake_id}/")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_retrieve_project_different_org(self, auth_client, organization):
         """Cannot retrieve project from different organization."""
@@ -610,11 +610,7 @@ class TestProjectRetrieveAPI:
         )
 
         response = auth_client.get(f"/tracer/project/{other_project.id}/")
-        # Should return 400 or 404 because project is not in user's org
-        assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
-        ]
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.integration
