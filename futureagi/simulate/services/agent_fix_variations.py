@@ -74,6 +74,14 @@ _CLAIMED = {
 _TRANSIENT = (OperationalError, InterfaceError, S3Error, HTTPError)
 
 
+def _without_variations(
+    parents: Mapping[str, list[str]], variations: Mapping[str, str]
+) -> list[str]:
+    """The failing cases the builder wrote no usable variation of."""
+    varied = set(variations.values())
+    return [key for key in parents if key not in varied]
+
+
 def is_fix_command(command: HostedHarnessConversationMessage | None) -> bool:
     """Whether a builder turn was a fix's request for variations."""
     return command is not None and (command.payload or {}).get("_origin") == FIX_ORIGIN
@@ -306,6 +314,8 @@ def land(
         return
     archives.put_archive(prepared.suite_key, prepared.suite_body)
     source_run = fix_run.source_run
+    parents = failing_targets(fix_run)
+    without = _without_variations(parents, variations)
     with transaction.atomic():
         # The fix first, then the environment, as a check run of the fix takes them.
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run.id)
@@ -329,7 +339,8 @@ def land(
             authored_against=source_run.environment_version,
             fix_run=locked,
             created_by=locked.created_by,
-            summary=f"{len(variations)} variations of the failing cases, for a fix",
+            summary=f"{len(variations)} variations of {len(parents) - len(without)}"
+            f" of {len(parents)} failing cases, for a fix",
             scenario_count=len(prepared.scenarios),
             **{
                 **prepared.suite_fields,
@@ -368,6 +379,8 @@ def land(
         fix_run=str(fix_run.id),
         suite_version=str(version.id),
         variations=len(variations),
+        cases=len(parents),
+        cases_without_variations=without,
     )
 
 
@@ -517,23 +530,34 @@ def _settle(
         # The fix's minutes start now: the step's time is its own.
         locked.started_at = timezone.now()
         locked.save(update_fields=["request", "started_at", "updated_at"])
+    without = _without_variations(parents, variations)
     logger.info(
         "agent_fix_variations_settled",
         fix_run=str(fix_run.id),
+        cases=len(parents),
+        cases_without_variations=without,
         written=len(variations),
         kept=len(kept),
-        cases=len(failing),
+        failing=len(failing),
     )
     if len(failing) < floor:
+        unvaried = (
+            f" ({len(without)} of them got no usable variation)" if without else ""
+        )
         return _end(
             fix_run,
             AgentFixRun.State.TOO_FEW_CASES,
             "fix_targets_too_few",
-            f"{len(kept)} of the {len(variations)} variations failed on the current"
-            f" version: with the run's {len(parents)}, that is {len(failing)} failing"
-            f" cases, and a fix needs {floor}",
+            f"The run had {_count(len(parents), 'failing case')}{unvaried}. The builder"
+            f" wrote {_count(len(variations), 'variation')} of them, and {len(kept)}"
+            f" failed on the current version: {_count(len(failing), 'failing case')},"
+            f" and a fix needs {floor}.",
         )
     return VariationsStep.DONE
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" + ("" if number == 1 else "s")
 
 
 def _end(

@@ -324,6 +324,34 @@ class TestThePrivateSuite:
             == live
         )
 
+    def test_takes_only_the_variations_whatever_else_the_workspace_holds(
+        self, environment, source_run, fix_run, storage
+    ):
+        # The builder works on the environment's unsaved changes, if a user opened some:
+        # here an edit to an existing scenario and a new one.
+        body = _builder_save(environment, extra=["fresh-idea"])
+        files = archives.read_archive(body)
+        documents = json.loads(files["scenarios.json"])
+        for one in documents:
+            if one.get("scenario_key") == KEYS[1]:
+                one["instruction"] = "an unsaved edit"
+        files["scenarios.json"] = json.dumps(documents).encode()
+
+        _land(fix_run, storage, archives.pack_archive(files))
+
+        source = dict(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=source_run.suite_version_id
+            ).values_list("scenario_key", "content")
+        )
+        private = dict(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version=_private(fix_run)
+            ).values_list("scenario_key", "content")
+        )
+        assert {key: private[key] for key in source} == source
+        assert "fresh-idea" not in private
+
     def test_is_listed_nowhere_picked_by_no_other_run_and_never_the_default(
         self, environment, fix_run, storage
     ):
@@ -435,7 +463,10 @@ class TestSettle:
         fix_run.refresh_from_db()
         assert fix_run.state == AgentFixRun.State.TOO_FEW_CASES
         assert fix_run.failure["code"] == "fix_targets_too_few"
-        assert "1 of the 3 variations failed" in fix_run.failure["message"]
+        assert fix_run.failure["message"] == (
+            "The run had 1 failing case. The builder wrote 3 variations of them, and 1"
+            " failed on the current version: 2 failing cases, and a fix needs 4."
+        )
         assert fix_run.request["variation_parents"] == {kept: PARENT}
         assert fix_run.suite_version.fix_run_id == fix_run.id
         # A variation the base version passed is no case of the fix.
@@ -509,3 +540,59 @@ class TestSettle:
             fix_run=retried
         ).exists()
         builder.assert_not_called()
+
+
+class TestACaseWithoutVariations:
+    @pytest.fixture
+    def source_run(self, environment):
+        """Both scenarios failed "refunded"."""
+        run = _run(environment)
+        _receipts(run, {key: {"refunded": False} for key in KEYS})
+        return run
+
+    @pytest.fixture
+    def fix_run(self, source_run, user):
+        fix_run = launch_fix_run(
+            source_run,
+            target_scenario_keys=list(KEYS),
+            surfaces=[Surface.PROMPT],
+            locked_paths=[],
+            budget_usd=5.0,
+            max_minutes=30,
+            user=user,
+        )
+        assert variations.advance(str(fix_run.id)) == VariationsStep.WRITING
+        fix_run.refresh_from_db()
+        return fix_run
+
+    def test_is_counted_and_the_fix_goes_on_with_the_others(
+        self, environment, fix_run, storage
+    ):
+        # Variations of the first case only.
+        _land(fix_run, storage, _builder_save(environment))
+        names = [_named(fix_run, n) for n in (1, 2, 3)]
+        assert _private(fix_run).summary == (
+            "3 variations of 1 of 2 failing cases, for a fix"
+        )
+        _finish(_base_run(fix_run), failed=names)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+        fix_run.refresh_from_db()
+        assert fix_run.request["target_scenario_keys"] == [*KEYS, *names]
+
+    def test_names_it_in_the_reason_when_too_few_failed(
+        self, environment, fix_run, storage
+    ):
+        _land(fix_run, storage, _builder_save(environment))
+        _finish(_base_run(fix_run), failed=[_named(fix_run, 1)])
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.ENDED
+
+        fix_run.refresh_from_db()
+        assert fix_run.state == AgentFixRun.State.TOO_FEW_CASES
+        assert fix_run.failure["message"] == (
+            "The run had 2 failing cases (1 of them got no usable variation). The"
+            " builder wrote 3 variations of them, and 1 failed on the current version:"
+            " 3 failing cases, and a fix needs 4."
+        )
