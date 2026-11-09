@@ -19519,6 +19519,11 @@ export interface HarnessActorWriteApi {
   actor: HarnessActorWriteApiActor;
   /** @minimum 0 */
   expected_revision?: number;
+  /**
+   * Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.
+   * @maxItems 100
+   */
+  share_actions?: string[];
 }
 
 export type HarnessActorSeenApiSource =

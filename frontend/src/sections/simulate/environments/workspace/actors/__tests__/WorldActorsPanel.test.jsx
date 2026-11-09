@@ -502,6 +502,50 @@ describe("WorldActorsPanel", () => {
     });
   });
 
+  it("shows the conflict before saving when an actor is given an action only one other actor holds, and saves it shared only once confirmed", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Lena" },
+    });
+    fireEvent.mouseDown(
+      screen.getByLabelText("World actions they may take (optional)"),
+    );
+    fireEvent.click(
+      screen.getByRole("option", { name: /crm.approve_discount/ }),
+    );
+    const warning = screen.getByTestId("actor-permission-conflict");
+    expect(warning).toHaveTextContent(
+      "crm.approve_discount is held only by Priya Raman today",
+    );
+    const save = screen.getByText("Save to draft");
+    expect(save.closest("button")).toBeDisabled();
+    fireEvent.click(within(warning).getByLabelText("Both should have it"));
+    fireEvent.click(save);
+    const [change] = mutate.mock.calls[0];
+    expect(change.actor.permitted_actions).toEqual(["crm.approve_discount"]);
+    expect(change.shareActions).toEqual(["crm.approve_discount"]);
+  });
+
+  it("shows no conflict for an action nobody else holds", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Lena" },
+    });
+    fireEvent.mouseDown(
+      screen.getByLabelText("World actions they may take (optional)"),
+    );
+    fireEvent.click(
+      screen.getByRole("option", { name: /crm.request_approval/ }),
+    );
+    expect(
+      screen.queryByTestId("actor-permission-conflict"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Save to draft"));
+    expect(mutate.mock.calls[0][0].shareActions).toEqual([]);
+  });
+
   it("keeps the details a run does not read yet folded under More details", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);

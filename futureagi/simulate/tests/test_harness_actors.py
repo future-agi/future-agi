@@ -349,6 +349,26 @@ def test_an_actor_a_scenario_includes_is_not_removed(
     ]
 
 
+def test_an_actor_counts_every_scenario_it_takes_part_in_however_it_comes_in():
+    from simulate.services.harness_actors import _scenarios_using
+
+    documents = [
+        {"scenario_key": "asks", "actors": [{"id": "manager"}]},
+        {
+            "scenario_key": "meeting-ended",
+            "starts_with": {"actor": "calendar", "text": "The call ended"},
+        },
+        {"scenario_key": "thread", "pre_run": [{"actors": ["coworker", "manager"]}]},
+        {"scenario_key": "summarize", "starts_with": {"text": "Summarize this thread"}},
+    ]
+
+    # The caller is the person in every scenario that a person starts, and in none started by a task or event.
+    assert _scenarios_using(documents, "caller") == ["asks", "thread"]
+    assert _scenarios_using(documents, "manager") == ["asks", "thread"]
+    assert _scenarios_using(documents, "calendar") == ["meeting-ended"]
+    assert _scenarios_using(documents, "coworker") == ["thread"]
+
+
 def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not_get_it_twice(
     user, workspace, storage, auth_client
 ):
@@ -1544,3 +1564,84 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
         assert (
             refused.status_code == 400 and said in refused.json()["message"]
         ), refused.content
+
+
+def test_giving_an_actor_an_action_only_one_other_actor_holds_shows_the_conflict_before_saving(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-permission-conflict")
+    customer = {
+        "id": "customer",
+        "name": "Lena Ortiz",
+        "permitted_actions": ["crm.request_approval"],
+    }
+    assert _add(auth_client, environment, customer).status_code == 200
+    manager = {
+        "id": "manager",
+        "name": "Priya Raman",
+        "permitted_actions": ["crm.approve_discount", "crm.request_approval"],
+    }
+
+    refused = _add(auth_client, environment, manager)
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    listed = listed.get("result", listed)
+    confirmed = auth_client.post(
+        f"{BASE}/{environment.id}/actors/",
+        {"actor": manager, "share_actions": ["crm.request_approval"]},
+        format="json",
+    )
+
+    # The manager is given the customer's own action: refused before anything is saved, naming who holds it.
+    assert refused.status_code == 409, refused.content
+    body = refused.json()
+    assert body["error"] == "permission_conflict"
+    assert body["conflicts"] == [
+        {
+            "actor": "manager",
+            "action": "crm.request_approval",
+            "holder": "customer",
+            "holder_name": "Lena Ortiz",
+        }
+    ]
+    assert "held only by Lena Ortiz" in body["message"]
+    assert [one["id"] for one in listed["actors"]] == ["customer"]
+    # Confirmed as shared, the edit goes through.
+    assert confirmed.status_code == 200, confirmed.content
+
+
+def test_no_conflict_for_an_action_the_actor_already_had_none_holds_or_two_already_share(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-permission-no-conflict")
+    lead = {"id": "lead", "name": "Arjun", "permitted_actions": ["crm.reject_discount"]}
+    coworker = {
+        "id": "coworker",
+        "name": "Meera",
+        "permitted_actions": ["crm.reject_discount"],
+    }
+    assert _add(auth_client, environment, lead).status_code == 200
+    assert (
+        auth_client.post(
+            f"{BASE}/{environment.id}/actors/",
+            {"actor": coworker, "share_actions": ["crm.reject_discount"]},
+            format="json",
+        ).status_code
+        == 200
+    )
+    manager = {
+        "id": "manager",
+        "name": "Priya",
+        "permitted_actions": ["crm.approve_discount", "crm.reject_discount"],
+    }
+
+    # Nobody holds approve_discount; two already share reject_discount, so it is shared, not reserved.
+    added = _add(auth_client, environment, manager)
+    # Editing the lead keeps the action it already had: never a conflict with the others who share it.
+    kept = auth_client.put(
+        f"{BASE}/{environment.id}/actors/lead/",
+        {"actor": {**lead, "name": "Arjun Mehta"}},
+        format="json",
+    )
+
+    assert added.status_code == 200, added.content
+    assert kept.status_code == 200, kept.content

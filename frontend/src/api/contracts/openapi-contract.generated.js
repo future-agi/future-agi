@@ -66757,6 +66757,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 0,
           "x-nullable": true,
         },
+        share_actions: {
+          description:
+            "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
       },
     },
     HarnessAgentCredentialsResponse: {

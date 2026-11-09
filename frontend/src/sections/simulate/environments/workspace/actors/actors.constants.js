@@ -196,6 +196,9 @@ export const ACTORS_COPY = {
         "Pick from this environment's actions. The world refuses anything else they try and records the attempt.",
       noWorldActions:
         "This environment has no world actions: its tools run inside the agent, so no one in the world can act here.",
+      permittedConflict: (action, holder) =>
+        `${action} is held only by ${holder} today. Giving it here lets both take it.`,
+      permittedShare: "Both should have it",
       trigger: "Comes in",
       triggerHelp:
         "When they first take part; a scenario can give them its own",
