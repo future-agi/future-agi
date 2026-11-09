@@ -532,3 +532,29 @@ func TestPlugin_ExtractLastUserMessage_Empty(t *testing.T) {
 		t.Error("nil request should return empty")
 	}
 }
+
+func TestPlugin_SemanticCacheSystemPromptIsolation(t *testing.T) {
+	p, _, _ := newTestSemanticPlugin()
+
+	rc1 := models.AcquireRequestContext()
+	rc1.Request = &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{
+		{Role: "system", Content: json.RawMessage(`"You are a Python programming assistant."`)},
+		{Role: "user", Content: json.RawMessage(`"How do I reverse a string?"`)},
+	}}
+	rc1.Model = "gpt-4o"
+	p.ProcessRequest(context.Background(), rc1)
+	rc1.Response = makeResp("python-resp")
+	p.ProcessResponse(context.Background(), rc1)
+	rc1.Release()
+
+	rc2 := models.AcquireRequestContext()
+	defer rc2.Release()
+	rc2.Request = &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{
+		{Role: "system", Content: json.RawMessage(`"You are a French translator."`)},
+		{Role: "user", Content: json.RawMessage(`"How do I reverse a string?"`)},
+	}}
+	rc2.Model = "gpt-4o"
+	if result := p.ProcessRequest(context.Background(), rc2); result.Action == pipeline.ShortCircuit {
+		t.Fatal("semantic cache served a response stored under a different system prompt")
+	}
+}

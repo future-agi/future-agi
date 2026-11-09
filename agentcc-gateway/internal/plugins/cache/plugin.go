@@ -137,7 +137,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 	// L2: Check semantic cache.
 	if p.semanticStore != nil {
-		text := extractLastUserMessage(rc.Request)
+		text := semanticCacheText(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
 			if result := p.semanticStore.Search(vec, rc.Request.Model); result != nil {
@@ -191,7 +191,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Also store in semantic cache (L2).
 	if p.semanticStore != nil && rc.Request != nil {
-		text := extractLastUserMessage(rc.Request)
+		text := semanticCacheText(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
 			p.semanticStore.Set(key, vec, rc.Request.Model, rc.Response, ttl)
@@ -256,6 +256,27 @@ func extractLastUserMessage(req *models.ChatCompletionRequest) string {
 		return string(msg.Content)
 	}
 	return ""
+}
+
+// semanticCacheText vectorizes the system/developer instructions with the last user
+// message so agents that share a user query but not instructions do not share entries.
+func semanticCacheText(req *models.ChatCompletionRequest) string {
+	if req == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, msg := range req.Messages {
+		if msg.Role != "system" && msg.Role != "developer" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(msg.Content, &text); err == nil && text != "" {
+			b.WriteString(text)
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(extractLastUserMessage(req))
+	return b.String()
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
