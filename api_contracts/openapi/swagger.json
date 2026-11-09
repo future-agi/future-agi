@@ -71353,6 +71353,12 @@
                             "$ref": "#/definitions/ProjectDetailResponse"
                         }
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "404": {
                         "description": "",
                         "schema": {
@@ -71447,6 +71453,12 @@
                     "204": {
                         "description": ""
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "404": {
                         "description": "",
                         "schema": {
@@ -71499,6 +71511,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/Project"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "404": {

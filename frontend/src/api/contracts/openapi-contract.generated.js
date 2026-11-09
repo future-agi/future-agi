@@ -40108,6 +40108,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/ProjectDetailResponse",
           },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           404: {
             $ref: "#/definitions/ApiErrorResponse",
           },
@@ -40160,6 +40163,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           404: {
             $ref: "#/definitions/ApiErrorResponse",
           },
@@ -40184,6 +40190,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/Project",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorResponse",
