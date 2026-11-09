@@ -1,10 +1,11 @@
 """The runs a user sees and acts on.
 
 A fix's check runs and a coding agent's verify runs are ordinary runs of the
-environment's run test that only the platform reads. Every user-facing list, count,
-comparison and action starts from these selectors, so none of them reaches such a
-run. Internal paths (ingestion, teardown, cleanup, billing, the fix and the verify
-read) query the models directly and keep them.
+environment's run test that only the platform reads, and a pairing's validation job
+certifies and runs nothing. Every user-facing list, count, comparison and action starts
+from these selectors, so none of them reaches such a run. Internal paths (ingestion,
+teardown, cleanup, billing, the fix and the verify read) query the models directly and
+keep them.
 """
 
 from django.db.models import Q, QuerySet
@@ -31,4 +32,6 @@ def user_runs(path: str = "") -> Q:
     ``simulation_runs__`` from an environment). Anything else uses the selectors
     above.
     """
-    return Q(**{f"{path}fix_run__isnull": True, f"{path}verify_of__isnull": True})
+    return Q(**{f"{path}fix_run__isnull": True, f"{path}verify_of__isnull": True}) & ~Q(
+        **{f"{path}payload__contains": {"metadata": {"certify_only": True}}}
+    )

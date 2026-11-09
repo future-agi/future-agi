@@ -17,6 +17,7 @@ from simulate.services.harness_agent_versions import (
     resnapshot_version,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_receiver import _owned
 from simulate.tests.test_harness_agent_versions import (
     _a1,
@@ -611,6 +612,7 @@ def _two_phone_environments(user, workspace, storage, key):
     assert _create(a1, environments[1], secret_values={"OPENAI_API_KEY": "v2"}).id == (
         a2.id
     )
+    settle_validations()
     assert _defaults(*environments) == [a2.id, a2.id]
     return environments
 
@@ -623,6 +625,7 @@ def test_only_the_asking_environment_moves(
 
     _, version = _made(_post(auth_client, first, {"prompt": "Be friendly."}))
     assert _preflight(version).status == "passed"
+    settle_validations()
 
     assert _defaults(first, second) == [version.id, a2_id]
     assert _outcomes(version) == {
@@ -679,6 +682,7 @@ class TestRead:
             assert (item["source"], item["prompt"]) == (None, None)
 
         assert _preflight(version).status == "passed"
+        settle_validations(environment)
         [default] = [
             item
             for item in _listed(auth_client, environment)["agent"]

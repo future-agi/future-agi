@@ -388,11 +388,14 @@ def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> 
 def make_candidate_default(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
-    """Make a finished fix's winner the environment's default, on the user's word."""
+    """Make a finished fix's winner the environment's default, on the user's word.
+
+    ``validating``: the default moves once the winner's pairing validates.
+    """
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
-    if outcome not in ("activated", "already_default"):
+    if outcome not in ("activated", "already_default", "validating"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
             f"the version could not become the default: {outcome}",
