@@ -66,6 +66,15 @@ def coding_agent_key(request: Any) -> OrgApiKey | None:
     return request.org_api_key if is_coding_agent_key(request) else None
 
 
+def refusal_body(exc: Any, request: Any) -> dict[str, Any]:
+    """A refusal as the caller may read it: a coding agent never gets the readiness
+    selection, which names every requested case, held-back ones included."""
+    body = exc.as_dict()
+    if coding_agent_key(request) is not None:
+        body.pop("selection", None)
+    return body
+
+
 def detail_without(detail: dict[str, Any], keys: Collection[str]) -> dict[str, Any]:
     """An environment detail read with the ``keys`` scenarios taken out: their rows,
     their authoring results, the personas only they use, the checks only they make,
