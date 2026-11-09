@@ -362,9 +362,15 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
             store=writer.store,
             retention_days=lambda: 0,
         )
+        # No committed row is not a computed unit with missing inputs. Span and
+        # conversation evidence share the existing not_calculated contract.
         assert [(r["unit_id"], r["status"]) for r in values["results"]] == [
             ("absent", "not_calculated")
         ]
+        absent = values["results"][0]
+        assert absent["no_value_reason"] == "not_calculated"
+        assert absent["value_number"] is None
+        assert absent["eligible_count"] == absent["evaluated_count"] == 0
         return
     first = reads.read_units(
         metric,

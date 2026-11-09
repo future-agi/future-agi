@@ -193,8 +193,14 @@ def _rows(store, sql, params):
     return result
 
 
-def bucket_select(metric, definition, manifest, window):
-    """Only immutable keys prune branches; tombstones win before being removed."""
+def bucket_select(metric, definition, manifest, window, *, projection_sql="*"):
+    """Collapse before filtering or projecting a compiler-owned read grouping.
+
+    Only immutable keys prune branches; tombstones win before being removed.
+    Keeping the period/trend projection in this outer SELECT avoids an extra
+    subquery over the wide sufficient-statistic rows. It must never change the
+    persisted cohort key used by the replacement collapse below it.
+    """
     sketches = definition.kind in {"unique_count", "percentile"}
     columns = (
         *BUCKET_TOTALS.logical_key,
@@ -227,7 +233,7 @@ def bucket_select(metric, definition, manifest, window):
         )
     params["read_workspace"] = str(metric.workspace_id)
     return (
-        "SELECT * FROM (SELECT * FROM ("
+        f"SELECT {projection_sql} FROM (SELECT * FROM ("
         + " UNION ALL ".join(branches)
         + ") ORDER BY generation DESC, version DESC LIMIT 1 BY "
         + ", ".join(BUCKET_TOTALS.logical_key)
@@ -292,11 +298,9 @@ def _aggregate_periods(store, metric, definition, manifest, current, previous):
         definition,
         manifest,
         {**current, "window_start": previous["window_start"]},
+        projection_sql="*, if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS period_key",
     )
     params["read_current_start"] = current["window_start"]
-    sql = f"""SELECT *,
-        if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS period_key
-        FROM ({sql})"""
     rows = _rows(
         store, _aggregate_select(sql, definition, params, per_period=True), params
     )
@@ -423,19 +427,25 @@ def read_trend(metric, data, *, store=None):
             raise MetricInputError(
                 {"group_by": "Choose a dimension stored by this definition."}
             )
-        sql, params = bucket_select(metric, definition, manifest, window)
-        params.update(read_start=window["window_start"], read_step=width * 900)
         # The full window reaches combine_parts_select before its scope guard.
         # Point/group boundaries therefore cannot hide mixed sampling scopes.
         group = "group_key" if group_by else "''"
         if group_by in dimensions:
-            params["read_dimension"] = dimensions.index(group_by) + 1
             # Dimensions are an array of tagged JSON strings. Preserve structural
             # missing/mixed/Other markers instead of turning them into empty values.
             group = "if(group_key IN ('[\"other\"]', '[\"mixed\"]'), group_key, JSONExtractString(group_key, %(read_dimension)s))"
-        sql = f"""SELECT * REPLACE(toJSONString(tuple(
-            intDiv(dateDiff('second', toDateTime(%(read_start)s, 'UTC'), bucket_start), %(read_step)s), {group}
-            )) AS group_key) FROM ({sql})"""
+        sql, params = bucket_select(
+            metric,
+            definition,
+            manifest,
+            window,
+            projection_sql=f"""* REPLACE(toJSONString(tuple(
+                intDiv(dateDiff('second', toDateTime(%(read_start)s, 'UTC'), bucket_start), %(read_step)s), {group}
+                )) AS group_key)""",
+        )
+        params.update(read_start=window["window_start"], read_step=width * 900)
+        if group_by in dimensions:
+            params["read_dimension"] = dimensions.index(group_by) + 1
         rows = _rows(
             store, _aggregate_select(sql, definition, params, grouped=True), params
         )
