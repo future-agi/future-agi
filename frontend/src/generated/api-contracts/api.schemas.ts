@@ -21112,7 +21112,7 @@ export interface HarnessRunHeldBackApi {
 export type HarnessRunReadinessSelectionApiReasons = { [key: string]: string };
 
 /**
- * The cases readiness held back from this run and why; null when runs are not pinned to versions.
+ * The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.
  */
 export interface HarnessRunReadinessSelectionApi {
   /**
@@ -27062,7 +27062,7 @@ export interface HarnessCapabilityRowApi {
 }
 
 /**
- * The run readiness of the run's versions when it was created.
+ * The run readiness of the run's versions when it was created; null for a coding agent's key.
  */
 export interface HarnessCapabilityReportApi {
   pairing: HarnessCapabilityPairingApi;

@@ -538,12 +538,9 @@ def create_selected_harness_run(
         if parallelism is not None:
             runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
-        for key in (
-            *RUN_DROPPED_METADATA,
-            # The run's payload never names which cases are held back; its sandbox
-            # still holds every case of the suite.
-            HELD_BACK_METADATA_KEY,
-        ):
+        # The run's payload never names which cases are held back; its sandbox still holds
+        # every case of the suite.
+        for key in (*RUN_DROPPED_METADATA, HELD_BACK_METADATA_KEY):
             child_metadata.pop(key, None)
         if coding_agent_key_id is not None:
             child_metadata["coding_agent_key_id"] = coding_agent_key_id

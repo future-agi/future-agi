@@ -4745,9 +4745,11 @@ class HostedHarnessGateway:
             label = (
                 RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else AUTHORING_FAILED
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    AUTHORING_FAILED
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
             record = self._failure_record(attempt)
             # ALK's own redacted line when it wrote one; the log's last typed line can
