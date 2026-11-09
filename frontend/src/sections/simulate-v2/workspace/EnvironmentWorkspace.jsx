@@ -197,7 +197,7 @@ import AlsoRunIn from "../run/AlsoRunIn";
 import WorldPanel from "./WorldPanel";
 import SettingsPanel from "./SettingsPanel";
 import { clickable, focusRing } from "../components/clickable";
-import { compatibilityOf } from "../_mock/compatibility";
+import { compatibilityOf, pairingStampOf } from "../_mock/compatibility";
 import { buildableAgentsOf } from "../environments/worldSource";
 
 /**
@@ -1229,9 +1229,32 @@ export default function EnvironmentWorkspace() {
     setCapsChecking(true);
     setTimeout(
       () => {
+        /* A check that fails on our side (?check=unavailable shows it):
+           nothing about the pairing is learned, so it counts against
+           nothing and runs aren't held. */
+        if (new URLSearchParams(window.location.search).get("check") === "unavailable") {
+          setAgentValues(agentKey, {
+            checkUnavailable: {
+              at: new Date().toISOString(),
+              reason: "The test world couldn't be prepared on our side",
+            },
+          });
+          setCapsChecking(false);
+          enqueueSnackbar("The check couldn't run on our side — runs aren't held. Try again later.", { variant: "info" });
+          return;
+        }
         const out = runConnectionCheck(agentNow, spec, found.tools);
         const failed = out.results.filter((r) => r.state === "failed").length;
-        setAgentValues(agentKey, checkSavedPatch(agentNow.values, out));
+        /* Saved with the pairing it covered, so a newer environment version
+           or edited scenarios make it stale. */
+        setAgentValues(agentKey, {
+          ...checkSavedPatch(agentNow.values, out),
+          checkUnavailable: null,
+          checkedOn: {
+            ...(agentNow.values?.checkedOn || {}),
+            [env.id]: pairingStampOf(worldEnv, envState),
+          },
+        });
         setCapsChecking(false);
         enqueueSnackbar(
           out.passed

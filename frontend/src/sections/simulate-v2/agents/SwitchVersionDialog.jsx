@@ -29,6 +29,7 @@ export default function SwitchVersionDialog({
   envState,
   label,
   onConfirm,
+  checks = false,
 }) {
   if (!env || !envState || !label) return null;
   /* A code agent's versions read as commits — "main @ 3f9a2c1". */
@@ -80,6 +81,13 @@ export default function SwitchVersionDialog({
             ? `Tests ${name} and follows each new production version. Earlier runs keep theirs.`
             : `It stays on ${name} — new production versions won't move it. Nothing runs now; earlier runs keep their version.`}
         </Typography>
+        {checks && (
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mt: 1.25 }}
+          >
+            {`${name} hasn't been checked on this environment. Confirming starts a check; the default moves when it passes, usually in a couple of minutes. Until then, runs keep using the current default.`}
+          </Typography>
+        )}
         {!follows && newerKeys.length > 0 && (
           <Typography
             sx={{ typography: "s3", color: "text.secondary", mt: 1.25 }}
@@ -147,4 +155,5 @@ SwitchVersionDialog.propTypes = {
   envState: PropTypes.object,
   label: PropTypes.string,
   onConfirm: PropTypes.func,
+  checks: PropTypes.bool,
 };

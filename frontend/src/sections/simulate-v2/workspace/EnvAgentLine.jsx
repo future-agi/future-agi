@@ -50,6 +50,7 @@ import ChangeAgentDrawer from "./agents/ChangeAgentDrawer";
 import ConnectNewAgentDrawer from "./agents/ConnectNewAgentDrawer";
 import { COMPAT_STATUS, compatibilityOf } from "../_mock/compatibility";
 import { StatusDot } from "../components/primitives";
+import { checksConnection } from "../_mock/connectionCheck";
 
 const outlined = {
   color: "text.primary",
@@ -125,6 +126,19 @@ export default function EnvAgentLine({
 
   const [menu, setMenu] = useState(null);
   const [switching, setSwitching] = useState(false);
+  /* A new default for a pairing no check has covered waits for its check;
+     the environment keeps testing the old version until it passes. */
+  const checkable = checksConnection(record || agent);
+  const [pendingDefault, setPendingDefault] = useState(null);
+  const makeDefault = (label) => {
+    if (!checkable) return testHere(label);
+    setPendingDefault(label);
+    setTimeout(() => {
+      testHere(label);
+      setPendingDefault(null);
+      enqueueSnackbar(`${nm(label)} passed its check here — it's now the default.`, { variant: "success" });
+    }, 6000);
+  };
   const [syncOpen, setSyncOpen] = useState(false);
   const [changing, setChanging] = useState(false);
   const [connectingNew, setConnectingNew] = useState(false);
@@ -354,7 +368,7 @@ export default function EnvAgentLine({
           <Box component="span" sx={{ color: "text.tertiary" }}>
             {pinned ? ` · default ${nm(active)}` : " · default: production"}
           </Box>
-          {behind && (
+          {behind && !pendingDefault && (
             <Box
               component="span"
               sx={{ color: "text.secondary" }}
@@ -368,7 +382,20 @@ export default function EnvAgentLine({
             </Box>
           )}
         </Typography>
-        {switchTo && !locked && (
+        {pendingDefault && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ flexShrink: 0 }}
+          >
+            <StatusDot status="running" size={6} live />
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {`Checking ${pendingDefault} before it becomes the default`}
+            </Typography>
+          </Stack>
+        )}
+        {switchTo && !locked && !pendingDefault && (
           <Button
             size="small"
             variant="outlined"
@@ -506,8 +533,9 @@ export default function EnvAgentLine({
         env={env}
         envState={envState}
         label={switchTo || active}
+        checks={checkable}
         onConfirm={() => {
-          testHere(switchTo);
+          makeDefault(switchTo);
           setSwitching(false);
         }}
       />

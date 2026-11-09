@@ -308,11 +308,19 @@ export const compatibilityOf = ({
     (x) => x.label === version?.label,
   );
   const versionAt = Date.parse(saved?.createdAt || saved?.at || "") || null;
+  /* What this pairing looked like when it was last checked here: a newer
+     environment version or edited scenarios make that check stale too. */
+  const checkedHere = env?.id ? v.checkedOn?.[env.id] || null : null;
+  const pairNow = checkedHere ? pairingStampOf(env, envState) : null;
   const staleWhy = v.disconnected
     ? "A credential it uses changed since the last test"
     : testedAt && versionAt && versionAt > testedAt
       ? `Agent ${version.label} arrived after the last test`
-      : null;
+      : checkedHere && pairNow.envVersion !== checkedHere.envVersion
+        ? `Environment ${pairNow.envVersion} was saved after the last check (it ran on ${checkedHere.envVersion})`
+        : checkedHere && pairNow.suite !== checkedHere.suite
+          ? "The scenarios changed after the last check"
+          : null;
 
   const rows = [];
   const add = (id, status, detail, extra = {}) =>
@@ -981,8 +989,54 @@ export const compatibilityOf = ({
     /* The last check before a fix cleared it — never "never checked". */
     checkedBeforeAt: !test ? v.connectionTestBefore?.at || null : null,
     staleWhy,
+    validation: validationOf(v, test, testedAt, rows, staleWhy),
     fromCode: startsFromCode(agent),
   };
+};
+
+/** The scenarios a full run takes, as one short fingerprint. */
+const suiteOf = (envState) =>
+  (hashSeed(
+    JSON.stringify(
+      requestedOf(envState).map((s) => [
+        s.id,
+        s.title || s.name || "",
+        s.goal || s.description || s.prompt || "",
+        (s.subgoals || s.subGoals || []).length,
+      ]),
+    ),
+  ) >>> 0).toString(16);
+
+/** Saved with a check run from an environment: the pairing it covered. */
+export const pairingStampOf = (env, envState) => ({
+  envVersion: currentEnvVersion(env, envState)?.label || "v1",
+  suite: suiteOf(envState),
+});
+
+/* How long a pairing check may take before it gives up (minutes). */
+export const PAIR_CHECK_LIMIT_MIN = 45;
+
+/*
+  The pairing's last check, as a run reads it: ready, stale, failed (runs
+  of the pairing are held), or unavailable — the check failed on our side
+  (the test world couldn't be prepared), so it counts against nothing and
+  runs aren't held. "validating" is the live state, passed in by the caller.
+*/
+const validationOf = (v, test, testedAt, rows, staleWhy) => {
+  const off = v.checkUnavailable;
+  if (off && (!testedAt || Date.parse(off.at) > testedAt))
+    return { state: "unavailable", reason: off.reason, at: off.at };
+  if (!test) return null;
+  const failed = rows.filter(
+    (r) => r.status === "blocked" && r.repair === "connection",
+  );
+  if (failed.length)
+    return {
+      state: "failed",
+      reason: failed.map((r) => r.label.toLowerCase()).join(", "),
+      at: test.at,
+    };
+  return { state: staleWhy ? "stale" : "ready", at: test.at };
 };
 
 /**
@@ -1149,6 +1203,8 @@ export const compatStampOf = (report, evaluatedIds) => ({
   evaluated: evaluatedIds.length,
   blocked: report.scope.blocked,
   testedAt: report.testedAt,
+  validation: report.validation,
+  staleWhy: report.staleWhy,
   rows: report.rows.map((r) => ({
     id: r.id,
     label: r.label,

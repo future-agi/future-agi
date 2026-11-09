@@ -2,6 +2,8 @@ import PropTypes from "prop-types";
 import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import { StatusDot } from "../components/primitives";
 import { READY_STATUS, readinessOf } from "../_mock/readiness";
+import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
+import { ago } from "../agents/agentViewUtils";
 
 /*
   Ready to run (plan T06; runs.md step 1): the short panel in Run setup for
@@ -24,6 +26,7 @@ export default function ReadyToRun({
   onFix,
   onCheck,
   checking = false,
+  excluded = 0,
   children,
 }) {
   const areas = readinessOf(report, scenarios, evalCount);
@@ -33,6 +36,34 @@ export default function ReadyToRun({
   const blockers = areas.filter((a) => a.status === "blocked").length;
   const open = areas.filter((a) => a.status !== "ready");
   const ready = areas.filter((a) => a.status === "ready");
+  /* The pairing's check, said once above the areas: running (runs wait),
+     failed (runs held), unavailable on our side (nothing held), or stale. */
+  const pair = `agent ${report.identity?.agentVersion || "v1"} on environment ${report.identity?.worldVersion || "v1"}`;
+  const val = report.validation;
+  const runnable = report.scope.runnable;
+  const state = checking ? "validating" : val?.state;
+  const pairLine =
+    state === "validating"
+      ? {
+          dot: "running",
+          text: `Checking ${pair}. Runs of this pairing wait until it finishes — at most ${PAIR_CHECK_LIMIT_MIN} minutes.`,
+        }
+      : state === "failed"
+        ? {
+            dot: "failed",
+            text: `The last check (${ago(val.at)}) failed on ${val.reason}. Runs of this pairing are held until a check passes${runnable ? ` — or run just the ${runnable} that can run` : ""}.`,
+          }
+        : state === "unavailable"
+          ? {
+              dot: "cancelled",
+              text: `Check unavailable ${ago(val.at)}: ${String(val.reason || "").replace(/^./, (c) => c.toLowerCase())}. It doesn't count against this pairing, and runs aren't held.`,
+            }
+          : state === "stale"
+            ? {
+                dot: "needs_input",
+                text: `${report.staleWhy}. Re-check before trusting a run.`,
+              }
+            : null;
   return (
     <Box
       sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px" }}
@@ -57,12 +88,15 @@ export default function ReadyToRun({
           {[
             `${eligible} of ${requested} eligible`,
             `${blocked.length} blocked`,
+            excluded ? `${excluded} excluded` : null,
             blockers
               ? `${blockers} blocker${blockers === 1 ? "" : "s"} to fix`
               : "no blocker",
-          ].join(" · ")}
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </Typography>
-        {unchecked && onCheck && (
+        {(unchecked || val || checking) && onCheck && (
           <Button
             size="small"
             variant="outlined"
@@ -70,10 +104,34 @@ export default function ReadyToRun({
             onClick={onCheck}
             sx={{ py: 0, flexShrink: 0 }}
           >
-            {checking ? "Checking…" : "Run the check"}
+            {checking ? "Checking…" : val ? "Re-check" : "Run the check"}
           </Button>
         )}
       </Stack>
+      {pairLine && (
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Box sx={{ pt: "6px", flexShrink: 0, display: "flex" }}>
+            <StatusDot
+              status={pairLine.dot}
+              size={6}
+              live={state === "validating"}
+            />
+          </Box>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {pairLine.text}
+          </Typography>
+        </Stack>
+      )}
       {/* Short by design (runs.md: "a short Ready to run panel"): one line
           per blocker — its reason and the scenarios it hits on hover — and
           every ready area folded into one quiet line. */}
@@ -205,5 +263,6 @@ ReadyToRun.propTypes = {
   onFix: PropTypes.func,
   onCheck: PropTypes.func,
   checking: PropTypes.bool,
+  excluded: PropTypes.number,
   children: PropTypes.node,
 };

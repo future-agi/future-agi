@@ -55,7 +55,12 @@ import {
   trialMatchesSubActor,
 } from "../_mock/subActors";
 import { scenarioTitle } from "../_mock/scenarios";
-import { SectionCard, StatusChip, EmptyState } from "../components/primitives";
+import {
+  SectionCard,
+  StatusChip,
+  StatusDot,
+  EmptyState,
+} from "../components/primitives";
 import RunAnalytics from "./RunAnalyticsV2";
 import CallDrawer from "./CallDrawer";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
@@ -147,7 +152,8 @@ import {
   TrialArtifacts,
 } from "./TrialEvidence";
 import ProviderEvents from "./ProviderEvents";
-import { isTextRehearsal } from "../_mock/compatibility";
+import { COMPAT_STATUS, isTextRehearsal } from "../_mock/compatibility";
+import { ago } from "../agents/agentViewUtils";
 
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
@@ -1618,20 +1624,40 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {/* A run is one agent version against one environment version,
                 each scenario played `repeats` times — the context every
                 result on this page compares within. */}
-            {env.name}
-            {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
             {(() => {
-              /* runs §2: agent, environment and suite versions together. */
+              /* runs §2: agent, environment and suite versions together —
+                 the environment and agent in the line, the rest on hover. */
               const pins = runPinsOf(identity || sourceRun, env, envState);
-              return `${pins.env ? ` · environment ${envLabelOf(env, envState, pins.env)}` : ""} · suite ${pins.suite}`;
-            })()}
-            {(() => {
-              const line = runSkillsLineOf(
+              const envV = pins.env ? envLabelOf(env, envState, pins.env) : null;
+              const skills = runSkillsLineOf(
                 simState?.workspaceSettings,
                 envState.agent,
                 sourceRun,
               );
-              return line ? ` · ${line}` : "";
+              return (
+                <Tooltip
+                  arrow
+                  placement="bottom-start"
+                  title={
+                    <Box sx={{ whiteSpace: "pre-line" }}>
+                      {[
+                        envV && `Environment ${envV}`,
+                        identity?.agentVersion &&
+                          `Agent ${identity.agentVersion}`,
+                        `Suite ${pins.suite}`,
+                        `${stats.total} scenario${stats.total === 1 ? "" : "s"}${identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}`,
+                        skills,
+                      ]
+                        .filter(Boolean)
+                        .join("\n")}
+                    </Box>
+                  }
+                >
+                  <Box component="span" sx={{ cursor: "default" }}>
+                    {`${env.name}${envV ? ` ${envV}` : ""}${identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}`}
+                  </Box>
+                </Tooltip>
+              );
             })()}
             {named?.improvement && (
               <>
@@ -1643,8 +1669,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               envId={env.id}
               run={(envState.runs || []).find((r) => r.id === runId)}
             />
-            {` · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
-            {identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}
             {(() => {
               /* Finishing what an earlier run left unstarted: a linked attempt of it. */
               const at = attemptHeaderOf(envState.runs || [], sourceRun);
@@ -1660,6 +1684,64 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               return c && c.requested > c.evaluated
                 ? ` · ${c.evaluated} evaluated / ${c.requested} requested`
                 : "";
+            })()}
+            {(() => {
+              /* The readiness this run started under, kept with it — not
+                 today's, which may have moved since. */
+              const c = (envState.runs || []).find(
+                (r) => r.id === runId,
+              )?.compat;
+              if (!c?.rows) return null;
+              const open = c.rows.filter((r) => r.status !== "supported");
+              const worst = ["blocked", "stale", "untested", "partial"].find(
+                (k) => open.some((r) => r.status === k),
+              );
+              const v = c.validation?.state;
+              return (
+                <>
+                  {" · "}
+                  <Tooltip
+                    arrow
+                    placement="bottom-start"
+                    title={
+                      <Box sx={{ whiteSpace: "pre-line" }}>
+                        {[
+                          `Ready to run when this run started (${new Date(c.at).toLocaleString()})`,
+                          `Agent ${c.identity?.agentVersion || "v1"} on environment ${c.identity?.worldVersion || "v1"} · ${c.testedAt ? `checked ${ago(c.testedAt)}` : "never checked"}`,
+                          v === "unavailable"
+                            ? "Last check unavailable on our side — it held nothing."
+                            : v === "stale"
+                              ? `Stale: ${c.staleWhy}.`
+                              : null,
+                          ...open.map(
+                            (r) =>
+                              `${r.label} — ${COMPAT_STATUS[r.status]?.label || r.status}${r.affected ? ` · ${r.affected} affected` : ""}`,
+                          ),
+                        ]
+                          .filter(Boolean)
+                          .join("\n")}
+                      </Box>
+                    }
+                  >
+                    <Box
+                      component="span"
+                      sx={{
+                        cursor: "default",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        verticalAlign: "middle",
+                      }}
+                    >
+                      <StatusDot
+                        status={worst ? COMPAT_STATUS[worst].dot : "passed"}
+                        size={6}
+                      />
+                      Readiness
+                    </Box>
+                  </Tooltip>
+                </>
+              );
             })()}
             {(() => {
               /* A platform config that can change between runs. */

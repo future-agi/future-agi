@@ -381,6 +381,23 @@ export default function RunPlanDialog({
     ledger.project,
     { user: me, userUsed: ledger.user },
   );
+  /* Runs of a pairing wait while its check runs, and are held after it
+     failed when nothing can run; a check unavailable on our side holds
+     nothing. */
+  const pairHold = !compat
+    ? null
+    : checkingCompat
+      ? {
+          title: "Waiting for this pairing's check",
+          line: "Runs start once it finishes.",
+        }
+      : compat.validation?.state === "failed" && !compat.scope.runnable
+        ? {
+            title: "Held — this pairing's last check failed",
+            line: "Fix what it found and re-check.",
+          }
+        : null;
+  const canStart = check.canStart && !pairHold;
   /* The estimate can be over the admin's per-run limit however the limit is
      set — then the most attempts that fit is the useful suggestion. */
   const overPolicy =
@@ -469,6 +486,7 @@ export default function RunPlanDialog({
               onFix={onRepairCompat}
               onCheck={onCheckCompat}
               checking={checkingCompat}
+              excluded={breakdown?.excluded || 0}
             >
               {blockedN > 0 && (
                 <Stack spacing={1}>
@@ -960,6 +978,7 @@ export default function RunPlanDialog({
                 compat.scope.untested.length
                   ? `${compat.scope.untested.length} ${waitingWordOf(compat)}`
                   : null,
+                breakdown?.excluded ? `${breakdown.excluded} excluded` : null,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -1528,11 +1547,11 @@ export default function RunPlanDialog({
         <Tooltip
           arrow
           title={
-            check.canStart
+            canStart
               ? SHOW_RUN_COST
                 ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
                 : `${estimate.trials} ${unit}s`
-              : check.holds[0]?.title || ""
+              : pairHold?.title || check.holds[0]?.title || ""
           }
         >
           <span>
@@ -1540,7 +1559,7 @@ export default function RunPlanDialog({
               size="small"
               variant="contained"
               disabled={
-                !check.canStart ||
+                !canStart ||
                 (blockedN > 0 && !subsetOk) ||
                 submit === "sending" ||
                 submit === "timeout"
