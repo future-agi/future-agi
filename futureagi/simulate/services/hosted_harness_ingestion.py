@@ -1090,6 +1090,7 @@ def _apply_receipt_to_call(
         transaction.on_commit(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
+        transaction.on_commit(lambda: _dispatch_worker_read(call_id), robust=True)
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         lookup_failed = False
         try:
@@ -1130,6 +1131,18 @@ def _apply_receipt_to_call(
                 lambda: locked_call_metadata_update(call_id, _mark_eval_side),
                 robust=True,
             )
+
+
+def _dispatch_worker_read(call_id: UUID) -> None:
+    """Read the call's worker timeline once its spans have had time to arrive."""
+    from datetime import timedelta
+
+    from simulate.services.harness_workers import FIRST_READ
+    from simulate.tasks.alk_sim import record_call_workers
+
+    record_call_workers.apply_async(
+        args=(str(call_id),), start_delay=timedelta(seconds=FIRST_READ)
+    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:

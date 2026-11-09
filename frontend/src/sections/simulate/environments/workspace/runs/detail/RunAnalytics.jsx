@@ -220,6 +220,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           scenario: task.label,
           simulationCallType: task.modality,
           provider: task.provider,
+          completedAt: task.completed_at ?? null,
         })
     : undefined;
   const { summary } = data;

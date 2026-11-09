@@ -115,3 +115,32 @@ describe("ChatTranscriptPane", () => {
     expect(screen.getByText(/args:/)).toBeInTheDocument();
   });
 });
+
+describe("ChatTranscriptPane tool and hand-off rows", () => {
+  it("marks a tool row apart from the customer, and a hand-off as a hand-off", () => {
+    render(
+      <ChatTranscriptPane
+        turns={[
+          { role: "customer", text: "Where is my order?" },
+          {
+            role: "tool",
+            text: "get_order",
+            toolCalls: [{ name: "get_order" }],
+          },
+          {
+            role: "tool",
+            text: "Billing",
+            toolCalls: [{ name: "Billing", delegated_to: "Billing" }],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/· Hand-off$/)).toBeInTheDocument();
+    const tool = screen.getByText(/· Tool call$/).parentElement;
+    const customer = screen.getByText(/· Customer$/).parentElement;
+    expect(getComputedStyle(tool).borderLeftColor).not.toBe(
+      getComputedStyle(customer).borderLeftColor,
+    );
+  });
+});

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Chip,
@@ -18,13 +18,19 @@ import { ShareDialog } from "src/components/share-dialog";
 import {
   useCallDetail,
   useCallTraces,
+  useHasWorkers,
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
 import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import {
+  CALL_TRACES_COPY,
+  CALL_WORKERS_COPY,
+  ownsArrowKeys,
+} from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
@@ -72,17 +78,6 @@ NavArrow.propTypes = {
   disabled: PropTypes.bool,
 };
 
-// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
-// instead of stepping to another conversation — the voice transcript does the
-// same. Focusable so a click inside hands it the keyboard; default not
-// prevented, so the browser still scrolls.
-const ownsArrowKeys = {
-  tabIndex: 0,
-  onKeyDown: (e) => {
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
-  },
-};
-
 export default function ChatCallDrawer({
   task,
   executionId = null,
@@ -113,9 +108,31 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [artifact, setArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [openStep, setOpenStep] = useState(null);
+  // Forgotten on another call, as in the voice drawer.
+  const [traceCallId, setTraceCallId] = useState(task.id);
+  if (traceCallId !== task.id) {
+    setTraceCallId(task.id);
+    setOpenStep(null);
+  }
+  const openTrace = (traceId, spanId) => {
+    setOpenStep({ traceId, spanId });
+    setChosenArtifact("traces");
+  };
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back.
+  const artifact =
+    chosenArtifact === "workers" && hasWorkers === false
+      ? "transcript"
+      : chosenArtifact;
+  const showWorkers = hasWorkers || artifact === "workers";
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
+  const traceIds = useMemo(
+    () => callTraces.traces.map((trace) => trace.traceId),
+    [callTraces.traces],
+  );
   const showTraces = artifact === "traces";
   const showChanges =
     artifact === "world_changes" && Boolean(callDetail?.trial_state);
@@ -246,14 +263,11 @@ export default function ChatCallDrawer({
           }}
         >
           <CustomTabs
-            value={
-              showTraces
-                ? "traces"
-                : showChanges
-                  ? "world_changes"
-                  : "transcript"
-            }
-            onChange={(_, value) => setArtifact(value)}
+            value={artifact}
+            onChange={(_, value) => {
+              setOpenStep(null);
+              setChosenArtifact(value);
+            }}
             sx={{
               boxShadow: "none",
               borderBottom: "1px solid",
@@ -265,13 +279,27 @@ export default function ChatCallDrawer({
             {callDetail?.trial_state && (
               <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
             )}
+            {showWorkers ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {showChanges ? (
+            {/* Hidden, not unmounted, on another tab, so its open rows and Raw events survive a visit to Traces. */}
+            {showWorkers ? (
+              <Box sx={{ display: artifact === "workers" ? "block" : "none" }}>
+                <CallWorkersPanel
+                  key={task.id}
+                  callExecutionId={task.id}
+                  onOpenTrace={openTrace}
+                  traceIds={traceIds}
+                />
+              </Box>
+            ) : null}
+            {artifact === "workers" ? null : showChanges ? (
               <TrialChangesPanel trialState={callDetail.trial_state} />
             ) : showTraces ? (
               <Box
@@ -289,6 +317,8 @@ export default function ChatCallDrawer({
                   testExecutionId={executionId}
                   isError={callTraces.isError}
                   onMountedChange={onTracePanelMountedChange}
+                  openTraceId={openStep?.traceId ?? null}
+                  openSpanId={openStep?.spanId ?? null}
                 />
               </Box>
             ) : isLoading && turns.length === 0 ? (
@@ -477,6 +507,7 @@ ChatCallDrawer.propTypes = {
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
     provider: PropTypes.string,
+    completedAt: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,
   executionId: PropTypes.string,
