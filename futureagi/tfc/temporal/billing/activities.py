@@ -6,7 +6,12 @@ Stripe meter events fire at invoice-close (see invoice_generation.py);
 no hourly catch-up. Errors re-raise so Temporal applies its retry policy.
 """
 
+import asyncio
+import contextvars
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
+from threading import Event
 
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
@@ -18,6 +23,36 @@ from tfc.temporal.billing.types import (
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
 )
+from tfc.temporal.common.heartbeat import Heartbeater
+
+
+@asynccontextmanager
+async def _billing_heartbeats() -> AsyncIterator[Callable[[str], None]]:
+    """Keep slow billing phases alive and deliver thread progress on the loop."""
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+    stopped = Event()
+
+    async with Heartbeater() as heartbeater:
+
+        def report_progress(org_id: str) -> None:
+            if not stopped.is_set():
+                heartbeater.details = (org_id,)
+                activity.heartbeat(org_id)
+
+        def progress_from_thread(org_id: str) -> None:
+            # Async activity heartbeats create asyncio tasks. The executor has
+            # no loop, so carry the activity context back to its owning loop.
+            if not stopped.is_set():
+                loop.call_soon_threadsafe(report_progress, org_id, context=context)
+
+        try:
+            yield progress_from_thread
+        finally:
+            # Cancelling the await cannot stop in-flight synchronous billing.
+            # Ignore its late progress, including already-queued callbacks.
+            stopped.set()
+
 
 # ── Monthly Invoice Generation ─────────────────────────────────────────────
 
@@ -33,9 +68,10 @@ async def generate_monthly_invoices_activity(
     """
     close_old_connections()
     try:
-        created, skipped, errors = await sync_to_async(
-            _generate_monthly_invoices_sync, thread_sensitive=False
-        )(input.period, input.org_id)
+        async with _billing_heartbeats() as on_progress:
+            created, skipped, errors = await sync_to_async(
+                _generate_monthly_invoices_sync, thread_sensitive=False
+            )(input.period, input.org_id, on_progress=on_progress)
         activity.logger.info(
             f"Monthly invoices: created={created}, skipped={skipped}, errors={errors}"
         )
@@ -50,7 +86,7 @@ async def generate_monthly_invoices_activity(
 
 
 def _generate_monthly_invoices_sync(
-    period: str, org_id: str = ""
+    period: str, org_id: str = "", *, on_progress: Callable[[str], None] | None = None
 ) -> tuple[int, int, int]:
     """Sync wrapper — generates invoices for paid orgs (or a single org).
 
@@ -86,7 +122,7 @@ def _generate_monthly_invoices_sync(
             skip_stripe=False,
             skip_email=False,
             stdout=lambda msg: activity.logger.info(msg),
-            on_progress=activity.heartbeat,
+            on_progress=on_progress,
         )
         return result.created, result.skipped, result.errors
     finally:
@@ -155,13 +191,14 @@ async def monthly_closing_activity(
             f"monthly_closing_start closed={period_closed} billed={period_billed}"
         )
 
-        await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(
-            period_closed
-        )
+        async with _billing_heartbeats() as on_progress:
+            await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(
+                period_closed
+            )
 
-        created, skipped, errors = await sync_to_async(
-            _generate_monthly_invoices_sync, thread_sensitive=False
-        )(period_billed, "")
+            created, skipped, errors = await sync_to_async(
+                _generate_monthly_invoices_sync, thread_sensitive=False
+            )(period_billed, "", on_progress=on_progress)
         activity.logger.info(
             f"monthly_closing_done closed={period_closed} billed={period_billed} "
             f"created={created} skipped={skipped} errors={errors}"
