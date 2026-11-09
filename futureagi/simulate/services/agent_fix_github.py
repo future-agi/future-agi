@@ -16,7 +16,11 @@ from django.conf import settings
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
 from simulate.selectors.agent_fix import limited_validation, overridable_regressions
 from simulate.services.agent_fix_engine import load_object
-from simulate.services.agent_fix_runs import record_override, require_shippable
+from simulate.services.agent_fix_runs import (
+    base_moved,
+    record_override,
+    require_shippable,
+)
 from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
@@ -40,7 +44,9 @@ _LIMITED_NOTE = (
 def open_pull_request(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
-    """Open the candidate's pull request once and return its URL."""
+    """Open the candidate's pull request once and return its URL. Refused when the branch
+    it targets moved since the fix's commit, whatever the reason given: the fix proved its
+    change on that commit alone."""
     require_shippable(candidate, override_reason=override_reason)
     if candidate.pull_request_url:
         return candidate.pull_request_url
@@ -78,12 +84,15 @@ def open_pull_request(
         )
     patch = load_object(candidate.patch_object_key) or b""
     branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
-    # Before the push: the commit carries the reason, so a retry pushes the same commit.
-    record_override(candidate, reason=override_reason, user=user)
-    title, body = _description(candidate)
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
-        _push(repository, commit, branch, patch, candidate, title, body, token)
         base = _base_branch(repository, str(source.get("ref") or ""), token)
+        head = _branch_head(repository, base, token)
+        if head != commit:
+            raise base_moved(f"{base} @ {commit[:7]}", f"{base} @ {head[:7]}")
+        # Before the push: the commit carries the reason, so a retry pushes the same commit.
+        record_override(candidate, reason=override_reason, user=user)
+        title, body = _description(candidate)
+        _push(repository, commit, branch, patch, candidate, title, body, token)
         url = _pull_request(
             repository,
             branch,
@@ -243,6 +252,13 @@ def _base_branch(repository: str, ref: str, token: str) -> str:
     if name and not ref.startswith("refs/tags/") and not _COMMIT.fullmatch(name):
         return name
     return _api("GET", f"/repos/{repository}", token).json()["default_branch"]
+
+
+def _branch_head(repository: str, branch: str, token: str) -> str:
+    """The commit ``branch`` points at on GitHub now."""
+    return _api("GET", f"/repos/{repository}/git/ref/heads/{branch}", token).json()[
+        "object"
+    ]["sha"]
 
 
 def _pull_request(

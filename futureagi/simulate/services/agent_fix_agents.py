@@ -157,8 +157,13 @@ class VersionedSourceAgent:
                 " there",
                 status_code=422,
             )
+        # Only over the version the fix was made on: a default that moved since would
+        # lose that change.
         return make_default(
-            candidate.agent_version, candidate.fix_run.environment, user=user
+            candidate.agent_version,
+            candidate.fix_run.environment,
+            user=user,
+            expected_default_id=candidate.fix_run.base_agent_version_id,
         )
 
 

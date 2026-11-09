@@ -385,13 +385,34 @@ def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> 
     )
 
 
+def base_moved(base: str, current: str) -> HostedHarnessError:
+    """The refusal to ship a fix whose agent changed since its base: what it proved is no
+    longer what it would change. ``base`` and ``current`` name the agent then and now."""
+    return HostedHarnessError(
+        "fix_base_moved",
+        f"The agent changed since this fix started: the fix was made on {base} and the"
+        f" agent is now {current}. Run the environment on the current version and fix"
+        " it again.",
+        status_code=409,
+    )
+
+
 def make_candidate_default(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
-    """Make a finished fix's winner the environment's default, on the user's word."""
+    """Make a finished fix's winner the environment's default, on the user's word; never
+    over a default that moved since the fix's base, whatever the reason given."""
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
+    if outcome == "base_moved":
+        current = HostedHarnessJob.no_workspace_objects.select_related(
+            "agent_version"
+        ).get(id=fix_run.environment_id)
+        raise base_moved(
+            f"v{fix_run.base_agent_version.version_number}",
+            f"v{current.agent_version.version_number}",
+        )
     if outcome not in ("activated", "already_default"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
