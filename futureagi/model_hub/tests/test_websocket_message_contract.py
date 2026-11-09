@@ -3,7 +3,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 import requests
@@ -12,6 +12,7 @@ from asgiref.testing import ApplicationCommunicator
 from channels.layers import get_channel_layer
 from django.test import override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
+from structlog.testing import capture_logs
 
 from accounts.models import OrgApiKey
 from model_hub.utils import call_websocket
@@ -50,7 +51,7 @@ MESSAGES = [
     pytest.param(
         {
             "type": "generate_prompt",
-            "generation_id": TARGET,
+            "generation_id": f"generate_{TARGET}",
             "current_activity": "generate_initial_prompt",
             "status": "completed",
             "prompt": "Synthetic prompt",
@@ -139,6 +140,11 @@ async def receive_message(socket):
 
 @pytest.mark.parametrize("message,targeted", MESSAGES)
 def test_helper_messages_reach_only_authenticated_organization(message, targeted):
+    target = message.get("generation_id", TARGET)
+    assert_helper_delivery(message, targeted, target)
+
+
+def assert_helper_delivery(message, targeted, target):
     async def resolve_org(scope, user):
         return user.organization_id
 
@@ -151,7 +157,7 @@ def test_helper_messages_reach_only_authenticated_organization(message, targeted
                 await socket.send_input(
                     {
                         "type": "websocket.receive",
-                        "text": json.dumps({"type": "subscribe", "uuid": TARGET}),
+                        "text": json.dumps({"type": "subscribe", "uuid": target}),
                     }
                 )
                 assert (await receive_message(socket))[
@@ -168,7 +174,7 @@ def test_helper_messages_reach_only_authenticated_organization(message, targeted
                     ORG,
                     message,
                     send_to_uuid=targeted,
-                    uuid=TARGET if targeted else None,
+                    uuid=target if targeted else None,
                 )
             assert result["status"] is True, result
             payload = post.call_args.kwargs["json"]
@@ -248,7 +254,8 @@ def test_enqueue_failure_is_not_reported_as_success(targeted):
         response = post_relay({"message": {}, "send_to_uuid": targeted, "uuid": TARGET})
     assert response.status_code == 400
     logger.error.assert_called_once_with(
-        "websocket_relay_delivery_failed", error_type="ConnectionError"
+        "websocket_relay_delivery_failed", error_type="ConnectionError",
+        exception_traceback=ANY
     )
     assert "private delivery detail" not in str(response.data)
 
@@ -291,6 +298,7 @@ def test_malformed_endpoint_is_a_contained_notification_failure():
     logger.error.assert_called_once_with(
         "websocket_relay_failed",
         error_type="ValueError",
+        exception_traceback=ANY,
         status_code=None,
         validation_fields=[],
     )
@@ -321,6 +329,119 @@ def test_http_validation_log_contains_only_status_and_known_field_names():
     logger.error.assert_called_once_with(
         "websocket_relay_failed",
         error_type="HTTPError",
+        exception_traceback=ANY,
         status_code=400,
         validation_fields=["message", "uuid"],
     )
+
+
+@pytest.mark.parametrize(
+    "action,id_field,prefix,data",
+    [
+        ("generate_prompt", "generation_id", "generate_", {"statement": "Synthetic task"}),
+        ("improve_prompt", "improve_id", "improve_", {
+            "existing_prompt": "Synthetic prompt", "improvement_requirements": "Be concise"
+        }),
+    ],
+)
+@pytest.mark.parametrize("streaming", [False, True])
+def test_prompt_endpoint_identifiers_reach_subscribed_consumer(action, id_field, prefix, data, streaming):
+    from model_hub.views import prompt_template
+
+    request = SimpleNamespace(
+        data=data, headers={}, workspace=None,
+        user=SimpleNamespace(id=TARGET, organization=SimpleNamespace(id=ORG)),
+    )
+    # Exercise the real producer, replacing only billing/model work. The ID must
+    # come from its response, not a test's approximation of the endpoint format.
+    with (
+        patch.object(prompt_template, "count_text_tokens", return_value=1),
+        patch.object(prompt_template, "log_and_deduct_cost_for_api_request", None),
+        patch.object(prompt_template, "PromptGenerator"),
+        patch.object(prompt_template, "submit_with_retry") as submit,
+        patch("tfc.ee_gating.check_ee_feature"),
+    ):
+        response = getattr(prompt_template.PromptTemplateViewSet(), action)(request)
+    assert response.status_code == 200, response.data
+    target = response.data["result"][id_field]
+    assert target.startswith(prefix)
+    assert submit.call_args.args[2][id_field] == target
+    message = (
+        {"type": "run_prompt", "uuid": target, "chunk": "Synthetic chunk", "streaming_status": "running"}
+        if streaming else
+        {"type": action, id_field: target, "current_activity": "generate_initial_prompt", "status": "completed"}
+    )
+    assert_helper_delivery(message, True, target)
+
+
+@pytest.mark.parametrize("target", [
+    f"generate_{TARGET}", f"improve_{TARGET}",
+    "generate_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    "improve_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+])
+def test_prefixed_target_normalization_matches_subscriber(target):
+    assert_helper_delivery({"type": "run_prompt", "uuid": target, "chunk": "hello"}, True, target)
+
+
+@pytest.mark.parametrize("target", [
+    "generate_", "improve_not-a-uuid", f"unknown_{TARGET}",
+    f"generate_improve_{TARGET}", f"generate_{TARGET}extra", [TARGET], 42,
+])
+def test_invalid_prefixed_targets_are_rejected(target):
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        response = post_relay({"message": {}, "send_to_uuid": True, "uuid": target})
+    assert response.status_code == 400
+    layer.assert_not_called()
+
+
+def diagnostic_cause():
+    # No exception text, source line, request object, or local value may be logged.
+    sensitive = "synthetic-private-credential"
+    raise ValueError(sensitive)
+
+
+def diagnostic_origin(*args, **kwargs):
+    try:
+        diagnostic_cause()
+    except ValueError as exc:
+        raise ConnectionError("synthetic-private-payload") from exc
+
+
+@pytest.mark.parametrize("boundary", ["lookup", "create", "transport", "delivery"])
+def test_failure_logs_retain_origin_and_cause_without_sensitive_values(boundary):
+    with (
+        capture_logs() as events,
+        patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
+        patch("model_hub.utils.requests.post") as post,
+        patch("tfc.views.socket.get_channel_layer") as layer,
+    ):
+        keys.get.return_value = SimpleNamespace(api_key="synthetic-key", secret_key="synthetic-secret")
+        if boundary == "lookup":
+            keys.get.side_effect = diagnostic_origin
+        elif boundary == "create":
+            keys.get.side_effect = OrgApiKey.DoesNotExist
+            keys.create.side_effect = diagnostic_origin
+        elif boundary == "transport":
+            post.side_effect = diagnostic_origin
+        else:
+            layer.return_value.group_send = AsyncMock(side_effect=diagnostic_origin)
+        if boundary == "delivery":
+            assert post_relay({"message": {}}).status_code == 400
+        else:
+            assert call_websocket(ORG, {"sensitive": "synthetic-private-message"})["status"] == "error"
+    event = next(event for event in events if event["event"].startswith("websocket_relay_"))
+    assert event["log_level"] == "error"
+    trace = event["exception_traceback"]
+    assert trace[0]["error_type"] == "ConnectionError"
+    assert trace[0]["chained_by"] == "cause"
+    assert trace[1]["error_type"] == "ValueError"
+    for entry, function in zip(trace, ["diagnostic_origin", "diagnostic_cause"]):
+        origin = entry["frames"][-1]
+        assert origin["function"] == function
+        assert origin["file"] == "test_websocket_message_contract.py"
+        assert origin["line"] > 0
+    rendered = json.dumps(event)
+    assert "synthetic-private" not in rendered
+    assert "synthetic-secret" not in rendered
+    assert "synthetic-key" not in rendered
+    assert "exc_info" not in event

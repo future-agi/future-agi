@@ -1,10 +1,9 @@
-from uuid import UUID
-
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
+from sockets.targets import normalize_socket_target
 
 logger = structlog.get_logger(__name__)
 
@@ -203,7 +202,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
     def _uuid_group_name(self, uuid):
         try:
-            uuid = str(UUID(str(uuid)))
+            uuid = normalize_socket_target(uuid)
         except ValueError:
             # Preserve non-UUID subscriptions used by older socket clients.
             pass

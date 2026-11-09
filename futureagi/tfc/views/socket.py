@@ -11,6 +11,7 @@ from tfc.utils.api_serializers import (
     CallWebsocketResponseSerializer,
 )
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.safe_traceback import sanitized_exception_traceback
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +49,8 @@ class CallWebsocketView(APIView):
             return self._gm.success_response("Message sent to websocket")
         except Exception as exc:
             logger.error(
-                "websocket_relay_delivery_failed", error_type=type(exc).__name__
+                "websocket_relay_delivery_failed",
+                error_type=type(exc).__name__,
+                exception_traceback=sanitized_exception_traceback(exc),
             )
             return self._gm.bad_request("Unable to send message to Websocket")

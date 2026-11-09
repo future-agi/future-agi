@@ -6,6 +6,7 @@ from django.conf import settings
 
 from accounts.models import OrgApiKey
 from tfc.ee_loader import is_cloud_env
+from tfc.utils.safe_traceback import sanitized_exception_traceback
 
 logger = structlog.get_logger(__name__)
 
@@ -76,9 +77,10 @@ def call_websocket(organization_id, message, send_to_uuid=False, uuid=None):
         )
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.JSONDecodeError:
+    except requests.exceptions.JSONDecodeError as exc:
         logger.error(
             "websocket_relay_invalid_response",
+            exception_traceback=sanitized_exception_traceback(exc),
             status_code=response.status_code if response is not None else None,
         )
         return {"status": "error", "message": "Invalid response format"}
@@ -86,6 +88,7 @@ def call_websocket(organization_id, message, send_to_uuid=False, uuid=None):
         logger.error(
             "websocket_relay_failed",
             error_type=type(exc).__name__,
+            exception_traceback=sanitized_exception_traceback(exc),
             status_code=response.status_code if response is not None else None,
             validation_fields=_relay_validation_fields(response),
         )

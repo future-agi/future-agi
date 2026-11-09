@@ -1117,11 +1117,11 @@ export type ${jsonAlias} = JsonValueApi;`,
       "jsonValueSchema",
       "CallWebsocketCreateBody.message JSON values",
     );
-    zod = assertReplaceInNamedBlock(
+    zod = assertReplaceRegexInNamedBlock(
       zod,
       "export const CallWebsocketCreateBody =",
-      '"uuid": zod.string().uuid().optional()',
-      '"uuid": zod.string().uuid().nullish()',
+      /("uuid": zod\.string\(\)[^\n]*?)\.optional\(\)/,
+      "$1.nullish()",
       "CallWebsocketCreateBody.uuid nullable",
     );
     zod = assertReplaceRegexInNamedBlock(

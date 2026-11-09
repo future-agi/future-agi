@@ -560,7 +560,11 @@ def test_websocket_request_schema_matches_object_messages_and_optional_uuid():
     assert message["type"] == "object"
     assert message["additionalProperties"]["x-json-value"] is True
     target = schema["properties"]["uuid"]
-    assert target["format"] == "uuid"
+    from sockets.targets import TARGET_PATTERN
+
+    assert target["type"] == "string"
+    assert target["pattern"] == TARGET_PATTERN
+    assert "format" not in target
     assert target["x-nullable"] is True
 
 
