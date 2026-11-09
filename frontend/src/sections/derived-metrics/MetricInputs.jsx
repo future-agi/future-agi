@@ -13,6 +13,7 @@ export default function MetricInputs({
   projectId,
   guided = false,
   selectionUnit = "unit",
+  capabilities,
 }) {
   const guidedLabel = (label, index) =>
     inputs.length === 1 ? label : `${label} · input ${index + 1}`;
@@ -23,8 +24,27 @@ export default function MetricInputs({
       inputs.map((input, i) =>
         i === index
           ? {
-              ...(key === "source" ? newInput(input.alias) : {}),
-              ...input,
+              ...(key === "source"
+                ? value === "eval"
+                  ? {
+                      alias: input.alias,
+                      source: "eval",
+                      reducer: "latest",
+                      config_id: "",
+                      config_hash: "",
+                    }
+                  : newInput(input.alias)
+                : input),
+              ...(key === "field" && input.value_type
+                ? {
+                    value_type:
+                      value === "attribute_bool"
+                        ? "boolean"
+                        : value === "attribute_text"
+                          ? "text"
+                          : "number",
+                  }
+                : {}),
               [key]: value,
             }
           : input,
@@ -91,7 +111,12 @@ export default function MetricInputs({
               onChange={(e) => update(index, "reducer", e.target.value)}
               fullWidth
             >
-              {["latest", "mean", "min", "max"].map((value) => (
+              {(
+                capabilities?.sources?.find(
+                  (source) =>
+                    source.value_type === (input.value_type || "number"),
+                )?.reducers || ["latest", "mean", "min", "max"]
+              ).map((value) => (
                 <MenuItem key={value} value={value}>
                   {value}
                 </MenuItem>
@@ -140,6 +165,7 @@ export default function MetricInputs({
                   {[
                     "attribute_number",
                     "attribute_bool",
+                    ...(capabilities ? ["attribute_text"] : []),
                     "latency_ms",
                     "cost",
                     "total_tokens",
@@ -196,4 +222,5 @@ MetricInputs.propTypes = {
   projectId: PropTypes.string,
   guided: PropTypes.bool,
   selectionUnit: PropTypes.string,
+  capabilities: PropTypes.object,
 };

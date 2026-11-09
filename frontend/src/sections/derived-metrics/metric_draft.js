@@ -16,6 +16,9 @@ export function readMetricDraft(scope) {
       typeof value.form?.formula === "string" &&
       Array.isArray(value.form?.inputs) &&
       (location?.pathname === metricPath ||
+        /^\/dashboard\/metrics\/(new|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/edit)\/?$/i.test(
+          location?.pathname || "",
+        ) ||
         /^\/dashboard\/evaluations\/metrics\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i.test(
           location?.pathname || "",
         ))
