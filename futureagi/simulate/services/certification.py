@@ -719,10 +719,10 @@ def detect_stable_behavior_failures(case) -> list[dict]:
         job=job, attempt=attempt
     ).select_related("scenario"):
         for evaluation in (receipt.body or {}).get("evaluations") or []:
-            if (
-                evaluation.get("name") in stable
-                and evaluation.get("status") in {"failed", "error"}
-            ):
+            if evaluation.get("name") in stable and evaluation.get("status") in {
+                "failed",
+                "error",
+            }:
                 failures.append(
                     {
                         "scenario_key": (
@@ -758,10 +758,7 @@ def detect_exploratory_failures(case) -> list[dict]:
         job=job, attempt=attempt
     ).exclude(body__isnull=True):
         for ev in (r.body or {}).get("evaluations") or []:
-            if (
-                ev.get("name") not in stable
-                and ev.get("status") in {"failed", "error"}
-            ):
+            if ev.get("name") not in stable and ev.get("status") in {"failed", "error"}:
                 out.append(
                     {
                         "receipt_id": str(r.id),

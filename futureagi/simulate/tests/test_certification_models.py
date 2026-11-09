@@ -165,9 +165,7 @@ def submission_mocks():
             "simulate.services.harness_versioning.versions.versioning_enabled",
             return_value=False,
         ),
-        patch(
-            "simulate.services.harness_agent_versions.advisory_xact_lock"
-        ) as lock,
+        patch("simulate.services.harness_agent_versions.advisory_xact_lock") as lock,
         patch(
             "simulate.temporal.client.start_hosted_harness_gateway_workflow"
         ) as start,
