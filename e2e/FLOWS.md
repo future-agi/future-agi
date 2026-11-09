@@ -1592,39 +1592,45 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:70`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a voice project and seed a call whose four recording URLs 404
+2. open Voice Observe and identify the exact seeded call by Call ID
+3. open the call detail drawer and observe a real recording HTTP 404
+4. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the public-created project retains its exact ID/name, actor organization/workspace and simulator source in PG
+- the exact conversation root and recording attributes are queryable in spans FINAL with the scoped curated trace present
+- the browser voice-list response and visible Call ID/Status cells identify exactly the seeded completed call
+- browser and independent voice_call_detail reads return the exact seeded call and all four recording URLs unchanged with recording_available true
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:70`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a voice project and seed a call with no recording attributes
+2. open Voice Observe and identify the exact seeded call by Call ID
+3. open the call detail drawer
+4. see "No recording found", with no loader or recording-unavailable error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the public-created project retains its exact ID/name, actor organization/workspace and simulator source in PG
+- the exact conversation root and recording attributes are queryable in spans FINAL with the scoped curated trace present
+- the browser voice-list response and visible Call ID/Status cells identify exactly the seeded completed call
+- browser and independent voice_call_detail reads return the exact seeded call with recording_available false and all four recording URLs null
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
