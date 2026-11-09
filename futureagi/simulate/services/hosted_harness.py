@@ -2957,7 +2957,12 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
             CallExecution.CallStatus.ONGOING,
         )
     )
-    ended = list(still_open.values_list("id", flat=True))
+    # Only a call that was under way has workers' evidence to keep; one that never started has none to read.
+    ended = list(
+        still_open.filter(status=CallExecution.CallStatus.ONGOING).values_list(
+            "id", flat=True
+        )
+    )
     still_open.update(
         status=(
             CallExecution.CallStatus.CANCELLED

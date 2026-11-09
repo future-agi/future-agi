@@ -2771,6 +2771,12 @@ def test_a_cancelled_run_reads_each_call_it_cut_short(
     CallExecution.objects.filter(id=call.id).update(
         status=CallExecution.CallStatus.ONGOING
     )
+    # A call that never started has no workers' evidence: no read is queued for it.
+    waiting = CallExecution.objects.get(id=call.id)
+    waiting.pk = None
+    waiting.id = None
+    waiting.status = CallExecution.CallStatus.PENDING
+    waiting.save()
     HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
         state=HostedHarnessJob.State.CANCELED
     )
