@@ -32,9 +32,17 @@ class GitOpsFailureTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         for name in (
-            "start", "select", "successful", "witnesses", "browser", "permissions",
-            "pinned_digest_ignores_moved_tag", "missing_digest", "failed_bootstrap",
-            "untrusted_source", "image_only_rollback",
+            "start",
+            "select",
+            "successful",
+            "witnesses",
+            "browser",
+            "permissions",
+            "pinned_digest_ignores_moved_tag",
+            "missing_digest",
+            "failed_bootstrap",
+            "untrusted_source",
+            "image_only_rollback",
         ):
             stack.enter_context(mock.patch.object(fixture, name))
         return stack
@@ -43,7 +51,10 @@ class GitOpsFailureTests(unittest.TestCase):
         for error in (AssertionError(), TimeoutError(), RuntimeError("failed")):
             with self.subTest(error=type(error).__name__):
                 fixture = self.fixture()
-                with mock.patch.object(fixture, "start", side_effect=error), redirect_stdout(io.StringIO()):
+                with (
+                    mock.patch.object(fixture, "start", side_effect=error),
+                    redirect_stdout(io.StringIO()),
+                ):
                     self.assertFalse(fixture.exercise())
                 summary = json.loads((fixture.output / "summary.json").read_text())
                 self.assertEqual(summary["status"], "failed")
@@ -73,19 +84,39 @@ class GitOpsFailureTests(unittest.TestCase):
         fixture = self.fixture()
         secret = "synthetic-private-value"
         status = {
-            "sync": {"status": "OutOfSync", "revision": "requested-digest", "comparedTo": {
-                "source": {"helm": {"valuesObject": {"password": secret}}}}},
+            "sync": {
+                "status": "OutOfSync",
+                "revision": "requested-digest",
+                "comparedTo": {
+                    "source": {"helm": {"valuesObject": {"password": secret}}}
+                },
+            },
             "history": [{"source": {"helm": {"values": secret}}}],
-            "conditions": [{"type": "Ready", "status": "False", "reason": "Failed", "message": secret}],
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "reason": "Failed",
+                    "message": secret,
+                }
+            ],
         }
         console = io.StringIO()
 
         def wait():
-            return fixture.wait("controller readiness", lambda: {"status": status}, lambda _: False, seconds=1)
+            return fixture.wait(
+                "controller readiness",
+                lambda: {"status": status},
+                lambda _: False,
+                seconds=1,
+            )
 
-        with mock.patch.object(fixture, "start", side_effect=wait), \
-                mock.patch.object(acceptance.time, "monotonic", side_effect=[0, 0, 2]), \
-                mock.patch.object(acceptance.time, "sleep"), redirect_stdout(console):
+        with (
+            mock.patch.object(fixture, "start", side_effect=wait),
+            mock.patch.object(acceptance.time, "monotonic", side_effect=[0, 0, 2]),
+            mock.patch.object(acceptance.time, "sleep"),
+            redirect_stdout(console),
+        ):
             self.assertFalse(fixture.exercise())
         summary = json.loads((fixture.output / "summary.json").read_text())
         self.assertEqual(summary["status"], "failed")
@@ -98,12 +129,23 @@ class GitOpsFailureTests(unittest.TestCase):
 
     def test_timeout_does_not_echo_non_mapping_status(self):
         fixture = self.fixture()
-        for document in ("synthetic-private-value", {"status": "synthetic-private-value"}, None):
-            with self.subTest(document=document), \
-                    mock.patch.object(acceptance.time, "monotonic", side_effect=[0, 0, 2]), \
-                    mock.patch.object(acceptance.time, "sleep"):
+        for document in (
+            "synthetic-private-value",
+            {"status": "synthetic-private-value"},
+            None,
+        ):
+            with (
+                self.subTest(document=document),
+                mock.patch.object(acceptance.time, "monotonic", side_effect=[0, 0, 2]),
+                mock.patch.object(acceptance.time, "sleep"),
+            ):
                 with self.assertRaises(acceptance.Refused) as caught:
-                    fixture.wait("controller readiness", lambda document=document: document, lambda _: False, seconds=1)
+                    fixture.wait(
+                        "controller readiness",
+                        lambda document=document: document,
+                        lambda _: False,
+                        seconds=1,
+                    )
                 self.assertNotIn("synthetic-private-value", str(caught.exception))
                 self.assertTrue(str(caught.exception).endswith("last status={}"))
 
@@ -119,7 +161,9 @@ class BrowserFailureTests(unittest.TestCase):
         if screenshot_error:
             page.screenshot.side_effect = screenshot_error
         else:
-            page.screenshot.side_effect = lambda *, path, **kwargs: Path(path).write_bytes(b"synthetic image")
+            page.screenshot.side_effect = lambda *, path, **kwargs: Path(
+                path
+            ).write_bytes(b"synthetic image")
         browser_instance = mock.Mock()
         browser_instance.new_page.return_value = page
         manager = mock.MagicMock()
@@ -132,10 +176,20 @@ class BrowserFailureTests(unittest.TestCase):
         api.expect = mock.Mock()
         api.sync_playwright = mock.Mock(return_value=manager)
         package.sync_api = api
-        config = {"ui": "http://localhost:1", "api": "http://localhost:2", "output": str(output),
-                  "email": "review@example.test", "password": secret, "first_login": False}
-        with mock.patch.dict(sys.modules, {"playwright": package, "playwright.sync_api": api}), \
-                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(config))):
+        config = {
+            "ui": "http://localhost:1",
+            "api": "http://localhost:2",
+            "output": str(output),
+            "email": "review@example.test",
+            "password": secret,
+            "first_login": False,
+        }
+        with (
+            mock.patch.dict(
+                sys.modules, {"playwright": package, "playwright.sync_api": api}
+            ),
+            mock.patch.object(sys, "stdin", io.StringIO(json.dumps(config))),
+        ):
             self.assertEqual(browser.main(), 1)
         result = json.loads(output.read_text())
         self.assertEqual(result["status"], "failed")
@@ -145,7 +199,9 @@ class BrowserFailureTests(unittest.TestCase):
         self.assertTrue(result["frames"])
         browser_instance.close.assert_called_once_with()
         self.assertEqual(page.screenshot.call_count, 1)
-        self.assertEqual(page.screenshot.call_args.kwargs["mask"], [page.locator.return_value])
+        self.assertEqual(
+            page.screenshot.call_args.kwargs["mask"], [page.locator.return_value]
+        )
         return result, output
 
     def test_screenshot_failure_is_recorded_without_replacing_original_failure(self):

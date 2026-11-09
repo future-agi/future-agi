@@ -4,7 +4,7 @@ These cover service health, an actual account login and persisted store state.
 They are not a cross-version database-migration or backup/restore qualification.
 """
 
-PROGRAM = r'''
+PROGRAM = r"""
 import base64, hashlib, json, os, sys, urllib.parse, urllib.request
 import django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
@@ -73,4 +73,4 @@ print("GITOPS_WITNESS=" + json.dumps({
     "migration_count": len(migrations),
     "migration_sha256": hashlib.sha256(json.dumps(migrations).encode()).hexdigest(),
 }, sort_keys=True))
-'''
+"""
