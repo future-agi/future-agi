@@ -2609,6 +2609,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     query={
                         "category": query_params.get("category", ""),
                         "source": query_params.get("source", ""),
+                        "context": query_params.get("context", ""),
+                        "level": query_params.get("level", ""),
                         "property_kind": "",
                         "role": query_params.get("role", ""),
                         "per_eval_config": query_params.get("per_eval_config", False),

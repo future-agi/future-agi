@@ -9,6 +9,7 @@ from tracer.constants.dashboard import (
     text_annotation_aggregation_error,
 )
 from tracer.models.dashboard import Dashboard, DashboardWidget
+from tracer.models.derived_metric import DerivedMetricVersion
 from tracer.serializers.derived_metric import DerivedMetricDashboardContextSerializer
 from tracer.serializers.filters import (
     JsonValueField,
@@ -822,6 +823,7 @@ class DashboardMetricCatalogItemSerializer(serializers.Serializer):
             "eval_template",
             "annotation",
             "dataset_column",
+            "metric_field",
         ],
     )
     display_name = serializers.CharField(required=False, allow_blank=True)
@@ -853,6 +855,33 @@ class DashboardMetricCatalogItemSerializer(serializers.Serializer):
         allow_empty=True,
     )
     attribute_types_exact = serializers.BooleanField(required=False)
+    # Active-version descriptors, not current metric values. Other property
+    # families keep their existing shape and need not supply these fields.
+    column_id = serializers.CharField(required=False)
+    metric_id = serializers.UUIDField(required=False)
+    project_id = serializers.UUIDField(required=False)
+    version_id = serializers.UUIDField(required=False)
+    version = serializers.IntegerField(min_value=1, required=False)
+    kind = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Kind.choices, required=False
+    )
+    level = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Level.choices, required=False
+    )
+    source_level = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Level.choices, required=False
+    )
+    projection = serializers.ChoiceField(
+        choices=("", "per_user", "user_metric"), required=False, allow_blank=True
+    )
+    value_format = serializers.CharField(required=False, allow_blank=True)
+    value_labels = serializers.DictField(
+        child=serializers.CharField(trim_whitespace=False), required=False
+    )
+    definition_hash = serializers.RegexField(r"^[0-9a-f]{64}$", required=False)
+    group_dims = serializers.ListField(child=serializers.CharField(), required=False)
+    operators = serializers.ListField(child=serializers.CharField(), required=False)
+    filterable = serializers.BooleanField(required=False)
 
 
 class DashboardMetricsCatalogResultSerializer(serializers.Serializer):
@@ -956,10 +985,33 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
         trim_whitespace=True,
     )
     category = serializers.ChoiceField(
-        choices=DASHBOARD_METRIC_TYPES,
+        choices=(*DASHBOARD_METRIC_TYPES, "metric"),
         required=False,
         allow_blank=True,
         default="",
+    )
+    context = serializers.ChoiceField(
+        choices=(
+            "sessions",
+            "spans",
+            "traces",
+            "users",
+            "task_sessions",
+            "task_spans",
+            "task_traces",
+            "task",
+            "tasks",
+        ),
+        required=False,
+        help_text=(
+            "Unified cursor catalog context. Native user metrics require explicit "
+            "users; source=users alone does not admit them. Trace fields stay disabled."
+        ),
+    )
+    level = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Level.choices,
+        required=False,
+        help_text="Filter by the active definition's source grain, before projection.",
     )
     role = serializers.ChoiceField(
         choices=("metric", "dimension"),
@@ -1002,6 +1054,16 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
     def validate(self, attrs):
         cursor = attrs.get("cursor")
         cursor_mode = attrs.get("cursor_mode", False)
+        if not cursor_mode:
+            errors = {
+                field: f"{field} requires cursor_mode=true"
+                for field in ("context", "level")
+                if field in attrs
+            }
+            if attrs.get("category") == "metric":
+                errors["category"] = "category=metric requires cursor_mode=true"
+            if errors:
+                raise serializers.ValidationError(errors)
         if cursor and not cursor_mode:
             raise serializers.ValidationError(
                 {"cursor_mode": "cursor_mode=true is required with cursor"}
