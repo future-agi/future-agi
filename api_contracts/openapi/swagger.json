@@ -145233,6 +145233,13 @@
                         "not_applicable",
                         "inconclusive"
                     ]
+                },
+                "subject": {
+                    "title": "Subject",
+                    "type": "string",
+                    "pattern": "^(task|worker:\\S+)$",
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         },
@@ -154071,6 +154078,11 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "subject": {
+                    "title": "Subject",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -154303,6 +154315,29 @@
                 }
             }
         },
+        "TrialRefusedAction": {
+            "required": [
+                "action",
+                "code",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
         "TrialStateChange": {
             "required": [
                 "who",
@@ -154357,6 +154392,12 @@
                     "title": "No change",
                     "description": "True when this participant committed nothing: a result shown as 'no change', never left out.",
                     "type": "boolean"
+                },
+                "refused_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TrialRefusedAction"
+                    }
                 }
             }
         },
@@ -155155,6 +155196,20 @@
                 "tokens": {
                     "title": "Tokens",
                     "type": "integer"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "completed",
+                        "failed",
+                        "no_return",
+                        "timed_out",
+                        "cancel_requested",
+                        "cancelled",
+                        "infrastructure",
+                        "not_observed"
+                    ]
                 }
             }
         },
@@ -155255,6 +155310,11 @@
                 "output_omitted": {
                     "title": "Output omitted",
                     "type": "boolean"
+                },
+                "refusal_code": {
+                    "title": "Refusal code",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "relationship": {
                     "title": "Relationship",
@@ -155391,6 +155451,11 @@
                 "output_omitted": {
                     "title": "Output omitted",
                     "type": "boolean"
+                },
+                "refusal_code": {
+                    "title": "Refusal code",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "relationship": {
                     "title": "Relationship",

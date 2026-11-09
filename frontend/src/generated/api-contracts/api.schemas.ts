@@ -21354,6 +21354,12 @@ export interface HarnessSubGoalApi {
   reason?: string;
   judged: boolean;
   verdict?: HarnessSubGoalApiVerdict;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^(task|worker:\S+)$
+   */
+  subject?: string;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -25242,6 +25248,8 @@ export interface SubGoalResultApi {
   reason?: string;
   /** What the check was decided from: world_state, tool_calls, transcript, recording. */
   evidence?: string[];
+  /** @minLength 1 */
+  subject?: string;
 }
 
 export interface CostBreakdownApi {
@@ -25345,6 +25353,13 @@ export interface CallCallActorApi {
   delivery?: CallCallActorApiDelivery;
 }
 
+export interface TrialRefusedActionApi {
+  /** @minLength 1 */
+  action: string;
+  code: string;
+  reason: string;
+}
+
 export interface TrialStateChangeApi {
   /** @minLength 1 */
   who: string;
@@ -25358,6 +25373,7 @@ export interface TrialStateChangeApi {
   committed_actions: string[];
   /** True when this participant committed nothing: a result shown as 'no change', never left out. */
   no_change?: boolean;
+  refused_actions?: TrialRefusedActionApi[];
 }
 
 export type ActorDecisionApiPlay =
@@ -25621,6 +25637,20 @@ export const CallWorkersResponseApiCollection = {
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
 
+export type CallWorkerApiState =
+  (typeof CallWorkerApiState)[keyof typeof CallWorkerApiState];
+
+export const CallWorkerApiState = {
+  completed: "completed",
+  failed: "failed",
+  no_return: "no_return",
+  timed_out: "timed_out",
+  cancel_requested: "cancel_requested",
+  cancelled: "cancelled",
+  infrastructure: "infrastructure",
+  not_observed: "not_observed",
+} as const;
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -25634,6 +25664,7 @@ export interface CallWorkerApi {
   /** @minLength 1 */
   model?: string;
   tokens?: number;
+  state?: CallWorkerApiState;
 }
 
 export type CallWorkerEventApiType =
@@ -25706,6 +25737,8 @@ export interface CallWorkerEventApi {
   output?: CallWorkerEventApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
+  /** @minLength 1 */
+  refusal_code?: string;
   relationship?: CallWorkerEventApiRelationship;
   /** @minLength 1 */
   at: string;
@@ -25795,6 +25828,8 @@ export interface CallWorkerEventOrNullApi {
   output?: CallWorkerEventOrNullApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
+  /** @minLength 1 */
+  refusal_code?: string;
   relationship?: CallWorkerEventOrNullApiRelationship;
   /** @minLength 1 */
   at: string;

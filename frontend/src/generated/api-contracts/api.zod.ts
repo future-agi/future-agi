@@ -44000,6 +44000,10 @@ export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
+  new RegExp("^(task|worker:\\S+)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -44081,6 +44085,12 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       judged: zod.boolean(),
       verdict: zod
         .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .optional(),
+      subject: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax)
+        .regex(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp)
         .optional(),
     }),
   ),
@@ -53416,6 +53426,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "What the check was decided from: world_state, tool_calls, transcript, recording.",
         ),
+      subject: zod.string().min(1).optional(),
     }),
   ),
   outcome: zod.enum([
@@ -53513,6 +53524,15 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             .describe(
               "True when this participant committed nothing: a result shown as 'no change', never left out.",
             ),
+          refused_actions: zod
+            .array(
+              zod.object({
+                action: zod.string().min(1),
+                code: zod.string(),
+                reason: zod.string(),
+              }),
+            )
+            .optional(),
         }),
       )
       .optional(),
@@ -53640,6 +53660,18 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       instance_ids: zod.array(zod.string().min(1)),
       model: zod.string().min(1).optional(),
       tokens: zod.number().optional(),
+      state: zod
+        .enum([
+          "completed",
+          "failed",
+          "no_return",
+          "timed_out",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+        ])
+        .optional(),
     }),
   ),
   events: zod.array(
@@ -53667,6 +53699,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         .describe("Any valid JSON value."),
       input_omitted: zod.boolean().optional(),
       output_omitted: zod.boolean().optional(),
+      refusal_code: zod.string().min(1).optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "unattributed"]),
@@ -53717,6 +53750,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -53747,6 +53781,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -53780,6 +53815,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
             .describe("Any valid JSON value."),
           input_omitted: zod.boolean().optional(),
           output_omitted: zod.boolean().optional(),
+          refusal_code: zod.string().min(1).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
           attribution: zod.enum(["reported", "unattributed"]),
@@ -54794,6 +54830,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .describe(
               "What the check was decided from: world_state, tool_calls, transcript, recording.",
             ),
+          subject: zod.string().min(1).optional(),
         }),
       ),
       harness_outcome_status: zod.string().min(1),
