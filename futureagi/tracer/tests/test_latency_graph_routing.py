@@ -222,6 +222,8 @@ def test_filtered_trace_traffic_reuses_root_contributions_without_an_extra_scan(
     assert "toUInt64(countIf(" in sql
     assert "> 0) AS graph_row_count" in sql
     assert "HAVING graph_match_0 = 1" in sql
+    assert "(parent_span_id IS NULL OR parent_span_id = '') AND (1 = 1)" in sql
+    assert "observation_type != ''" not in sql
 
 
 def test_trace_traffic_cache_identity_carries_root_scope(monkeypatch):
@@ -241,7 +243,8 @@ def test_trace_traffic_cache_identity_carries_root_scope(monkeypatch):
     assert scoped[:2] == filters
     assert len(scoped) == 3
     assert scoped[-1]["_eval_task_trace_root"] is True
-    assert scoped[-1]["filter_config"]["filter_op"] == "is_not_null"
+    assert scoped[-1]["filter_config"]["filter_op"] == "not_in"
+    assert scoped[-1]["filter_config"]["filter_value"] == []
 
 
 def test_trace_traffic_cost_probe_prices_root_projection_columns():

@@ -237,14 +237,15 @@ def _active_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # The Traffic chart in the trace view counts roots, not their child spans.
 # Reuse the private root leaf so filtered graphs keep any-sibling membership,
 # root-only contributions, and the existing one-per-trace/bucket reduction.
-# observation_type is non-null on spans, including roots with an empty kind.
+# NOT IN [] compiles to 1 = 1: only the private parent/root constraint narrows
+# this population. Text is_not_null would incorrectly reject empty kinds.
 _TRACE_TRAFFIC_ROOT_FILTER = {
     "column_id": "observation_type",
     "filter_config": {
         "col_type": "INTERNAL_ROOT_METRIC",
         "filter_type": "text",
-        "filter_op": "is_not_null",
-        "filter_value": None,
+        "filter_op": "not_in",
+        "filter_value": [],
     },
     "_eval_task_trace_root": True,
 }

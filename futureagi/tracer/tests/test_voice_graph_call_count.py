@@ -21,6 +21,7 @@ both endpoints for the same window and toggle.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -460,6 +461,61 @@ def test_trace_chart_counts_roots_not_spans(auth_client, voice_fixture, child_fi
     assert sum(point["primary_traffic"] for point in traffic) == (
         1 if child_filter else 3
     )
+
+
+@pytest.mark.parametrize("child_filter", [False, True], ids=["unfiltered", "child-match"])
+def test_trace_traffic_keeps_empty_kind_roots(
+    auth_client, observe_project, voice_fixture, child_filter
+):
+    trace_id = str(uuid.uuid4())
+    root_id = uuid.uuid4().hex[:16]
+    start = voice_fixture["window"][1] - timedelta(days=1)
+    seed_ch_spans([
+        _span_row(
+            observe_project, trace_id, root_id, "",
+            ("empty-kind-root", "", "", 500, None), start, start,
+        ),
+        _span_row(
+            observe_project, trace_id, uuid.uuid4().hex[:16], root_id,
+            ("matching-child", "llm", "openai", 100, None),
+            start + timedelta(minutes=1), start + timedelta(minutes=1),
+        ),
+    ])
+    filters = [{
+        "column_id": "provider",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "openai",
+        },
+    }] if child_filter else []
+    expected = {trace_id, voice_fixture["trace_ids"]["voice-call"]}
+    if not child_filter:
+        expected.update(voice_fixture["trace_ids"].values())
+
+    response = auth_client.get(
+        "/tracer/trace/list_traces_of_session/",
+        {
+            "project_id": voice_fixture["project_id"],
+            "page_number": 0,
+            "page_size": 25,
+            "filters": json.dumps([*_window_filter(voice_fixture["window"]), *filters]),
+        },
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    result = body.get("result", body)
+    listed = [row["trace_id"] for row in result["table"]]
+    assert set(listed) == expected
+    assert len(listed) == len(expected)
+
+    traffic = _graph(auth_client, voice_fixture, "traffic", filters=filters)
+
+    # The matching child selects the empty-kind root's trace; both filtered
+    # and date-only Traffic count it once, just like the trace list.
+    assert sum(point["value"] for point in traffic) == len(expected)
+    assert sum(point["primary_traffic"] for point in traffic) == len(expected)
 
 
 def test_trace_traffic_uses_root_bucket_not_child_bucket(
