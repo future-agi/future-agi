@@ -1029,6 +1029,54 @@ def test_source_scan_does_not_require_adc_for_google_sdk_or_api_key_mode():
     assert detect_source_credentials(b"not a tarball") == ([], [], 0)
 
 
+_MONOREPO = {
+    "README.md": "examples\n",
+    "requirements.txt": "httpx==0.27.0\n",
+    "examples/requirements.txt": "httpx==0.27.0\n",
+    "examples/chat/server/bot.py": "import daily\n",
+    "examples/chat/server/tools/search.py": "import httpx\n",
+    "examples/chat/client/app.py": "import livekit\n",
+    "examples/voice/agent.py": (
+        "from livekit import agents\n"
+        "credentials = os.environ['GOOGLE_APPLICATION_CREDENTIALS']\n"
+    ),
+    "examples/voice/requirements.txt": "google-cloud-aiplatform==1.71.1\n",
+}
+
+
+def test_a_subfolder_agent_is_not_asked_for_its_siblings_keys():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO), subfolder="examples/chat/server"
+    )
+
+    assert connectors == []
+    assert required_files == []
+    assert scanned == 4
+
+
+def test_a_subfolder_agent_reads_the_files_directly_above_it():
+    files = {
+        **_MONOREPO,
+        "examples/chat/pyproject.toml": 'dependencies = ["livekit-agents"]\n',
+    }
+
+    connectors, _required, _scanned = detect_source_credentials(
+        _source_tarball(files), subfolder="examples/chat/server/"
+    )
+
+    assert connectors == ["livekit"]
+
+
+def test_without_a_subfolder_the_whole_source_is_read():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO)
+    )
+
+    assert connectors == ["livekit"]
+    assert required_files == ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+    assert scanned == len(_MONOREPO) - 1
+
+
 def test_dispatch_payload_mirrors_only_livekit_url():
     payload = {"agent": {"connector": "livekit", "config": {}}}
 

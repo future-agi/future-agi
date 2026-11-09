@@ -617,7 +617,9 @@ def _preflight_source_connectors(organization, payload):
         return [], [], 0
     probe = HostedHarnessJob(organization=organization, payload=payload)
     archive, _commit = HostedSourceAcquirer().acquire(probe)
-    detected, required_files, scanned = detect_source_credentials(archive)
+    detected, required_files, scanned = detect_source_credentials(
+        archive, subfolder=payload["source"].get("subfolder")
+    )
     if payload["agent"]["connector"] != "auto":
         detected = []
     return detected, required_files, scanned

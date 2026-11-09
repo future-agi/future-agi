@@ -756,8 +756,23 @@ _VERTEX_ADC_SIGNATURES = (
 TARGET_GOOGLE_ADC_ALIAS = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
 
 
-def detect_source_credentials(archive: bytes) -> tuple[list[str], list[str], int]:
-    """Return voice connectors, required credential-file aliases, and files read."""
+def _in_agent_reach(member_name: str, subfolder: str | None) -> bool:
+    folder = (subfolder or "").strip("/")
+    if not folder:
+        return True
+    path = member_name.removeprefix("./").removeprefix("source/")
+    if path.startswith(f"{folder}/"):
+        return True
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    parts = folder.split("/")
+    return parent in {"/".join(parts[:depth]) for depth in range(len(parts))}
+
+
+def detect_source_credentials(
+    archive: bytes, *, subfolder: str | None = None
+) -> tuple[list[str], list[str], int]:
+    """Return voice connectors, required credential-file aliases, and files read,
+    from the agent's folder and the files directly above it when ``subfolder`` is set."""
     found: set[str] = set()
     required_files: set[str] = set()
     scanned = 0
@@ -765,6 +780,8 @@ def detect_source_credentials(archive: bytes) -> tuple[list[str], list[str], int
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
             for member in tar:
                 if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
+                    continue
+                if not _in_agent_reach(member.name, subfolder):
                     continue
                 path = "/" + member.name.lower()
                 if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
