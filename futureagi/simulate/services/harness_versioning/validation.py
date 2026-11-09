@@ -46,12 +46,13 @@ logger = structlog.get_logger(__name__)
 Purpose = Literal["agent_move", "recheck", "save"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
-# A check still running this long after it was asked for is stopped and fails the
-# pairing, so runs read why and the next check starts a fresh job.
+# A check still running this long after it was asked for is stopped. A slow worker or
+# sandbox is ours, not the agent's: the check reads as unavailable and runs go ahead;
+# the next check starts a fresh job.
 CHECK_DEADLINE = timedelta(minutes=45)
 CHECK_TIMED_OUT = "validation_timed_out"
 # The endings that are a check's verdict on the pairing; any other one is retried.
-CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed", CHECK_TIMED_OUT})
+CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed"})
 # A check that ended on our side, not the agent's: runs are not held for it.
 CHECK_UNAVAILABLE = "check_unavailable"
 # What a run refused after a failed check is told, by the check's ending.
@@ -516,6 +517,12 @@ def drop_waiting_moves(locked: HostedHarnessJob, agent_version_id: Any) -> None:
             continue
         _set_move(job, None)
         _record_activation(dropped["agent_version_id"], {str(locked.id): "superseded"})
+        purpose = (job.payload.get("metadata") or {}).get("validation_purpose")
+        if purpose == "agent_move":
+            # Nobody else waits on a move's check: stop its sandbox rather than run it out.
+            from simulate.services.hosted_harness import request_cancellation
+
+            request_cancellation(job, "superseded_move")
         logger.info(
             "harness_pair_validation_move_dropped",
             environment_id=str(locked.id),
@@ -539,6 +546,7 @@ def _create_job(
 ) -> HostedHarnessJob:
     """The environment's job, pinned to the pairing; certifying is all it does, after
     reading the agent version's tools when ``reading`` says so."""
+    from simulate.selectors.held_back import HELD_BACK_METADATA_KEY
     from simulate.services.harness_agent_versions import (
         apply_agent_version,
         own_credential_set,
@@ -548,7 +556,7 @@ def _create_job(
     if own_credential_set(runtime):
         apply_agent_version(payload, runtime, environment_id=locked.id)
     metadata = payload.setdefault("metadata", {})
-    for name in RUN_DROPPED_METADATA:
+    for name in (*RUN_DROPPED_METADATA, HELD_BACK_METADATA_KEY):
         metadata.pop(name, None)
     metadata.update(
         {
@@ -723,7 +731,7 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
         failure = {"message": _FAILED_REASONS[CHECK_TIMED_OUT]}
     cause = (
         code
-        if code == "certify_incomplete"
+        if code in ("certify_incomplete", CHECK_TIMED_OUT)
         else (
             platform_failure(failure, (bundle.error or {}).get("failed_actions"))
             if code == "authoring_runtime_validation_failed"
