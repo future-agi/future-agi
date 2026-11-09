@@ -74,6 +74,20 @@ def envelope_fixture():
 
 
 class EnvelopeProvenanceTests(unittest.TestCase):
+    def test_repeated_physical_reference_is_rejected_before_qualification(self):
+        _, corpus, _, refs = envelope_fixture()
+        plan = [corpus['target_pending_plan'][0], dict(app_label='tracer', name='0130_second_physical_change')]
+        first = corpus['pending_migration_tables'][0]
+        repeated = [first, dict(plan[1], tables=copy.deepcopy(first['tables']))]
+        with self.assertRaisesRegex(p.ManualRelease, 'migration_measurement_unavailable'):
+            q.reference_scope(plan, repeated, refs.values())
+
+    def test_state_only_migration_keeps_identity_without_repeating_input(self):
+        _, corpus, _, refs = envelope_fixture()
+        plan = [corpus['target_pending_plan'][0], dict(app_label='tracer', name='0130_state_only')]
+        scope = [corpus['pending_migration_tables'][0], dict(plan[1], tables=[])]
+        self.assertEqual(q.reference_scope(plan, scope, refs.values()), scope)
+
     def test_real_reducer_and_independent_scope_bind_the_measurement(self):
         fields,corpus,target,refs=envelope_fixture()
         self.assertEqual(q.validate_bootstrap_envelope(fields,corpus,target,refs),fields['migration_measurements'])

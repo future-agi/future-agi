@@ -475,7 +475,7 @@ def select_reference_registry(registry, pending_migration_tables, *, plan=None):
 # relation. RunPython/RunSQL use the gate's reviewed literal UPDATE_SAFETY
 # tables. Unresolvable relations, custom operations and undeclared code refuse.
 PENDING_TABLE_SCOPE = r'''
-from django.db import migrations
+from django.db import migrations, models
 from django.db.backends.utils import strip_quotes, truncate_name
 try:
     from django.db.migrations.utils import resolve_relation
@@ -549,8 +549,26 @@ MODEL_OPS={'AddField','RemoveField','AlterField','RenameField','AddIndex','Remov
     'AddIndexConcurrently','RemoveIndexConcurrently','AddConstraint','RemoveConstraint',
     'AddConstraintNotValid','ValidateConstraint','AlterConstraint','AlterModelTable',
     'AlterModelTableComment','AlterUniqueTogether','AlterIndexTogether','AlterOrderWithRespectTo'}
+def choices_only_alter(operation, app, state):
+    # Stock CharField choices are excluded by Django's schema editor. Keep this
+    # exception narrow: custom operations/fields and every other changed option
+    # retain their conservative physical scope.
+    if type(operation) is not migrations.AlterField or not getattr(operation,'preserve_default',False):
+        return False
+    before=state.models[(app,operation.model_name.lower())].fields[operation.name]
+    after=operation.field
+    if type(before) is not models.CharField or type(after) is not models.CharField:
+        return False
+    old_name,old_path,old_args,old_kwargs=before.deconstruct()
+    new_name,new_path,new_args,new_kwargs=after.deconstruct()
+    old_choices=old_kwargs.pop('choices',None)
+    new_choices=new_kwargs.pop('choices',None)
+    return (old_choices != new_choices and
+        (old_name,old_path,old_args,old_kwargs)==(new_name,new_path,new_args,new_kwargs))
 def touched(operation, migration, state):
     app=migration.app_label
+    if choices_only_alter(operation,app,state):
+        return set()
     if type(operation) is migrations.SeparateDatabaseAndState:
         physical=state.clone(); tables=set()
         for child in operation.database_operations:

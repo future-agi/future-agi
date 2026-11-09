@@ -31,10 +31,18 @@ def reference_scope(plan, scope, references):
     keys = {(row['engine'], row['table']) for row in references}
     p.equal(len(scope), len(plan), 'missing ordered migration scope')
     result = []
+    physical_inputs = set()
     for identity, row in zip(plan, scope):
         p.equal({key: row[key] for key in ('app_label', 'name')}, identity,
                 'migration scope order differs')
         tables = [dict(table) for table in row['tables'] if (table['engine'], table['table']) in keys]
+        # A's reference sizes cannot bound an intermediate migration output.
+        # Match admission's existing refusal before certifying an unusable row.
+        for table in tables:
+            key = (table['engine'], table['table'])
+            if key in physical_inputs:
+                raise p.ManualRelease('migration_measurement_unavailable')
+            physical_inputs.add(key)
         result.append(dict(identity, tables=sorted(tables, key=lambda table: (table['engine'], table['table']))))
     p.equal({(table['engine'], table['table']) for row in result for table in row['tables']}, keys,
             'registered reference table omitted from migration scope')
