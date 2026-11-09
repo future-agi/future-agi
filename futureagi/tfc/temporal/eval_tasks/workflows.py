@@ -143,7 +143,9 @@ _MAX_CONTINUOUS_POLLS = 100
 
 
 def _is_database_deferred_error(exc: Exception) -> bool:
-    if not isinstance(exc, ActivityError) or not isinstance(exc.cause, ApplicationError):
+    if not isinstance(exc, ActivityError) or not isinstance(
+        exc.cause, ApplicationError
+    ):
         return False
     cause = exc.cause
     return (

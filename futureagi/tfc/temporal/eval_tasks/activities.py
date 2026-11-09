@@ -14,7 +14,10 @@ from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
-from tfc.temporal.eval_tasks.db_errors import database_control_activity
+from tfc.temporal.eval_tasks.db_errors import (
+    database_control_activity,
+    database_control_errors,
+)
 from tfc.temporal.eval_tasks.types import (
     ClaimBatchInput,
     ClaimBatchOutput,
@@ -145,7 +148,14 @@ def _claim_batch_sync(task_id: str, n: int) -> dict:
 
         task = EvalTask.objects.get(id=task_id)
         _require_instant_eval_license(task)
-        entries = claim_pending_batch(task, n)
+        # Earlier task/license reads cannot have claimed anything. Only this
+        # transaction needs protection against replay after a lost commit reply.
+        with database_control_errors(
+            task_id=str(task_id),
+            control_activity="claim_eval_batch_activity",
+            claim=True,
+        ):
+            entries = claim_pending_batch(task, n)
         return {"entry_ids": [str(e.id) for e in entries]}
     finally:
         close_old_connections()
@@ -586,7 +596,7 @@ async def reconcile_eval_task_activity(
 
 
 @activity.defn
-@database_control_activity(claim=True)
+@database_control_activity()
 async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
