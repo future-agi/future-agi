@@ -54,6 +54,20 @@ export const FAILURE_TEXT = {
   channel_changed:
     "This version changed from chat to voice or back; connect it as a new agent.",
   agent_reading_unavailable: "The reading couldn't run. Try again in a moment.",
+  agent_reading_timed_out: "Reading the agent took too long and was stopped.",
+  agent_reading_crashed: "Reading the agent stopped before it finished.",
+  agent_reading_invalid: "Reading the agent stopped before it finished.",
+  agent_reading_model_error: "The model reading the agent returned an error.",
+  agent_reading_incomplete: "The reading ended without describing the agent.",
+  agent_reading_too_large: "The agent's description is too large to store.",
+  agent_document_invalid:
+    "The agent's description couldn't be built from what was read.",
+  reading_source_empty:
+    "The agent's code hadn't arrived yet, so there was nothing to read.",
+  reading_job_invalid:
+    "The reading couldn't start because of a problem on our side.",
+  reading_output_not_empty:
+    "The reading couldn't start because of a problem on our side.",
 };
 
 export const failureText = (failure) => {

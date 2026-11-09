@@ -765,3 +765,39 @@ def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypat
     assert harness_usage.check_harness_action(organization_id, "voice_call") == {
         "allowed": True
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("complete", [True, False, None])
+def test_a_reading_bill_says_whether_it_holds_every_turn(monkeypatch, complete):
+    from ee.usage.services import emitter
+
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    if complete is not None:
+        spend["complete"] = complete
+
+    harness_usage.record_agent_reading_usage(
+        organization_id=uuid4(),
+        workspace_id=None,
+        subject_id=uuid4(),
+        spend=spend,
+    )
+
+    assert len(events) == 1
+    assert events[0].properties["source"] == "agent_reading"
+    assert events[0].properties["complete"] is complete

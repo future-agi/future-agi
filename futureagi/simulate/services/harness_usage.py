@@ -499,6 +499,7 @@ def record_agent_reading_usage(
                     "cached_input_tokens": item["tokens_cached"],
                     "raw_cost_usd": item["cost_usd"],
                     "pricing_source": item["pricing_source"],
+                    "complete": spend.get("complete"),
                 },
             )
         )
