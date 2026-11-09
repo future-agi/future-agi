@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import argparse
 import base64
-from contextlib import ExitStack
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import shutil
@@ -24,6 +22,8 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from contextlib import ExitStack
+from pathlib import Path
 
 import yaml
 
@@ -150,8 +150,10 @@ class Fixture:
                 print("PASS " + description, flush=True)
                 return last
             time.sleep(5)
+        status = last.get("status") if isinstance(last, dict) else None
+        safe_status = status_projection(status) if isinstance(status, dict) else {}
         raise Refused(description + " exceeded " + str(seconds) + " seconds; last status=" +
-                      json.dumps(last.get("status", {}) if isinstance(last, dict) else last)[-3000:])
+                      json.dumps(safe_status)[-3000:])
 
     def start(self):
         if os.environ.get("FAGI_GITOPS_DISPOSABLE") != "1":
@@ -619,7 +621,7 @@ class Fixture:
                 self.cleanup()
             except Exception as exc:
                 error = (error + "; " if error else "") + "cleanup: " + str(exc)
-            self.save("summary.json", {"status": "failed" if error else "passed", "error": error,
+            self.save("summary.json", {"status": "failed" if error is not None else "passed", "error": error,
                       "controller": self.controller, "checkpoints": self.checkpoints,
                       "test_key_only": True, "database_migration_rollback_qualified": False,
                       "artifacts": self.artifacts, "controller_version": PINS[self.controller]["version"]})

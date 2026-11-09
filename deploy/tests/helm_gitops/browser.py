@@ -5,16 +5,40 @@ request bodies, response bodies or browser trace is written to evidence.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
 import json
-from pathlib import Path
 import sys
+import traceback
+from contextlib import ExitStack
+from pathlib import Path
+from typing import TypedDict
 from urllib.parse import urlencode, urlsplit
 
-from playwright.sync_api import expect, sync_playwright
+
+class ErrorFrame(TypedDict):
+    file: str
+    function: str
+    line: int
+
+
+class ErrorDetails(TypedDict):
+    error_type: str
+    frames: list[ErrorFrame]
+
+
+def error_details(error: Exception) -> ErrorDetails:
+    """Retain bounded stack locations, never exception text, source or locals."""
+    return {
+        "error_type": type(error).__name__,
+        "frames": [
+            {"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+            for frame in traceback.extract_tb(error.__traceback__, limit=-6)
+        ],
+    }
 
 
 def main():
+    from playwright.sync_api import expect, sync_playwright
+
     config = json.load(sys.stdin)
     output = Path(config["output"])
     origin = config["ui"]
@@ -99,14 +123,18 @@ def main():
                 raise AssertionError("browser or local server error during smoke")
             result.update(status="passed", retained_identity_visible=True)
         except Exception as exc:
-            # Playwright exception text can echo entered fields; retain only a
-            # bounded stage/type and a screenshot with the password field masked.
-            result.update(stage=stage, error_type=type(exc).__name__)
+            # Playwright exception text can echo entered fields. Stack locations
+            # and a password-masked screenshot preserve diagnostics without it.
+            result.update(stage=stage, **error_details(exc))
             try:
                 page.screenshot(path=str(output.with_suffix(".png")), full_page=True,
                                 mask=[page.locator('input[type="password"]')])
-            except Exception:
-                pass
+            except Exception as screenshot_error:
+                # Diagnostic capture is best-effort; retain its failure without
+                # replacing the original test failure or leaking exception text.
+                result["screenshot"] = {"status": "failed", **error_details(screenshot_error)}
+            else:
+                result["screenshot"] = {"status": "captured"}
         finally:
             browser.close()
             output.write_text(json.dumps(result, indent=2) + "\n")
