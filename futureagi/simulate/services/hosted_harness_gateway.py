@@ -2082,9 +2082,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2453,7 +2455,9 @@ class HostedHarnessGateway:
             if sandbox is not None:
                 try:
                     sandbox.delete()
-                except Exception:  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
+                except (
+                    Exception
+                ):  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
                     pass
 
     def launch(
@@ -2461,10 +2465,16 @@ class HostedHarnessGateway:
     ) -> HostedHarnessAttempt:
 
         from simulate.services.harness_versioning import assembly as bundle_cache
-        from simulate.services.harness_versioning.validation import certify_only
+        from simulate.services.harness_versioning.validation import (
+            certify_only,
+            reading_only,
+            reads_agent,
+        )
 
         validation = certify_only(job)
-        if validation and bundle_cache.assembled_bundle_ready(job):
+        # A certified pairing's check only reads its agent version's tools.
+        only_reading = validation and reading_only(job)
+        if validation and not only_reading and bundle_cache.assembled_bundle_ready(job):
             # Certified meanwhile, by a run or another validation: nothing to launch.
             return self._complete_without_sandbox(job, endpoint_base_url)
         _mark_stage(job, "acquiring_source")
@@ -2473,6 +2483,7 @@ class HostedHarnessGateway:
         assembled, assembly_error = _prepare_assembly(job)
         if (
             validation
+            and not only_reading
             and assembly_error is None
             and (assembled is None or assembled.hit)
         ):
@@ -2827,6 +2838,12 @@ class HostedHarnessGateway:
             )
             if certify:
                 bundle_command = bundle_cache.certify_command()
+                if reads_agent(job):
+                    bundle_command = (
+                        bundle_cache.agent_reading_command() + bundle_command
+                    )
+            elif only_reading:
+                bundle_command = bundle_cache.agent_reading_command() + "true"
             elif assembled is not None:
                 bundle_command = (
                     bundle_cache.source_check_command(assembled.source_digest)
@@ -3658,7 +3675,9 @@ class HostedHarnessGateway:
                 response = {
                     "error": {"code": exc.code, "message": exc.message},
                 }
-            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - return a bounded typed response to guest
                 logger.exception(
                     "offline hosted control failed attempt=%s request=%s",
                     attempt.id,
@@ -3821,7 +3840,9 @@ class HostedHarnessGateway:
                         path, _PROGRESS_FILE_TIMEOUT_SECONDS
                     ).decode("utf-8")
                 )
-            except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
+            except (
+                Exception
+            ):  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
         try:
@@ -3951,7 +3972,9 @@ class HostedHarnessGateway:
                     proved_since=getattr(attempt, "created_at", None),
                 )
                 job.refresh_from_db()
-            except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
+            except (
+                Exception
+            ):  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
                     job.id,
@@ -4044,7 +4067,9 @@ class HostedHarnessGateway:
             raw = sandbox.fs.download_file(
                 _ADJUSTMENT_STATUS_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
             ).decode("utf-8")
-        except Exception:  # noqa: BLE001 - status file does not exist before first boundary
+        except (
+            Exception
+        ):  # noqa: BLE001 - status file does not exist before first boundary
             return
         statuses: dict[str, dict[str, Any]] = {}
         for line in raw.splitlines():
@@ -4552,6 +4577,8 @@ class HostedHarnessGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+        if certify_only(job):
+            self._store_agent_reading(attempt)
 
         # Event/manifest ingestion runs independently from the provider poll. The attempt object
         # held by the workflow may predate terminal HTTP requests even though both commits are
@@ -4575,7 +4602,9 @@ class HostedHarnessGateway:
         ):
             try:
                 self._recover_offline_delivery(attempt)
-            except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
+            except (
+                Exception
+            ):  # noqa: BLE001 - preserve the typed delivery failure below
                 logger.exception(
                     "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
                     attempt.id,
@@ -4646,28 +4675,34 @@ class HostedHarnessGateway:
             label = (
                 "Generated environment failed real-runtime validation after bounded repair"
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    "Environment authoring failed before a runnable world was saved"
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
-            cause = guest_failure_cause(guest_logs)
+            record = self._failure_record(attempt)
+            # ALK's own redacted line when it wrote one; the log's last typed line can
+            # be the agent's printing.
+            cause = record["message"] if record else guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment" if authoring_failed else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed" if authoring_failed else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
                     "process_logs": observation.get("process_logs", ""),
+                    **({"harness_failure": record} if record else {}),
                 },
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
@@ -4742,11 +4777,94 @@ class HostedHarnessGateway:
             return None
         return bundle_cache.certify_failed_actions(sandbox)
 
+    def _failure_record(self, attempt: HostedHarnessAttempt) -> dict[str, Any] | None:
+        """ALK's record of why the guest failed, read before its sandbox is deleted."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 - the failure is recorded from the log instead
+            logger.warning(
+                "harness failure record unread attempt=%s", attempt.id, exc_info=True
+            )
+            return None
+        return bundle_cache.failure_record(sandbox)
+
+    def _keep_tool_routing(self, attempt: HostedHarnessAttempt) -> None:
+        """Keep on the certified bundle the tools its qualification saw reaching the
+        test world, read before the sandbox is deleted. Never raises."""
+        from simulate.models import HarnessAssembledBundle
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            observed = bundle_cache.tool_routing_observations(sandbox)
+            if observed is None:
+                return
+            with transaction.atomic():
+                bundle = (
+                    HarnessAssembledBundle._base_manager.select_for_update()
+                    .filter(id=attempt.job.assembled_bundle_id)
+                    .first()
+                )
+                if bundle is None:
+                    return
+                bundle.certificate = {
+                    **(bundle.certificate or {}),
+                    "tool_routing": observed,
+                }
+                bundle.save(update_fields=["certificate", "updated_at"])
+        except Exception:  # noqa: BLE001 - routing stays unobserved
+            logger.warning(
+                "harness tool routing not kept attempt=%s", attempt.id, exc_info=True
+            )
+
+    def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
+        """Store the tools a validation read for its agent version, before its sandbox
+        is deleted. Never raises: an unread version stays unread."""
+        from simulate.services.agent_setup import store_agent
+        from simulate.services.harness_versioning import assembly as bundle_cache
+        from simulate.services.harness_versioning.validation import reads_agent
+
+        job = attempt.job
+        if not reads_agent(job) or job.agent_version_id is None:
+            return
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            document = bundle_cache.agent_reading(sandbox)
+            if document is None:
+                return
+            outcome = store_agent(
+                agent_version_id=job.agent_version_id,
+                agent=document["agent"],
+                sdk_version=document["sdk_version"],
+            )
+            logger.info(
+                "harness_agent_reading_stored job=%s agent_version=%s outcome=%s",
+                job.id,
+                job.agent_version_id,
+                outcome,
+            )
+        except Exception:  # noqa: BLE001 - the check settles whatever the reading did
+            logger.warning(
+                "harness agent reading not stored attempt=%s", attempt.id, exc_info=True
+            )
+
     def _finish_certify_only(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
         """A validation's guest exited 0: completed when its bundle was filled."""
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         if bundle_cache.assembled_bundle_ready(attempt.job):
+            self._keep_tool_routing(attempt)
             attempt.terminal_stage = "completed"
             attempt.terminal_failure = None
         else:
@@ -5249,7 +5367,9 @@ def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
 
     try:
         return briefing_evals(job.organization, job.workspace, _authored_modality(job))
-    except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
+    except (
+        Exception
+    ):  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
         structlog_logger.exception(
             "harness_eval_catalogue_failed",
             job_id=str(getattr(job, "id", "") or ""),
@@ -5352,7 +5472,9 @@ def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
         body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
+    except (
+        Exception
+    ):  # noqa: BLE001 - no ledger is the ordinary case for an early failure
         logger.debug("no harness ledger to read attempt=%s", attempt.id)
 
 
@@ -5908,7 +6030,9 @@ def rewrite_authoring_scenarios(
     try:
         response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
         body = response.read()
-    except Exception as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
         logger.exception("could not read authoring archive for amend job=%s", job.id)
         raise AuthoringArchiveKept("the saved scenarios could not be read") from exc
     finally:
@@ -5937,7 +6061,9 @@ def rewrite_authoring_scenarios(
             raise AuthoringArchiveKept(
                 exc.message, code=exc.code, status_code=exc.status_code
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
             logger.exception("could not version an amended suite job=%s", job.id)
             raise AuthoringArchiveKept("the change could not be saved") from exc
         if recorded is None:

@@ -23,14 +23,14 @@ from simulate.tests.test_harness_readiness import (
     _environment,
     _rows,
 )
-from simulate.tests.test_harness_readiness import (
-    readiness_on as readiness_on,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    readiness_on as readiness_on,
 )
-from simulate.tests.test_harness_readiness import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
-from simulate.tests.test_harness_readiness import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
 )
 
 pytestmark = pytest.mark.django_db
@@ -58,6 +58,8 @@ class TestApi:
         assert got.status_code == posted.status_code == 200, posted.content
         assert got.json()["selection"] == posted.json()["selection"]
         assert got.json()["selection"]["blocked"] == 1
+        assert got.json()["selection"]["suite_total"] == 10
+        assert got.json()["selection"]["excluded"]["count"] == 7
         assert [row["affected"] for row in got.json()["rows"]] == [
             row["affected"] for row in posted.json()["rows"]
         ]
@@ -260,3 +262,64 @@ class TestDoneWhen:
             10,
         )
         assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+
+class TestRunHoldBackApi:
+    def test_the_run_answer_and_the_run_read_name_the_held_back_cases(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        from simulate.serializers.harness_job import HarnessRunCreateResponseSerializer
+
+        monkeypatch.setattr(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(user, workspace, storage, "hb-api")
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": REFUND_KEYS + LOOKUP_KEYS, "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="hb-api-run",
+        )
+
+        assert response.status_code == 202, response.content
+        body = response.json()
+        HarnessRunCreateResponseSerializer(data=body).is_valid(raise_exception=True)
+        assert body["selection"]["held_back"]["keys"] == REFUND_KEYS
+        assert (body["selection"]["running"], body["total_calls"]) == (6, 6)
+        assert (
+            body["selection"]["suite_total"],
+            body["selection"]["excluded"]["count"],
+        ) == (10, 0)
+        header = auth_client.get(
+            f"/simulate/v3/test-executions/{body['test_execution_id']}/calls/"
+        ).json()["execution"]
+        assert header["readiness_selection"] == body["selection"]
+
+    def test_every_case_blocked_answers_409_with_the_reasons(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(user, workspace, storage, "hb-api-all")
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": REFUND_KEYS, "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="hb-api-all",
+        )
+
+        assert response.status_code == 409, response.content
+        body = response.json()
+        assert body["error"] == "all_cases_blocked"
+        assert body["selection"]["held_back"]["by"] == {"tool_routing": 4}

@@ -28,14 +28,17 @@ from simulate.services.hosted_harness import (
     record_cleanup,
 )
 from simulate.tests.harness_validation import running_validations, settle_validations
-from simulate.tests.test_harness_agent_versions import _a1, _create
-from simulate.tests.test_harness_agent_versions import _environment as _agent_env
 from simulate.tests.test_harness_agent_versions import (
-    scheduled as scheduled,  # noqa: F401 - fixture
+    _a1,
+    _create,
+)
+from simulate.tests.test_harness_agent_versions import _environment as _agent_env
+from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
+    scheduled as scheduled,
 )
 from simulate.tests.test_harness_amend_archive import NAMES, _key
-from simulate.tests.test_harness_nudges import (
-    started as started,  # noqa: F401 - fixture
+from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
+    started as started,
 )
 from simulate.tests.test_harness_versioning_assembly import (
     _environment,
@@ -43,11 +46,11 @@ from simulate.tests.test_harness_versioning_assembly import (
     _row,
     _uncache,
 )
-from simulate.tests.test_harness_versioning_assembly import (
-    gateway as gateway,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_assembly import (  # noqa: F401 - fixture
+    gateway as gateway,
 )
-from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
+from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
+    storage as storage,
 )
 
 pytestmark = pytest.mark.django_db
@@ -60,6 +63,21 @@ FAILED_ACTIONS = {
         {"action": "cancel_order", "status": "refused", "reason": "policy"},
     ]
 }
+
+
+_UNREAD = validation.unread
+
+
+@pytest.fixture(autouse=True)
+def tools_read(monkeypatch):
+    """Every agent version's tools were read, unless a test reads them in its check."""
+    monkeypatch.setattr(validation, "unread", lambda agent_version, runtime: False)
+
+
+@pytest.fixture
+def tools_unread(monkeypatch):
+    """Agent versions are read only where a stored document says so."""
+    monkeypatch.setattr(validation, "unread", _UNREAD)
 
 
 @pytest.fixture(autouse=True)
@@ -1702,3 +1720,381 @@ class TestUnavailableReuse:
 
         assert _move(environment).state == "validating"
         assert _checks(environment) == 2
+
+
+def _reading(tools):
+    from simulate.tests.test_agent_setup_service import source_agent
+
+    document = source_agent(tools=tools)
+    document["behaviour"][0]["tools"] = [tool["name"] for tool in tools]
+    return json.dumps({"sdk_version": "0.2.3", "agent": document}).encode()
+
+
+def _not_built_with(environment):
+    """The environment version names no agent it was built with, so its default agent
+    is not known to be that one and its own tools are what readiness compares."""
+    type(environment.environment_version)._base_manager.filter(
+        id=environment.environment_version_id
+    ).update(agent_version=None)
+    environment.refresh_from_db()
+    return environment
+
+
+def _runtime(environment):
+    from simulate.models import HarnessAgentVersionRuntime
+
+    return effective_runtime(
+        environment,
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=environment.agent_version
+        ).first(),
+    )
+
+
+_EMAIL = [{"name": "send_email", "kind": "http", "parameters": None, "endpoint": None}]
+
+
+@pytest.mark.usefixtures("tools_unread")
+class TestAgentReading:
+    def test_a_version_is_unread_until_a_document_is_stored(
+        self, user, workspace, storage
+    ):
+        from simulate.services.agent_setup import store_agent
+
+        environment = _pending(user, workspace, storage, "pv-unread")
+        agent = environment.agent_version
+        runtime = _runtime(environment)
+        assert validation.unread(agent, runtime)
+
+        document = json.loads(_reading(_EMAIL))
+        store_agent(
+            agent_version_id=agent.id,
+            agent=document["agent"],
+            sdk_version=document["sdk_version"],
+        )
+
+        assert not validation.unread(agent, runtime)
+
+    def test_a_recheck_of_an_unread_version_reads_it_before_certifying(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-read-first")
+        )
+        job = _start(environment).job
+
+        _launch(gateway, job)
+
+        assert _job_metadata(job)["agent_reading"] == "before_certify"
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.agent_reading_command() + assembly.certify_command()
+
+    def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-move-no-read")
+        )
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=None
+        )
+        job = _start(environment, purpose="agent_move", move=move).job
+
+        _launch(gateway, job)
+
+        assert "agent_reading" not in _job_metadata(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.certify_command()
+
+    def test_a_certified_unread_pairing_starts_a_reading_only_check(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-read-only", storage)
+        )
+        assert _row(environment).state == "ready"
+
+        started = _start(environment)
+        attempt = _launch(gateway, started.job)
+
+        assert started.state == "validating"
+        assert _job_metadata(started.job)["agent_reading"] == "only"
+        assert attempt.terminal_stage != "completed"
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.agent_reading_command() + "true"
+
+    def test_the_read_document_is_stored_and_the_check_settles(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-read-store")
+        )
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        stored = stored_agent(environment.agent_version_id)
+        assert [tool["name"] for tool in stored["tools"]] == ["send_email"]
+
+    def test_a_failed_certify_still_stores_the_reading(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(_pending(user, workspace, storage, "pv-read-78"))
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _exit(gateway, monkeypatch, 78, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
+
+        gateway.reconcile_completed(attempt)
+
+        assert stored_agent(environment.agent_version_id) is not None
+
+    def test_no_document_leaves_the_version_unread_and_settles(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-read-none", storage)
+        )
+        started = _start(environment)
+        attempt = _launch(gateway, started.job)
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        assert _job_metadata(started.job)["validation_outcome"] == "ready"
+        assert _row(environment).state == "ready"
+        assert validation.unread(environment.agent_version, _runtime(environment))
+
+    def test_a_check_without_reading_never_stores_a_document(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        from simulate.services.agent_setup import stored_agent
+
+        environment = _not_built_with(
+            _pending(user, workspace, storage, "pv-no-read-store")
+        )
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=None
+        )
+        job = _start(environment, purpose="agent_move", move=move).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
+
+        gateway.reconcile_completed(attempt)
+
+        assert stored_agent(environment.agent_version_id) is None
+
+    def test_the_agent_the_environment_was_built_with_is_never_read(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _pending(user, workspace, storage, "pv-built-with")
+        job = _start(environment).job
+
+        _launch(gateway, job)
+
+        assert "agent_reading" not in _job_metadata(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command == assembly.certify_command()
+
+
+def _recorded(domain, *, code="spawn_failed", process="tool-proxy", message=None):
+    return {
+        "domain": domain,
+        "phase": "runtime",
+        "stage": "spawn",
+        "code": code,
+        "process": process,
+        "message": message or f"spawn/{code} ({process}): exited 1",
+    }
+
+
+class TestFailureRecord:
+    """ALK's own record of why a check failed decides whose failure it is."""
+
+    @pytest.mark.parametrize(
+        ("domain", "expected"),
+        [("world", "spawn_failed"), ("harness", "spawn_failed"), ("agent", None)],
+    )
+    def test_the_record_decides_whatever_the_log_says(self, domain, expected):
+        # The log alone would read the opposite way for each.
+        logged = _AGENT_CRASH if domain != "agent" else WORLD_SEED
+        failure = _failure(logged)
+        failure["details"]["harness_failure"] = _recorded(domain)
+
+        assert validation.platform_failure(failure) == expected
+
+    def test_without_a_record_the_log_is_read_as_before(self):
+        assert validation.platform_failure(_failure(WORLD_SEED)) == "seed_failed"
+        assert validation.platform_failure(_failure(_AGENT_CRASH)) is None
+
+    def test_a_failed_probe_is_the_agents_even_with_a_record_of_ours(self):
+        failure = _failure(WORLD_SEED)
+        failure["details"]["harness_failure"] = _recorded("world")
+
+        assert (
+            validation.platform_failure(failure, [{"action": "issue_refund"}]) is None
+        )
+
+    def test_the_sandboxs_record_is_kept_and_its_line_replaces_the_logs(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        environment = _pending(user, workspace, storage, "pv-record")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        forged = "ProcessRuntimeError: render/internal_forged (world-db): forged by the agent"
+        monkeypatch.setattr(
+            gateway,
+            "inspect",
+            lambda _: {"exit_code": 78, "logs": forged, "process_logs": ""},
+        )
+        record = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+        files = {assembly.FAILURE_RECORD_PATH: json.dumps(record).encode()}
+        monkeypatch.setattr(
+            gateway.client.sandbox.fs,
+            "download_file",
+            lambda path, timeout=None: files[path],
+        )
+        monkeypatch.setattr(
+            gateway,
+            "_delete_and_record",
+            lambda attempt, *, retry_pending=False: record_cleanup(
+                attempt.id,
+                provider_ref=str(attempt.provider_ref),
+                verified_absent=True,
+                retry_pending=retry_pending,
+            ),
+        )
+
+        gateway.reconcile_completed(attempt)
+
+        attempt.refresh_from_db()
+        failure = attempt.terminal_failure
+        assert failure["details"]["harness_failure"] == record
+        assert failure["message"].endswith("spawn/spawn_failed (agent): exited 1")
+        assert "forged" not in failure["message"]
+
+    def test_an_unreadable_record_is_none(self):
+        class Files:
+            def download_file(self, path, timeout=None):
+                return b'{"domain": "ours"}'
+
+        class Sandbox:
+            fs = Files()
+
+        assert assembly.failure_record(Sandbox()) is None
+
+    def test_a_failed_pairing_shows_alks_line_and_never_the_agents_output(
+        self, user, workspace, storage
+    ):
+        from simulate.services import harness_readiness
+
+        environment = _pending(user, workspace, storage, "pv-record-shown")
+        job = _start(environment).job
+        failure = _failure(_AGENT_CRASH)
+        failure["details"]["harness_failure"] = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state="failed", failure=failure
+        )
+
+        assert validation.finish_validation(job.id) == "failed"
+        report = harness_readiness.readiness_report(
+            harness_readiness.resolve_pairing(environment)
+        )
+
+        assert report["validation"]["error"]["excerpt"] == (
+            "spawn/spawn_failed (agent): exited 1"
+        )
+        start = next(row for row in report["rows"] if row["id"] == "start")
+        assert {
+            "check": "failed_check",
+            "result": "spawn/spawn_failed (agent): exited 1",
+        } in start["evidence"]
+
+    def test_the_gateway_keeps_the_excerpt_on_the_failed_bundle(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-record-mark")
+        job = _start(environment).job
+        payload = dict(job.payload)
+        payload["metadata"]["assembly"]["outcome"] = "miss"
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+        job.refresh_from_db()
+        failure = _failure(_AGENT_CRASH)
+        failure["details"]["harness_failure"] = _recorded(
+            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+        )
+
+        assembly.mark_failed(job, failure)
+
+        row = _row(environment)
+        assert row.state == "failed"
+        assert row.error["excerpt"] == "spawn/spawn_failed (agent): exited 1"
+
+
+class TestToolRoutingKept:
+    def test_a_completed_check_keeps_the_observed_routing_on_its_bundle(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-routing")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        observed = {
+            "tools": [{"tool": "lookup_order", "routed": True, "calls": 1}],
+            "unobserved": [{"tool": "issue_refund", "reason": "reaches_outside"}],
+        }
+        _exit(
+            gateway,
+            monkeypatch,
+            0,
+            {assembly.TOOL_ROUTING_PATH: json.dumps(observed).encode()},
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert _row(environment).certificate["tool_routing"] == observed
+
+    def test_without_observations_the_certificate_is_unchanged(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        environment = _pending(user, workspace, storage, "pv-routing-none")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0)
+
+        gateway.reconcile_completed(attempt)
+
+        assert "tool_routing" not in (_row(environment).certificate or {})

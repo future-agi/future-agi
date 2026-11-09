@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -20,7 +20,11 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HarnessSuiteVersion,
+    HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
 )
 from simulate.models.harness_versioning import ArchiveLayout
 from simulate.services.harness_readiness.catalogue import (
@@ -36,6 +40,8 @@ logger = structlog.get_logger(__name__)
 
 TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
+# Each tool call the qualification conversation made that reached the test world.
+TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
 _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # An archive's files never change, so they are kept long; an unreadable one is tried
 # again soon.
@@ -56,6 +62,16 @@ class Evidence:
     tools: list[Mapping[str, Any]]
     actions: list[Mapping[str, Any]]
     checked_at: str | None
+    # Tools observed reaching the test world in the qualification conversation.
+    routed: list[Mapping[str, Any]] = field(default_factory=list)
+    # Tools qualification did not see reaching the world, each with why.
+    unobserved: list[Mapping[str, Any]] = field(default_factory=list)
+    # A build certificate of an earlier environment version than the pairing's, read
+    # because the pairing's own version has none.
+    made_for: HarnessEnvironmentVersion | None = None
+    # Whether a build certificate covered the pairing's suite version; ``None`` when
+    # it cannot be told.
+    covers_suite: bool | None = None
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -92,7 +108,7 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
     try:
         found = archives.read_members(
             archives.get_archive(object_key),
-            {TOOL_CERTIFICATION, ACTION_CERTIFICATION},
+            {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
             _MAX_CERTIFICATION_BYTES,
         )
     except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
@@ -101,12 +117,19 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: dict[str, list[Mapping[str, Any]]] = {"tools": [], "actions": []}
+        unreadable: dict[str, list[Mapping[str, Any]]] = {
+            "tools": [],
+            "actions": [],
+            "routed": [],
+            "unobserved": [],
+        }
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     files = {
         "tools": _items(_json(found.get(TOOL_CERTIFICATION)), "tools"),
         "actions": _items(_json(found.get(ACTION_CERTIFICATION)), "actions"),
+        "routed": _items(_json(found.get(TOOL_ROUTING)), "tools"),
+        "unobserved": _items(_json(found.get(TOOL_ROUTING)), "unobserved"),
     }
     cache.set(cache_key, files, timeout=_FILES_TTL_SECONDS)
     return files
@@ -134,36 +157,95 @@ def _build_certification(
     return None
 
 
+def agent_tools(pairing: Pairing) -> list[Mapping[str, Any]] | None:
+    """The tools the picked agent version's stored document lists; ``None`` when no
+    document of it was read, or it no longer matches the agent's provider."""
+    from simulate.services.agent_setup import stored_agent
+
+    if pairing.agent_version is None:
+        return None
+    document = stored_agent(pairing.agent_version.id)
+    return list(document["tools"]) if document is not None else None
+
+
 def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Evidence:
     """A certified pair bundle, else the environment version's build certificate."""
     if certified(bundle):
         files = _certification_files(bundle.object_key)
         checks = (bundle.certificate or {}).get("checks")
+        kept = (bundle.certificate or {}).get("tool_routing")
+        kept = kept if isinstance(kept, Mapping) else {}
         return Evidence(
             source="pair_certificate",
             checks=checks if isinstance(checks, Mapping) else {},
             tools=files["tools"],
             actions=files["actions"],
             checked_at=bundle.updated_at.isoformat(),
+            # Kept on the bundle by the check, else sealed in its archive.
+            routed=kept.get("tools") or files.get("routed", []),
+            unobserved=kept.get("unobserved") or files.get("unobserved", []),
         )
-    version = pairing.environment_version
-    data = _build_certification(version)
+    version = _certified_version(pairing.environment_version)
+    data = _build_certification(version) if version is not None else None
     if data is None:
         return Evidence("none", {}, [], [], None)
     certificate = data.get("certificate")
     checks = certificate.get("checks") if isinstance(certificate, Mapping) else None
     # Only an archive kept whole holds the sealed tool certification.
-    tools = (
-        _certification_files(version.archive_object_key)["tools"]
+    files = (
+        _certification_files(version.archive_object_key)
         if version.archive_layout == ArchiveLayout.COMBINED
-        else []
+        else {}
     )
+    tools = files.get("tools", [])
     return Evidence(
         source="build_certificate",
         checks=checks if isinstance(checks, Mapping) else {},
         tools=tools,
         actions=_items(data.get("action_certification"), "actions"),
         checked_at=version.created_at.isoformat(),
+        routed=files.get("routed", []),
+        unobserved=files.get("unobserved", []),
+        made_for=None if version.id == pairing.environment_version.id else version,
+        covers_suite=_covers_suite(version, pairing.suite_version),
+    )
+
+
+_ANCESTORS_READ = 50
+
+
+def _certified_version(
+    version: HarnessEnvironmentVersion,
+) -> HarnessEnvironmentVersion | None:
+    """``version``, or its nearest earlier version, that holds a build certificate: an
+    edit saves a new version without certifying it."""
+    seen: set[Any] = set()
+    current: HarnessEnvironmentVersion | None = version
+    while (
+        current is not None and current.id not in seen and len(seen) < _ANCESTORS_READ
+    ):
+        if _build_certification(current) is not None:
+            return current
+        seen.add(current.id)
+        current = (
+            HarnessEnvironmentVersion._base_manager.filter(id=current.parent_id).first()
+            if current.parent_id
+            else None
+        )
+    return None
+
+
+def _covers_suite(
+    version: HarnessEnvironmentVersion, suite_version: HarnessSuiteVersion
+) -> bool | None:
+    """Whether the build that made ``version``'s certificate also made
+    ``suite_version``: the two share that build's authoring revision, the first one
+    ``version`` records."""
+    revisions = (version.documents or {}).get("authoring_revisions") or []
+    if not revisions:
+        return None
+    return revisions[0] in (
+        (suite_version.documents or {}).get("authoring_revisions") or []
     )
 
 
@@ -271,22 +353,94 @@ def _tool_routing(evidence: Evidence) -> Reading:
             targets("action", failed, "failed"),
             seen,
         )
-    # A refused probe is the agent declining a call it should decline: a pass.
-    passed = _actions(evidence, "passed", "refused")
-    not_run = _actions(evidence, "not_run")
-    if passed and not_run:
+    # Routing is read only from what the test world itself received in qualification. A
+    # probe that passed is the harness calling the tool, not the agent's call reaching it.
+    routed = _routed(evidence, True)
+    not_received = _routed(evidence, False)
+    if not_received:
+        return Reading(
+            "failed",
+            "tool_not_routed",
+            "Called, but the test world never received it: " + ", ".join(not_received),
+            targets("tool", not_received, "not_routed"),
+            seen,
+        )
+    if routed:
+        seen = [*seen, {"check": "tools_routed", "result": ", ".join(routed)}]
+    named = {str(item.get("tool") or "") for item in evidence.tools}
+    by_provider = {
+        str(item.get("tool") or "")
+        for item in evidence.tools
+        if item.get("entrypoint_mode") == "provider"
+    }
+    if named and by_provider == named and not routed:
+        return Reading(
+            "not_applicable",
+            "tools_in_provider",
+            "The provider runs these tools in its own systems, so their calls never"
+            " reach the test world",
+            evidence=seen,
+        )
+    unobserved = {str(item.get("tool") or "") for item in evidence.unobserved}
+    unseen = sorted(
+        {*_actions(evidence, "passed", "refused", "not_run"), *unobserved}
+        - {"", *routed}
+    )
+    probed = bool(_actions(evidence, "passed", "refused") or (ratio and ratio[0]))
+    if unseen and (routed or unobserved or probed):
         return Reading(
             "limited",
             "probe_not_run",
-            "Not probed: " + ", ".join(not_run),
-            targets("action", not_run, "not_run"),
+            "Not yet shown reaching the test world: "
+            + ", ".join(_why_unobserved(one, evidence) for one in unseen),
+            targets("action", unseen, "not_run"),
             seen,
         )
-    if passed or (ratio and ratio[1] > 0 and not not_run):
+    if routed:
         return Reading("passed", evidence=seen)
+    if probed:
+        return Reading(
+            "limited",
+            "probe_not_run",
+            "Its tools work when the harness calls them; no call of the agent's was"
+            " recorded reaching the test world",
+            evidence=seen,
+        )
     return Reading(
-        "not_run", targets=targets("action", not_run, "not_run"), evidence=seen
+        "not_run", targets=targets("action", unseen, "not_run"), evidence=seen
     )
+
+
+def _routed(evidence: Evidence, routed: bool) -> list[str]:
+    return sorted(
+        str(item.get("tool") or "")
+        for item in evidence.routed
+        if item.get("routed") is routed and item.get("tool")
+    )
+
+
+_UNOBSERVED_REASONS = {
+    "reaches_outside": "its contract says it leaves the test world, so it was not asked",
+    "not_called": "asked, but not called",
+    "request_failed": "asked, but the agent did not answer",
+    "no_world_record": "the agent runs it itself, so the test world keeps no record of"
+    " the call",
+}
+
+
+def _why_unobserved(tool: str, evidence: Evidence) -> str:
+    reason = next(
+        (
+            str(item.get("reason") or "")
+            for item in evidence.unobserved
+            if item.get("tool") == tool
+        ),
+        "",
+    )
+    shown = _UNOBSERVED_REASONS.get(reason) or (
+        "" if evidence.routed or evidence.unobserved else "no call of it was recorded"
+    )
+    return f"{tool} ({shown})" if shown else tool
 
 
 def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Reading:
@@ -409,4 +563,174 @@ def readings(pairing: Pairing, evidence: Evidence) -> dict[str, Reading]:
         "tool_routing": _tool_routing(evidence),
         "state": _single(checks, "schema_and_seed", "state_failed"),
         "reset": _reset(evidence, pairing.runtime),
+    }
+
+
+# --- rows read from this agent's runs, never from a check -------------------------------
+
+_RUNS_READ = 20
+# A connection that answers each message whole: the generated chat ingress (ALK
+# ``RuntimeInterface``). SSE and WebSocket are not one of them until qualified.
+_WHOLE_REPLY_KINDS = frozenset({"http", "callable", "command"})
+
+
+def _runs(pairing: Pairing) -> list[Any]:
+    """The newest runs of the pairing's agent and environment version."""
+    if pairing.agent_version is None:
+        return []
+    return list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=pairing.environment.id,
+            agent_version_id=pairing.agent_version.id,
+            environment_version_id=pairing.environment_version.id,
+            test_execution_id__isnull=False,
+            # A validation job never ran the agent's cases; its key is set only on them.
+            payload__metadata__certify_only__isnull=True,
+        )
+        .order_by("-created_at")
+        .values_list("id", flat=True)[:_RUNS_READ]
+    )
+
+
+def _contract(pairing: Pairing) -> Mapping[str, Any]:
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    return contract if isinstance(contract, Mapping) else {}
+
+
+def _continuity(runs: list[Any]) -> Reading:
+    receipt = (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id__in=runs, body__call__turns__gte=2
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if receipt is None:
+        return Reading(
+            "not_run",
+            "no_multi_turn_run",
+            "No run of this agent has gone past one turn yet",
+        )
+    turns = (receipt.body.get("call") or {}).get("turns")
+    return Reading(
+        "limited",
+        "turns_observed",
+        f"A run went {turns} turns; whether the agent kept the context is not checked",
+        evidence=[{"check": "turns", "result": str(turns)}],
+        checked_at=receipt.created_at.isoformat(),
+    )
+
+
+def _streaming(pairing: Pairing) -> Reading:
+    contract = _contract(pairing)
+    interface = (contract.get("runtime") or {}).get("interface") or {}
+    kind = str(interface.get("kind") or "") if isinstance(interface, Mapping) else ""
+    if str(contract.get("modality") or "").lower() == "voice":
+        return Reading(
+            "not_applicable",
+            "voice_call",
+            "A voice agent is heard over its call, not over a chat stream",
+        )
+    if kind in _WHOLE_REPLY_KINDS:
+        return Reading(
+            "not_applicable",
+            "whole_replies",
+            "This connection answers each message whole; a reply ends when it returns",
+            evidence=[{"check": "interface", "result": kind}],
+        )
+    if kind:
+        return Reading(
+            "not_applicable",
+            "transport_not_qualified",
+            f"A {kind} connection is not supported until it passes qualification",
+            evidence=[{"check": "interface", "result": kind}],
+        )
+    return Reading(
+        "not_run",
+        "interface_not_recorded",
+        "The connection's interface is not recorded",
+    )
+
+
+def _audio(pairing: Pairing, runs: list[Any]) -> Reading:
+    if str(_contract(pairing).get("modality") or "").lower() != "voice":
+        return Reading(
+            "not_applicable", "not_voice", "A chat connection carries no audio"
+        )
+    recording = (
+        HostedHarnessArtifact.no_workspace_objects.filter(
+            job_id__in=runs, kind__startswith="recording"
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if recording is None:
+        return Reading(
+            "not_run", "no_recording", "No run of this agent has a call recording yet"
+        )
+    return Reading(
+        "passed",
+        evidence=[{"check": "recording", "result": recording.kind}],
+        checked_at=recording.created_at.isoformat(),
+    )
+
+
+def _resume(runs: list[Any]) -> Reading:
+    resumed = (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id__in=runs, attempt_number__gt=1
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if (
+        resumed is None
+        or not HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id=resumed.job_id, attempt_number__lt=resumed.attempt_number
+        ).exists()
+    ):
+        return Reading(
+            "not_run",
+            "no_interrupted_run",
+            "No run of this agent was interrupted and finished on a new attempt",
+        )
+    return Reading(
+        "passed",
+        evidence=[{"check": "attempt", "result": str(resumed.attempt_number)}],
+        checked_at=resumed.created_at.isoformat(),
+    )
+
+
+def _cost(runs: list[Any]) -> Reading:
+    from simulate.services.harness_usage import harness_consumption
+
+    for run in HostedHarnessJob.no_workspace_objects.filter(id__in=runs[:1]):
+        if harness_consumption(run) is not None:
+            return Reading(
+                "limited",
+                "agent_model_cost_unmeasured",
+                "Our side of the last run was measured; the agent's own model spend"
+                " is not",
+                checked_at=run.updated_at.isoformat(),
+            )
+    return Reading(
+        "not_run", "no_run_measured", "No run of this agent was measured yet"
+    )
+
+
+def observed(pairing: Pairing) -> dict[str, Reading]:
+    """What this agent's runs on this environment version show for the rows no check
+    measures; they hold no case and never lower the answer."""
+    runs = _runs(pairing)
+    return {
+        "continuity": _continuity(runs),
+        "streaming": _streaming(pairing),
+        "audio": _audio(pairing, runs),
+        "files": Reading(
+            "not_run",
+            "files_not_recorded",
+            "No run records the files an agent produces yet",
+        ),
+        "resume": _resume(runs),
+        "cost": _cost(runs),
     }

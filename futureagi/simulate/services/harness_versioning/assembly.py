@@ -837,6 +837,93 @@ def source_check_command(source_digest: str | None) -> str:
     return f'python -c "{code}" {source_digest} && '
 
 
+FAILURE_RECORD_PATH = "/work/failure.json"
+_FAILURE_DOMAINS = frozenset({"harness", "world", "agent"})
+_FAILURE_FIELDS = ("phase", "stage", "code", "process", "message")
+
+
+def failure_record(sandbox: Any) -> dict[str, Any] | None:
+    """ALK's record of why the guest failed, ``{domain, phase, stage, code, process,
+    message}`` with ``domain`` one of harness, world or agent; ``None`` when a template
+    writes none or it cannot be read."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                FAILURE_RECORD_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write no record
+        logger.info("harness_failure_record_unread", error=type(exc).__name__)
+        return None
+    if not document or document.get("domain") not in _FAILURE_DOMAINS:
+        return None
+    return {
+        "domain": document["domain"],
+        **{
+            name: str(document[name])[:300] if document.get(name) else None
+            for name in _FAILURE_FIELDS
+        },
+    }
+
+
+TOOL_ROUTING_PATH = "/work/authoring/generic-harness/tool-routing-observations.json"
+
+
+def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
+    """The tools a check's qualification saw reaching the test world, as ALK wrote
+    them; ``None`` when absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(TOOL_ROUTING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS)
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write none
+        logger.info("harness_tool_routing_unread", error=type(exc).__name__)
+        return None
+    if not document or not isinstance(document.get("tools"), list):
+        return None
+    return {
+        "tools": [one for one in document["tools"] if isinstance(one, dict)][:500],
+        "unobserved": [
+            one for one in document.get("unobserved") or [] if isinstance(one, dict)
+        ][:500],
+    }
+
+
+AGENT_READING_PATH = "/work/reading/agent.json"
+
+
+def agent_reading_command() -> str:
+    """Read the agent version's tools from its source into ``AGENT_READING_PATH``, its
+    model spend journalled where the gateway reads a build's. Never fails the command:
+    an unread version stays unread and the certify after it runs as without it."""
+    return (
+        "ALK_SPEND_JOURNAL=/work/authoring/cost.json python -m "
+        "fi.alk.harness.hosted_agent_reading --source /work/source "
+        f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
+    )
+
+
+def agent_reading(sandbox: Any) -> dict[str, Any] | None:
+    """The agent document a reading wrote, ``{sdk_version, agent}``; ``None`` when it
+    is absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                AGENT_READING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a reading that failed writes nothing
+        logger.info("harness_agent_reading_unread", error=type(exc).__name__)
+        return None
+    if not (
+        isinstance(document, dict)
+        and isinstance(document.get("agent"), dict)
+        and isinstance(document.get("sdk_version"), str)
+    ):
+        return None
+    return document
+
+
 def certify_command() -> str:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
@@ -1003,7 +1090,9 @@ def certify_failed_actions(sandbox: Any) -> list[dict[str, str]] | None:
                 ACTION_CERTIFICATION_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
             )
         )
-    except Exception as exc:  # noqa: BLE001 - a certify can stop before it probes actions
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - a certify can stop before it probes actions
         logger.info("harness_certify_action_report_unread", error=type(exc).__name__)
         return None
     actions = (report or {}).get("actions")
@@ -1183,6 +1272,12 @@ def mark_failed(
         }
         if failed_actions is not None:
             error["failed_actions"] = failed_actions
+        excerpt = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+            "message"
+        )
+        if excerpt:
+            # The harness's own redacted line; the message above may quote the log.
+            error["excerpt"] = excerpt
         if certify_only(job):
             error["source"] = FAILURE_SOURCE
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(
