@@ -746,6 +746,16 @@ class ActorUsageSerializer(serializers.Serializer):
     cost_usd = serializers.FloatField()
 
 
+class TrialNoticeSerializer(serializers.Serializer):
+    code = serializers.CharField(help_text="fault_not_applied or fault_not_triggered")
+    message = serializers.CharField(
+        help_text="Plain words for the person reading the run."
+    )
+    action = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    on_call = serializers.IntegerField(required=False, allow_null=True)
+    mode = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
 class TrialStateSerializer(serializers.Serializer):
     state_changes = TrialStateChangeSerializer(many=True, required=False)
     decisions = ActorDecisionSerializer(many=True, required=False)
@@ -754,6 +764,11 @@ class TrialStateSerializer(serializers.Serializer):
     limits = serializers.DictField(
         required=False,
         help_text="The actor limits this trial ran with; null is no limit.",
+    )
+    notices = TrialNoticeSerializer(
+        many=True,
+        required=False,
+        help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )
 
 

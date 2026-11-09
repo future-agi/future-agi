@@ -1444,6 +1444,18 @@ def _ingest_hosted_transcript(
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
                 trial["limits"] = world["limits"]
+            # What the person should know about how the trial ran, e.g. a fault that did not take effect.
+            notices = payload.get("notices") if isinstance(payload, dict) else None
+            notices = [
+                {
+                    key: one.get(key)
+                    for key in ("code", "message", "action", "on_call", "mode")
+                }
+                for one in notices or []
+                if isinstance(one, dict) and isinstance(one.get("message"), str)
+            ]
+            if notices:
+                trial["notices"] = notices
             if any(trial.values()):
                 metadata[TRIAL_STATE_KEY] = trial
             else:

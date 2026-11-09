@@ -25460,6 +25460,25 @@ export interface ActorUsageApi {
 }
 
 /**
+ * How the trial ran that the person should know, e.g. a scenario fault that did not take effect.
+ */
+export interface TrialNoticeApi {
+  /**
+   * fault_not_applied or fault_not_triggered
+   * @minLength 1
+   */
+  code: string;
+  /**
+   * Plain words for the person reading the run.
+   * @minLength 1
+   */
+  message: string;
+  action?: string;
+  on_call?: number;
+  mode?: string;
+}
+
+/**
  * The actor limits this trial ran with; null is no limit.
  */
 export type TrialStateApiLimits = { [key: string]: string };
@@ -25471,6 +25490,8 @@ export interface TrialStateApi {
   usage?: ActorUsageApi[];
   /** The actor limits this trial ran with; null is no limit. */
   limits?: TrialStateApiLimits;
+  /** How the trial ran that the person should know, e.g. a scenario fault that did not take effect. */
+  notices?: TrialNoticeApi[];
 }
 
 export interface CallExecutionV3DetailResponseApi {

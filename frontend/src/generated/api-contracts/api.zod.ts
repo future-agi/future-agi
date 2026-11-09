@@ -53655,6 +53655,30 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .record(zod.string(), zod.string())
       .optional()
       .describe("The actor limits this trial ran with; null is no limit."),
+    notices: zod
+      .array(
+        zod
+          .object({
+            code: zod
+              .string()
+              .min(1)
+              .describe("fault_not_applied or fault_not_triggered"),
+            message: zod
+              .string()
+              .min(1)
+              .describe("Plain words for the person reading the run."),
+            action: zod.string().optional(),
+            on_call: zod.number().optional(),
+            mode: zod.string().optional(),
+          })
+          .describe(
+            "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+          ),
+      )
+      .optional()
+      .describe(
+        "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+      ),
   }),
   scoring_status: zod.enum([
     "not_applicable",
