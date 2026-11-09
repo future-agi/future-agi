@@ -271,7 +271,7 @@ def _seed_prompt_labels_after_migrate(sender, **kwargs):
 
 class ModelHubConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "model_hub"
+    name: str = "model_hub"
 
     def ready(self):
         # Import signal handlers, then enforce the mutation-free startup

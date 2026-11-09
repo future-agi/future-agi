@@ -3,7 +3,7 @@ from django.apps import AppConfig
 
 class SdkConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "tracer"
+    name: str = "tracer"
 
     def ready(self):
         # Import all model modules so Django discovers them.
