@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -96,6 +97,15 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// PriceTableName is "vertex_ai" on Vertex AI and "gemini" on the Gemini API,
+// the names the price table keys each one's models under.
+func (p *Provider) PriceTableName() string {
+	if p.vertexAI {
+		return "vertex_ai"
+	}
+	return "gemini"
+}
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
@@ -326,6 +336,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, err := state.parseStreamData(data)
 			if err != nil {
+				var apiErr *models.APIError
+				if errors.As(err, &apiErr) {
+					errs <- apiErr
+					return
+				}
 				slog.Warn("gemini: error parsing stream data",
 					"error", err,
 					"provider", p.id,

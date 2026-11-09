@@ -1,24 +1,25 @@
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
-import { useTheme } from "@mui/material/styles";
+import { darken, lighten, rgbToHex, useTheme } from "@mui/material/styles";
+import { seriesColor } from "src/theme/data-colors";
 
-// Sequential ramp — one hue, magnitude read as increasing distance from the
-// surface. On light that means light -> dark; on dark it has to run the other
-// way, otherwise the "Very High" cells are the ones that vanish into the page.
-const LIGHT_RANGES = [
-  { from: 0, to: 25, color: "#e0e7ff", name: "Low" },
-  { from: 26, to: 50, color: "#818cf8", name: "Medium" },
-  { from: 51, to: 75, color: "#6366f1", name: "High" },
-  { from: 76, to: 100, color: "#4338ca", name: "Very High" },
-];
-
-const DARK_RANGES = [
-  { from: 0, to: 25, color: "#312e81", name: "Low" },
-  { from: 26, to: 50, color: "#4f46e5", name: "Medium" },
-  { from: 51, to: 75, color: "#818cf8", name: "High" },
-  { from: 76, to: 100, color: "#c7d2fe", name: "Very High" },
-];
+// Sequential ramp from the first data colour: magnitude reads as increasing
+// distance from the surface. On light that means light -> dark; on dark it has
+// to run the other way, otherwise the "Very High" cells vanish into the page.
+// ApexCharts shades range colours itself and only reads hex, hence rgbToHex.
+const heatmapRanges = (theme) => {
+  const base = seriesColor(theme, 0);
+  const isDark = theme.palette.mode === "dark";
+  const toSurface = isDark ? darken : lighten;
+  const fromSurface = isDark ? lighten : darken;
+  return [
+    { from: 0, to: 25, color: toSurface(base, 0.75), name: "Low" },
+    { from: 26, to: 50, color: toSurface(base, 0.35), name: "Medium" },
+    { from: 51, to: 75, color: base, name: "High" },
+    { from: 76, to: 100, color: fromSurface(base, 0.35), name: "Very High" },
+  ].map((range) => ({ ...range, color: rgbToHex(range.color) }));
+};
 
 export default function WidgetHeatmap({ config }) {
   const theme = useTheme();
@@ -30,22 +31,22 @@ export default function WidgetHeatmap({ config }) {
     chart: {
       type: "heatmap",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
     dataLabels: { enabled: config.showValues ?? false },
-    colors: [config.color || "#7B56DB"],
+    colors: [config.color || seriesColor(theme, 0)],
     plotOptions: {
       heatmap: {
         radius: 2,
         colorScale: {
-          ranges: config.ranges || (isDark ? DARK_RANGES : LIGHT_RANGES),
+          ranges: config.ranges || heatmapRanges(theme),
         },
       },
     },
     xaxis: { categories: config.categories || [] },
-    grid: { borderColor: isDark ? "#27272a" : "#f0f0f0" },
+    grid: { borderColor: theme.palette.divider },
     tooltip: { theme: isDark ? "dark" : "light" },
   };
 

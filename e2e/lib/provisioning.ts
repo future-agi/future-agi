@@ -10,13 +10,16 @@ export interface TestActor {
   api: ApiClient;
 }
 
-interface UserInfo { organization: { id: string }; default_workspace_id: string | null }
+export interface UserInfo {
+  organization: { id: string };
+  default_workspace_id: string | null;
+  restrict_simulate_to_environments?: boolean;
+}
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
 export async function provisionActor(req: APIRequestContext, label: string,
   createAccount?: (account: { email: string; fullName: string; password: string }) => Promise<void>): Promise<TestActor> {
-  // futureagi.com domain: belt (special-email recaptcha bypass) to the
-  // localhost-Host suspenders; also gives the auto-created org a stable name.
+  // The domain gives the auto-created organization a stable name.
   // Freshness must not depend on the caller's label: parallel workers can
   // provision in the same millisecond.
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -25,7 +28,8 @@ export async function provisionActor(req: APIRequestContext, label: string,
   const anon = new ApiClient(req, E2E.apiUrl);
 
   if (createAccount) await createAccount({ email, fullName: `E2E ${label}`, password });
-  else await anon.post('/accounts/signup/', { email, full_name: `E2E ${label}`, password });
+  // Only the test image exposes this route. Signup flows use the public route.
+  else await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);

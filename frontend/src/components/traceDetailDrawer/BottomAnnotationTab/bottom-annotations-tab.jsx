@@ -116,9 +116,7 @@ const BottomAnnotationsTab = ({
           variant="outlined"
           color="primary"
           size="small"
-          startIcon={
-            <Iconify icon="mingcute:add-line" width={16} height={16} />
-          }
+          startIcon={<Iconify icon="solar:add-linear" width={16} height={16} />}
           onClick={() => setAddLabelDrawerOpen(true)}
         >
           Add Label
@@ -212,7 +210,7 @@ const BottomAnnotationsTab = ({
       </ShowComponent>
       {spanNotes?.length > 0 && (
         <>
-          <Typography variant="s1" fontWeight="fontWeightBold">
+          <Typography variant="s1" fontWeight="fontWeightSemiBold">
             Span Notes
           </Typography>
           <Box

@@ -9,7 +9,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 
 
 def _result(response):
@@ -27,6 +27,7 @@ def _tasks(project, eval_config, rows):
                 sampling_rate=row.get("sampling_rate", 100),
                 last_run=row.get("last_run"),
                 run_type=row.get("run_type", RunType.CONTINUOUS),
+                row_type=row.get("row_type", RowType.SPANS),
                 status=row.get("status", EvalTaskStatus.COMPLETED),
             )
             for row in rows
@@ -132,6 +133,7 @@ def test_deep_page_is_counted_and_sliced_before_hydration(
         "Task 019",
     ]
     assert all(row["created_at"].endswith("Z") for row in data["table"])
+    assert {row["row_type"] for row in data["table"]} == {"spans"}
     assert str(deleted_only_task.id) not in {row["id"] for row in data["table"]}
 
     sql = [query["sql"] for query in captured.captured_queries]
@@ -236,7 +238,7 @@ def test_unicode_text_filters_keep_filter_engine_semantics(
         project,
         custom_eval_config,
         [
-            {"name": composed},
+            {"name": composed, "row_type": RowType.TRACES},
             {"name": "istanbul"},
             {"name": "Other"},
         ],
@@ -269,6 +271,7 @@ def test_unicode_text_filters_keep_filter_engine_semantics(
     data = _result(response)
     assert data["metadata"]["total_rows"] == 1
     assert [row["name"] for row in data["table"]] == [composed]
+    assert data["table"][0]["row_type"] == "traces"
 
     _assert_bounded_compatibility_task_reads(captured)
     assert all("UPPER(" not in query["sql"] for query in captured.captured_queries)

@@ -1,18 +1,12 @@
 import React, { useEffect, useState } from "react";
-import {
-  Box,
-  Button,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import EscalationSettingsDialog from "./components/EscalationSettingsDialog";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import PageHeader from "src/components/page-header";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
@@ -61,120 +55,86 @@ export default function ErrorFeedView() {
           px: 2,
           pt: 2,
           pb: 1.5,
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
           borderBottom: "1px solid",
           borderColor: "divider",
           flexShrink: 0,
         }}
       >
-        <Stack gap={0.25}>
-          <Stack direction="row" alignItems="center" gap={1}>
+        <PageHeader
+          sx={{ mb: 0 }}
+          title="Error Feed"
+          badge={
             <Typography
-              color="text.primary"
-              typography="m2"
-              fontWeight="fontWeightSemiBold"
-            >
-              Error Feed
-            </Typography>
-            <Box
               sx={{
-                px: 0.75,
-                py: 0.25,
-                borderRadius: "4px",
-                bgcolor: "action.hover",
-                border: "1px solid",
-                borderColor: "divider",
+                typography: "s1",
+                fontWeight: 400,
+                color: "text.tertiary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              <Typography
-                sx={{
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  fontFeatureSettings: "'tnum'",
-                }}
-              >
-                {totalCount}
-              </Typography>
-            </Box>
-          </Stack>
-          <Typography
-            typography="s2"
-            color="text.secondary"
-            fontWeight="fontWeightRegular"
-          >
-            Track, triage, and resolve AI errors — hallucinations, eval
-            failures, and pipeline issues
-          </Typography>
-        </Stack>
-
-        <Stack direction="row" alignItems="center" gap={1}>
-          <Tooltip title="Escalation settings" arrow>
-            <span>
-              <IconButton
-                aria-label="Escalation settings"
+              {totalCount}
+            </Typography>
+          }
+          description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
+          actions={
+            <>
+              <Tooltip title="Escalation settings" arrow>
+                <span>
+                  <IconButton
+                    aria-label="Escalation settings"
+                    size="small"
+                    disabled={!currentWorkspaceId || !currentOrganizationId}
+                    onClick={() => setSettingsOpen(true)}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: "6px",
+                      width: 32,
+                      height: 32,
+                      color: "text.secondary",
+                    }}
+                  >
+                    <Iconify icon="solar:settings-linear" width={16} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Button
+                variant="outlined"
                 size="small"
-                disabled={!currentWorkspaceId || !currentOrganizationId}
-                onClick={() => setSettingsOpen(true)}
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/navbar/ic_alert.svg"
+                    sx={{ width: 16 }}
+                  />
+                }
+                onClick={() => navigate("/dashboard/error-feed/alerts")}
+                sx={{ borderColor: "divider", color: "text.secondary" }}
+              >
+                Alert rules
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/ic_docs_single.svg"
+                    sx={{ width: 15 }}
+                  />
+                }
+                component="a"
+                href="https://docs.futureagi.com/docs/error-feed"
+                target="_blank"
                 sx={{
-                  border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "6px",
-                  width: 32,
-                  height: 32,
                   color: "text.secondary",
+                  "&:hover": { borderColor: "border.hover" },
                 }}
               >
-                <Iconify icon="solar:settings-linear" width={16} />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={
-              <SvgColor
-                src="/assets/icons/navbar/ic_alert.svg"
-                sx={{ width: 16, height: 16 }}
-              />
-            }
-            onClick={() => navigate("/dashboard/error-feed/alerts")}
-            sx={{
-              height: 32,
-              fontSize: "13px",
-              borderColor: "divider",
-              color: "text.secondary",
-              borderRadius: "6px",
-            }}
-          >
-            Alert rules
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={
-              <SvgColor
-                src="/assets/icons/ic_docs_single.svg"
-                sx={{ width: 15, height: 15 }}
-              />
-            }
-            component="a"
-            href="https://docs.futureagi.com/docs/error-feed"
-            target="_blank"
-            sx={{
-              height: 32,
-              fontSize: "13px",
-              borderColor: "divider",
-              color: "text.secondary",
-              borderRadius: "6px",
-              "&:hover": { borderColor: "border.hover" },
-            }}
-          >
-            Docs
-          </Button>
-        </Stack>
+                Docs
+              </Button>
+            </>
+          }
+        />
       </Box>
 
       {settingsOpen && (

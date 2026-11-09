@@ -1,17 +1,9 @@
 import PropTypes from "prop-types";
-import { forwardRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/material";
+import { forwardRef } from "react";
+import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-
-// Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
-// Custom covers anything else in 1–20. Same set as the header TrialsPicker so
-// the vocabulary is one thing.
-const TRIAL_PRESETS = [1, 3, 5, 8];
-const DEFAULT_TRIALS_LABEL = 1;
-const RED = BUILD_TONES.red;
+import TrialsPicker from "./TrialsPicker";
 
 /**
  * Bulk-action bar for the scenario table.
@@ -38,10 +30,6 @@ const RED = BUILD_TONES.red;
 export default function SelectionBar({
   count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
 }) {
-  const [trialsAnchor, setTrialsAnchor] = useState(null);
-  const [customOpen, setCustomOpen] = useState(false);
-  const [customValue, setCustomValue] = useState(String(trials || 1));
-
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = count * k;
   const estSeconds = totalRuns * 10; // ~10s / run in the mock player
@@ -55,20 +43,6 @@ export default function SelectionBar({
   const isAll = matching?.mode === "all";
   const canEscalate =
     matching && !isAll && matching.pageCount > 0 && matching.total > matching.pageCount;
-
-  const applyPreset = (v) => {
-    onTrialsChange?.(v);
-    setTrialsAnchor(null);
-    setCustomOpen(false);
-    setCustomValue(String(v));
-  };
-  const commitCustom = () => {
-    const n = Math.max(1, Math.min(20, Math.floor(Number(customValue) || 1)));
-    onTrialsChange?.(n);
-    setTrialsAnchor(null);
-    setCustomOpen(false);
-    setCustomValue(String(n));
-  };
 
   return (
     <Stack
@@ -92,17 +66,16 @@ export default function SelectionBar({
         direction="row" alignItems="center" spacing={0.75}
         sx={{
           flexShrink: 0,
-          pl: 0.375, pr: 0.375, py: 0.375, borderRadius: 999,
-          border: "1px solid",
-          borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
-          bgcolor: "transparent",
+          height: 32, pl: 0.75, pr: 0.5, borderRadius: "6px",
+          border: "1px solid", borderColor: "divider",
+          bgcolor: "background.paper",
         }}
       >
         {isAll ? (
           // Whole-match scope stated as one phrase so the escalation reads as
           // done (and the paging contract can assert it as a unit).
           <Typography sx={{
-            typography: "s2", fontWeight: 600, fontSize: 13,
+            typography: "m3", fontWeight: "fontWeightMedium",
             color: "text.primary", whiteSpace: "nowrap", px: 0.5,
           }}>
             All {count.toLocaleString()} matching {count === 1 ? "scenario" : "scenarios"} selected
@@ -110,16 +83,15 @@ export default function SelectionBar({
         ) : (
           <>
             <Box sx={{
-              width: 22, height: 22, borderRadius: "50%",
+              minWidth: 22, height: 22, px: 0.5, borderRadius: "4px",
               display: "flex", alignItems: "center", justifyContent: "center",
-              bgcolor: "text.primary",
-              color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-              fontSize: 11, fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              bgcolor: "action.selected", color: "text.primary",
+              typography: "s3", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
             }}>
               {count}
             </Box>
             <Typography sx={{
-              typography: "s2", fontWeight: 600, fontSize: 13,
+              typography: "m3", fontWeight: "fontWeightMedium",
               color: "text.primary", whiteSpace: "nowrap", pl: 0.25,
             }}>
               {count === 1 ? "scenario selected" : "scenarios selected"}
@@ -134,17 +106,17 @@ export default function SelectionBar({
             aria-label="Clear selection"
             sx={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 22, height: 22, borderRadius: 999,
+              width: 22, height: 22, borderRadius: "4px",
               bgcolor: "transparent", border: "none", cursor: "pointer",
               color: "text.subtitle",
               transition: "background-color 120ms, color 120ms",
               "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08),
+                bgcolor: "action.hover",
                 color: "text.primary",
               },
             }}
           >
-            <Iconify icon="eva:close-fill" width={14} />
+            <Iconify icon="solar:close-linear" width={14} />
           </Box>
         </CustomTooltip>
       </Stack>
@@ -154,13 +126,10 @@ export default function SelectionBar({
       {canEscalate && (
         <Button
           size="small"
+          variant="text"
+          color="inherit"
           onClick={matching.onSelectAll}
-          sx={{
-            typography: "s2", fontWeight: 700, flexShrink: 0,
-            color: "primary.main", minWidth: 0, px: 1,
-            whiteSpace: "nowrap",
-            "&:hover": { bgcolor: "transparent", textDecoration: "underline" },
-          }}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
         >
           Select all {matching.total.toLocaleString()} matching
         </Button>
@@ -174,18 +143,9 @@ export default function SelectionBar({
             size="small"
             onClick={onDelete}
             variant="outlined"
-            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
-            sx={{
-              typography: "s2", fontWeight: 600, fontSize: 12.5,
-              color: RED,
-              borderColor: alpha(RED, 0.4),
-              px: 1.5, height: 32, minWidth: 0, flexShrink: 0,
-              whiteSpace: "nowrap",
-              "&:hover": {
-                borderColor: RED,
-                bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
-              },
-            }}
+            color="inherit"
+            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
+            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
             Delete
           </Button>
@@ -193,28 +153,7 @@ export default function SelectionBar({
 
         {/* TRIALS — reliability dial */}
         {onTrialsChange && (
-          <CustomTooltip show arrow size="small" title="How many times to run each scenario (reliability across trials)">
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={(e) => setTrialsAnchor(e.currentTarget)}
-              endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
-              startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
-              sx={{
-                typography: "s2", fontWeight: 600, fontSize: 12.5,
-                color: "text.primary",
-                borderColor: "divider",
-                px: 1.25, height: 32, minWidth: 0, flexShrink: 0,
-                whiteSpace: "nowrap",
-                "&:hover": {
-                  borderColor: (t) => alpha(t.palette.text.primary, 0.4),
-                  bgcolor: "action.hover",
-                },
-              }}
-            >
-              Repeats: {k}
-            </Button>
-          </CustomTooltip>
+          <TrialsPicker trials={k} onChange={onTrialsChange} scenarioCount={count} />
         )}
 
         {/* PRIMARY — Run N selected (× k). Unavailable: shown disabled, the
@@ -241,101 +180,6 @@ export default function SelectionBar({
 
       </Stack>
 
-      {/* Repeats popover — presets + custom */}
-      <Popover
-        open={!!trialsAnchor}
-        anchorEl={trialsAnchor}
-        onClose={() => { setTrialsAnchor(null); setCustomOpen(false); }}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 240, p: 0.5, mt: 0.5 } } }}
-      >
-        <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
-            Repeats per scenario
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
-            {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
-          </Typography>
-        </Box>
-        {TRIAL_PRESETS.map((v) => {
-          const active = v === k;
-          return (
-            <Box
-              key={v}
-              onClick={() => applyPreset(v)}
-              sx={{
-                display: "flex", alignItems: "center", gap: 1,
-                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
-                bgcolor: active ? "action.hover" : "transparent",
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <Box sx={{
-                width: 34, textAlign: "left",
-                typography: "s2", fontWeight: active ? 700 : 600,
-                color: active ? "primary.main" : "text.primary",
-                fontVariantNumeric: "tabular-nums",
-              }}>
-                {v}×
-              </Box>
-              {v === DEFAULT_TRIALS_LABEL && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                  Default
-                </Typography>
-              )}
-              <Box sx={{ flex: 1 }} />
-              {active && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
-            </Box>
-          );
-        })}
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider", mt: 0.5, pt: 0.5 }}>
-          {!customOpen ? (
-            <Box
-              onClick={() => setCustomOpen(true)}
-              sx={{
-                display: "flex", alignItems: "center", gap: 1,
-                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <Iconify icon="solar:pen-2-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
-                Custom…
-              </Typography>
-            </Box>
-          ) : (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 0.75 }}>
-              <TextField
-                size="small"
-                type="number"
-                autoFocus
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitCustom(); }}
-                inputProps={{ min: 1, max: 20, style: { padding: "6px 8px", fontSize: 13, width: 56 } }}
-                sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
-              />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                1 – 20 repeats
-              </Typography>
-              <Button
-                size="small" variant="contained"
-                onClick={commitCustom}
-                sx={{
-                  typography: "s3", fontWeight: 700,
-                  bgcolor: "text.primary",
-                  color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-                  boxShadow: "none", minWidth: 0, px: 1.25, py: 0.375,
-                  "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
-                }}
-              >
-                Set
-              </Button>
-            </Stack>
-          )}
-        </Box>
-      </Popover>
     </Stack>
   );
 }
@@ -349,17 +193,8 @@ const RunButton = forwardRef(function RunButton({ label, onClick, disabled = fal
       variant="contained"
       disabled={disabled}
       onClick={onClick}
-      startIcon={<Iconify icon="solar:play-bold" width={13} />}
-      sx={{
-        typography: "s2", fontWeight: 700, fontSize: 12.5,
-        px: 1.75, height: 32, minWidth: 0, flexShrink: 0,
-        bgcolor: "text.primary",
-        color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-        boxShadow: "none",
-        whiteSpace: "nowrap",
-        "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
-        "&.Mui-disabled": { bgcolor: "action.disabledBackground", color: "text.disabled" },
-      }}
+      startIcon={<Iconify icon="solar:play-bold" width={14} />}
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
     >
       {label}
     </Button>

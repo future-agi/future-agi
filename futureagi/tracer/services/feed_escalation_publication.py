@@ -88,7 +88,10 @@ def bind_scan_occurrence(*, cluster, finding_id, trace_id):
 def eval_occurrence_time(project_id, result):
     from tracer.models.observation_span import EvalLogger
 
-    entry = EvalLogger.no_workspace_objects.get(pk=result.eval_logger_id)
+    entry = EvalLogger.no_workspace_objects.filter(pk=result.eval_logger_id).first()
+    if entry is None:
+        # Deleted after the fetch: the caller's live-eval lock skips it.
+        return None, ""
     if (
         str(entry.custom_eval_config.project_id) != str(project_id)
         or entry.target_type != result.target_type
