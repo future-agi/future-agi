@@ -24,6 +24,7 @@ func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.R
 		return nil, apiErr
 	}
 
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	vsp, ok := provider.(providers.VectorStoresProvider)
 	if !ok {
 		return nil, &models.APIError{

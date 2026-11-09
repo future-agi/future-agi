@@ -129,6 +129,7 @@ func (h *Handlers) CreateEmbedding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to EmbeddingProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	ep, ok := provider.(providers.EmbeddingProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{

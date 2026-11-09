@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/rotation"
 )
 
@@ -316,31 +316,29 @@ func noModelsEndpoint(err error) bool {
 	return strings.HasSuffix(msg, "returned status 404") || strings.HasSuffix(msg, "returned status 405")
 }
 
-// keyFreeError describes a failed validation call without repeating what the
-// upstream said: an upstream may repeat the key it refused (OpenAI's 401 shows
-// its first and last characters; others echo it whole), and the description
-// is logged and answered. A provider's answer keeps its status, type and code.
-// A call that got no answer (nothing listening, a dial or TLS error, the
-// provider's timeout) says so, so an unreachable provider never reads as one
-// that refused the key; the adapters' own error for it keeps its status,
-// type and code, and a transport error its text with the key, should it
-// appear, replaced. Any other error is kept the same way.
-func keyFreeError(err error, key string) error {
+// keyFreeError publishes only gateway-authored validation explanations and a
+// numeric status. Provider messages, codes/types, URLs and dial diagnostics may
+// carry credentials (including fragments); none is safe to repeat here.
+func keyFreeError(err error, _ string) error {
+	const noAnswer = "the validation call got no answer from the provider (no connection, or the provider's timeout): the key was not checked"
+	if common.IsTransportError(err) || errors.Is(err, context.DeadlineExceeded) {
+		return errors.New(noAnswer)
+	}
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {
 		if apiErr.Code == "provider_0" || apiErr.Type == models.ErrTypeGatewayTimeout {
-			// The adapters' error for a call with no response:
-			// ErrUpstreamProvider(0, ...) or ErrGatewayTimeout.
-			return fmt.Errorf("the validation call got no answer from the provider (status %d, type %s, code %s: no connection, or the provider's timeout): the key was not checked",
-				apiErr.Status, apiErr.Type, apiErr.Code)
+			return errors.New(noAnswer)
 		}
-		return fmt.Errorf("the provider refused the call: status %d, type %s, code %s (its message is not repeated: it can carry the key)",
-			apiErr.Status, apiErr.Type, apiErr.Code)
+		// Name the provider's own HTTP status (an adapter answers a refused
+		// call as a 502 that records it), never its text, type or code.
+		status := apiErr.ProviderStatus
+		if status == 0 {
+			status = apiErr.UpstreamStatus
+		}
+		if status == 0 {
+			status = apiErr.Status
+		}
+		return fmt.Errorf("the provider refused the call: status %d (its diagnostics are not repeated: they can carry the key)", status)
 	}
-	text := strings.ReplaceAll(err.Error(), key, "[the new key]")
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("the validation call got no answer from the provider (%s): the key was not checked", text)
-	}
-	return errors.New(text)
+	return errors.New("the validation call failed: the new key was not promoted (provider diagnostics are not repeated)")
 }

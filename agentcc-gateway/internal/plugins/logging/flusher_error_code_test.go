@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -18,6 +19,35 @@ import (
 // log entry's top-level error_code (futureagi/agentcc/services/log_ingestion.py
 // _budget_error_code), and the request-log batch never carried one, so a
 // budget block or throttle notified nobody (GW-E2E-012 check #3).
+
+// These expectations are independent literal fixtures, never imported from the
+// production closed-message table. Unknown credential ownership hides error text.
+var legacyClosedErrorMessages = map[string]string{
+	"req_upstream_budget_exceeded":     "rate_limit_error: retry later; contact support with the correlation id (correlation id: req_upstream_budget_exceeded)",
+	"req_upstream_org_budget_exceeded": "invalid_request_error: check your request; contact support with the correlation id (correlation id: req_upstream_org_budget_exceeded)",
+	"req_upstream_budget_throttled":    "rate_limit_error: retry later; contact support with the correlation id (correlation id: req_upstream_budget_throttled)",
+	"req_upstream_provider_503":        "upstream_unavailable: retry later; contact support with the correlation id (correlation id: req_upstream_provider_503)",
+	"req_rf_logerr_budget_block":       "rate_limit_error: retry later; contact support with the correlation id (correlation id: req_rf_logerr_budget_block)",
+	"req_01JD8Z3K4M5N6P7Q8R9S.1":       "rate_limit_error: retry later; contact support with the correlation id (correlation id: req_01JD8Z3K4M5N6P7Q8R9S.1)",
+	"req_content":                      "upstream_unavailable: retry later; contact support with the correlation id (correlation id: req_content)",
+}
+
+func assertSerializedEntryOmitsText(t *testing.T, label string, entry any, text string) {
+	t.Helper()
+	if text == "" {
+		t.Fatal("the omitted-text assertion needs a nonempty fixture")
+	}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Match the JSON encoding, including HTML escapes in callerText, anywhere
+	// in the entry rather than checking only its top-level error_message.
+	encodedText, _ := json.Marshal(text)
+	if bytes.Contains(raw, encodedText[1:len(encodedText)-1]) {
+		t.Errorf("%s: serialized entry retained the original error text", label)
+	}
+}
 
 // budgetRefusalFixture is the entry the gateway sends for the budget block
 // below, as Django's tests read it (agentcc/tests/test_rf_logerr_budget_entry.py).
@@ -97,6 +127,9 @@ func TestLogBatchCarriesTheBudgetRefusalErrorCode(t *testing.T) {
 	if err := json.Unmarshal(raw, &want); err != nil {
 		t.Fatalf("parse %s: %v", budgetRefusalFixture, err)
 	}
+	// Keep the shared Django fixture unchanged; only exported error text differs.
+	assertSerializedEntryOmitsText(t, "budget refusal", entry, want["error_message"].(string))
+	want["error_message"] = legacyClosedErrorMessages["req_rf_logerr_budget_block"]
 	if !reflect.DeepEqual(entry, want) {
 		got, _ := json.MarshalIndent(entry, "", "  ")
 		t.Errorf("the gateway's entry differs from %s, which Django's test feeds to log ingestion; "+
@@ -176,8 +209,8 @@ func hasKey(m map[string]any, k string) bool {
 // (parseProviderError, which sets UpstreamStatus), and Django reads a budget
 // code in error_code as the gateway's own refusal, so an upstream answering
 // "budget_exceeded" (another gateway in front of the model, say) must not
-// raise budget.exceeded. The entry keeps the status and the message, and the
-// record keeps the code for the trace line.
+// raise budget.exceeded. The entry keeps the status but hides the provider's
+// message, and the record keeps the code for the trace line.
 func TestLogEntryLeavesOutAProviderErrorCode(t *testing.T) {
 	for _, upstream := range []*models.APIError{
 		{Status: 429, Type: "insufficient_quota", Code: "budget_exceeded",
@@ -207,10 +240,12 @@ func TestLogEntryLeavesOutAProviderErrorCode(t *testing.T) {
 				t.Errorf("%s %s entry: error_code = %v; a provider's code must not reach Django as the gateway's",
 					upstream.Code, name, e["error_code"])
 			}
-			if e["status_code"] != float64(upstream.Status) || e["error_message"] != upstream.Message {
+			wantMessage := legacyClosedErrorMessages[rec.RequestID]
+			if e["status_code"] != float64(upstream.Status) || e["error_message"] != wantMessage {
 				t.Errorf("%s %s entry: status_code = %v, error_message = %v; want %d, %q",
-					upstream.Code, name, e["status_code"], e["error_message"], upstream.Status, upstream.Message)
+					upstream.Code, name, e["status_code"], e["error_message"], upstream.Status, wantMessage)
 			}
+			assertSerializedEntryOmitsText(t, upstream.Code+" "+name, e, upstream.Message)
 		}
 	}
 }

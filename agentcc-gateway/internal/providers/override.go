@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +121,23 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		return nil, fmt.Errorf("no base config for provider %q", providerID)
 	}
 
+	// Refuse an unparseable inherited URL without publishing its userinfo in
+	// a parser error. Never let net/http recover node authentication from it.
+	if _, err := url.Parse(baseCfg.BaseURL); err != nil {
+		return nil, &ConfigurationError{ProviderID: providerID, Problem: "base_url must be a valid URL"}
+	}
+	// Adapter settings use lowercase map lookups. Reject case-ambiguous
+	// settings before normalization rather than picking a value by map order.
+	seenHeaders := make(map[string]bool)
+	for name := range baseCfg.Headers {
+		if kept, ok := orgInheritedHeaderName(baseCfg.APIFormat, name); ok {
+			key := strings.ToLower(kept)
+			if seenHeaders[key] {
+				return nil, &ConfigurationError{ProviderID: providerID, Problem: "inherited provider settings contain duplicate names"}
+			}
+			seenHeaders[key] = true
+		}
+	}
 	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
 	if orgCfg.BaseURL == "" {
 		return nil, &ConfigurationError{
@@ -138,11 +156,19 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		return nil, fmt.Errorf("creating org provider %s/%s: %w", orgID, providerID, err)
 	}
 
+	// Construction is the only authority for the BYOK publication exception.
+	// Record it against this exact instance before the cache publishes it. The
+	// instance keeps its concrete adapter type and full method set; a factory
+	// result that cannot carry identity-keyed provenance fails closed.
+	if !markOrgInstance(p, orgID) {
+		_ = p.Close()
+		return nil, &ConfigurationError{ProviderID: providerID, Problem: "provider does not support org credential provenance"}
+	}
 	c.providers[key] = p
 	slog.Info("created per-org provider",
 		"org_id", orgID,
 		"provider", providerID,
-		"base_url", orgCfg.BaseURL,
+		"base_url", resolveOrgConfig(orgCfg, "", nil).BaseURL,
 		"api_format", orgCfg.APIFormat,
 	)
 
@@ -156,26 +182,114 @@ func orgInstanceID(providerID, orgID string) string {
 	return providerID + "_org_" + orgID
 }
 
-// IsOrgInstance reports whether p is an instance built from orgID's own
-// provider config, and so calls its upstream with the org's credentials
-// rather than the gateway's.
-func IsOrgInstance(p Provider, orgID string) bool {
-	if p == nil || orgID == "" {
-		return false
-	}
-	// orgInstanceID's suffix, matched without building it: this runs on
-	// every upstream attempt.
-	id := p.ID()
-	return strings.HasSuffix(id, orgID) && strings.HasSuffix(id[:len(id)-len(orgID)], "_org_")
+// orgCredentialProvenance is private construction evidence for the BYOK
+// publication exception: instance identity -> the org whose credentials that
+// instance sends. Only GetOrCreateWithTenantConfig writes it (before the cache
+// publishes the instance) and Evict/EvictAll remove it. It is keyed by the
+// instance itself, never by its ID string, so a registry adapter or a
+// lookalike "<id>_org_<orgID>" provider can never hold an entry. The adapters
+// are separate packages, so a field on the adapter is not available here;
+// adapters keep their concrete types and method sets.
+var orgCredentialProvenance = struct {
+	sync.RWMutex
+	owner map[Provider]string
+}{owner: make(map[Provider]string)}
+
+// identityKeyed is true only for pointer-typed instances. Their identity is a
+// stable, hashable key; any other dynamic type is never trusted.
+func identityKeyed(p Provider) bool {
+	return p != nil && reflect.TypeOf(p).Kind() == reflect.Pointer && !reflect.ValueOf(p).IsNil()
 }
 
-// resolveOrgConfig clones a base provider config for one org. The upstream it
-// names (base_url, api_format, headers, TLS) stays; everything the org states
-// about itself wins over the rest, including a path prefix stated as empty.
+func markOrgInstance(p Provider, orgID string) bool {
+	if orgID == "" || !identityKeyed(p) {
+		return false
+	}
+	orgCredentialProvenance.Lock()
+	orgCredentialProvenance.owner[p] = orgID
+	orgCredentialProvenance.Unlock()
+	return true
+}
+
+// unmarkOrgInstance drops the record when the cache closes and removes the
+// instance. A request still holding it is then treated as platform-owned,
+// which is the fail-closed direction.
+func unmarkOrgInstance(p Provider) {
+	if !identityKeyed(p) {
+		return
+	}
+	orgCredentialProvenance.Lock()
+	delete(orgCredentialProvenance.owner, p)
+	orgCredentialProvenance.Unlock()
+}
+
+// IsOrgInstance reports whether p is an instance built from orgID's own
+// provider config, and so calls its upstream with the org's credentials
+// rather than the gateway's. The answer is construction provenance, never an
+// ID naming convention.
+func IsOrgInstance(p Provider, orgID string) bool {
+	if orgID == "" || !identityKeyed(p) {
+		return false
+	}
+	orgCredentialProvenance.RLock()
+	owner, ok := orgCredentialProvenance.owner[p]
+	orgCredentialProvenance.RUnlock()
+	return ok && owner == orgID
+}
+
+// orgInheritedHeaderName is an exact-name, case-insensitive allowlist. The
+// common entries are reviewed non-secret wire defaults; the adapter-specific
+// entries are settings, normalized for the adapters' lowercase map lookups.
+// All credential-capable headers (and unknown names) are deliberately absent.
+func orgInheritedHeaderName(apiFormat, name string) (string, bool) {
+	key := strings.ToLower(name)
+	switch key {
+	case "anthropic-version", "anthropic-beta", "user-agent":
+		return name, true // Preserve wire-header spelling and deployed defaults.
+	}
+	switch apiFormat {
+	case "azure":
+		return key, key == "auth-type" || key == "api-version"
+	case "gemini", "google":
+		return key, key == "x-gcp-project" || key == "x-gcp-location"
+	case "bedrock":
+		return key, key == "x-aws-region"
+	case "cohere":
+		return key, key == "x-cohere-input-type"
+	default:
+		return "", false
+	}
+}
+
+// resolveOrgConfig clones a base provider config for one org. The endpoint
+// (without inherited userinfo), api_format, reviewed headers and TLS stay;
+// everything the org states about itself wins, including an empty path prefix.
 // None of the operator's credentials carry over: the org authenticates with
 // its own or not at all.
 func resolveOrgConfig(baseCfg config.ProviderConfig, apiKey string, tenantCfg *tenant.ProviderConfig) config.ProviderConfig {
 	orgCfg := baseCfg
+	if tenantCfg == nil || tenantCfg.BaseURL == "" {
+		// BaseURL is copied, not mutated in the platform config. Without this,
+		// net/http can synthesize node Basic auth alongside a tenant API key.
+		if endpoint, err := url.Parse(orgCfg.BaseURL); err == nil && endpoint.User != nil {
+			endpoint.User = nil
+			orgCfg.BaseURL = endpoint.String()
+		}
+	}
+	// An inherited header must never replace the tenant credential. This is
+	// an allowlist, not a growing denylist of auth header spellings. Keep a
+	// separate map so an org instance cannot mutate the operator's defaults.
+	orgCfg.Headers = nil
+	for name, value := range baseCfg.Headers {
+		if kept, ok := orgInheritedHeaderName(baseCfg.APIFormat, name); ok {
+			if orgCfg.Headers == nil {
+				orgCfg.Headers = make(map[string]string)
+			}
+			orgCfg.Headers[kept] = value
+		}
+	}
+	// tenant.ProviderConfig has no Headers field on this deployed tree.
+	// Do not add a new tenant auth-header surface as part of this backport.
 	orgCfg.APIKey = apiKey
 	orgCfg.AWSAccessKeyID = ""
 	orgCfg.AWSSecretAccessKey = ""
@@ -371,8 +485,11 @@ func (c *OrgProviderCache) Evict(orgID string) {
 	for key, p := range c.providers {
 		// Keys are formatted as "orgID:providerID".
 		if len(key) > len(orgID) && key[:len(orgID)+1] == orgID+":" {
-			p.Close()
+			// Revoke and unpublish together under c.mu, before Close can
+			// block or let a still-running request observe a closed instance.
+			unmarkOrgInstance(p)
 			delete(c.providers, key)
+			p.Close()
 		}
 	}
 }
@@ -383,8 +500,10 @@ func (c *OrgProviderCache) EvictAll() {
 	defer c.mu.Unlock()
 
 	for key, p := range c.providers {
-		p.Close()
+		// Same lock and revoke-before-close order as Evict.
+		unmarkOrgInstance(p)
 		delete(c.providers, key)
+		p.Close()
 	}
 }
 

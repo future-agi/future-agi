@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,9 +34,11 @@ type Provider struct {
 
 // New creates a new Bedrock provider.
 func New(id string, cfg config.ProviderConfig) (*Provider, error) {
+	errorCredentials := common.HeldErrorCredentials(cfg.Headers, cfg.APIKey, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSSessionToken)
+
 	creds, err := loadCredentials(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock: loading credentials: %w", err)
+		return nil, common.ExactError(fmt.Errorf("bedrock: loading credentials: %w", err), errorCredentials...)
 	}
 
 	timeout := cfg.DefaultTimeout
@@ -102,6 +105,8 @@ func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming request to Bedrock.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.credentials.AccessKeyID, p.credentials.SecretAccessKey, p.credentials.SessionToken)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -116,44 +121,45 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	body, err := json.Marshal(br)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock: marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: marshaling request: %v", err)), errorCredentials...)
 	}
 
 	reqURL := fmt.Sprintf("%s/model/%s/invoke", p.baseURL, url.PathEscape(modelID))
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock: creating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: creating request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 
 	if err := signRequest(httpReq, p.credentials, p.region, bedrockService); err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock: signing request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: signing request: %v", err)), errorCredentials...)
 	}
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("bedrock: request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("bedrock: request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "bedrock: reading response")
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock: reading response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseBedrockError(resp.StatusCode, respBody)
+		return nil, parseBedrockError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var br2 bedrockResponse
 	if err := json.Unmarshal(respBody, &br2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock: parsing response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock: parsing response: %v", err)), errorCredentials...)
 	}
 
 	return translateResponse(&br2), nil
@@ -161,6 +167,8 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming request to Bedrock.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.credentials.AccessKeyID, p.credentials.SecretAccessKey, p.credentials.SessionToken)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -202,7 +210,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		body, err := json.Marshal(br)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock: marshaling request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: marshaling request: %v", err)), errorCredentials...)
 			return
 		}
 
@@ -210,7 +218,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock: creating request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: creating request: %v", err)), errorCredentials...)
 			return
 		}
 
@@ -218,17 +226,18 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		httpReq.Header.Set("Accept", "application/vnd.amazon.eventstream")
 
 		if err := signRequest(httpReq, p.credentials, p.region, bedrockService); err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock: signing request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock: signing request: %v", err)), errorCredentials...)
 			return
 		}
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
-				errs <- models.ErrGatewayTimeout("bedrock: request timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("bedrock: request timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
@@ -236,11 +245,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		if resp.StatusCode != http.StatusOK {
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
-				errs <- models.ErrUpstreamProvider(resp.StatusCode,
-					fmt.Sprintf("bedrock: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+				errs <- common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+					fmt.Sprintf("bedrock: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 				return
 			}
-			errs <- parseBedrockError(resp.StatusCode, respBody)
+			errs <- parseBedrockError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -253,10 +262,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			default:
 			}
 
-			msg, err := readEventStreamMessage(resp.Body)
+			msg, err := readEventStreamMessage(resp.Body, errorCredentials...)
 			if err != nil {
 				if ctx.Err() == nil {
-					errs <- common.ReadError(err, 0, "bedrock: stream read")
+					errs <- common.ReadError(err, 0, "bedrock: stream read", errorCredentials...)
 				}
 				return
 			}
@@ -264,15 +273,15 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				return // EOF.
 			}
 
-			chunk, done, err := state.parseStreamPayload(msg)
+			chunk, done, err := state.parseStreamPayload(msg, errorCredentials...)
 			if err != nil {
 				slog.Warn("bedrock: error parsing stream event",
-					"error", err,
+					"error", common.ExactError(err, errorCredentials...),
 					"provider", p.id,
 				)
 				// Bedrock exceptions are fatal.
 				if msg.Headers[":message-type"] == "exception" {
-					errs <- models.ErrUpstreamProvider(0, err.Error())
+					errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, privacy.ScrubExactCredential(err.Error(), errorCredentials...)), errorCredentials...)
 					return
 				}
 				continue

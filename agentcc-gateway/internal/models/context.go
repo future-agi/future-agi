@@ -180,6 +180,9 @@ type RequestContext struct {
 	// provider config, "platform" for the gateway's own. "" until a provider
 	// is called. Provider names the routing provider either way.
 	CredentialSource string
+	// ErrorTextRedactor is an immutable request-owned publication policy. It
+	// contains no credential and is never serialized or retained after Release.
+	ErrorTextRedactor func(string) string `json:"-"`
 
 	// v2 request state (plan G0b contract b). Each is written by the lane
 	// that owns its domain, deep-copied by Snapshot and cleared by Release.
@@ -409,6 +412,7 @@ func (rc *RequestContext) Release() {
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0
 	rc.CredentialSource = ""
+	rc.ErrorTextRedactor = nil
 	rc.Agent = AgentContext{}
 	rc.Routing = RoutingOptions{}
 	rc.Billing = BillingState{}
@@ -594,6 +598,7 @@ func (rc *RequestContext) CloneRequest() *RequestContext {
 	cp.Billing = rc.Billing.Clone()
 	cp.Evidence = rc.Evidence
 	cp.Privacy = rc.Privacy
+	cp.ErrorTextRedactor = rc.ErrorTextRedactor
 	cp.Runtime = rc.Runtime.Clone()
 	cp.ToolCallGuard = rc.ToolCallGuard
 	cp.ToolCalls = rc.ToolCalls.clone()

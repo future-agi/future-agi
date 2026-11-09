@@ -112,9 +112,10 @@ func TestSolQueuedSplitEvidence(t *testing.T) {
 			prepareManagedStream(t, g, p)
 			status, body, complete := sendManagedWithin(t, g, "/v1/chat/completions", "acme/token", 5*time.Second)
 			spent, held := settledAccount(t, g)
-			if !complete || status != 200 || spent != 48 || held != 0 || !strings.Contains(body, "sol queued failure") || strings.Contains(body, "[DONE]") {
-				t.Fatalf("complete=%t status=%d spent=%d held=%d body=%.400s", complete, status, spent, held, body)
+			if !complete || status != 200 || spent != 48 || held != 0 || p.calls.Load() != 1 {
+				t.Fatalf("complete=%t status=%d spent=%d held=%d calls=%d body=%.400s", complete, status, spent, held, p.calls.Load(), body)
 			}
+			w4AssertTerminalOrder(t, body, "sol queued failure")
 		})
 	}
 }

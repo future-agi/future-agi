@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,30 +63,22 @@ func TestDXR2NativeStreamHTTPFailure(t *testing.T) {
 				} else {
 					h.handleGenAIStream(context.Background(), w, rc, stream, "probe", requestview.Gemini([]byte(`{"contents":[]}`), "probe", true), nil)
 				}
-				wantStatus, wantCode := status, fmt.Sprintf("provider_%d", status)
+				// A billing label alone cannot prove an org-owned credential.
+				wantStatus := status
 				if status == 401 || status == 403 {
-					wantStatus, wantCode = 502, "provider_auth_failed"
+					wantStatus = 502
 				}
-				var envelope struct {
-					Error struct {
-						Code    json.RawMessage `json:"code"`
-						Message string          `json:"message"`
-						Details []struct {
-							Reason string `json:"reason"`
-						} `json:"details"`
-					} `json:"error"`
+				message := w4ClosedMessage(status, rc.RequestID)
+				want := map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": message}}
+				if format == "gemini" {
+					want = map[string]any{"error": map[string]any{"code": float64(wantStatus), "message": message, "status": "INTERNAL"}}
 				}
-				if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+				var got map[string]any
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 					t.Fatal(err)
 				}
-				code := ""
-				if format == "anthropic" {
-					_ = json.Unmarshal(envelope.Error.Code, &code)
-				} else if len(envelope.Error.Details) == 1 {
-					code = envelope.Error.Details[0].Reason
-				}
-				if w.Code != wantStatus || code != wantCode || !strings.Contains(envelope.Error.Message, `"native"`) || !stream.closed {
-					t.Fatalf("status=%d code=%s body=%s closed=%v", w.Code, code, w.Body.String(), stream.closed)
+				if w.Code != wantStatus || !reflect.DeepEqual(got, want) || !stream.closed || w.Flushed || w.Header().Get("Content-Type") != "application/json" {
+					t.Fatalf("status=%d body=%s closed=%v; want %d %#v", w.Code, w.Body.String(), stream.closed, wantStatus, want)
 				}
 			})
 		}

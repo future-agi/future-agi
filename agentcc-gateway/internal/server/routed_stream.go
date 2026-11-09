@@ -2,13 +2,11 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"github.com/futureagi/agentcc-gateway/internal/billing"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
-	"net/http"
 	"time"
 )
 
@@ -58,16 +56,17 @@ func (h *Handlers) openRoutedStream(ctx context.Context, rc *models.RequestConte
 		// failover context's cancellation after the first chunk.
 		attemptCtx = models.CopyInclusiveCredential(attemptCtx, beginCtx)
 		attemptCtx, accepted := models.ObserveStreamAcceptance(attemptCtx)
+		rc.CredentialSource = credentialSourceOf(callProvider, rc.Metadata["org_id"])
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
-			err := models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			err := models.ErrGatewayUpstream("upstream provider returned no stream")
 			finish(nil, nil, err)
 			return err
 		}
 
 		chunk, prefixes, err := waitForManagedStreamStart(beginCtx, candidateChunks, candidateErrCh, credentialType(rc) == models.CredentialManaged)
-		stampProvider(err, providerID)
+		stampProvider(err, providerID, credentialSourceOf(callProvider, rc.Metadata["org_id"]))
 		var usage *models.Usage
 		if chunk != nil {
 			usage = chunk.Usage
@@ -157,7 +156,7 @@ func (h *Handlers) openRoutedStream(ctx context.Context, rc *models.RequestConte
 				} else {
 					var ok bool
 					if p, ok = h.registry.GetProvider(providerID); !ok {
-						return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
+						return models.ErrGatewayUpstream("failover provider not found")
 					}
 					if shouldApplyOrgProviderOverride(rc) {
 						p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)

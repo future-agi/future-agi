@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -173,6 +174,8 @@ func supportsMaxCompletionTokens(apiVersion string) bool {
 
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -187,39 +190,40 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	body, err := json.Marshal(&reqCopy)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("marshaling request: %v", err)), errorCredentials...)
 	}
 
 	url := p.deploymentURL(deployment, "chat/completions")
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("provider request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("provider request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "reading provider response")
+		return nil, common.ReadError(err, resp.StatusCode, "reading provider response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
+		return nil, parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var result models.ChatCompletionResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing provider response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing provider response: %v", err)), errorCredentials...)
 	}
 
 	return &result, nil
@@ -227,6 +231,8 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming chat completion request.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -247,14 +253,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		body, err := json.Marshal(&reqCopy)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("marshaling request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("marshaling request: %v", err)), errorCredentials...)
 			return
 		}
 
 		url := p.deploymentURL(deployment, "chat/completions")
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("creating request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating request: %v", err)), errorCredentials...)
 			return
 		}
 
@@ -262,13 +268,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		httpReq.Header.Set("Accept", "text/event-stream")
 		p.setAuth(httpReq)
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
-				errs <- models.ErrGatewayTimeout("provider request timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("provider request timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
@@ -276,11 +283,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		if resp.StatusCode != http.StatusOK {
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
-				errs <- models.ErrUpstreamProvider(resp.StatusCode,
-					fmt.Sprintf("provider error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+				errs <- common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+					fmt.Sprintf("provider error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 				return
 			}
-			errs <- parseProviderError(resp.StatusCode, respBody)
+			errs <- parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -300,10 +307,17 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				return
 			}
 
+			var envelope struct {
+				Error json.RawMessage `json:"error"`
+			}
+			if json.Unmarshal([]byte(data), &envelope) == nil && len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+				errs <- parseProviderError(http.StatusBadGateway, []byte(data), errorCredentials...)
+				return
+			}
 			var chunk models.StreamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				slog.Warn("failed to parse stream chunk",
-					"error", err, "data", data, "provider", p.id)
+					"error", common.ExactError(err, errorCredentials...), "data", privacy.ScrubExactCredential(data, errorCredentials...), "provider", p.id)
 				continue
 			}
 
@@ -316,7 +330,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- common.ReadError(err, 0, "stream read")
+				errs <- common.ReadError(err, 0, "stream read", errorCredentials...)
 			}
 		}
 	}()
@@ -326,26 +340,29 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 // ListModels returns available models from Azure OpenAI.
 func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	url := fmt.Sprintf("%s/openai/models?api-version=%s", p.baseURL, p.apiVersion)
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, common.ExactError(err, errorCredentials...)
 	}
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, common.ExactError(err, errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list models returned status %d", resp.StatusCode)
+		return nil, common.ExactError(fmt.Errorf("list models returned status %d", resp.StatusCode), errorCredentials...)
 	}
 
 	var result models.ModelListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, common.ExactError(err, errorCredentials...)
 	}
 
 	return result.Data, nil
@@ -353,6 +370,8 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 
 // CreateEmbedding sends an embedding request to Azure OpenAI.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -362,39 +381,40 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("marshaling embedding request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("marshaling embedding request: %v", err)), errorCredentials...)
 	}
 
 	url := p.deploymentURL(deployment, "embeddings")
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating embedding request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating embedding request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("embedding request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("embedding request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("embedding request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("embedding request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "reading embedding response")
+		return nil, common.ReadError(err, resp.StatusCode, "reading embedding response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
+		return nil, parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var result models.EmbeddingResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing embedding response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing embedding response: %v", err)), errorCredentials...)
 	}
 
 	return &result, nil
@@ -402,6 +422,8 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 // CreateImage sends an image generation request to Azure OpenAI (DALL-E).
 func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*models.ImageResponse, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -411,39 +433,40 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("marshaling image request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("marshaling image request: %v", err)), errorCredentials...)
 	}
 
 	url := p.deploymentURL(deployment, "images/generations")
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating image request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating image request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("image request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("image request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("image request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("image request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "reading image response")
+		return nil, common.ReadError(err, resp.StatusCode, "reading image response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
+		return nil, parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var result models.ImageResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing image response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing image response: %v", err)), errorCredentials...)
 	}
 
 	return &result, nil
@@ -451,6 +474,8 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 // CreateSpeech sends a text-to-speech request to Azure OpenAI and returns an audio stream.
 func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) (io.ReadCloser, string, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, "", err
 	}
@@ -461,26 +486,27 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 	body, err := json.Marshal(req)
 	if err != nil {
 		p.releaseSemaphore()
-		return nil, "", models.ErrInternal(fmt.Sprintf("marshaling speech request: %v", err))
+		return nil, "", common.ExactAPIError(models.ErrInternal(fmt.Sprintf("marshaling speech request: %v", err)), errorCredentials...)
 	}
 
 	url := p.deploymentURL(deployment, "audio/speech")
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		p.releaseSemaphore()
-		return nil, "", models.ErrInternal(fmt.Sprintf("creating speech request: %v", err))
+		return nil, "", common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating speech request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
-			return nil, "", models.ErrGatewayTimeout("speech request timed out")
+			return nil, "", common.ExactAPIError(models.ErrGatewayTimeout("speech request timed out"), errorCredentials...)
 		}
-		return nil, "", models.ErrUpstreamProvider(0, fmt.Sprintf("speech request failed: %v", err))
+		return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("speech request failed: %v", err)), errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -488,10 +514,10 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		p.releaseSemaphore()
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 		if readErr != nil {
-			return nil, "", models.ErrUpstreamProvider(resp.StatusCode,
-				fmt.Sprintf("speech error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+			return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+				fmt.Sprintf("speech error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 		}
-		return nil, "", parseProviderError(resp.StatusCode, respBody)
+		return nil, "", parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -517,6 +543,8 @@ func (s *semaphoreReadCloser) Close() error {
 
 // CreateTranscription sends an audio transcription request to Azure OpenAI (Whisper).
 func (p *Provider) CreateTranscription(ctx context.Context, req *models.TranscriptionRequest) (*models.TranscriptionResponse, error) {
+	errorCredentials := p.headers.ErrorCredentials(p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -535,10 +563,10 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 	}
 	filePart, err := writer.CreateFormFile("file", fileName)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating multipart file: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating multipart file: %v", err)), errorCredentials...)
 	}
 	if _, err := filePart.Write(req.FileData); err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("writing file data: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("writing file data: %v", err)), errorCredentials...)
 	}
 
 	// Add model field (Azure may ignore this, but include for compatibility).
@@ -562,39 +590,40 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err)), errorCredentials...)
 	}
 
 	url := p.deploymentURL(deployment, "audio/transcriptions")
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating transcription request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating transcription request: %v", err)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	p.setAuth(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("transcription request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("transcription request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("transcription request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("transcription request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "reading transcription response")
+		return nil, common.ReadError(err, resp.StatusCode, "reading transcription response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
+		return nil, parseProviderError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	result, err := models.NewTranscriptionResponse(respBody, resp.Header.Get("Content-Type"))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing transcription response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing transcription response: %v", err)), errorCredentials...)
 	}
 	return result, nil
 }
@@ -606,26 +635,26 @@ func (p *Provider) Close() error {
 	return nil
 }
 
-func parseProviderError(status int, body []byte) *models.APIError {
+func parseProviderError(status int, body []byte, credentials ...string) *models.APIError {
 	var errResp models.ErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 		// Status is what the client gets (an upstream 5xx is a 502);
 		// UpstreamStatus keeps the provider's own for the status lists.
-		return &models.APIError{
+		return common.ExactAPIError(&models.APIError{
 			Status:         mapProviderStatus(status),
 			Type:           errResp.Error.Type,
 			Code:           errResp.Error.Code,
 			Message:        errResp.Error.Message,
 			UpstreamStatus: status,
 			ProviderStatus: status,
-		}
+		}, credentials...)
 	}
 
 	msg := string(body)
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	e := models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+	e := common.ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg)), credentials...)
 	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
 	return e
 }

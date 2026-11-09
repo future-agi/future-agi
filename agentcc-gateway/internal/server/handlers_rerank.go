@@ -129,6 +129,7 @@ func (h *Handlers) Rerank(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to RerankProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	rp, ok := provider.(providers.RerankProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{

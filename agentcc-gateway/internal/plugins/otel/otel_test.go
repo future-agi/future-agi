@@ -182,7 +182,11 @@ func TestPlugin_ErrorSpan(t *testing.T) {
 	if spans[0].Status != "ERROR" {
 		t.Fatalf("Status = %q, want ERROR", spans[0].Status)
 	}
-	assertAttr(t, spans[0], "error.message", "provider timeout")
+	// An untyped plain error has no constructor-bound origin or owner: fail closed.
+	assertAttr(t, spans[0], "error.message", "upstream_unavailable: retry later; contact support with the correlation id (correlation id: req-123)")
+	if len(rc.Errors) != 1 || rc.Errors[0].Error() != "provider timeout" {
+		t.Error("span publication changed the internal untyped error")
+	}
 
 	if p.Metrics().ErrorCount.Load() != 1 {
 		t.Fatalf("ErrorCount = %d, want 1", p.Metrics().ErrorCount.Load())

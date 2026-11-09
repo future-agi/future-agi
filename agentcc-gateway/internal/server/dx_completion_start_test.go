@@ -21,12 +21,8 @@ func TestDXCompletionStartupHTTPRefusal(t *testing.T) {
 		for _, raw := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d/raw=%v", status, raw), func(t *testing.T) {
 				body := `{"error":{"message":"synthetic refusal","type":"authentication_error","code":"invalid_api_key"}}`
-				message, typ, code := "synthetic refusal", "authentication_error", "invalid_api_key"
 				if raw {
 					body = "synthetic refusal"
-					message = fmt.Sprintf("provider error (HTTP %d): synthetic refusal", status)
-					typ = "upstream_error"
-					code = fmt.Sprintf("provider_%d", status)
 				}
 				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status); fmt.Fprint(w, body) }))
 				defer up.Close()
@@ -43,7 +39,7 @@ func TestDXCompletionStartupHTTPRefusal(t *testing.T) {
 				h := &Handlers{engine: pipeline.NewEngine(post)}
 				w := httptest.NewRecorder()
 				h.handleCompletionStream(context.Background(), w, rc, p)
-				want := map[string]any{"error": map[string]any{"message": fmt.Sprintf(`Provider "fixture" rejected the credential this gateway is configured with for it (HTTP %d). This is not a problem with your API key; the gateway's operator must update that provider's key. The provider said: %s`, status, message), "type": "upstream_error", "code": "provider_auth_failed", "param": nil, "metadata": map[string]any{"provider": "fixture", "provider_status": float64(status), "provider_message": message, "provider_type": typ, "provider_code": code}}}
+				want := map[string]any{"error": map[string]any{"message": w4ClosedMessage(status, rc.RequestID), "type": "upstream_error", "code": "provider_auth_failed", "param": nil}}
 				var got map[string]any
 				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 					t.Fatal(err, w.Body.String())

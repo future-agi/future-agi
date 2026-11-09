@@ -115,6 +115,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to SpeechProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	sp, ok := provider.(providers.SpeechProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{
@@ -277,6 +278,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to TranslationProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	tp, ok := provider.(providers.TranslationProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{
@@ -427,6 +429,7 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to TranscriptionProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	tp, ok := provider.(providers.TranscriptionProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{
@@ -654,6 +657,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to SpeechProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	sp, ok := provider.(providers.SpeechProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{
@@ -678,9 +682,10 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		audioStream, contentType, callErr = sp.CreateSpeech(ctx, rc.SpeechRequest)
+		stampProvider(callErr, rc.Provider, credentialSourceOf(provider, rc.Metadata["org_id"]))
 		return callErr
 	}); err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 	if audioStream == nil {

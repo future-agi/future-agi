@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 )
 
 // ProviderFunc is the function that calls the LLM provider.
@@ -126,7 +128,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"request_id", rc.RequestID,
 			"provider", rc.Provider,
 			"model", rc.Model,
-			"error", err,
+			"error", PublishedErrorText(rc, err),
 			"elapsed", providerElapsed,
 		)
 		e.RunPostPlugins(ctx, rc)
@@ -250,6 +252,67 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	for i, p := range toRun {
 		rc.RecordTiming("post_"+p.Name(), durations[i])
 	}
+}
+
+// PublishedErrorText is a private diagnostic value for operator sinks. Source
+// scrubbing belongs at the adapter boundary; this closed projection is defence
+// in depth. Only the error's call-bound owner can exempt provider text. A direct,
+// constructor-typed gateway refusal may retain its own diagnostic; wrappers and
+// unknown origins never inherit that gateway exception. Final routing/billing
+// state (including CredentialSource) cannot bind an older error.
+// The capability package depends on pipeline, so this lower-layer sink helper
+// keeps the same closed categories without introducing an import cycle.
+func PublishedErrorText(rc *models.RequestContext, err error) string {
+	if err == nil {
+		return ""
+	}
+	status := 0
+	var apiErr *models.APIError
+	text := ""
+	if errors.As(err, &apiErr) && apiErr != nil {
+		status = apiErr.ProviderStatus
+		if status == 0 {
+			status = apiErr.UpstreamStatus
+		}
+		if status == 0 {
+			status = apiErr.Status
+		}
+		if owner, bound := apiErr.PublicationCredentialOwner(); bound {
+			if owner == models.CredentialBYOK {
+				// The existing call-bound BYOK exception is independent of the
+				// gateway-origin exception. Never publish a wrapper's prefix.
+				text = apiErr.Error()
+			}
+		} else if direct, ok := err.(*models.APIError); ok && direct == apiErr && direct.Origin() == models.OriginGateway {
+			// errors.As alone is not authority: an untyped wrapper can embed
+			// provider text around a perfectly valid gateway refusal.
+			text = direct.Error()
+		}
+	}
+	if text == "" {
+		category, action := "upstream_unavailable", "retry later; contact support with the correlation id"
+		switch status {
+		case 401:
+			category, action = "authentication_error", "contact support with the correlation id"
+		case 403:
+			category, action = "permission_error", "contact support with the correlation id"
+		case 429:
+			category = "rate_limit_error"
+		case 400:
+			category, action = "invalid_request_error", "check your request; contact support with the correlation id"
+		}
+		id := "unavailable"
+		if rc != nil && rc.RequestID != "" {
+			id = rc.RequestID
+		}
+		text = category + ": " + action + " (correlation id: " + id + ")"
+	}
+	text = models.RedactCredentials(text)
+	text = privacy.RedactCredentials(text, func(name string) string { return "[REDACTED:" + name + "]" })
+	if rc != nil && rc.ErrorTextRedactor != nil {
+		text = rc.ErrorTextRedactor(text)
+	}
+	return text
 }
 
 // PluginCount returns the number of registered plugins.

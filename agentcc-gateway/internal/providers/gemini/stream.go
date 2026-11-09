@@ -3,6 +3,7 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -27,10 +28,16 @@ func newStreamState(model string) *streamState {
 }
 
 // parseStreamData parses a Gemini SSE data payload and returns a StreamChunk.
-func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) {
+func (s *streamState) parseStreamData(data string, credentials ...string) (*models.StreamChunk, error) {
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal([]byte(data), &envelope) == nil && len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+		return nil, parseGeminiError(502, []byte(data), credentials...)
+	}
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
-		return nil, err
+		return nil, common.ExactError(err, credentials...)
 	}
 
 	chunk := &models.StreamChunk{

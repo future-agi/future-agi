@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"math"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -242,7 +241,7 @@ func (firstTarget) Select([]routing.RoutingTarget, *routing.LatencyTracker) (int
 func (of *orgFailover) target(h *Handlers, targetID, model string) (providers.Provider, string, error) {
 	id, ok := of.ids[targetID]
 	if !ok {
-		return nil, "", models.ErrUpstreamProvider(http.StatusBadGateway, "provider "+targetID+" not found")
+		return nil, "", models.ErrGatewayUpstream("failover provider not found")
 	}
 	pcfg := of.cfg.Providers[id]
 	p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(of.orgID, id, pcfg.APIKey, pcfg)

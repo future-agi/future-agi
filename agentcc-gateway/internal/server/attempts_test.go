@@ -674,9 +674,10 @@ func TestSkippedHopKeepsPreviousError(t *testing.T) {
 	g, _ := newRefusedHopGateway(t)
 
 	w := g.chat(t, attemptsChat)
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "upstream down") || strings.Contains(w.Body.String(), "skipped") {
-		t.Fatalf("status = %d, body %s; want first's own 502", w.Code, w.Body)
+	if w.Code != http.StatusBadGateway || g.first.calls.Load() != 3 || g.second.calls.Load() != 0 || strings.Contains(w.Body.String(), "skipped") {
+		t.Fatalf("status = %d, first calls=%d, second calls=%d, body %s; want first's own 502", w.Code, g.first.calls.Load(), g.second.calls.Load(), w.Body)
 	}
+	w4AssertProjectedError(t, w, http.StatusBadGateway, "provider_502")
 	_, _, _, errs := g.capture.last()
 	if len(errs) == 0 {
 		t.Fatal("the request recorded no error")

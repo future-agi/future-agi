@@ -100,6 +100,17 @@ func TestDXResponsesCompletionsCredentialOwner(t *testing.T) {
 							message += `: synthetic refusal`
 						}
 						want := map[string]any{"error": map[string]any{"message": message, "type": typ, "code": code, "param": nil, "metadata": map[string]any{"provider": "openai", "provider_status": float64(status), "provider_message": "synthetic refusal", "provider_type": "invalid_request_error", "provider_code": "fixture_code"}}}
+						if owner == "platform" {
+							// Actual registry credentials, not the billing label, require (iii).
+							id := w.Header().Get("X-Agentcc-Request-Id")
+							if id == "" {
+								t.Fatal("missing correlation id")
+							}
+							if status == 404 {
+								typ, code = "upstream_unavailable", "upstream_unavailable"
+							}
+							want = map[string]any{"error": map[string]any{"message": w4ClosedMessage(status, id), "type": typ, "code": code, "param": nil}}
+						}
 						var got map[string]any
 						_ = json.Unmarshal(w.Body.Bytes(), &got)
 						if w.Code != wantStatus || !reflect.DeepEqual(got, want) || w.Header().Get("WWW-Authenticate") != "" || w.Flushed {

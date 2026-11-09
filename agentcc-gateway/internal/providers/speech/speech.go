@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"net/http"
 	"net/url"
 	"sort"
@@ -89,11 +90,13 @@ type Provider struct {
 
 // New creates a speech provider; cfg.APIFormat names the vendor ("deepgram" or "cartesia").
 func New(id string, cfg config.ProviderConfig) (*Provider, error) {
+	errorCredentials := common.HeldErrorCredentials(cfg.Headers, cfg.APIKey, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSSessionToken)
+
 	if _, ok := vendors[cfg.APIFormat]; !ok {
-		return nil, fmt.Errorf("speech provider %q: unknown vendor %q", id, cfg.APIFormat)
+		return nil, common.ExactError(fmt.Errorf("speech provider %q: unknown vendor %q", id, cfg.APIFormat), errorCredentials...)
 	}
 	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("speech provider %q: api_key is required", id)
+		return nil, common.ExactError(fmt.Errorf("speech provider %q: api_key is required", id), errorCredentials...)
 	}
 	return &Provider{
 		id:      id,
@@ -110,12 +113,14 @@ func (p *Provider) ID() string { return p.id }
 func (p *Provider) Vendor() string { return p.vendor }
 
 func (p *Provider) notChat() *models.APIError {
-	return &models.APIError{
+	errorCredentials := []string{p.apiKey}
+
+	return common.ExactAPIError(&models.APIError{
 		Status:  http.StatusNotImplemented,
 		Type:    models.ErrTypeServer,
 		Code:    "not_supported",
 		Message: fmt.Sprintf("provider %q serves streaming speech only, at /%s", p.id, p.vendor),
-	}
+	}, errorCredentials...)
 }
 
 func (p *Provider) ChatCompletion(context.Context, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
@@ -166,9 +171,11 @@ type Session struct {
 
 // Open prepares a session for one of the vendor's paths and the client's query and headers.
 func (p *Provider) Open(path string, query url.Values, header http.Header) (*Session, error) {
+	errorCredentials := []string{p.apiKey}
+
 	kind, ok := vendors[p.vendor].endpoints[path]
 	if !ok {
-		return nil, models.ErrNotFound("unknown_endpoint", fmt.Sprintf("%s has no relayed endpoint %s", p.vendor, path))
+		return nil, common.ExactAPIError(models.ErrNotFound("unknown_endpoint", fmt.Sprintf("%s has no relayed endpoint %s", p.vendor, path)), errorCredentials...)
 	}
 	// The session is checked and metered by one value of each of these, and the query travels
 	// upstream as parsed, so a second value would reach the vendor unchecked. So would a value
@@ -177,15 +184,15 @@ func (p *Provider) Open(path string, query url.Values, header http.Header) (*Ses
 	// ASCII folding does, never fewer.
 	for _, name := range checkedParams {
 		if len(query[name]) > 1 {
-			return nil, models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
+			return nil, common.ExactAPIError(models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
 				"the query names %s more than once; the gateway checks and meters a session by a single %s, so name it once",
-				name, name))
+				name, name)), errorCredentials...)
 		}
 		for key := range query {
 			if key != name && strings.EqualFold(key, name) {
-				return nil, models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
+				return nil, common.ExactAPIError(models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
 					"the query names %q, another spelling of %s; the gateway checks and meters a session by a single %s spelled exactly so, so name it once, as %s",
-					key, name, name, name))
+					key, name, name, name)), errorCredentials...)
 			}
 		}
 	}
@@ -319,7 +326,7 @@ var sampleWidth = map[string]int{
 	"mulaw": 1, "alaw": 1, "pcm_mulaw": 1, "pcm_alaw": 1,
 }
 
-func audioBytesPerSecond(q url.Values) (int, error) {
+func audioBytesPerSecond(q url.Values, credentials ...string) (int, error) {
 	width := sampleWidth[q.Get("encoding")]
 	rate, _ := strconv.Atoi(q.Get("sample_rate"))
 	channels := 1
@@ -327,10 +334,10 @@ func audioBytesPerSecond(q url.Values) (int, error) {
 		channels, _ = strconv.Atoi(c)
 	}
 	if width == 0 || rate <= 0 || channels <= 0 {
-		return 0, models.ErrBadRequest("unmeterable_audio",
+		return 0, common.ExactAPIError(models.ErrBadRequest("unmeterable_audio",
 			"transcription through the gateway is metered by audio length, so it needs a raw "+
 				"encoding (linear16, pcm_s16le, mulaw, ...), sample_rate and, for more than one "+
-				"channel, channels")
+				"channel, channels"), credentials...)
 	}
 	return width * rate * channels, nil
 }

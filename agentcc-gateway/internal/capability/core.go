@@ -236,7 +236,9 @@ func (c *Core) voidOnExit(rc *models.RequestContext, org string, a models.Attemp
 // capability_provider_unavailable with the attempts.
 func (c *Core) failure(capability string, err error, tried []models.Attempt) *models.APIError {
 	if ve, ok := vendorAnswered(err); ok && ve.Status >= 400 && ve.Status < 500 && ve.Status != 429 {
-		return models.ErrUpstreamProvider(ve.Status, tried[len(tried)-1].ErrorMessage)
+		out := models.ErrUpstreamProvider(ve.Status, tried[len(tried)-1].ErrorMessage)
+		out.BindPublicationCredentialOwner(tried[len(tried)-1].CredentialType)
+		return out
 	}
 	return providerUnavailable(capability, tried)
 }

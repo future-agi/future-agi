@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"hash/crc32"
 	"io"
 	"time"
@@ -44,14 +46,14 @@ func newBedrockStreamState(model string) *bedrockStreamState {
 
 // readEventStreamMessage reads a single message from the AWS event stream.
 // Returns nil on EOF.
-func readEventStreamMessage(r io.Reader) (*eventStreamMessage, error) {
+func readEventStreamMessage(r io.Reader, credentials ...string) (*eventStreamMessage, error) {
 	// Read prelude: total_byte_length (4) + headers_byte_length (4).
 	prelude := make([]byte, 8)
 	if _, err := io.ReadFull(r, prelude); err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading prelude: %w", err)
+		return nil, common.ExactError(fmt.Errorf("reading prelude: %w", err), credentials...)
 	}
 
 	totalLen := binary.BigEndian.Uint32(prelude[0:4])
@@ -60,21 +62,21 @@ func readEventStreamMessage(r io.Reader) (*eventStreamMessage, error) {
 	// Read prelude CRC (4 bytes).
 	preludeCRC := make([]byte, 4)
 	if _, err := io.ReadFull(r, preludeCRC); err != nil {
-		return nil, fmt.Errorf("reading prelude CRC: %w", err)
+		return nil, common.ExactError(fmt.Errorf("reading prelude CRC: %w", err), credentials...)
 	}
 
 	// Verify prelude CRC.
 	expectedCRC := crc32.ChecksumIEEE(prelude)
 	actualCRC := binary.BigEndian.Uint32(preludeCRC)
 	if expectedCRC != actualCRC {
-		return nil, fmt.Errorf("prelude CRC mismatch: expected %d, got %d", expectedCRC, actualCRC)
+		return nil, common.ExactError(fmt.Errorf("prelude CRC mismatch: expected %d, got %d", expectedCRC, actualCRC), credentials...)
 	}
 
 	// Read headers.
 	headersBytes := make([]byte, headersLen)
 	if headersLen > 0 {
 		if _, err := io.ReadFull(r, headersBytes); err != nil {
-			return nil, fmt.Errorf("reading headers: %w", err)
+			return nil, common.ExactError(fmt.Errorf("reading headers: %w", err), credentials...)
 		}
 	}
 
@@ -90,14 +92,14 @@ func readEventStreamMessage(r io.Reader) (*eventStreamMessage, error) {
 	payload := make([]byte, payloadLen)
 	if payloadLen > 0 {
 		if _, err := io.ReadFull(r, payload); err != nil {
-			return nil, fmt.Errorf("reading payload: %w", err)
+			return nil, common.ExactError(fmt.Errorf("reading payload: %w", err), credentials...)
 		}
 	}
 
 	// Read message CRC (4 bytes).
 	msgCRC := make([]byte, 4)
 	if _, err := io.ReadFull(r, msgCRC); err != nil {
-		return nil, fmt.Errorf("reading message CRC: %w", err)
+		return nil, common.ExactError(fmt.Errorf("reading message CRC: %w", err), credentials...)
 	}
 
 	return &eventStreamMessage{
@@ -179,11 +181,25 @@ type bedrockStreamChunk struct {
 }
 
 // parseStreamPayload parses a Bedrock event stream payload into a StreamChunk.
-func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*models.StreamChunk, bool, error) {
+func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage, credentials ...string) (*models.StreamChunk, bool, error) {
 	messageType := msg.Headers[":message-type"]
 	if messageType == "exception" {
 		errMsg := string(msg.Payload)
-		return nil, false, fmt.Errorf("bedrock exception: %s", errMsg)
+		// Decode string fields before scrubbing: the exception envelope adds
+		// another JSON escape layer to any encoded credential it contains.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(msg.Payload, &fields) == nil {
+			for name, raw := range fields {
+				var text *string
+				if json.Unmarshal(raw, &text) == nil && text != nil {
+					fields[name], _ = json.Marshal(privacy.ScrubExactCredential(*text, credentials...))
+				}
+			}
+			if payload, err := json.Marshal(fields); err == nil {
+				errMsg = string(payload)
+			}
+		}
+		return nil, false, common.ExactError(fmt.Errorf("bedrock exception: %s", errMsg), credentials...)
 	}
 
 	if messageType != "event" {

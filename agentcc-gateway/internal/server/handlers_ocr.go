@@ -121,6 +121,7 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to OCRProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	op, ok := provider.(providers.OCRProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{

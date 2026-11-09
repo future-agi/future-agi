@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -133,7 +134,7 @@ type anthropicErrorDetail struct {
 
 // --- Translation functions ---
 
-func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, error) {
+func translateRequest(req *models.ChatCompletionRequest, credentials ...string) (*anthropicRequest, error) {
 	ar := &anthropicRequest{
 		Model:       resolveModelName(req.Model),
 		Temperature: req.Temperature,
@@ -178,7 +179,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 
 		am, err := translateMessage(msg)
 		if err != nil {
-			return nil, fmt.Errorf("translating message: %w", err)
+			return nil, common.ExactError(fmt.Errorf("translating message: %w", err), credentials...)
 		}
 		ar.Messages = append(ar.Messages, am)
 	}
@@ -205,7 +206,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 				InputSchema: t.Function.Parameters,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("encoding tool %q: %w", t.Function.Name, err)
+				return nil, common.ExactError(fmt.Errorf("encoding tool %q: %w", t.Function.Name, err), credentials...)
 			}
 			ar.Tools = append(ar.Tools, encoded)
 			continue
@@ -472,7 +473,7 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 	return nil, nil
 }
 
-func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
+func translateResponse(resp *anthropicResponse, credentials ...string) *models.ChatCompletionResponse {
 	msg := models.Message{
 		Role: "assistant",
 	}
@@ -499,7 +500,7 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 		switch block.Type {
 		case "text":
 			textParts = append(textParts, block.Text)
-			annotations = append(annotations, citationsForBlock(block, textLen)...)
+			annotations = append(annotations, citationsForBlock(block, textLen, credentials...)...)
 			textLen += len(block.Text)
 		case "thinking":
 			// Anthropic extended thinking blocks (Claude 3.7+).
@@ -630,14 +631,14 @@ type urlCitationBody struct {
 // citationsForBlock maps one text block's citations onto the joined response
 // text. Anthropic cites a whole block rather than a character range, so the
 // span is the block's own extent — offset is where it starts in the join.
-func citationsForBlock(block anthropicContentBlock, offset int) []urlCitation {
+func citationsForBlock(block anthropicContentBlock, offset int, credentials ...string) []urlCitation {
 	if len(block.Citations) == 0 {
 		return nil
 	}
 	var cites []anthropicCitation
 	if err := json.Unmarshal(block.Citations, &cites); err != nil {
 		slog.Warn("anthropic: could not decode citations, dropping them",
-			"error", err)
+			"error", common.ExactError(err, credentials...))
 		return nil
 	}
 	out := make([]urlCitation, 0, len(cites))
@@ -689,7 +690,7 @@ func mapStopReason(reason string) string {
 	}
 }
 
-func parseAnthropicError(status int, body []byte) *models.APIError {
+func parseAnthropicError(status int, body []byte, credentials ...string) *models.APIError {
 	var errResp anthropicErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 		// An answer with no error type (an OpenAI-shaped body, say) is
@@ -698,20 +699,20 @@ func parseAnthropicError(status int, body []byte) *models.APIError {
 		if errResp.Error.Type == "" {
 			code = fmt.Sprintf("provider_%d", status)
 		}
-		return &models.APIError{
+		return common.ExactAPIError(&models.APIError{
 			Status:         mapAnthropicStatus(status, errResp.Error.Type),
 			Type:           mapAnthropicErrorType(errResp.Error.Type),
 			Code:           code,
 			Message:        errResp.Error.Message,
 			ProviderStatus: status,
-		}
+		}, credentials...)
 	}
 
 	msg := string(body)
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	e := models.ErrUpstreamProvider(status, fmt.Sprintf("anthropic error (HTTP %d): %s", status, msg))
+	e := common.ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("anthropic error (HTTP %d): %s", status, msg)), credentials...)
 	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
 	return e
 }

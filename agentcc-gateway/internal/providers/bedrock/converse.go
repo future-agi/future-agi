@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"net/http"
 	"net/url"
@@ -423,53 +424,58 @@ func translateConverseResponse(resp *converseResponse, model string) *models.Cha
 }
 
 func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.credentials.AccessKeyID, p.credentials.SecretAccessKey, p.credentials.SessionToken)
+
 	cr, modelID := buildConverseRequest(req)
 
 	body, err := json.Marshal(cr)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock converse: marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse: marshaling request: %v", err)), errorCredentials...)
 	}
 
 	reqURL := fmt.Sprintf("%s/model/%s/converse", p.baseURL, url.PathEscape(modelID))
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock converse: creating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse: creating request: %v", err)), errorCredentials...)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 
 	if err := signRequest(httpReq, p.credentials, p.region, bedrockService); err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("bedrock converse: signing: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse: signing: %v", err)), errorCredentials...)
 	}
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, models.ErrGatewayTimeout("bedrock converse: request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("bedrock converse: request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "bedrock converse: reading response")
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock converse: reading response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseBedrockError(resp.StatusCode, respBody)
+		return nil, parseBedrockError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var cr2 converseResponse
 	if err := json.Unmarshal(respBody, &cr2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: parsing response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: parsing response: %v", err)), errorCredentials...)
 	}
 
 	return translateConverseResponse(&cr2, modelID), nil
 }
 
 func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.credentials.AccessKeyID, p.credentials.SecretAccessKey, p.credentials.SessionToken)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -481,7 +487,7 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 
 		body, err := json.Marshal(cr)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock converse stream: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse stream: %v", err)), errorCredentials...)
 			return
 		}
 
@@ -489,31 +495,32 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock converse stream: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse stream: %v", err)), errorCredentials...)
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/vnd.amazon.eventstream")
 
 		if err := signRequest(httpReq, p.credentials, p.region, bedrockService); err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("bedrock converse stream: signing: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("bedrock converse stream: signing: %v", err)), errorCredentials...)
 			return
 		}
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				errs <- models.ErrGatewayTimeout("bedrock converse stream: timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("bedrock converse stream: timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse stream: %v", err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse stream: %v", err)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-			errs <- parseBedrockError(resp.StatusCode, respBody)
+			errs <- parseBedrockError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -525,10 +532,10 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 			default:
 			}
 
-			msg, err := readEventStreamMessage(resp.Body)
+			msg, err := readEventStreamMessage(resp.Body, errorCredentials...)
 			if err != nil {
 				if ctx.Err() == nil {
-					errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse stream: %v", err))
+					errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock converse stream: %v", err)), errorCredentials...)
 				}
 				return
 			}
@@ -536,10 +543,10 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 				return
 			}
 
-			chunk, done, err := state.parseConverseEvent(msg)
+			chunk, done, err := state.parseConverseEvent(msg, errorCredentials...)
 			if err != nil {
 				if msg.Headers[":message-type"] == "exception" {
-					errs <- models.ErrUpstreamProvider(0, err.Error())
+					errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, privacy.ScrubExactCredential(err.Error(), errorCredentials...)), errorCredentials...)
 					return
 				}
 				continue
@@ -570,9 +577,9 @@ type converseStreamState struct {
 	blockIndexToToolCallIx map[int]int
 }
 
-func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*models.StreamChunk, bool, error) {
+func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage, credentials ...string) (*models.StreamChunk, bool, error) {
 	if msg.Headers[":message-type"] == "exception" {
-		return nil, false, fmt.Errorf("bedrock converse exception: %s", string(msg.Payload))
+		return nil, false, common.ExactError(fmt.Errorf("bedrock converse exception: %s", string(msg.Payload)), credentials...)
 	}
 	if msg.Headers[":message-type"] != "event" {
 		return nil, false, nil

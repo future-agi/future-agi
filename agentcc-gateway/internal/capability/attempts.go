@@ -133,7 +133,10 @@ func (c *Core) failed(ctx context.Context, rc *models.RequestContext, call *Call
 	}
 	a.StatusCode = status
 	a.ErrorClass, a.ErrorOrigin = routing.ClassifyError(err, status)
-	a.ErrorMessage = routing.AttemptErrorMessage(err)
+	// PLATFORM_ONLY: cand.cred is the same credential passed to the adapter
+	// in Core.Do, not the request's last billing mode or a provider-name guess.
+	a.ErrorMessage = ProjectErrorMessage(ErrorTextPlatformOnly, cand.cred.Type,
+		status, a.AttemptID, routing.AttemptErrorMessage(err))
 	if !cand.card.NoPerfDisclosure {
 		a.LatencyMs = latency.Milliseconds()
 	}

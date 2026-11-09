@@ -97,7 +97,9 @@ func TestDXR4SyntheticFailureEvidence(t *testing.T) {
 		original := models.ErrUpstreamProvider(502, message)
 		got := providerFailure(rc, original).(*models.APIError)
 		meta, _ := got.Metadata.(map[string]any)
-		if got.Message != `Provider "operator" failed: `+message || meta["provider_status"] != 0 || meta["provider_type"] != nil || meta["provider_code"] != nil {
+		// ErrUpstreamProvider is upstream-origin even when its text resembles a
+		// gateway explanation. Only gateway constructors grant that exception.
+		if got.Message != w4ClosedMessage(502, "") || got.Status != 502 || got.Code != "provider_502" || got.Type != models.ErrTypeUpstream || got.Metadata != nil {
 			t.Errorf("synthetic failure: %+v metadata=%v", got, meta)
 		}
 		if original.ProviderStatus != 0 || original.Message != message {

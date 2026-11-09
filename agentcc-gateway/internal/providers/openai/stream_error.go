@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -10,7 +11,7 @@ import (
 // An SSE error after HTTP 200 is not an empty successful completion. Both
 // OpenRouter's error object and event:error providers carry this envelope.
 // Retain a real accompanying usage report, but never synthesize one here.
-func streamErrorEnvelope(data []byte) (*models.APIError, models.StreamChunk) {
+func streamErrorEnvelope(data []byte, credentials ...string) (*models.APIError, models.StreamChunk) {
 	var envelope struct {
 		Error *struct {
 			Message string          `json:"message"`
@@ -34,7 +35,7 @@ func streamErrorEnvelope(data []byte) (*models.APIError, models.StreamChunk) {
 		message = "upstream stream failed"
 	}
 	chunk := models.StreamChunk{ID: envelope.ID, Model: envelope.Model, Usage: envelope.Usage, UpstreamProvider: envelope.Provider}
-	err := models.ErrUpstreamProvider(status, message)
+	err := common.ExactAPIError(models.ErrUpstreamProvider(status, message), credentials...)
 	err.ProviderRejected = true
 	err.BillingEvidence = &models.ProviderBillingEvidence{Generation: models.GenerationFromResponse(&chunk), Usage: envelope.Usage}
 	return err, chunk

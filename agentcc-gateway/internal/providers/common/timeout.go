@@ -48,9 +48,9 @@ func timedOut(err error) bool {
 // stalls until a deadline is a timeout, and reporting it as an upstream
 // failure makes it a 502 that an SDK retries — on a request that has already
 // spent its budget. The message is unchanged for every other cause.
-func ReadError(err error, status int, label string) *models.APIError {
+func ReadError(err error, status int, label string, credentials ...string) *models.APIError {
 	if timedOut(err) {
-		return models.ErrGatewayTimeout(label + " timed out")
+		return ExactAPIError(models.ErrGatewayTimeout(label+" timed out"), credentials...)
 	}
-	return models.ErrUpstreamProvider(status, fmt.Sprintf("%s: %v", label, err))
+	return ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("%s: %v", label, err)), credentials...)
 }

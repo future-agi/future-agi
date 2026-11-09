@@ -3,6 +3,7 @@ package cohere
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -275,25 +276,25 @@ func mapCohereFinishReason(reason string) string {
 	}
 }
 
-func parseCohereError(status int, body []byte) *models.APIError {
+func parseCohereError(status int, body []byte, credentials ...string) *models.APIError {
 	var errResp struct {
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
-		return &models.APIError{
+		return common.ExactAPIError(&models.APIError{
 			Status:         mapCohereStatus(status),
 			Type:           mapCohereErrorType(status),
 			Code:           fmt.Sprintf("provider_%d", status),
 			Message:        errResp.Message,
 			ProviderStatus: status,
-		}
+		}, credentials...)
 	}
 
 	msg := string(body)
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	e := models.ErrUpstreamProvider(status, fmt.Sprintf("cohere error (HTTP %d): %s", status, msg))
+	e := common.ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("cohere error (HTTP %d): %s", status, msg)), credentials...)
 	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
 	return e
 }

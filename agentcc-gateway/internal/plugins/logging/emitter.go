@@ -57,6 +57,7 @@ func NewTraceEmitter(cfg config.RequestLoggingConfig) *TraceEmitter {
 // Emit sends a trace record to the buffer. Non-blocking: drops the record if the buffer is full
 // or the emitter is closed.
 func (e *TraceEmitter) Emit(record TraceRecord) {
+	record = projectTraceError(record)
 	e.mu.RLock()
 	closed, sent := e.closed, false
 	if !closed {

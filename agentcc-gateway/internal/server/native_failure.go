@@ -31,6 +31,9 @@ func nativeProviderFailure(rc *models.RequestContext, status int, body []byte) *
 		return nil
 	}
 	e := &models.APIError{Status: status, ProviderStatus: status, Message: nativeErrorMessage(body)}
+	if rc != nil {
+		e.Provider = rc.Provider
+	}
 	var envelope struct {
 		Error struct {
 			Type   string          `json:"type"`
@@ -46,11 +49,11 @@ func nativeProviderFailure(rc *models.RequestContext, status int, body []byte) *
 		// Google uses a numeric code; it is already represented by status.
 		_ = json.Unmarshal(envelope.Error.Code, &e.Code)
 	}
-	out := attributeProviderFailure(e, rc.Provider, credentialOwner(rc))
+	out := attributeProviderFailure(e, e.Provider, credentialOwner(rc))
 	if status != 401 && status != 403 {
 		// Native clients get one stable code even if the upstream uses a
 		// vendor-specific string. The original stays in provider_code.
 		out.Code = fmt.Sprintf("provider_%d", status)
 	}
-	return out
+	return publishClientProviderError(rc, e, out)
 }

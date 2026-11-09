@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -34,7 +33,7 @@ func awaitCanonicalStreamStart(ctx context.Context, chunks <-chan models.StreamC
 		if err := contextError(); err != nil {
 			return nil, errs, err
 		}
-		return nil, errs, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
+		return nil, errs, models.ErrGatewayUpstream("upstream stream closed before sending any chunks")
 	}
 	for {
 		// Prefer a chunk already queued to a terminal error queued after it.

@@ -51,8 +51,9 @@ func (v *Verdict) apiError() *models.APIError {
 		// A routing preference the gateway cannot honour (G26).
 		errType, code = models.ErrTypeInvalidRequest, v.Code
 	}
-	return &models.APIError{Status: status, Type: errType, Code: code, Message: v.Message,
-		Metadata: map[string]string{"reason": v.Code}}
+	err := models.ErrGatewayRefusal(status, errType, code, v.Message)
+	err.Metadata = map[string]string{"reason": v.Code}
+	return err
 }
 
 // checkEligibility is part of call-order step 11: whether model on

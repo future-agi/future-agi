@@ -16,6 +16,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 )
@@ -88,7 +89,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	}
 	session, err := relayer.Open(path, r.URL.Query(), r.Header)
 	if err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 	rc.Provider = provider.ID()
@@ -136,15 +137,16 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 				return err
 			}
 		}
+		errorCredentials := upstreamDialCredentials(session.URL, session.Header, speechDialer.Subprotocols...)
 		conn, resp, err := speechDialer.DialContext(ctx, session.URL, session.Header)
 		if err != nil {
-			return speechDialError(resp, err)
+			return speechDialError(resp, common.ExactError(err, errorCredentials...), errorCredentials...)
 		}
 		upstream = conn
 		return nil
 	})
 	if err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 
@@ -231,10 +233,11 @@ func (h *Handlers) speechModelAllowed(rc *models.RequestContext, vendor, model s
 // speechDialError reports a refused upstream handshake with the vendor's own message. A request
 // the vendor rejects keeps its status; a rejected platform credential or an unreachable vendor
 // is the gateway's failure.
-func speechDialError(resp *http.Response, err error) error {
+func speechDialError(resp *http.Response, err error, credentials ...string) error {
 	if resp == nil {
-		return models.ErrUpstreamProvider(http.StatusBadGateway, "connecting to the speech provider: "+err.Error())
+		return common.ExactAPIError(models.ErrUpstreamProvider(http.StatusBadGateway, "connecting to the speech provider: "+err.Error()), credentials...)
 	}
+	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	message := strings.TrimSpace(string(body))
 	if message == "" {
@@ -245,10 +248,10 @@ func speechDialError(resp *http.Response, err error) error {
 		resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
 		status = resp.StatusCode
 	}
-	return &models.APIError{
+	return common.ExactAPIError(&models.APIError{
 		Status:  status,
 		Type:    models.ErrTypeUpstream,
 		Code:    fmt.Sprintf("provider_%d", resp.StatusCode),
 		Message: message,
-	}
+	}, credentials...)
 }

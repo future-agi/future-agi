@@ -197,6 +197,10 @@ func TestLogEntryV2Golden(t *testing.T) {
 	want["metadata"].(map[string]any)["cost"] = "0.011815"
 	want["metadata"].(map[string]any)["auto_requested"] = "auto"
 	want["metadata"].(map[string]any)["team"] = "caller-dimension"
+	// The managed billing label does not establish error-text ownership.
+	// Override only this field, leaving the shared contract example unchanged.
+	assertSerializedEntryOmitsText(t, "golden attempt", entry, st.Attempts[0].ErrorMessage)
+	want["attempts"].([]any)[0].(map[string]any)["error_message"] = legacyClosedErrorMessages["req_01JD8Z3K4M5N6P7Q8R9S.1"]
 	// Compared without zero values: C0's golden spells some out, the gateway
 	// omits the empty v2 ones, and the schema checked the required v1 ones.
 	if g, w := stripZeros(got), stripZeros(want); !reflect.DeepEqual(g, w) {

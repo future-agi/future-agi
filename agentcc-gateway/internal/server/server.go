@@ -285,6 +285,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
+	handlers.configureErrorRedactor(cfg.Privacy)
 	handlers.reserveDefaultOutputTokens = cfg.Managed.ReserveDefaultOutputTokens
 	// managed.mixed_billing_chains (MIXED-HOP-GUARD-1): off unless the
 	// operator turns it on; read at startup (mixed_billing.go).
@@ -536,6 +537,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		MaxMessageSize:     16 * 1024 * 1024,
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
+	realtimeHandler.bindErrorRedactor = handlers.bindErrorRedactor
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
 
 	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.

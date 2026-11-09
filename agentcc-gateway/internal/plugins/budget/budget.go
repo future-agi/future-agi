@@ -210,12 +210,8 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 		if !result.Allowed {
 			rc.Metadata["budget_blocked_by"] = result.BlockedBy
 			stampRefusal(rc, result.BlockedLevel, result.BlockedPeriod, result.BlockedPeriodStart, tenant.BudgetActionBlock)
-			return pipeline.ResultError(&models.APIError{
-				Status:  http.StatusTooManyRequests,
-				Type:    models.ErrTypeRateLimit,
-				Code:    "budget_exceeded",
-				Message: result.BlockMsg,
-			})
+			return pipeline.ResultError(models.ErrGatewayRefusal(http.StatusTooManyRequests,
+				models.ErrTypeRateLimit, "budget_exceeded", result.BlockMsg))
 		}
 	}
 
@@ -374,12 +370,8 @@ func (p *Plugin) checkLevel(hc *orgHierarchyCounters, rc *models.RequestContext,
 		case tenant.BudgetActionBlock:
 			rc.Metadata["org_budget_blocked"] = "true"
 			stampRefusal(rc, refusalLevel, period, start, tenant.BudgetActionBlock)
-			return &models.APIError{
-				Status:  http.StatusTooManyRequests,
-				Type:    models.ErrTypeRateLimit,
-				Code:    "org_budget_exceeded",
-				Message: message,
-			}
+			return models.ErrGatewayRefusal(http.StatusTooManyRequests,
+				models.ErrTypeRateLimit, "org_budget_exceeded", message)
 		case tenant.BudgetActionThrottle:
 			for _, t := range *throttled {
 				if t.counter == bc {
@@ -453,13 +445,10 @@ func (p *Plugin) takeThrottleSlots(hc *orgHierarchyCounters, rc *models.RequestC
 			}
 			rc.Metadata["org_budget_throttled"] = "true"
 			stampRefusal(rc, t.level, t.period, t.start, tenant.BudgetActionThrottle)
-			return &models.APIError{
-				Status:        http.StatusTooManyRequests,
-				Type:          models.ErrTypeRateLimit,
-				Code:          "budget_throttled",
-				Message:       t.message,
-				RetryAfterSec: retry,
-			}
+			err := models.ErrGatewayRefusal(http.StatusTooManyRequests,
+				models.ErrTypeRateLimit, "budget_throttled", t.message)
+			err.RetryAfterSec = retry
+			return err
 		}
 	}
 	for _, t := range throttled {

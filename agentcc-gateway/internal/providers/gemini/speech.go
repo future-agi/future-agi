@@ -28,11 +28,13 @@ const geminiSpeechSampleRate = 24000
 // without an audio encoder; any other response_format is rejected rather than
 // answered with bytes in a format the caller did not ask for.
 func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) (io.ReadCloser, string, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	switch req.ResponseFormat {
 	case "", "pcm", "wav":
 	default:
-		return nil, "", models.ErrBadRequest("unsupported_response_format",
-			fmt.Sprintf("gemini: text-to-speech returns pcm or wav, not %q", req.ResponseFormat))
+		return nil, "", common.ExactAPIError(models.ErrBadRequest("unsupported_response_format",
+			fmt.Sprintf("gemini: text-to-speech returns pcm or wav, not %q", req.ResponseFormat)), errorCredentials...)
 	}
 
 	if err := p.acquireSemaphore(ctx); err != nil {
@@ -66,14 +68,14 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 
 	body, err := json.Marshal(gemReq)
 	if err != nil {
-		return nil, "", models.ErrInternal(fmt.Sprintf("gemini: marshaling speech request: %v", err))
+		return nil, "", common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling speech request: %v", err)), errorCredentials...)
 	}
 
 	url := buildURL(p.baseURL, model, false)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, "", models.ErrInternal("gemini: creating speech request: " + withoutURL(err))
+		return nil, "", common.ExactAPIError(models.ErrInternal("gemini: creating speech request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -82,30 +84,31 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		httpReq.Header.Set(k, v)
 	}
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, "", models.ErrGatewayTimeout("gemini: speech request timed out")
+			return nil, "", common.ExactAPIError(models.ErrGatewayTimeout("gemini: speech request timed out"), errorCredentials...)
 		}
-		return nil, "", models.ErrUpstreamProvider(0, "gemini: speech request failed: "+withoutURL(err))
+		return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: speech request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB — audio can be large
 	if err != nil {
-		return nil, "", common.ReadError(err, resp.StatusCode, "gemini: reading speech response")
+		return nil, "", common.ReadError(err, resp.StatusCode, "gemini: reading speech response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
 			p.tokenProvider.Invalidate(sentToken(httpReq))
 		}
-		return nil, "", parseGeminiError(resp.StatusCode, respBody)
+		return nil, "", parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var gemResp geminiResponse
 	if err := json.Unmarshal(respBody, &gemResp); err != nil {
-		return nil, "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing speech response: %v", err))
+		return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing speech response: %v", err)), errorCredentials...)
 	}
 
 	pcm, mimeType, err := extractAudioFromResponse(&gemResp)
@@ -129,6 +132,8 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 // extractAudioFromResponse decodes and joins every audio inlineData part of the
 // first candidate that has any; a long input can come back split across parts.
 func extractAudioFromResponse(resp *geminiResponse) (pcm []byte, mimeType string, err error) {
+	errorCredentials := []string{} // no provider dispatch in this local transformation
+
 	for _, candidate := range resp.Candidates {
 		for _, part := range candidate.Content.Parts {
 			if part.InlineData == nil || !isAudioMimeType(part.InlineData.MimeType) {
@@ -136,8 +141,8 @@ func extractAudioFromResponse(resp *geminiResponse) (pcm []byte, mimeType string
 			}
 			decoded, err := base64.StdEncoding.DecodeString(part.InlineData.Data)
 			if err != nil {
-				return nil, "", models.ErrUpstreamProvider(http.StatusBadGateway,
-					fmt.Sprintf("gemini: decoding audio base64: %v", err))
+				return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(http.StatusBadGateway,
+					fmt.Sprintf("gemini: decoding audio base64: %v", err)), errorCredentials...)
 			}
 			if mimeType == "" {
 				mimeType = part.InlineData.MimeType
@@ -148,8 +153,8 @@ func extractAudioFromResponse(resp *geminiResponse) (pcm []byte, mimeType string
 			return pcm, mimeType, nil
 		}
 	}
-	return nil, "", models.ErrUpstreamProvider(http.StatusBadGateway,
-		"gemini: no audio data in TTS response")
+	return nil, "", common.ExactAPIError(models.ErrUpstreamProvider(http.StatusBadGateway,
+		"gemini: no audio data in TTS response"), errorCredentials...)
 }
 
 // wrapPCMInWAV prefixes 16-bit mono PCM with a canonical 44-byte WAV header.

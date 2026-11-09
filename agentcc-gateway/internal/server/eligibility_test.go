@@ -687,9 +687,10 @@ func deniedHopGateway(t *testing.T) *attemptsGateway {
 func TestDeniedHopNotRetriedOrTripped(t *testing.T) {
 	g := deniedHopGateway(t)
 	w := g.chat(t, attemptsChat)
-	if w.Code != http.StatusBadGateway || g.second.calls.Load() != 0 || !strings.Contains(w.Body.String(), "upstream down") {
+	if w.Code != http.StatusBadGateway || g.second.calls.Load() != 0 {
 		t.Fatalf("status %d, second called %d times, body %s; want first's 502", w.Code, g.second.calls.Load(), w.Body)
 	}
+	w4AssertProjectedError(t, w, http.StatusBadGateway, "provider_502")
 	if n := g.first.calls.Load(); n != 3 {
 		t.Fatalf("first called %d times, want its call and 2 retries", n)
 	}

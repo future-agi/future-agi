@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"net/http"
 	"net/url"
@@ -75,12 +76,14 @@ type geminiPrediction struct {
 // qualification run passes it (the capability matrix's qualified flag, G21).
 // An n of 0 or less, or none, is one image, as before.
 func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*models.ImageResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	n := 1
 	if req.N != nil && *req.N > 0 {
 		n = *req.N
 	}
 	if n > maxImagesPerRequest {
-		return nil, models.ErrBadRequest("invalid_n", fmt.Sprintf("n must be at most %d", maxImagesPerRequest))
+		return nil, common.ExactAPIError(models.ErrBadRequest("invalid_n", fmt.Sprintf("n must be at most %d", maxImagesPerRequest)), errorCredentials...)
 	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
@@ -104,6 +107,8 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 // generateImage makes one generateContent call for one image.
 func (p *Provider) generateImage(ctx context.Context, model string, req *models.ImageRequest) (models.ImageData, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	gemReq := geminiImageRequest{
 		Contents:         []geminiContent{{Role: "user", Parts: []geminiPart{{Text: req.Prompt}}}},
 		GenerationConfig: geminiImageGenerConfig{ResponseModalities: []string{"IMAGE"}},
@@ -126,8 +131,8 @@ func (p *Provider) generateImage(ctx context.Context, model string, req *models.
 	if len(gemResp.Candidates) > 0 && gemResp.Candidates[0].FinishReason != "" {
 		reason = gemResp.Candidates[0].FinishReason
 	}
-	return models.ImageData{}, &models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeUpstream, Code: "no_image_returned",
-		Message: "gemini: the response has no image (finish reason " + reason + ")"}
+	return models.ImageData{}, common.ExactAPIError(&models.APIError{Status: http.StatusBadGateway, Type: models.ErrTypeUpstream, Code: "no_image_returned",
+		Message: "gemini: the response has no image (finish reason " + reason + ")"}, errorCredentials...)
 }
 
 // predictImages calls Vertex AI's Imagen predict endpoint for n images.
@@ -148,37 +153,40 @@ func (p *Provider) predictImages(ctx context.Context, model string, req *models.
 
 // postImage POSTs body to endpoint and decodes a 200 answer into out.
 func (p *Provider) postImage(ctx context.Context, endpoint string, body, out any) error {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return models.ErrInternal(fmt.Sprintf("gemini: marshaling image request: %v", err))
+		return common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling image request: %v", err)), errorCredentials...)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return models.ErrInternal("gemini: creating image request: " + withoutURL(err))
+		return common.ExactAPIError(models.ErrInternal("gemini: creating image request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	p.setAuthHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return models.ErrGatewayTimeout("gemini: image request timed out")
+			return common.ExactAPIError(models.ErrGatewayTimeout("gemini: image request timed out"), errorCredentials...)
 		}
-		return models.ErrUpstreamProvider(0, "gemini: image request failed: "+withoutURL(err))
+		return common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: image request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB — images can be large.
 	if err != nil {
-		return common.ReadError(err, resp.StatusCode, "gemini: reading image response")
+		return common.ReadError(err, resp.StatusCode, "gemini: reading image response", errorCredentials...)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
 			p.tokenProvider.Invalidate(sentToken(httpReq))
 		}
-		return parseGeminiError(resp.StatusCode, respBody)
+		return parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 	}
 	if err := json.Unmarshal(respBody, out); err != nil {
-		return models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing image response: %v", err))
+		return common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing image response: %v", err)), errorCredentials...)
 	}
 	return nil
 }
@@ -187,12 +195,12 @@ func (p *Provider) postImage(ctx context.Context, endpoint string, body, out any
 // travels in the x-goog-api-key header (setAPIKey), never in the URL; a
 // *url.Error still prints the whole URL, so leaving it out keeps the
 // upstream's address out of the client's error and the logs as well.
-func withoutURL(err error) string {
+func withoutURL(err error, credentials ...string) string {
 	var ue *url.Error
 	if errors.As(err, &ue) && ue.Err != nil {
-		return ue.Op + ": " + ue.Err.Error()
+		return ue.Op + ": " + privacy.ScrubExactCredential(ue.Err.Error(), credentials...)
 	}
-	return err.Error()
+	return privacy.ScrubExactCredential(err.Error(), credentials...)
 }
 
 // isImagenModel reports whether model is an Imagen model, which only Vertex

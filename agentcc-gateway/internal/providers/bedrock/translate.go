@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"io"
 	"log/slog"
 	"net"
@@ -470,21 +471,21 @@ func convertImageToBedrock(imageURL string) *bedrockContentBlock {
 
 // downloadImageAsBase64 fetches an image from a URL and returns it as base64-encoded data.
 // The function uses a shared HTTP client with SSRF protection that rejects private/reserved IPs.
-func downloadImageAsBase64(rawURL string) (mediaType, data string, err error) {
+func downloadImageAsBase64(rawURL string, credentials ...string) (mediaType, data string, err error) {
 	resp, err := sharedDownloadClient.Get(rawURL)
 	if err != nil {
-		return "", "", fmt.Errorf("downloading image: %w", err)
+		return "", "", common.ExactError(fmt.Errorf("downloading image: %w", err), credentials...)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("downloading image: HTTP %d", resp.StatusCode)
+		return "", "", common.ExactError(fmt.Errorf("downloading image: HTTP %d", resp.StatusCode), credentials...)
 	}
 
 	// Limit to 20MB to prevent abuse.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 20*1024*1024))
 	if err != nil {
-		return "", "", fmt.Errorf("reading image body: %w", err)
+		return "", "", common.ExactError(fmt.Errorf("reading image body: %w", err), credentials...)
 	}
 
 	// Determine media type from Content-Type header, falling back to detection from URL.
@@ -666,27 +667,27 @@ func mapStopReason(reason string) string {
 	}
 }
 
-func parseBedrockError(status int, body []byte) *models.APIError {
+func parseBedrockError(status int, body []byte, credentials ...string) *models.APIError {
 	// Try Bedrock error format.
 	var errResp struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	}
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
-		return &models.APIError{
+		return common.ExactAPIError(&models.APIError{
 			Status:         mapBedrockStatus(status),
 			Type:           mapBedrockErrorType(status),
 			Code:           fmt.Sprintf("provider_%d", status),
 			Message:        errResp.Message,
 			ProviderStatus: status,
-		}
+		}, credentials...)
 	}
 
 	msg := string(body)
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	e := models.ErrUpstreamProvider(status, fmt.Sprintf("bedrock error (HTTP %d): %s", status, msg))
+	e := common.ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("bedrock error (HTTP %d): %s", status, msg)), credentials...)
 	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
 	return e
 }

@@ -56,6 +56,8 @@ type geminiBatchEmbedResponse struct {
 // It accepts OpenAI-format requests and translates to/from Gemini's embedContent
 // or batchEmbedContents endpoint.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -66,11 +68,11 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	// Parse input: can be a single string or an array of strings.
 	texts, err := parseEmbeddingInput(req.Input)
 	if err != nil {
-		return nil, models.ErrBadRequest("invalid_input", fmt.Sprintf("gemini: invalid embedding input: %v", err))
+		return nil, common.ExactAPIError(models.ErrBadRequest("invalid_input", fmt.Sprintf("gemini: invalid embedding input: %v", err)), errorCredentials...)
 	}
 
 	if len(texts) == 0 {
-		return nil, models.ErrBadRequest("empty_input", "gemini: embedding input must not be empty")
+		return nil, common.ExactAPIError(models.ErrBadRequest("empty_input", "gemini: embedding input must not be empty"), errorCredentials...)
 	}
 
 	// Use single embedContent for one input, batchEmbedContents for multiple.
@@ -118,6 +120,8 @@ func estimateTextTokens(s string) int {
 
 // doSingleEmbed calls the embedContent endpoint for a single text.
 func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string, dimensions *int, taskType string) (*models.EmbeddingResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	gemReq := geminiEmbedRequest{
 		Content: &geminiContent{
 			Parts: []geminiPart{{Text: text}},
@@ -128,39 +132,40 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 
 	body, err := json.Marshal(gemReq)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: marshaling embed request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling embed request: %v", err)), errorCredentials...)
 	}
 
 	url := p.buildModelURL(model, "embedContent")
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal("gemini: creating embed request: " + withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrInternal("gemini: creating embed request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 
 	p.setAuthHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, models.ErrGatewayTimeout("gemini: embed request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("gemini: embed request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, "gemini: embed request failed: "+withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: embed request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading embed response")
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading embed response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseGeminiError(resp.StatusCode, respBody)
+		return nil, parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var gemResp geminiEmbedResponse
 	if err := json.Unmarshal(respBody, &gemResp); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing embed response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing embed response: %v", err)), errorCredentials...)
 	}
 
 	return translateSingleEmbedResponse(&gemResp, model, text), nil
@@ -168,6 +173,8 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 
 // doBatchEmbed calls the batchEmbedContents endpoint for multiple texts.
 func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []string, dimensions *int, taskType string) (*models.EmbeddingResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	// Build the Gemini model reference for batch requests.
 	// Gemini requires the full model path in each batch item.
 	modelRef := "models/" + model
@@ -188,39 +195,40 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 
 	body, err := json.Marshal(gemReq)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: marshaling batch embed request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling batch embed request: %v", err)), errorCredentials...)
 	}
 
 	url := p.buildModelURL(model, "batchEmbedContents")
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal("gemini: creating batch embed request: " + withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrInternal("gemini: creating batch embed request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 
 	p.setAuthHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, models.ErrGatewayTimeout("gemini: batch embed request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("gemini: batch embed request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, "gemini: batch embed request failed: "+withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: batch embed request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading batch embed response")
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading batch embed response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseGeminiError(resp.StatusCode, respBody)
+		return nil, parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var gemResp geminiBatchEmbedResponse
 	if err := json.Unmarshal(respBody, &gemResp); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing batch embed response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing batch embed response: %v", err)), errorCredentials...)
 	}
 
 	return translateBatchEmbedResponse(&gemResp, model, texts), nil
@@ -249,8 +257,10 @@ func (p *Provider) setAuthHeaders(req *http.Request) {
 // OpenAI accepts: a single string, or an array of strings (also array of ints / array of arrays of ints,
 // but we only support string forms since Gemini only embeds text).
 func parseEmbeddingInput(input json.RawMessage) ([]string, error) {
+	errorCredentials := []string{} // no provider dispatch in this local transformation
+
 	if len(input) == 0 {
-		return nil, fmt.Errorf("input is empty")
+		return nil, common.ExactError(fmt.Errorf("input is empty"), errorCredentials...)
 	}
 
 	// Try as a single string.
@@ -265,7 +275,7 @@ func parseEmbeddingInput(input json.RawMessage) ([]string, error) {
 		return arr, nil
 	}
 
-	return nil, fmt.Errorf("input must be a string or array of strings")
+	return nil, common.ExactError(fmt.Errorf("input must be a string or array of strings"), errorCredentials...)
 }
 
 // --- Response translation ---

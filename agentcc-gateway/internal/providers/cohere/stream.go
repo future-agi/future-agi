@@ -78,13 +78,15 @@ type toolCallDeltaPayload struct {
 
 // parseStreamData parses a Cohere SSE data payload and returns a StreamChunk.
 // Returns (chunk, done, error).
-func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, error) {
+func (s *streamState) parseStreamData(data string, credentials ...string) (*models.StreamChunk, bool, error) {
 	var event streamEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return nil, false, nil // Skip unparseable.
 	}
 
 	switch event.Type {
+	case "error":
+		return nil, true, parseCohereError(502, []byte(data), credentials...)
 	case "message-start":
 		if event.ID != "" {
 			s.chunkID = event.ID

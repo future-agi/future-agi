@@ -283,7 +283,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Errors.
 	if len(rc.Errors) > 0 {
-		span.SetError(rc.Errors[0].Error())
+		// The exporter derives both error.message and OTLP Status.Message
+		// from this publication boundary, including its typed gateway-origin
+		// exception. Unknown origins fail closed; rc.Errors stays internal.
+		span.SetError(pipeline.PublishedErrorText(rc, rc.Errors[0]))
 		p.metrics.ErrorCount.Add(1)
 	}
 

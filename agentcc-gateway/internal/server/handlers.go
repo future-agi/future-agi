@@ -68,6 +68,7 @@ type Handlers struct {
 	// Per-org multi-tenant support.
 	tenantStore      *tenant.Store
 	orgProviderCache *providers.OrgProviderCache
+	errorRedactor    *privacy.Redactor
 
 	// Key store for early org_id peek (before auth plugin runs).
 	keyStore *authpkg.KeyStore
@@ -357,6 +358,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 // resolveOrgConfig extracts the org config from the tenant store based on
 // the API key's org_id metadata (set by the auth plugin).
 func (h *Handlers) resolveOrgConfig(rc *models.RequestContext) (string, *tenant.OrgConfig) {
+	h.bindErrorRedactor(rc)
 	if h.tenantStore == nil {
 		return "", nil
 	}
@@ -765,6 +767,7 @@ func (h *Handlers) applyOrgAlertingOverrides(orgCfg *tenant.OrgConfig, rc *model
 
 // applyOrgPrivacyOverrides applies per-org privacy/redaction config to the request context.
 func (h *Handlers) applyOrgPrivacyOverrides(orgCfg *tenant.OrgConfig, rc *models.RequestContext) {
+	defer h.bindErrorRedactor(rc)
 	if orgCfg == nil || orgCfg.Privacy == nil || !orgCfg.Privacy.Enabled {
 		return
 	}

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -60,7 +59,7 @@ func waitForManagedStreamStart(ctx context.Context, chunks <-chan models.StreamC
 				}
 			default:
 			}
-			return &pending, nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before model output")
+			return &pending, nil, models.ErrGatewayUpstream("upstream stream closed before model output")
 		}
 		if chunk.Usage != nil {
 			pending.Usage = models.MergeUsage(pending.Usage, chunk.Usage)
@@ -98,7 +97,7 @@ func waitForManagedStreamStart(ctx context.Context, chunks <-chan models.StreamC
 			encoded, err := json.Marshal(chunk)
 			if hasTools {
 				if err != nil || toolChunks >= maxStreamPrefixChunks || len(encoded) > maxStreamPrefixBytes-toolBytes {
-					return &pending, nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream tool prefix exceeds stream limit")
+					return &pending, nil, models.ErrGatewayUpstream("upstream tool prefix exceeds stream limit")
 				}
 				toolChunks++
 				toolBytes += len(encoded)

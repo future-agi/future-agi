@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -109,5 +110,11 @@ func writeCapabilityResult(w http.ResponseWriter, rc *models.RequestContext, nam
 // headers of a call that got as far as a vendor.
 func writeCapabilityError(w http.ResponseWriter, rc *models.RequestContext, err error) {
 	rc.ApplyResponseHeaders(w.Header())
+	// Core.failure already projects with the candidate's actual credential.
+	// Add the same client publication redactors without guessing its owner.
+	var apiErr *models.APIError
+	if errors.As(err, &apiErr) {
+		err = capability.RedactPublishedError(apiErr, rc.ErrorTextRedactor)
+	}
 	models.WriteErrorFromError(w, err)
 }

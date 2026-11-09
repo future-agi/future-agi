@@ -61,6 +61,10 @@ type TraceRecord struct {
 	// the anthropic, gemini, bedrock and cohere adapters' parsed errors and
 	// the speech relay's refusals leave it false, with their provider_ codes.
 	ErrorFromUpstream bool `json:"-"`
+	// Set only after a typed gateway error passes publication redaction.
+	// Bind the exception to the exact published text, never a caller's label.
+	errorOrigin     models.ErrorOrigin
+	errorOriginText string
 
 	// Optional bodies.
 	RequestBody      *models.ChatCompletionRequest  `json:"request_body,omitempty"`

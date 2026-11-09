@@ -223,7 +223,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	refuseHeld := func(apiErr *models.APIError) {
 		held.discard()
 		hold.drain(nil)
-		sseWriter.WriteError(apiErr)
+		sseWriter.WriteError(clientStreamError(rc, apiErr, servingProvider))
 	}
 	// checkHeldTail runs the streaming checker's final check on a held
 	// stream that the checker holds and that ends before the provider's
@@ -271,17 +271,17 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 			held.release()
 			writeHeld(usage)
-			sseWriter.WriteError(apiErr)
+			sseWriter.WriteError(clientStreamError(rc, apiErr, servingProvider))
 			return
 		}
 		if !hold.pending() {
-			sseWriter.WriteError(apiErr)
+			sseWriter.WriteError(clientStreamError(rc, apiErr, servingProvider))
 			finalizeStream(false)
 			return
 		}
 		_, usage := finalizeStream(false)
 		writeHeld(usage)
-		sseWriter.WriteError(apiErr)
+		sseWriter.WriteError(clientStreamError(rc, apiErr, servingProvider))
 	}
 	// stopStream ends the stream the streaming checker stopped mid-stream,
 	// with its error event (markStreamBlocked) and no [DONE]: as failStream
@@ -437,7 +437,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 					// stream was not held, so no check that refuses it was
 					// expected to block.
 					if apiErr := withheldAnswerError(rc); apiErr != nil {
-						sseWriter.WriteError(apiErr)
+						sseWriter.WriteError(clientStreamError(rc, apiErr, servingProvider))
 					}
 				}
 				if metadataChunk != nil {

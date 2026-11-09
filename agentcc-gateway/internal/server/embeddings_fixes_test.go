@@ -465,9 +465,10 @@ func TestEmbeddingsNoCrossHostFailover(t *testing.T) {
 
 	w := g.post(t, "/v1/embeddings", embedInternalKey, `{"model":"text-embedding-3-small","input":"x"}`, agentHeaders)
 	// The OpenAI adapter reports an upstream 503 as 502.
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "upstream down") {
+	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want the target's own error (502): %s", w.Code, w.Body.String())
 	}
+	w4AssertProjectedError(t, w, http.StatusServiceUnavailable, "provider_503")
 	if got := g.upstreams["oai"].calls.Load(); got != 1 {
 		t.Errorf("the target was called %d times, want 1", got)
 	}

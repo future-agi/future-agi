@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/capability"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -212,6 +213,8 @@ type requestState struct {
 	v2    models.RequestV2
 	usage *models.Usage
 	opts  LogEntryOptions
+	// Exact, source-owned capability messages, not mutable billing labels.
+	capabilityAttempts map[string]models.Attempt
 }
 
 func NewLogFlusher(webhookURL, webhookSecret string, interval time.Duration, maxBuffer int) *LogFlusher {
@@ -274,6 +277,9 @@ func (f *LogFlusher) Enqueue(rec TraceRecord) {
 // in the parallel window.
 func (f *LogFlusher) EnqueueRequest(rec TraceRecord, rc *models.RequestContext, opts LogEntryOptions) {
 	st := &requestState{v2: rc.SnapshotV2(), opts: opts}
+	if call, ok := capability.CallOf(rc); ok {
+		st.capabilityAttempts = call.ErrorAttempts()
+	}
 	if rc.Response != nil && rc.Response.Usage != nil {
 		u := *rc.Response.Usage
 		st.usage = &u
@@ -381,6 +387,18 @@ func (f *LogFlusher) encodeLogs(records []TraceRecord, events []json.RawMessage)
 		var entry logEntry
 		if st := states[i]; st != nil {
 			entry = buildLogEntry(rec, &st.v2, st.usage, st.opts)
+			if entry.ContentMode != string(models.ContentModeNone) {
+				for j := range entry.Attempts {
+					a := &entry.Attempts[j]
+					if source, ok := st.capabilityAttempts[a.AttemptID]; ok &&
+						source.StartedAt.Equal(a.StartedAt) && source.CredentialType == a.CredentialType &&
+						source.Provider == a.Provider && source.Model == a.Model && source.StatusCode == a.StatusCode {
+						// PLATFORM_ONLY already applied at the capability source.
+						// Identity checks prevent slot compaction from rebinding it.
+						a.ErrorMessage = source.ErrorMessage
+					}
+				}
+			}
 		} else {
 			entry = buildLogEntryV1(rec)
 		}
@@ -423,9 +441,15 @@ func buildLogEntry(rec TraceRecord, v2 *models.RequestV2, usage *models.Usage, o
 
 	if len(v2.Attempts) > 0 {
 		e.Attempts = append([]models.Attempt(nil), v2.Attempts...)
-		if mode == models.ContentModeNone {
-			for i := range e.Attempts {
-				e.Attempts[i].ErrorMessage = ""
+		for i := range e.Attempts {
+			a := &e.Attempts[i]
+			// HIDE_ALL: deployed chat/native attempts derive credential_type
+			// from billing mode and registry.Managed, not actual key ownership.
+			// encodeLogs restores only source-bound capability messages.
+			a.ErrorMessage = capability.ProjectErrorMessage(capability.ErrorTextHideAll, "",
+				a.StatusCode, a.AttemptID, a.ErrorMessage)
+			if mode == models.ContentModeNone {
+				a.ErrorMessage = ""
 			}
 		}
 		e.AttemptCount = len(e.Attempts)
@@ -571,8 +595,62 @@ func withoutKeys(m map[string]string, keys []string) map[string]string {
 	return out
 }
 
+// exportedErrorBody recognizes the native terminal error envelope, not fields
+// inside successful model content. A stream may keep HTTP 200 after failure.
+func exportedErrorBody(raw json.RawMessage) bool {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return false
+	}
+	_, ok := envelope["error"]
+	return ok
+}
+
+// projectTraceError returns a publication copy shared by request.trace and the
+// webhook exporter. It never modifies the internal error or caller's record.
+func projectTraceError(rec TraceRecord) TraceRecord {
+	// HIDE_ALL: TraceRecord has no credential owner and its last error is not
+	// linked to an attempt. Even v2's final billing mode cannot attribute an
+	// earlier error in a mixed chain. Never infer ownership from provider IDs.
+	status := rec.StatusCode
+	// Native adapters on this deployed tree encode the upstream status in a
+	// gateway-generated provider_N code while returning an outer 502. Only
+	// exact closed-table spellings influence the category, never the message.
+	switch rec.ErrorCode {
+	case "provider_401":
+		status = 401
+	case "provider_403":
+		status = 403
+	case "provider_429":
+		status = 429
+	case "provider_400":
+		status = 400
+	}
+	if rec.StatusCode >= 400 || (rec.ErrorMessage != "" && exportedErrorBody(rec.ResponseBodyJSON)) {
+		// An error body is another exported error field, including native JSON
+		// and a stream's terminal payload. Keep the internal record untouched.
+		rec.ResponseBody, rec.ResponseBodyJSON = nil, nil
+	}
+	if rec.errorOrigin != models.OriginGateway || rec.errorOriginText != rec.ErrorCode+": "+rec.ErrorMessage {
+		rec.ErrorMessage = capability.ProjectErrorMessage(capability.ErrorTextHideAll, "",
+			status, rec.RequestID, rec.ErrorMessage)
+	}
+	// Keep only the closed gateway budget notification codes. Provider codes
+	// are open text, including for native/transport errors with no provenance.
+	switch rec.ErrorCode {
+	case "budget_exceeded", "org_budget_exceeded", "budget_throttled":
+	default:
+		rec.ErrorCode = ""
+	}
+	if rec.ErrorFromUpstream {
+		rec.ErrorCode = "" // A provider cannot manufacture a gateway budget code.
+	}
+	return rec
+}
+
 // buildLogEntryV1 is the v1 part of a log entry, from rec alone.
 func buildLogEntryV1(rec TraceRecord) logEntry {
+	rec = projectTraceError(rec)
 	var grJSON json.RawMessage
 	if len(rec.GuardrailResults) > 0 {
 		grJSON, _ = json.Marshal(rec.GuardrailResults)

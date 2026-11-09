@@ -123,9 +123,11 @@ func TestStoreBodiesFalse(t *testing.T) {
 		p, f, wh := contentModePlugin(t, tenants)
 		entry := sendEntry(t, p, f, wh, contentRequest(t))
 		assertNoContent(t, "store_bodies=false", entry)
-		if entry["content_mode"] != "metadata" || entry["error_message"] != callerText {
-			t.Errorf("content_mode = %v, error_message = %v; want metadata, with the error text kept", entry["content_mode"], entry["error_message"])
+		wantMessage := legacyClosedErrorMessages["req_content"]
+		if entry["content_mode"] != "metadata" || entry["error_message"] != wantMessage {
+			t.Errorf("content_mode = %v, error_message = %v; want metadata, %q", entry["content_mode"], entry["error_message"], wantMessage)
 		}
+		assertSerializedEntryOmitsText(t, "store_bodies=false", entry, callerText)
 		if g := guardrailResult(t, entry); g["message"] != guardrailText {
 			t.Errorf("metadata guardrail result = %v; want its message kept", g)
 		}

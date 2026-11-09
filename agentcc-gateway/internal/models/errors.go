@@ -39,11 +39,15 @@ type ErrorDetail struct {
 
 // APIError is an error that carries HTTP status and OpenAI error details.
 type APIError struct {
-	Status  int
-	Type    string
-	Code    string
-	Message string
-	Param   *string
+	origin            ErrorOrigin    // constructor-set, never serialized
+	originText        string         // binds a gateway grant to its constructed text
+	publicationOwner  CredentialType // source-bound, never serialized
+	clientPublication string         // integrity-bound completed publication, never serialized
+	Status            int
+	Type              string
+	Code              string
+	Message           string
+	Param             *string
 	// Metadata is written as error.metadata: the PaymentMeta of a payment
 	// or limit refusal (error-402-v1).
 	Metadata any
@@ -101,12 +105,37 @@ func newAPIError(status int, errType, code, message string) *APIError {
 	return &APIError{Status: status, Type: errType, Code: code, Message: RedactCredentials(message)}
 }
 
+func newOriginAPIError(origin ErrorOrigin, status int, errType, code, message string) *APIError {
+	e := newAPIError(status, errType, code, message)
+	e.origin = origin
+	if origin == OriginGateway {
+		e.originText = e.Error()
+	}
+	return e
+}
+
+// Origin grants the gateway exception only to unchanged text from a gateway
+// constructor. APIError's public diagnostic fields remain mutable for legacy
+// callers; replacing/embedding provider text cannot inherit that exception.
+// The equality check verifies construction integrity, never message meaning.
+func (e *APIError) Origin() ErrorOrigin {
+	if e == nil {
+		return ""
+	}
+	if e.origin == OriginGateway && e.originText != e.Error() {
+		return ""
+	}
+	return e.origin
+}
+
 func ErrBadRequest(code, message string) *APIError {
 	return newAPIError(http.StatusBadRequest, ErrTypeInvalidRequest, code, message)
 }
 
+// ErrUnauthorized is a gateway authentication refusal, never a provider's
+// authentication response. Upstream diagnostics use ErrUpstreamProvider.
 func ErrUnauthorized(message string) *APIError {
-	return newAPIError(http.StatusUnauthorized, ErrTypeAuthentication, "invalid_api_key", message)
+	return newOriginAPIError(OriginGateway, http.StatusUnauthorized, ErrTypeAuthentication, "invalid_api_key", message)
 }
 
 func ErrForbidden(message string) *APIError {
@@ -121,16 +150,36 @@ func ErrRequestTimeout(message string) *APIError {
 	return newAPIError(http.StatusRequestTimeout, ErrTypeTimeout, "request_timeout", message)
 }
 
+// ErrTooManyRequests is a gateway rate-limit refusal. A provider's 429 uses
+// ErrUpstreamProvider instead, even when its text looks like a gateway refusal.
 func ErrTooManyRequests(message string) *APIError {
-	return newAPIError(http.StatusTooManyRequests, ErrTypeRateLimit, "rate_limit_exceeded", message)
+	return newOriginAPIError(OriginGateway, http.StatusTooManyRequests, ErrTypeRateLimit, "rate_limit_exceeded", message)
+}
+
+// ErrGatewayRefusal is for gateway-authored policy/admission explanations only.
+// Never pass provider bodies, transport diagnostics, credentials, or err.Error().
+// Callers must supply the final code and message: later text edits lose origin.
+func ErrGatewayRefusal(status int, errType, code, message string) *APIError {
+	return newOriginAPIError(OriginGateway, status, errType, code, message)
+}
+
+// ErrGatewayUpstream reports a gateway-detected failure (such as an empty
+// stream), not a provider diagnostic. It preserves the established 502 routing
+// shape without granting gateway origin to an existing upstream error.
+func ErrGatewayUpstream(message string) *APIError {
+	e := newOriginAPIError(OriginGateway, http.StatusBadGateway, ErrTypeUpstream, "provider_502", message)
+	e.UpstreamStatus = http.StatusBadGateway
+	return e
 }
 
 func ErrServiceUnavailable(message string) *APIError {
 	return newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "all_providers_unavailable", message)
 }
 
+// ErrInternal accepts wrapped/embedded provider diagnostics at gateway call
+// sites. Conservatively retain provider origin, even for a local-only message.
 func ErrInternal(message string) *APIError {
-	return newAPIError(http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
+	return newOriginAPIError(OriginUpstream, http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
 }
 
 // ErrUpstreamProvider is a provider's failure the gateway answers as a 502:
@@ -138,13 +187,13 @@ func ErrInternal(message string) *APIError {
 // in the code ("provider_<status>") and as UpstreamStatus. Some of the
 // gateway's own failures pass a fixed 502 instead (see UpstreamStatus).
 func ErrUpstreamProvider(status int, message string) *APIError {
-	e := newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
+	e := newOriginAPIError(OriginUpstream, http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
 	e.UpstreamStatus = status
 	return e
 }
 
 func ErrGatewayTimeout(message string) *APIError {
-	return newAPIError(http.StatusGatewayTimeout, ErrTypeGatewayTimeout, "gateway_timeout", message)
+	return newOriginAPIError(OriginUpstream, http.StatusGatewayTimeout, ErrTypeGatewayTimeout, "gateway_timeout", message)
 }
 
 func ErrGuardrailBlocked(code, message string) *APIError {

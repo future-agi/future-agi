@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,29 +18,33 @@ import (
 
 // Credentials holds AWS credentials.
 type Credentials struct {
-	AccessKeyID    string
+	AccessKeyID     string
 	SecretAccessKey string
-	SessionToken   string
+	SessionToken    string
 }
 
 // loadCredentials loads AWS credentials from provider config.
 func loadCredentials(cfg config.ProviderConfig) (*Credentials, error) {
+	errorCredentials := common.HeldErrorCredentials(cfg.Headers, cfg.APIKey, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSSessionToken)
+
 	accessKey := cfg.AWSAccessKeyID
 	secretKey := cfg.AWSSecretAccessKey
 
 	if accessKey == "" || secretKey == "" {
-		return nil, fmt.Errorf("aws_access_key_id and aws_secret_access_key must be set in provider config")
+		return nil, common.ExactError(fmt.Errorf("aws_access_key_id and aws_secret_access_key must be set in provider config"), errorCredentials...)
 	}
 
 	return &Credentials{
-		AccessKeyID:    accessKey,
+		AccessKeyID:     accessKey,
 		SecretAccessKey: secretKey,
-		SessionToken:   cfg.AWSSessionToken,
+		SessionToken:    cfg.AWSSessionToken,
 	}, nil
 }
 
 // signRequest signs an HTTP request with AWS Signature Version 4.
 func signRequest(req *http.Request, creds *Credentials, region, service string) error {
+	errorCredentials := common.ErrorCredentials(req, creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken)
+
 	now := time.Now().UTC()
 	dateStamp := now.Format("20060102")
 	amzDate := now.Format("20060102T150405Z")
@@ -49,7 +54,7 @@ func signRequest(req *http.Request, creds *Credentials, region, service string) 
 	if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
 		if err != nil {
-			return fmt.Errorf("reading request body: %w", err)
+			return common.ExactError(fmt.Errorf("reading request body: %w", err), errorCredentials...)
 		}
 		bodyHash = hashSHA256(bodyBytes)
 		req.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))

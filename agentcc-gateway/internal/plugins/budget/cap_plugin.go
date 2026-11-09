@@ -18,8 +18,8 @@ type capHold struct {
 }
 
 func capStateUnavailable() *models.APIError {
-	return &models.APIError{Status: http.StatusServiceUnavailable, Type: models.ErrTypeInvalidRequest,
-		Code: "budget_state_unavailable", Message: "durable admission-cap ledger cannot answer: activation missing, state unavailable, stale policy, or an unresolved prior hold; request not admitted"}
+	return models.ErrGatewayRefusal(http.StatusServiceUnavailable, models.ErrTypeInvalidRequest,
+		"budget_state_unavailable", "durable admission-cap ledger cannot answer: activation missing, state unavailable, stale policy, or an unresolved prior hold; request not admitted")
 }
 
 func (p *Plugin) reserveCaps(ctx context.Context, rc *models.RequestContext) (refusal *models.APIError) {
@@ -71,8 +71,8 @@ func (p *Plugin) reserveCaps(ctx context.Context, rc *models.RequestContext) (re
 	case "exhausted":
 		st.done.Store(true)
 		stampRefusal(rc, res.Level, "daily", a.period, "block")
-		return a.Refusal(&models.APIError{Status: http.StatusTooManyRequests, Type: models.ErrTypeRateLimit, Code: "org_budget_exceeded",
-			Message: "daily model-spend cap cannot admit this request"}, "daily", res.Level)
+		return a.Refusal(models.ErrGatewayRefusal(http.StatusTooManyRequests, models.ErrTypeRateLimit,
+			"org_budget_exceeded", "daily model-spend cap cannot admit this request"), "daily", res.Level)
 	default:
 		st.done.Store(true)
 		return a.Refusal(capStateUnavailable(), "daily", res.Level)

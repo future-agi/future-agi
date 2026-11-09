@@ -157,6 +157,10 @@ func (c *Call) MetadataResponse() json.RawMessage {
 }
 
 func (c *Call) addAttempt(a models.Attempt) {
+	// All call-owned attempts originate from newAttempt's actual selected
+	// credential. Project before any Result, Publish or log snapshot escapes.
+	a.ErrorMessage = ProjectErrorMessage(ErrorTextPlatformOnly, a.CredentialType,
+		a.StatusCode, a.AttemptID, a.ErrorMessage)
 	c.mu.Lock()
 	c.attempts = append(c.attempts, a)
 	c.mu.Unlock()
@@ -260,6 +264,57 @@ func billingMeta(usage Usage, upstreamMicros, billedMicros int64) map[string]any
 		"billed_micros":   billedMicros,
 		"cost_source":     usage.CostSource,
 	}}
+}
+
+// ErrorTextPolicy is the single error-text publication switch. Call sites
+// must opt into PLATFORM_ONLY with an actual credential source; a billing
+// label alone does not establish customer ownership on the deployed tree.
+type ErrorTextPolicy uint8
+
+const (
+	ErrorTextHideAll      ErrorTextPolicy = iota // HIDE_ALL: ownership undecidable
+	ErrorTextPlatformOnly                        // PLATFORM_ONLY: owner is source-bound
+)
+
+// ProjectErrorMessage never examines provider text to classify an error. A
+// customer-owned message is byte-identical to the deployed projection; all
+// other messages are from this closed table with the existing correlation id.
+func ProjectErrorMessage(policy ErrorTextPolicy, owner models.CredentialType, status int, id, message string) string {
+	if message == "" || (policy == ErrorTextPlatformOnly && owner == models.CredentialBYOK) {
+		return message
+	}
+	category, action := "upstream_unavailable", "retry later; contact support with the correlation id"
+	switch status {
+	case 401:
+		category, action = "authentication_error", "contact support with the correlation id"
+	case 403:
+		category, action = "permission_error", "contact support with the correlation id"
+	case 429:
+		category = "rate_limit_error"
+	case 400:
+		category, action = "invalid_request_error", "check your request; contact support with the correlation id"
+	}
+	if id == "" {
+		id = "unavailable"
+	}
+	return category + ": " + action + " (correlation id: " + id + ")"
+}
+
+// ErrorAttempts is a copy of call-owned attempt diagnostics, already projected
+// with the credential actually handed to the adapter. Log exporters may use
+// these exact bytes, but must not treat an arbitrary RequestV2 credential_type
+// label as the same ownership proof. Reclaimed/renumbered attempts that no
+// longer match this snapshot are intentionally handled by HIDE_ALL.
+func (c *Call) ErrorAttempts() map[string]models.Attempt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]models.Attempt, len(c.attempts))
+	for _, a := range c.attempts {
+		if a.AttemptID != "" {
+			out[a.AttemptID] = a
+		}
+	}
+	return out
 }
 
 func microsUSD(micros int64) float64 { return billing.MicrosToUSD(micros) }

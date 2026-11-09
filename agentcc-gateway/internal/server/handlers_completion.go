@@ -487,7 +487,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		}
 		held.discard()
 		hold.drain(nil)
-		sseWriter.WriteError(apiErr)
+		sseWriter.WriteError(clientStreamError(rc, apiErr, provider))
 		return true
 	}
 
@@ -545,7 +545,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 				if !refuseHeld() {
 					writeHeld(usage)
 					if apiErr := withheldAnswerError(rc); apiErr != nil {
-						sseWriter.WriteError(apiErr)
+						sseWriter.WriteError(clientStreamError(rc, apiErr, provider))
 					}
 				}
 				// A client that asked for usage, or for the gateway's
@@ -595,16 +595,16 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 						return
 					}
 					writeHeld(usage)
-					sseWriter.WriteError(apiErr)
+					sseWriter.WriteError(clientStreamError(rc, apiErr, provider))
 					return
 				}
 				if !hold.pending() {
-					sseWriter.WriteError(apiErr)
+					sseWriter.WriteError(clientStreamError(rc, apiErr, provider))
 					finalizeStream(false)
 					return
 				}
 				writeHeld(finalizeStream(false))
-				sseWriter.WriteError(apiErr)
+				sseWriter.WriteError(clientStreamError(rc, apiErr, provider))
 				return
 			}
 

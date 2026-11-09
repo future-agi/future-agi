@@ -101,6 +101,7 @@ func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.Req
 		return nil, apiErr
 	}
 
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	ap, ok := provider.(providers.AssistantsProvider)
 	if !ok {
 		return nil, &models.APIError{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 )
 
@@ -30,6 +32,7 @@ type RealtimeHandler struct {
 	maxMessageSize     int64
 	upgrader           websocket.Upgrader
 	logger             *slog.Logger
+	bindErrorRedactor  func(*models.RequestContext)
 }
 
 // NewRealtimeHandler creates a new handler for the realtime API.
@@ -90,6 +93,11 @@ func makeOriginChecker(allowedOrigins []string) func(*http.Request) bool {
 
 // HandleRealtime handles GET /v1/realtime — WebSocket upgrade and session management.
 func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request) {
+	requestID := models.GetRequestID(r.Context())
+	if requestID == "" {
+		requestID = middleware.NewID()
+		r = r.WithContext(models.WithRequestID(r.Context(), requestID))
+	}
 	model := r.URL.Query().Get("model")
 	if model == "" {
 		http.Error(w, `{"error":{"message":"model query parameter is required","type":"invalid_request_error"}}`, http.StatusBadRequest)
@@ -168,13 +176,13 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 	providerURL, err := rp.RealtimeURL(model)
 	if err != nil {
 		rh.tracker.Release(orgID)
-		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider URL: %s","type":"server_error"}}`, err), http.StatusBadGateway)
+		models.WriteError(w, rh.providerSetupFailure(requestID, orgID, provider.ID(), "url", err))
 		return
 	}
 	providerHeaders, err := rp.RealtimeHeaders(model)
 	if err != nil {
 		rh.tracker.Release(orgID)
-		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider headers: %s","type":"server_error"}}`, err), http.StatusBadGateway)
+		models.WriteError(w, rh.providerSetupFailure(requestID, orgID, provider.ID(), "headers", err))
 		return
 	}
 
@@ -191,18 +199,21 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 		HandshakeTimeout: 10 * time.Second,
 		Subprotocols:     rp.RealtimeSubprotocols(),
 	}
+	errorCredentials := upstreamDialCredentials(providerURL, providerHeaders, dialer.Subprotocols...)
 	providerConn, _, err := dialer.Dial(providerURL, providerHeaders)
 	if err != nil {
+		err = common.ExactError(err, errorCredentials...)
 		rh.tracker.Release(orgID)
-		closeMsg := websocket.FormatCloseMessage(4502, "Unable to connect to upstream provider: "+err.Error())
+		failure := rh.providerSetupFailure(requestID, orgID, provider.ID(), "dial", err)
+		// The gateway's request id is a 26-byte ULID. Keep this typed,
+		// actionable reason below the WebSocket control-frame limit.
+		closeMsg := websocket.FormatCloseMessage(4502, failure.Message)
 		clientConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(2*time.Second))
 		clientConn.Close()
-		rh.logger.Error("upstream connection failed", "model", model, "error", err)
 		return
 	}
 
 	// Create session.
-	requestID := models.GetRequestID(r.Context())
 	sessionID := fmt.Sprintf("rt-%s", requestID)
 	session := realtime.NewSession(sessionID, requestID, orgID, model, provider.ID(), clientConn, providerConn)
 	rh.tracker.Register(session)
@@ -253,4 +264,54 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 
 	rh.tracker.Release(orgID)
 	rh.tracker.Unregister(sessionID)
+}
+
+// upstreamDialCredentials snapshots the URL, headers and credential-bearing
+// subprotocols of this dial, never a later provider/configuration lookup. In
+// particular a url.Error may include a query credential in an encoded spelling.
+func upstreamDialCredentials(rawURL string, headers http.Header, protocols ...string) []string {
+	u, _ := url.Parse(rawURL)
+	credentials := common.ErrorCredentials(&http.Request{URL: u, Header: headers})
+	if _, query, ok := strings.Cut(rawURL, "?"); ok {
+		query, _, _ = strings.Cut(query, "#")
+		values, _ := url.ParseQuery(query)
+		for name, values := range values {
+			name = strings.ToLower(name)
+			if strings.Contains(name, "key") || strings.Contains(name, "token") || strings.Contains(name, "secret") || strings.Contains(name, "signature") || strings.Contains(name, "credential") || name == "authorization" {
+				credentials = append(credentials, values...)
+			}
+		}
+	}
+	allProtocols := append([]string(nil), protocols...)
+	for _, value := range headers.Values("Sec-WebSocket-Protocol") {
+		allProtocols = append(allProtocols, strings.Split(value, ",")...)
+	}
+	for _, protocol := range allProtocols {
+		protocol = strings.TrimSpace(protocol)
+		if token, ok := strings.CutPrefix(protocol, "openai-insecure-api-key."); ok {
+			credentials = append(credentials, token, protocol)
+		}
+	}
+	return credentials
+}
+
+// Realtime resolves only the global registry, never an org provider instance.
+// The caller's key type is not ownership of that provider credential. Project
+// its diagnostic exactly as a platform-owned provider failure before logging;
+// neither the HTTP refusal nor the close frame contains any provider value.
+func (rh *RealtimeHandler) providerSetupFailure(requestID, orgID, providerID, stage string, err error) *models.APIError {
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.RequestID, rc.Provider, rc.CredentialSource = requestID, providerID, "platform"
+	rc.Metadata["key_org_id"], rc.Metadata["org_id"] = orgID, orgID
+	if rh.bindErrorRedactor != nil {
+		rh.bindErrorRedactor(rc)
+	}
+	code := "realtime_provider_" + stage + "_failed"
+	logCopy := providerFailure(rc, models.ErrUpstreamProvider(0, err.Error()))
+	rh.logger.Error("realtime provider setup failed", "request_id", requestID, "code", code, "error", logCopy)
+	return &models.APIError{
+		Status: http.StatusBadGateway, Type: models.ErrTypeUpstream, Code: code,
+		Message: code + ": retry; contact support (request_id: " + requestID + ")",
+	}
 }

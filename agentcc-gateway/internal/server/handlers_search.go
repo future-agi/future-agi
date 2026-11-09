@@ -110,6 +110,7 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to SearchProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	sp, ok := provider.(providers.SearchProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{

@@ -157,7 +157,7 @@ func (h *Handlers) callChat(ctx context.Context, rc *models.RequestContext, p pr
 	}
 	rc.CredentialSource = credentialSourceOf(p, rc.Metadata["org_id"])
 	resp, err := p.ChatCompletion(attemptCtx, rc.Request)
-	stampProvider(err, providerID)
+	stampProvider(err, providerID, credentialSourceOf(p, rc.Metadata["org_id"]))
 	// Record the outcome before post-plugins finalize admission accounting.
 	if attemptCtx.Err() == context.DeadlineExceeded {
 		rc.Flags.Timeout = true

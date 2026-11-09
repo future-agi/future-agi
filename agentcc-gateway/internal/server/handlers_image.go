@@ -112,6 +112,7 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Type-assert to ImageProvider.
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	ip, ok := provider.(providers.ImageProvider)
 	if !ok {
 		models.WriteError(w, &models.APIError{

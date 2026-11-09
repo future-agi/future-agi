@@ -73,7 +73,7 @@ type contentBlockStartData struct {
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.
 // Returns (chunk, done, error).
-func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk, bool, error) {
+func (s *streamState) parseSSELine(eventType, data string, credentials ...string) (*models.StreamChunk, bool, error) {
 	if data == "" {
 		return nil, false, nil
 	}
@@ -99,7 +99,7 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		return nil, false, nil
+		return nil, true, parseAnthropicError(502, []byte(data), credentials...)
 	}
 
 	return nil, false, nil
@@ -310,7 +310,8 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 // parseSSELines processes raw SSE lines from the stream.
 // It extracts event type and data, then delegates to parseSSELine.
-func parseSSELines(lines []string, state *streamState) ([]*models.StreamChunk, bool, error) {
+func parseSSELines(lines []string, state *streamState, errorCredentials ...string) ([]*models.StreamChunk, bool, error) {
+
 	var chunks []*models.StreamChunk
 	var currentEvent string
 	var currentData string
@@ -321,7 +322,7 @@ func parseSSELines(lines []string, state *streamState) ([]*models.StreamChunk, b
 		if line == "" {
 			// Empty line = end of event.
 			if currentData != "" {
-				chunk, done, err := state.parseSSELine(currentEvent, currentData)
+				chunk, done, err := state.parseSSELine(currentEvent, currentData, errorCredentials...)
 				if err != nil {
 					return chunks, false, err
 				}
@@ -346,7 +347,7 @@ func parseSSELines(lines []string, state *streamState) ([]*models.StreamChunk, b
 
 	// Process any remaining data.
 	if currentData != "" {
-		chunk, done, err := state.parseSSELine(currentEvent, currentData)
+		chunk, done, err := state.parseSSELine(currentEvent, currentData, errorCredentials...)
 		if err != nil {
 			return chunks, false, err
 		}

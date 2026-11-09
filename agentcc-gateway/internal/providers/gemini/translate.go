@@ -198,10 +198,10 @@ func serverTool(tool models.Tool) (key string, config json.RawMessage, ok bool) 
 // went upstream without the tool, the model answered as best it could, and the
 // caller was billed for a reply that could not use the capability it asked
 // for. A tool is a capability, not a hint.
-func UnsupportedToolError(tool models.Tool) *models.APIError {
-	return models.ErrBadRequest("unsupported_tool", fmt.Sprintf(
+func UnsupportedToolError(tool models.Tool, credentials ...string) *models.APIError {
+	return common.ExactAPIError(models.ErrBadRequest("unsupported_tool", fmt.Sprintf(
 		"gemini does not support %s. Supported: a function tool, google_search, "+
-			"google_search_retrieval, url_context, code_execution.", toolName(tool)))
+			"google_search_retrieval, url_context, code_execution.", toolName(tool))), credentials...)
 }
 
 // toolName is what to call a tools entry in a message to its caller.
@@ -238,7 +238,7 @@ func toolName(tool models.Tool) string {
 // Kept apart from translateRequest so that function keeps its signature: it
 // has one job and many callers, and a validation error does not belong in its
 // return values.
-func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
+func RejectUnsupportedTools(tools []models.Tool, credentials ...string) *models.APIError {
 	var unsupported []models.Tool
 	served := 0
 	for _, tool := range tools {
@@ -257,7 +257,7 @@ func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
 	case len(unsupported) == 0:
 		return nil
 	case served == 0:
-		return UnsupportedToolError(unsupported[0])
+		return UnsupportedToolError(unsupported[0], credentials...)
 	default:
 		slog.Warn("gemini: tool entries this provider cannot serve were left out of the request",
 			"dropped", len(unsupported), "kept", served, "first", toolName(unsupported[0]))
@@ -835,7 +835,7 @@ func parseDataURI(uri string) (mediaType, data string) {
 	return mediaType, data
 }
 
-func translateResponse(resp *geminiResponse, model string) *models.ChatCompletionResponse {
+func translateResponse(resp *geminiResponse, model string, credentials ...string) *models.ChatCompletionResponse {
 	result := &models.ChatCompletionResponse{
 		ID:      fmt.Sprintf("gen-%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
@@ -950,7 +950,7 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 		// Sources for a grounded answer, measured against the text the model
 		// produced rather than any multipart wrapper around it, beside the
 		// groundingMetadata as sent.
-		msg.Annotations = groundingAnnotations(candidate.GroundingMetadata, len(strings.Join(textParts, "")))
+		msg.Annotations = groundingAnnotations(candidate.GroundingMetadata, len(strings.Join(textParts, "")), credentials...)
 
 		result.Choices = []models.Choice{
 			{
@@ -992,7 +992,7 @@ const groundingAnnotationType = "grounding_metadata"
 // Suggestion (searchEntryPoint) to be shown with the Grounded Results and
 // forbid modifying them, so the metadata is passed through as sent, and the
 // gateway never touches the text. nil when the candidate was not grounded.
-func groundingAnnotations(metadata json.RawMessage, textLen int) json.RawMessage {
+func groundingAnnotations(metadata json.RawMessage, textLen int, credentials ...string) json.RawMessage {
 	if len(metadata) == 0 || string(metadata) == "null" {
 		return nil
 	}
@@ -1008,7 +1008,7 @@ func groundingAnnotations(metadata json.RawMessage, textLen int) json.RawMessage
 	list = append(list, groundingAnnotation{Type: groundingAnnotationType, GroundingMetadata: metadata})
 	b, err := json.Marshal(list)
 	if err != nil {
-		slog.Warn("gemini: could not encode grounding annotations, dropping them", "error", err)
+		slog.Warn("gemini: could not encode grounding annotations, dropping them", "error", common.ExactError(err, credentials...))
 		return nil
 	}
 	return b
@@ -1110,7 +1110,7 @@ func mapGeminiFinishReasonWithToolCalls(reason string, hasToolCalls bool) string
 	return mapGeminiFinishReason(reason)
 }
 
-func parseGeminiError(status int, body []byte) *models.APIError {
+func parseGeminiError(status int, body []byte, credentials ...string) *models.APIError {
 	var errResp geminiErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
 		// An answer with no RPC status is coded by its HTTP status:
@@ -1119,20 +1119,20 @@ func parseGeminiError(status int, body []byte) *models.APIError {
 		if errResp.Error.Status == "" {
 			code = fmt.Sprintf("provider_%d", status)
 		}
-		return &models.APIError{
+		return common.ExactAPIError(&models.APIError{
 			Status:         mapGeminiStatus(errResp.Error.Status),
 			Type:           mapGeminiErrorType(errResp.Error.Status),
 			Code:           code,
 			Message:        errResp.Error.Message,
 			ProviderStatus: status,
-		}
+		}, credentials...)
 	}
 
 	msg := string(body)
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	e := models.ErrUpstreamProvider(status, fmt.Sprintf("gemini error (HTTP %d): %s", status, msg))
+	e := common.ExactAPIError(models.ErrUpstreamProvider(status, fmt.Sprintf("gemini error (HTTP %d): %s", status, msg)), credentials...)
 	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
 	return e
 }

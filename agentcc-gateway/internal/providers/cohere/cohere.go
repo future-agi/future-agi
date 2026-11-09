@@ -91,6 +91,8 @@ func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming request to Cohere.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -103,37 +105,38 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	body, err := json.Marshal(cr)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: marshaling request: %v", err)), errorCredentials...)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v2/chat", bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: creating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: creating request: %v", err)), errorCredentials...)
 	}
 
 	p.setHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("cohere: request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("cohere: request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading response")
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseCohereError(resp.StatusCode, respBody)
+		return nil, parseCohereError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var cr2 cohereResponse
 	if err := json.Unmarshal(respBody, &cr2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing response: %v", err)), errorCredentials...)
 	}
 
 	return translateResponse(&cr2, model), nil
@@ -141,6 +144,8 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming request to Cohere.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -160,26 +165,27 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		body, err := json.Marshal(cr)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("cohere: marshaling request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: marshaling request: %v", err)), errorCredentials...)
 			return
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v2/chat", bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("cohere: creating request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: creating request: %v", err)), errorCredentials...)
 			return
 		}
 
 		p.setHeaders(httpReq)
 		httpReq.Header.Set("Accept", "text/event-stream")
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
-				errs <- models.ErrGatewayTimeout("cohere: request timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("cohere: request timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: request failed: %v", err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: request failed: %v", err)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
@@ -187,11 +193,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		if resp.StatusCode != http.StatusOK {
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
-				errs <- models.ErrUpstreamProvider(resp.StatusCode,
-					fmt.Sprintf("cohere: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+				errs <- common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+					fmt.Sprintf("cohere: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 				return
 			}
-			errs <- parseCohereError(resp.StatusCode, respBody)
+			errs <- parseCohereError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -213,10 +219,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			data := strings.TrimPrefix(line, "data: ")
 
-			chunk, done, err := state.parseStreamData(data)
+			chunk, done, err := state.parseStreamData(data, errorCredentials...)
 			if err != nil {
+				if _, terminal := err.(*models.APIError); terminal {
+					errs <- common.ExactError(err, errorCredentials...)
+					return
+				}
 				slog.Warn("cohere: error parsing stream event",
-					"error", err,
+					"error", common.ExactError(err, errorCredentials...),
 					"provider", p.id,
 				)
 				continue
@@ -237,7 +247,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- common.ReadError(err, 0, "cohere: stream read")
+				errs <- common.ReadError(err, 0, "cohere: stream read", errorCredentials...)
 			}
 		}
 	}()
@@ -253,6 +263,8 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 
 // CreateEmbedding sends an embedding request to Cohere.
 func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -263,37 +275,38 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	body, err := json.Marshal(cr)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: marshaling embed request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: marshaling embed request: %v", err)), errorCredentials...)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v2/embed", bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: creating embed request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: creating embed request: %v", err)), errorCredentials...)
 	}
 
 	p.setHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("cohere: embed request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("cohere: embed request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: embed request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: embed request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading embed response")
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading embed response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseCohereError(resp.StatusCode, respBody)
+		return nil, parseCohereError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var cr2 cohereEmbedResponse
 	if err := json.Unmarshal(respBody, &cr2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing embed response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing embed response: %v", err)), errorCredentials...)
 	}
 
 	return translateEmbeddingResponse(&cr2, model), nil
@@ -305,6 +318,8 @@ func (p *Provider) AcceptsEmbeddingInputType() bool { return true }
 
 // Rerank sends a rerank request to Cohere.
 func (p *Provider) Rerank(ctx context.Context, req *models.RerankRequest) (*models.RerankResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
@@ -314,37 +329,38 @@ func (p *Provider) Rerank(ctx context.Context, req *models.RerankRequest) (*mode
 
 	body, err := json.Marshal(cr)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: marshaling rerank request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: marshaling rerank request: %v", err)), errorCredentials...)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v2/rerank", bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("cohere: creating rerank request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("cohere: creating rerank request: %v", err)), errorCredentials...)
 	}
 
 	p.setHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("cohere: rerank request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("cohere: rerank request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: rerank request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: rerank request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading rerank response")
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading rerank response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseCohereError(resp.StatusCode, respBody)
+		return nil, parseCohereError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var cr2 cohereRerankResponse
 	if err := json.Unmarshal(respBody, &cr2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing rerank response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing rerank response: %v", err)), errorCredentials...)
 	}
 
 	return translateRerankResponse(&cr2), nil

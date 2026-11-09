@@ -108,6 +108,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		delete(record.Metadata, guardrailWarningsMetadata)
 	}
 
+	// The trace emitter is independent of the request-row flusher. Project
+	// its private error copy before either publication path can consume it.
+	p.redactPublishedError(&record, rc, content)
 	p.emitter.Emit(record)
 
 	if p.flusher != nil {

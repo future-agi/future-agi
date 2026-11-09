@@ -23,16 +23,16 @@ func NewHeaderDefaults(headers map[string]string, internal ...string) (HeaderDef
 	seen := make(map[string]bool, len(headers))
 	for name, value := range headers {
 		if !validProviderHeaderName(name) {
-			return HeaderDefaults{}, errors.New("invalid provider header name")
+			return HeaderDefaults{}, ExactError(errors.New("invalid provider header name"), HeldErrorCredentials(headers)...)
 		}
 		for _, c := range []byte(value) {
 			if (c < ' ' && c != '\t') || c == 0x7f {
-				return HeaderDefaults{}, errors.New("invalid provider header value")
+				return HeaderDefaults{}, ExactError(errors.New("invalid provider header value"), HeldErrorCredentials(headers)...)
 			}
 		}
 		canonical := http.CanonicalHeaderKey(name)
 		if seen[canonical] {
-			return HeaderDefaults{}, errors.New("duplicate provider header name")
+			return HeaderDefaults{}, ExactError(errors.New("duplicate provider header name"), HeldErrorCredentials(headers)...)
 		}
 		seen[canonical] = true
 		if reservedProviderHeader(name) {

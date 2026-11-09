@@ -110,6 +110,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	// path before translation drops them and before any attempt or hold.
 	// Only lossless native pass-through may forward those fields unchanged.
 	managed := credentialType(rc) == models.CredentialManaged
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	ap, native := provider.(providers.AnthropicNativeProvider)
 	nativePassThrough := native && !managed && !h.messagesRoutingChain(rc, orgCfg)
 	if !nativePassThrough {
@@ -304,6 +305,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 
 	// Fast path: native Anthropic provider supports count_tokens. The body
 	// names the model as /v1/messages's does (passThroughModel).
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
 		if sent := passThroughModel(rc, upstreamModel); rc.Metadata["model_alias"] != "" || sent != model {
 			body, err = rewriteRequestModel(body, sent)
@@ -974,20 +976,21 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	// when the provider queues more than an event buffer before its final bill.
 	// After that delivery, finalize drains and settles before canceling; no
 	// terminal failure may open another routing attempt.
-	var providerErr *models.APIError
+	var providerErr, publishedProviderErr *models.APIError
 	recordProviderError := func(err error) {
 		if err == nil || providerErr != nil {
 			return
 		}
-		slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
 		var apiErr *models.APIError
 		if !errors.As(err, &apiErr) {
 			apiErr = models.ErrUpstreamProvider(http.StatusBadGateway, err.Error())
 		}
 		terminalEvidence = apiErr.BillingEvidence
-		wireErr := *apiErr
-		wireErr.Message = models.RedactCredentials(wireErr.Message)
-		providerErr = &wireErr
+		providerErr = apiErr
+		// Freeze a separate publication value against the instance that opened
+		// this stream, not the initial route or later billing/finalizer state.
+		publishedProviderErr = clientStreamError(rc, apiErr, opened.provider)
+		slog.Warn("provider stream error", "request_id", rc.RequestID, "error", publishedProviderErr)
 	}
 	drainReadyProviderErrors := func() {
 		// Adapters publish terminal errors before closing chunks. The
@@ -1011,7 +1014,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		if settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent) {
 			return
 		}
-		apiErr := providerErr
+		apiErr := publishedProviderErr
 		if withheld := withheldAnswerError(rc); withheld != nil {
 			apiErr = withheld
 		}

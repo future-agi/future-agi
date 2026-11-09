@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -103,57 +104,62 @@ func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming chat completion request to Anthropic.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, err
 	}
 	defer p.releaseSemaphore()
 
-	ar, err := translateRequest(req)
+	ar, err := translateRequest(req, errorCredentials...)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err)), errorCredentials...)
 	}
 	ar.Stream = false
 
 	body, err := json.Marshal(ar)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err)), errorCredentials...)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err)), errorCredentials...)
 	}
 
 	p.setHeaders(httpReq)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("anthropic: request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("anthropic: request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: request failed: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "anthropic: reading response")
+		return nil, common.ReadError(err, resp.StatusCode, "anthropic: reading response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseAnthropicError(resp.StatusCode, respBody)
+		return nil, parseAnthropicError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var ar2 anthropicResponse
 	if err := json.Unmarshal(respBody, &ar2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("anthropic: parsing response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("anthropic: parsing response: %v", err)), errorCredentials...)
 	}
 
-	return translateResponse(&ar2), nil
+	return translateResponse(&ar2, errorCredentials...), nil
 }
 
 // StreamChatCompletion sends a streaming chat completion request to Anthropic.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -167,35 +173,36 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		}
 		defer p.releaseSemaphore()
 
-		ar, err := translateRequest(req)
+		ar, err := translateRequest(req, errorCredentials...)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err)), errorCredentials...)
 			return
 		}
 		ar.Stream = true
 
 		body, err := json.Marshal(ar)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err)), errorCredentials...)
 			return
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err)), errorCredentials...)
 			return
 		}
 
 		p.setHeaders(httpReq)
 		httpReq.Header.Set("Accept", "text/event-stream")
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
-				errs <- models.ErrGatewayTimeout("anthropic: request timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("anthropic: request timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: request failed: %v", err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic: request failed: %v", err)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
@@ -203,11 +210,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		if resp.StatusCode != http.StatusOK {
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
-				errs <- models.ErrUpstreamProvider(resp.StatusCode,
-					fmt.Sprintf("anthropic: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+				errs <- common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+					fmt.Sprintf("anthropic: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 				return
 			}
-			errs <- parseAnthropicError(resp.StatusCode, respBody)
+			errs <- parseAnthropicError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -233,10 +240,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			data := strings.TrimPrefix(line, "data: ")
 			_ = currentEvent // Event type is also embedded in the JSON data.
 
-			chunk, done, err := state.parseSSELine(currentEvent, data)
+			chunk, done, err := state.parseSSELine(currentEvent, data, errorCredentials...)
 			if err != nil {
+				if _, terminal := err.(*models.APIError); terminal {
+					errs <- common.ExactError(err, errorCredentials...)
+					return
+				}
 				slog.Warn("anthropic: error parsing stream event",
-					"error", err,
+					"error", common.ExactError(err, errorCredentials...),
 					"provider", p.id,
 				)
 				continue
@@ -257,7 +268,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- common.ReadError(err, 0, "anthropic: stream read")
+				errs <- common.ReadError(err, 0, "anthropic: stream read", errorCredentials...)
 			}
 		}
 	}()
@@ -273,6 +284,8 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 
 // CreateAnthropicMessage sends a raw Anthropic Messages API request (native pass-through).
 func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, headers map[string]string) ([]byte, int, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -280,30 +293,36 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic native request: %v", err))
+		return nil, 0, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating anthropic native request: %v", err)), errorCredentials...)
 	}
 
 	p.setNativeHeaders(httpReq, headers)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, 0, models.ErrGatewayTimeout("anthropic request timed out")
+			return nil, 0, common.ExactAPIError(models.ErrGatewayTimeout("anthropic request timed out"), errorCredentials...)
 		}
-		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic request failed: %v", err))
+		return nil, 502, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic response")
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic response", errorCredentials...)
 	}
 
+	if resp.StatusCode >= 400 {
+		respBody = []byte(privacy.ScrubExactCredential(string(respBody), errorCredentials...))
+	}
 	return respBody, resp.StatusCode, nil
 }
 
 // CountAnthropicTokens sends a raw Anthropic count_tokens request.
 func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, headers map[string]string) ([]byte, int, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -311,30 +330,36 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages/count_tokens"), bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic count_tokens request: %v", err))
+		return nil, 0, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating anthropic count_tokens request: %v", err)), errorCredentials...)
 	}
 
 	p.setNativeHeaders(httpReq, headers)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, 0, models.ErrGatewayTimeout("anthropic count_tokens request timed out")
+			return nil, 0, common.ExactAPIError(models.ErrGatewayTimeout("anthropic count_tokens request timed out"), errorCredentials...)
 		}
-		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic count_tokens request failed: %v", err))
+		return nil, 502, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("anthropic count_tokens request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic count_tokens response")
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading anthropic count_tokens response", errorCredentials...)
 	}
 
+	if resp.StatusCode >= 400 {
+		respBody = []byte(privacy.ScrubExactCredential(string(respBody), errorCredentials...))
+	}
 	return respBody, resp.StatusCode, nil
 }
 
 // StreamAnthropicMessage sends a streaming native Anthropic Messages API request.
 func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, headers map[string]string) (io.ReadCloser, int, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -343,25 +368,26 @@ func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, h
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
-		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming anthropic request: %v", err))
+		return nil, 0, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("creating streaming anthropic request: %v", err)), errorCredentials...)
 	}
 
 	p.setNativeHeaders(httpReq, headers)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
-			return nil, 0, models.ErrGatewayTimeout("streaming anthropic request timed out")
+			return nil, 0, common.ExactAPIError(models.ErrGatewayTimeout("streaming anthropic request timed out"), errorCredentials...)
 		}
-		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("streaming anthropic request failed: %v", err))
+		return nil, 502, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("streaming anthropic request failed: %v", err)), errorCredentials...)
 	}
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		p.releaseSemaphore()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody)
+		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	return &semaphoreReadCloser{ReadCloser: resp.Body, release: p.releaseSemaphore}, resp.StatusCode, nil

@@ -143,8 +143,8 @@ func TestManagedChatDrainsQueuedEvidence(t *testing.T) {
 				if status != 200 || charged != 48 || held != 0 {
 					t.Fatalf("run %d: status=%d charged=%d want=48 held=%d body=%.400s", run, status, charged, held, body)
 				}
-				if tc.surface == "/v1/chat/completions" && (!strings.Contains(body, "hello there") || !strings.Contains(body, `"message":"fixture failure"`) || strings.Contains(body, "[DONE]")) {
-					t.Fatalf("run %d: want the answer, then the upstream's error and no [DONE]: %.400s", run, body)
+				if tc.surface == "/v1/chat/completions" {
+					w4AssertTerminalOrder(t, body, "fixture failure")
 				}
 			}
 			if got := int(p.calls.Load()); got != tc.runs {

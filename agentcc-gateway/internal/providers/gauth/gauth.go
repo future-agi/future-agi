@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -49,46 +50,46 @@ type TokenProvider struct {
 	failedAt    time.Time // when the last exchange failed
 }
 
-func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
+func NewTokenProvider(credentialsFile, scope string, credentials ...string) (*TokenProvider, error) {
 	if credentialsFile == "" {
 		credentialsFile = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 	}
 	if credentialsFile == "" {
-		return nil, fmt.Errorf("gauth: no credentials file provided and GOOGLE_APPLICATION_CREDENTIALS not set")
+		return nil, common.ExactError(fmt.Errorf("gauth: no credentials file provided and GOOGLE_APPLICATION_CREDENTIALS not set"), credentials...)
 	}
 
 	data, err := os.ReadFile(credentialsFile)
 	if err != nil {
-		return nil, fmt.Errorf("gauth: read credentials file: %w", err)
+		return nil, common.ExactError(fmt.Errorf("gauth: read credentials file: %w", err), credentials...)
 	}
-	return NewTokenProviderJSON(data, scope)
+	return NewTokenProviderJSON(data, scope, credentials...)
 }
 
 // NewTokenProviderJSON loads a service account without writing its private key to disk.
 // Managed providers receive this value from encrypted per-organization credentials.
-func NewTokenProviderJSON(data []byte, scope string) (*TokenProvider, error) {
+func NewTokenProviderJSON(data []byte, scope string, credentials ...string) (*TokenProvider, error) {
 	var sa serviceAccountKey
 	if err := json.Unmarshal(data, &sa); err != nil {
-		return nil, fmt.Errorf("gauth: parse service account JSON: %w", err)
+		return nil, common.ExactError(fmt.Errorf("gauth: parse service account JSON: %w", err), credentials...)
 	}
 	if sa.ClientEmail == "" || sa.PrivateKey == "" {
-		return nil, fmt.Errorf("gauth: service account JSON requires client_email and private_key")
+		return nil, common.ExactError(fmt.Errorf("gauth: service account JSON requires client_email and private_key"), credentials...)
 	}
 	if sa.TokenURI != "" && sa.TokenURI != defaultTokenURL {
-		return nil, fmt.Errorf("gauth: unsupported Google token URI")
+		return nil, common.ExactError(fmt.Errorf("gauth: unsupported Google token URI"), credentials...)
 	}
 
 	block, _ := pem.Decode([]byte(sa.PrivateKey))
 	if block == nil {
-		return nil, fmt.Errorf("gauth: failed to decode PEM private key")
+		return nil, common.ExactError(fmt.Errorf("gauth: failed to decode PEM private key"), credentials...)
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("gauth: parse private key: %w", err)
+		return nil, common.ExactError(fmt.Errorf("gauth: parse private key: %w", err), credentials...)
 	}
 	rsaKey, ok := key.(*rsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("gauth: private key is not RSA")
+		return nil, common.ExactError(fmt.Errorf("gauth: private key is not RSA"), credentials...)
 	}
 
 	tokenURL := defaultTokenURL
@@ -133,7 +134,7 @@ func (t *TokenProvider) Token() (token string) {
 	hash := sha256.Sum256([]byte(sigInput))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, t.privateKey, crypto.SHA256, hash[:])
 	if err != nil {
-		slog.Warn("gauth: JWT sign error", "error", err)
+		slog.Warn("gauth: JWT sign error", "error", common.ExactError(err, t.accessToken))
 		return ""
 	}
 	jwt := sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)
@@ -141,7 +142,7 @@ func (t *TokenProvider) Token() (token string) {
 	form := "grant_type=" + url.QueryEscape("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + jwt
 	resp, err := tokenClient.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
 	if err != nil {
-		slog.Warn("gauth: token exchange error", "error", err)
+		slog.Warn("gauth: token exchange error", "error", common.ExactError(err, jwt, t.accessToken))
 		return ""
 	}
 	defer resp.Body.Close()
@@ -155,7 +156,7 @@ func (t *TokenProvider) Token() (token string) {
 		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		slog.Warn("gauth: token decode error", "error", err)
+		slog.Warn("gauth: token decode error", "error", common.ExactError(err, jwt, t.accessToken, tokenResp.AccessToken))
 		return ""
 	}
 

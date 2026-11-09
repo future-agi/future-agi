@@ -19,9 +19,9 @@ import (
 // would send them rotating it (and carry the gateway's own Bearer
 // challenge).
 //
-// Only the answer written to the client changes: retries, failover, the
-// circuit breaker, request logs and billing all see the provider's error as
-// the adapter built it.
+// This changes a client publication copy: retries, failover, the circuit
+// breaker and billing retain the adapter's error. Trace/request-log publication
+// independently projects its own copy before the emitter and flusher.
 
 // codeProviderAuthFailed is the code of a provider's 401 or 403.
 const codeProviderAuthFailed = "provider_auth_failed"
@@ -32,12 +32,22 @@ const codeProviderAuthFailed = "provider_auth_failed"
 // answer names the provider that failed even after a fallback hop has moved
 // rc.Provider elsewhere. The error is the adapter's, made for this call and
 // not yet shared.
-func stampProvider(err error, providerID string) {
+func stampProvider(err error, providerID string, source ...string) {
 	var apiErr *models.APIError
-	if providerID == "" || !errors.As(err, &apiErr) || apiErr.Provider != "" || !isProviderFailure(apiErr) {
+	if providerID == "" || !errors.As(err, &apiErr) || !isProviderFailure(apiErr) {
+		return
+	}
+	if apiErr.Provider != "" && apiErr.Provider != providerID {
 		return
 	}
 	apiErr.Provider = providerID
+	if len(source) != 0 {
+		owner := models.CredentialManaged
+		if source[0] == "org" {
+			owner = models.CredentialBYOK
+		}
+		apiErr.BindPublicationCredentialOwner(owner)
+	}
 }
 
 // isProviderFailure reports whether e is a provider's failure: the
@@ -53,14 +63,21 @@ func isProviderFailure(e *models.APIError) bool {
 // error; err itself is never modified.
 func providerFailure(rc *models.RequestContext, err error) error {
 	var apiErr *models.APIError
-	if err == nil || !errors.As(err, &apiErr) || hasProviderMetadata(apiErr.Metadata) || !isProviderFailure(apiErr) {
+	if err == nil || !errors.As(err, &apiErr) {
+		return err
+	}
+	if apiErr.IsClientPublished() {
+		return err // including an existing routing wrapper
+	}
+	if !isProviderFailure(apiErr) && !hasProviderMetadata(apiErr.Metadata) {
 		return err
 	}
 	name := apiErr.Provider
 	if name == "" && rc != nil {
 		name = rc.Provider
 	}
-	return attributeProviderFailure(apiErr, name, credentialOwner(rc))
+	attributed := attributeProviderFailure(apiErr, name, credentialOwner(rc))
+	return publishClientProviderError(rc, apiErr, attributed)
 }
 
 // Whose credential a provider call was made with, for the message of a
@@ -88,12 +105,21 @@ func credentialOwner(rc *models.RequestContext) string {
 // attributeProviderFailure is e answered as provider name's failure, made
 // with owner's credential.
 func attributeProviderFailure(e *models.APIError, name, owner string) *models.APIError {
-	if hasProviderMetadata(e.Metadata) {
+	if e.IsClientPublished() || hasProviderMetadata(e.Metadata) {
 		return e
 	}
 	status := e.ProviderStatus
 	if status == 0 {
 		status = e.UpstreamStatus
+	}
+	if e.Origin() == models.OriginGateway {
+		// Retain the constructor's text and origin integrity. Synthetic status
+		// is not evidence of an upstream HTTP refusal, even on native surfaces.
+		out := *e
+		meta := copyErrorMetadata(e.Metadata)
+		meta["provider"], meta["provider_status"] = name, 0
+		out.Metadata = meta
+		return &out
 	}
 	providerMessage := models.RedactCredentials(e.Message)
 	// UpstreamStatus can be the gateway's synthetic 502 (for example an

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,6 +32,8 @@ type Provider struct {
 }
 
 func New(id string, cfg config.ProviderConfig) (*Provider, error) {
+	errorCredentials := common.HeldErrorCredentials(cfg.Headers, cfg.APIKey, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSSessionToken)
+
 	timeout := cfg.DefaultTimeout
 	if timeout == 0 {
 		timeout = 120 * time.Second
@@ -81,13 +84,13 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		var tp *gauth.TokenProvider
 		var err error
 		if cfg.ServiceAccountJSON != "" {
-			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform)
+			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform, errorCredentials...)
 		} else {
-			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform, errorCredentials...)
 		}
 		if err != nil {
 			p.slots.Close()
-			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
+			return nil, common.ExactError(fmt.Errorf("gemini: vertex ai credentials: %w", err), errorCredentials...)
 		}
 		p.tokenProvider = tp
 	}
@@ -139,12 +142,14 @@ const maxRedirects = 10
 // back on the next: comparing neighbours let A -> B -> B restore the
 // credential at B, because the second hop looked like it stayed put.
 func keepCredentialInOrigin(req *http.Request, via []*http.Request) error {
+	errorCredentials := common.ErrorCredentials(req)
+
 	if len(via) >= maxRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		return common.ExactError(fmt.Errorf("stopped after %d redirects", maxRedirects), errorCredentials...)
 	}
 	origin := via[0].URL
 	if origin.Scheme == "https" && req.URL.Scheme != "https" {
-		return fmt.Errorf("refusing a redirect from https to %s: it would send the provider credential in plaintext", req.URL.Scheme)
+		return common.ExactError(fmt.Errorf("refusing a redirect from https to %s: it would send the provider credential in plaintext", req.URL.Scheme), errorCredentials...)
 	}
 	if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
 		req.Header.Del("x-goog-api-key")
@@ -188,7 +193,9 @@ func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming request to Gemini.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
-	if err := RejectUnsupportedTools(req.Tools); err != nil {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
+	if err := RejectUnsupportedTools(req.Tools, errorCredentials...); err != nil {
 		return nil, err
 	}
 
@@ -201,14 +208,14 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	body, err := json.Marshal(gr)
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: marshaling request: %v", err))
+		return nil, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling request: %v", err)), errorCredentials...)
 	}
 
 	url := buildURL(p.baseURL, model, false)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal("gemini: creating request: " + withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrInternal("gemini: creating request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -217,37 +224,40 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		httpReq.Header.Set(k, v)
 	}
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, models.ErrGatewayTimeout("gemini: request timed out")
+			return nil, common.ExactAPIError(models.ErrGatewayTimeout("gemini: request timed out"), errorCredentials...)
 		}
-		return nil, models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading response")
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading response", errorCredentials...)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
 			p.tokenProvider.Invalidate(sentToken(httpReq))
 		}
-		return nil, parseGeminiError(resp.StatusCode, respBody)
+		return nil, parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	var gr2 geminiResponse
 	if err := json.Unmarshal(respBody, &gr2); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing response: %v", err))
+		return nil, common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: parsing response: %v", err)), errorCredentials...)
 	}
 
-	return translateResponse(&gr2, model), nil
+	return translateResponse(&gr2, model, errorCredentials...), nil
 }
 
 // StreamChatCompletion sends a streaming request to Gemini.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -255,7 +265,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(chunks)
 		defer close(errs)
 
-		if err := RejectUnsupportedTools(req.Tools); err != nil {
+		if err := RejectUnsupportedTools(req.Tools, errorCredentials...); err != nil {
 			errs <- err
 			return
 		}
@@ -270,7 +280,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		body, err := json.Marshal(gr)
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("gemini: marshaling request: %v", err))
+			errs <- common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: marshaling request: %v", err)), errorCredentials...)
 			return
 		}
 
@@ -280,7 +290,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer cancelUpstream()
 		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal("gemini: creating request: " + withoutURL(err))
+			errs <- common.ExactAPIError(models.ErrInternal("gemini: creating request: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 			return
 		}
 
@@ -291,13 +301,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			httpReq.Header.Set(k, v)
 		}
 
+		errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {
-				errs <- models.ErrGatewayTimeout("gemini: request timed out")
+				errs <- common.ExactAPIError(models.ErrGatewayTimeout("gemini: request timed out"), errorCredentials...)
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
+			errs <- common.ExactAPIError(models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err, errorCredentials...)), errorCredentials...)
 			return
 		}
 		defer resp.Body.Close()
@@ -308,11 +319,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			}
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
-				errs <- models.ErrUpstreamProvider(resp.StatusCode,
-					fmt.Sprintf("gemini: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
+				errs <- common.ExactAPIError(models.ErrUpstreamProvider(resp.StatusCode,
+					fmt.Sprintf("gemini: error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr)), errorCredentials...)
 				return
 			}
-			errs <- parseGeminiError(resp.StatusCode, respBody)
+			errs <- parseGeminiError(resp.StatusCode, respBody, errorCredentials...)
 			return
 		}
 
@@ -331,10 +342,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			data := strings.TrimPrefix(line, "data: ")
 
-			chunk, err := state.parseStreamData(data)
+			chunk, err := state.parseStreamData(data, errorCredentials...)
 			if err != nil {
+				if _, terminal := err.(*models.APIError); terminal {
+					errs <- common.ExactError(err, errorCredentials...)
+					return
+				}
 				slog.Warn("gemini: error parsing stream data",
-					"error", err,
+					"error", common.ExactError(err, errorCredentials...),
 					"provider", p.id,
 				)
 				continue
@@ -365,7 +380,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- common.ReadError(err, 0, "gemini: stream read")
+				errs <- common.ReadError(err, 0, "gemini: stream read", errorCredentials...)
 			}
 		}
 	}()
@@ -398,6 +413,8 @@ func (p *Provider) EmbedContent(ctx context.Context, model string, reqBody []byt
 
 // StreamGenerateContent sends a streaming Google GenAI request.
 func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqBody []byte, headers map[string]string) (io.ReadCloser, int, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -408,25 +425,26 @@ func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqB
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
-		return nil, 0, models.ErrInternal(fmt.Sprintf("gemini: creating native stream request: %v", err))
+		return nil, 0, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: creating native stream request: %v", err)), errorCredentials...)
 	}
 
 	p.setNativeGenAIHeaders(httpReq, headers)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
 		if common.TimedOut(ctx, err) {
-			return nil, 0, models.ErrGatewayTimeout("gemini: streaming request timed out")
+			return nil, 0, common.ExactAPIError(models.ErrGatewayTimeout("gemini: streaming request timed out"), errorCredentials...)
 		}
-		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: streaming request failed: %v", err))
+		return nil, 502, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: streaming request failed: %v", err)), errorCredentials...)
 	}
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		p.releaseSemaphore()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody)
+		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody, errorCredentials...)
 	}
 
 	return &semaphoreReadCloser{ReadCloser: resp.Body, release: p.releaseSemaphore}, resp.StatusCode, nil
@@ -434,6 +452,8 @@ func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqB
 
 // doGenAIRequest is a shared helper for non-streaming native GenAI requests.
 func (p *Provider) doGenAIRequest(ctx context.Context, model string, action string, reqBody []byte, headers map[string]string) ([]byte, int, error) {
+	errorCredentials := common.HeldErrorCredentials(p.headers, p.apiKey)
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -443,25 +463,29 @@ func (p *Provider) doGenAIRequest(ctx context.Context, model string, action stri
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, 0, models.ErrInternal(fmt.Sprintf("gemini: creating native request: %v", err))
+		return nil, 0, common.ExactAPIError(models.ErrInternal(fmt.Sprintf("gemini: creating native request: %v", err)), errorCredentials...)
 	}
 
 	p.setNativeGenAIHeaders(httpReq, headers)
 
+	errorCredentials = common.ErrorCredentials(httpReq, errorCredentials...)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
-			return nil, 0, models.ErrGatewayTimeout("gemini: native request timed out")
+			return nil, 0, common.ExactAPIError(models.ErrGatewayTimeout("gemini: native request timed out"), errorCredentials...)
 		}
-		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: native request failed: %v", err))
+		return nil, 502, common.ExactAPIError(models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: native request failed: %v", err)), errorCredentials...)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "gemini: reading native response")
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "gemini: reading native response", errorCredentials...)
 	}
 
+	if resp.StatusCode >= 400 {
+		respBody = []byte(privacy.ScrubExactCredential(string(respBody), errorCredentials...))
+	}
 	return respBody, resp.StatusCode, nil
 }
 

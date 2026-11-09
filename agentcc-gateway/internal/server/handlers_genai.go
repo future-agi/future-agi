@@ -162,6 +162,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	rc.CredentialSource = credentialSourceOf(provider, rc.Metadata["org_id"])
 	// embedContent and countTokens are native-only (no canonical equivalent).
 	// Route them to the native provider, or 501 if not available.
 	if action == "embedContent" || action == "countTokens" {
@@ -668,7 +669,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		if rawChunkCh == nil {
-			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			return models.ErrGatewayUpstream("upstream provider returned no stream")
 		}
 		// Keep admission inside Process, before SSE headers and its single
 		// post-plugin pass. GenAI also waits past metadata-only prefixes so a
@@ -682,7 +683,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 		if errors.Is(startErr, context.DeadlineExceeded) {
 			startErr = models.ErrGatewayTimeout("upstream stream timed out before model output")
 		}
-		stampProvider(startErr, rc.Provider)
+		stampProvider(startErr, rc.Provider, credentialSourceOf(provider, rc.Metadata["org_id"]))
 		if startErr != nil && first != nil && first.Usage != nil {
 			// Usage reported before the failure still belongs to this call.
 			if first.Model != "" {
