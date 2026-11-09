@@ -610,9 +610,16 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
 def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, dict]:
     metric = definition.metric
     scope = Scope(metric.organization_id, metric.workspace_id, metric.project_id)
-    formula = compile_formula(
-        definition.formula, [item["alias"] for item in definition.inputs]
-    )
+    if getattr(run, "kind", "run") == "snapshot":
+        from tracer.services.derived_metrics.unit_reads import field_recipe
+
+        formula = field_recipe(definition).formula
+        if formula is None:
+            raise ValueError("Snapshot requires a numeric formula.")
+    else:
+        formula = compile_formula(
+            definition.formula, [item["alias"] for item in definition.inputs]
+        )
     source = f"SELECT * FROM derived_metric_inputs WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s ORDER BY unit_id"
     params = {
         **scope.parameters(),
@@ -630,6 +637,21 @@ def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, d
         "definition_hash": definition.definition_hash,
         "sampling_scope": run.source_manifest.get("sampling_scope", ""),
     }
+    if getattr(run, "kind", "run") == "snapshot":
+        from tracer.services.derived_metrics.parts import (
+            combine_parts_select,
+            stratum_parts_select,
+        )
+
+        aggregate = combine_parts_select(
+            stratum_parts_select(
+                source, formula, rollup=rollup, scope_column="sampling_scope"
+            ),
+            formula,
+            rollup=rollup,
+        )
+    else:
+        aggregate = aggregate_select(source, formula, rollup=rollup)
     return (
         f"""INSERT INTO derived_metric_results
         SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(metric_id)s, %(metric_version)s,
@@ -637,6 +659,6 @@ def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, d
             unit_count, valid_count, missing_count, invalid_probability_count,
             %(start)s, %(end)s, %(as_of)s, %(source_run_id)s, %(definition_hash)s, %(sampling_scope)s,
             {", ".join(UNCERTAINTY_COLUMNS)}
-        FROM ({aggregate_select(source, formula, rollup=rollup)})""",
+        FROM ({aggregate})""",
         params,
     )

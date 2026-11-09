@@ -805,6 +805,12 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
 def read_history(metric, data):
     """Bounded keyset merge; attempts must explicitly include this metric version."""
     _check_metric(metric)
+    from tracer.models.derived_metric import DerivedMetricRun
+    from tracer.serializers.derived_metric import DerivedMetricRunSerializer
+
+    snapshots = DerivedMetricRun.objects.filter(
+        definition__metric=metric, kind="snapshot"
+    ).select_related("definition")
     versions = DerivedMetricVersion.objects.filter(metric=metric)
     attempts = MetricRefreshAttempt.objects.filter(
         project_id=metric.project_id,
@@ -813,7 +819,9 @@ def read_history(metric, data):
     before = data.get("before")
     if before:
         anchor = (
-            versions.filter(pk=before).first() or attempts.filter(pk=before).first()
+            versions.filter(pk=before).first()
+            or attempts.filter(pk=before).first()
+            or snapshots.filter(pk=before).first()
         )
         if anchor is None:
             raise MetricInputError({"before": "Unknown history cursor in this metric."})
@@ -821,6 +829,7 @@ def read_history(metric, data):
             created_at=anchor.created_at, id__lt=anchor.id
         )
         versions, attempts = versions.filter(condition), attempts.filter(condition)
+        snapshots = snapshots.filter(condition)
     limit = data.get("limit", 30)
     if not 1 <= limit <= 100:
         raise MetricInputError({"limit": "Use 1 to 100 history entries."})
@@ -831,6 +840,10 @@ def read_history(metric, data):
     rows += [
         (a.created_at, a.id, "recalculation", a)
         for a in attempts.order_by("-created_at", "-id")[: limit + 1]
+    ]
+    rows += [
+        (s.created_at, s.id, "snapshot", s)
+        for s in snapshots.order_by("-created_at", "-id")[: limit + 1]
     ]
     rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
     from tracer.serializers.derived_metric import DerivedMetricVersionSerializer
@@ -843,8 +856,14 @@ def read_history(metric, data):
                 "definition": DerivedMetricVersionSerializer(obj).data
                 if kind == "version"
                 else None,
-                "snapshot": None,
-                "status": obj.backfill_status if kind == "version" else obj.state,
+                "snapshot": DerivedMetricRunSerializer(obj).data
+                if kind == "snapshot"
+                else None,
+                "status": obj.backfill_status
+                if kind == "version"
+                else obj.status
+                if kind == "snapshot"
+                else obj.state,
             }
             for created, _id, kind, obj in rows[:limit]
         ],

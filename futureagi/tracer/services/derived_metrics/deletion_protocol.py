@@ -468,12 +468,17 @@ def _before_delete(sender, instance, using, **kwargs):
                 "attempt_id": str(instance.attempt_id) if instance.attempt_id else None,
                 "source_manifest": instance.source_manifest,
                 "kind": instance.kind,
+                "status": instance.status,
             },
         }
     elif sender is DerivedMetricVersion:
         metric = DerivedMetric._base_manager.using(using).get(id=instance.metric_id)
         scope = "version"
-        payload = {"metric_key": metric.id, "version_key": instance.id}
+        payload = {
+            "metric_key": metric.id,
+            "version_key": instance.id,
+            "store_payload": {"version": instance.version},
+        }
     elif sender is DerivedMetric:
         metric = instance
         scope = "metric"

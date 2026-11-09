@@ -10,6 +10,13 @@ from tracer.services.derived_metrics.feature_flag import metrics_enabled
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
+        schedule_id="cleanup-derived-metric-snapshots",
+        activity_name="tracer.cleanup_derived_metric_snapshots",
+        interval_seconds=900,
+        queue="tasks_l",
+        description="Resume durable metric erasure and queued snapshot captures",
+    ),
+    ScheduleConfig(
         schedule_id="process-inline-evals",
         activity_name="process_in_line_evals",
         interval_seconds=10,
