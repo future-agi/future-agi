@@ -31,14 +31,15 @@ it('flush includes purpose and note edits made after an in-flight file save', as
 });
 
 it('orders accepted dependency writes between flushed authored snapshots', async () => {
-  api.save.mockImplementation(async (request) => ({ ...initial, ...request, revision: request.revision + 1 }));
+  let serverLock = initial.resolvedLock;
+  api.save.mockImplementation(async (request) => ({ ...initial, ...request, resolvedLock: serverLock, revision: request.revision + 1 }));
   let finishApply;
-  const apply = vi.fn((draft) => new Promise((resolve) => { finishApply = () => resolve({ ...draft, resolvedLock: { links: ['v9'] }, revision: draft.revision + 1 }); }));
+  const apply = vi.fn((draft) => new Promise((resolve) => { finishApply = () => { serverLock = { links: ['v9'] }; resolve({ ...draft, resolvedLock: serverLock, revision: draft.revision + 1 }); }; }));
   const { result } = renderHook(() => useDraftSession('context', initial, true, resourceApi));
   let mutation;
   await act(async () => { mutation = result.current.mutateDraft(apply); });
   expect(result.current.dirty).toBe(true);
-  expect(apply).toHaveBeenCalledWith(expect.objectContaining({ revision: 5 }));
+  expect(apply).toHaveBeenCalledWith(expect.objectContaining({ revision: 4 }));
   act(() => result.current.editFields({ description: 'Typed during dependency apply' }));
   let flushed;
   await act(async () => {
@@ -47,8 +48,8 @@ it('orders accepted dependency writes between flushed authored snapshots', async
     await mutation;
     flushed = await pending;
   });
-  expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 6, description: 'Typed during dependency apply' }));
-  expect(flushed.revision).toBe(7);
+  expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 5, description: 'Typed during dependency apply' }));
+  expect(flushed.revision).toBe(6);
   expect(result.current.resolvedLock).toEqual({ links: ['v9'] });
   expect(result.current.description).toBe('Typed during dependency apply');
   expect(result.current.dirty).toBe(false);

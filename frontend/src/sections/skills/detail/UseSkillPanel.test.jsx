@@ -92,7 +92,8 @@ describe("Use skill panel", () => {
     "builds project and personal commands for %s",
     (client, project, personal) => {
       const { container } = show();
-      fireEvent.click(screen.getByRole("tab", { name: client }));
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Coding client' }));
+      fireEvent.click(screen.getByRole('option', { name: client, exact: true }));
       expect(container.querySelector("pre")).toHaveTextContent(
         `mkdir -p ${project}`,
       );
@@ -155,7 +156,11 @@ describe("Use skill panel", () => {
     async (client, expected) => {
       const { container } = show();
       await selectLabel("Pinned version");
-      fireEvent.click(screen.getByRole("tab", { name: client }));
+      fireEvent.click(screen.getByRole('tab', { name: client === 'MCP' ? 'MCP' : 'Application', exact: true }));
+      if (client !== 'MCP') {
+        fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Application transport' }));
+        fireEvent.click(screen.getByRole('option', { name: client, exact: true }));
+      }
       const command = container.querySelector("pre").textContent;
       expect(command).toContain(expected);
       expect(command).toContain(
@@ -169,6 +174,13 @@ describe("Use skill panel", () => {
       ).not.toBeInTheDocument();
     },
   );
+  it('offers the first unpromoted immutable release without a failing production command', () => {
+    const { container } = show({ labels: [], latestVersion: 1 });
+    expect(container.querySelector('pre')).toHaveTextContent('version=1');
+    expect(container.querySelector('pre')).not.toHaveTextContent('label=');
+    expect(screen.getByText(/Legacy ZIP installation, not a safe updater/)).toBeVisible();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Coding agent', 'Application', 'MCP', 'Project', 'Personal']);
+  });
   it("shows publish guidance for an unpublished skill", () => {
     show({ latestVersion: null });
     expect(

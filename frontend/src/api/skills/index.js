@@ -17,6 +17,16 @@ export * from './assist';
 export * from './github';
 export * from './governance';
 export * from './adoption';
+export {
+  useContextCredentials, useIssueContextCredential, useRevokeContextCredential,
+  resolveContext, readContextManifestPage, readContextFileChunk, checkContextAccess,
+} from './contexts';
+export { useContexts, useContextDetail, useContextDraft, useCreateContext, useStartContextDraft, useSaveContextDraft, useDiscardContextDraft, usePreviewContextDependencies, useApplyContextDependencies } from './context-authoring';
+export { useDraftCheckpoints, useCheckpointDraft } from './r3-intake';
+export { useSkillsSpendPolicy, useUpdateSkillsSpendPolicy } from './r3-spend';
+export { useContextBindings, useCreateContextBinding, useUpdateContextBinding, useRetireContextBinding, useVersionSafety, useSetVersionSafety } from './context-consumers';
+export { mapReleasePacket, pointerTransitionInput } from './r3-review';
+export { humanAnnotationInput, mapHumanAnnotation, nativeSelectionInput, mapNativeSelection } from './r3-cases';
 export const getSkillErrorCode = (error) => error?.response?.data?.code || error?.code;
 const result = (response) => response.data.result;
 const pageParams = ({ pageSize, ...params } = {}) => ({ ...params, ...(pageSize != null ? { page_size: pageSize } : {}) });

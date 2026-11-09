@@ -6,6 +6,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import FileTree from "../components/FileTree";
+import SkillMarkdownPreview from "../components/SkillMarkdownPreview";
 import ContextIdentityStrip from "./ContextIdentityStrip";
 import ContextLinksPanel from "./ContextLinksPanel";
 
@@ -15,6 +16,7 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state }) {
   const [tab, setTab] = useState("context");
+  const [fileMode, setFileMode] = useState('source');
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || query.isLoading || state === "loading") return <ContentSkeleton />;
   if (query.error || state === "error") return <ErrorState title="Context unavailable" detail="The context could not be read in your current scope." onRetry={query.refetch} />;
@@ -48,7 +50,8 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
           <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>{selectedPath}</Typography>
           {selected?.origin?.kind === "linked" && <Alert severity="info">Read-only linked content · source version {selected.origin.versionId}. The included bytes belong to this parent release.</Alert>}
           {selected?.origin?.kind === "generated" && <Alert severity="info">Generated descriptor · read-only. Selector policy and accepted dependency identities participate in the release digest.</Alert>}
-          {fileQuery.isLoading ? <ContentSkeleton /> : fileQuery.error ? <ErrorState title="File unavailable" onRetry={fileQuery.refetch} /> : content == null ? <Typography variant="s3">Select a retained file. No content from another release is shown.</Typography> : <Box component="pre" tabIndex={0} aria-label={`${selectedPath} read-only source`} sx={{ m: 0, p: 1.5, bgcolor: "background.paper", border: 1, borderColor: "divider", borderRadius: 1, typography: "s1", fontFamily: "monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{content}</Box>}
+          {/\.(md|markdown)$/i.test(selectedPath) && <SegmentedTabs value={fileMode} onChange={(_, value) => setFileMode(value)} aria-label="Context file view"><Tab value="source" label="Source" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
+          {fileQuery.isLoading ? <ContentSkeleton /> : fileQuery.error ? <ErrorState title="File unavailable" onRetry={fileQuery.refetch} /> : content == null ? <Typography variant="s3">Select a retained file. No content from another release is shown.</Typography> : fileMode === 'preview' && /\.(md|markdown)$/i.test(selectedPath) ? <SkillMarkdownPreview literal content={content} currentPath={selectedPath} onOpenPath={openFile} /> : <Box component="pre" tabIndex={0} aria-label={`${selectedPath} read-only source`} sx={{ m: 0, p: 1.5, bgcolor: "background.paper", border: 1, borderColor: "divider", borderRadius: 1, typography: "s1", fontFamily: "monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{content}</Box>}
         </Stack>
       </Stack>}
       {tab === "links" && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}

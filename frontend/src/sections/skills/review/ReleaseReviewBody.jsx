@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -9,8 +9,6 @@ import {
   Link,
   Stack,
   Typography,
-  useMediaQuery,
-  useTheme,
 } from "@mui/material";
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
@@ -20,7 +18,6 @@ import StatusBadge from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import TextDiff from "../components/TextDiff";
 import ChecksList from "../components/ChecksList";
-import { buildDiffRows } from "../components/diffRows";
 import CapabilityChanges from "./CapabilityChanges";
 
 const TERMINAL = new Set([
@@ -141,12 +138,6 @@ export function ReviewState({ state, onRetry }) {
 ReviewState.propTypes = { state: PropTypes.string, onRetry: PropTypes.func };
 
 export function ReviewFileDiff({ file }) {
-  const theme = useTheme();
-  const narrow = useMediaQuery(theme.breakpoints.down("sm"));
-  const rows = useMemo(
-    () => buildDiffRows(file.fromText ?? "", file.toText ?? ""),
-    [file.fromText, file.toText],
-  );
   if (file.fromText === undefined || file.toText === undefined)
     return (
       <Alert severity="info">
@@ -154,65 +145,7 @@ export function ReviewFileDiff({ file }) {
         revision-bound diff.
       </Alert>
     );
-  if (!narrow)
-    return (
-      <TextDiff
-        fromText={file.fromText}
-        toText={file.toText}
-        fromTitle="Before"
-        toTitle="Candidate"
-      />
-    );
-  return (
-    <Box
-      role="region"
-      aria-label="Unified file changes"
-      sx={{ border: 1, borderColor: "divider", borderRadius: 1, minWidth: 0 }}
-    >
-      {rows.flatMap((row, index) =>
-        (row.left?.status === "unchanged"
-          ? [row.left]
-          : [row.left, row.right].filter(Boolean)
-        ).map((line) => (
-          <Typography
-            key={`${index}:${line.status}`}
-            component="div"
-            variant="s1"
-            sx={{
-              fontFamily: "monospace",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              p: 0.5,
-              bgcolor:
-                line.status === "added"
-                  ? "status.success.bg"
-                  : line.status === "removed"
-                    ? "status.danger.bg"
-                    : "background.paper",
-            }}
-          >
-            <Box component="span" aria-label={line.status}>
-              {line.status === "added"
-                ? "+ "
-                : line.status === "removed"
-                  ? "− "
-                  : "  "}
-            </Box>
-            {line.text}
-          </Typography>
-        )),
-      )}
-      {!rows.length && (
-        <Typography variant="s3">Both files are empty.</Typography>
-      )}
-      {file.fromText.endsWith("\n") !== file.toText.endsWith("\n") && (
-        <Typography variant="s3">
-          {file.fromText.endsWith("\n") ? "Candidate" : "Before"} has no newline
-          at the end of the file.
-        </Typography>
-      )}
-    </Box>
-  );
+  return <TextDiff fromText={file.fromText} toText={file.toText} fromTitle="Before" toTitle="Candidate" />;
 }
 ReviewFileDiff.propTypes = { file: PropTypes.object.isRequired };
 

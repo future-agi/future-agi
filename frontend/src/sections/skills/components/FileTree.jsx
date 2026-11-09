@@ -11,7 +11,7 @@ import './skillIcons';
 
 const DEFAULT_PINNED = ['SKILL.md'];
 
-export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, readOnly = true }) {
+export default function FileTree({ files, selectedPath, onSelect, onCreate, onRename, onDelete, pinned = DEFAULT_PINNED, protectedPaths = DEFAULT_PINNED, isPathReadOnly = () => false, readOnly = true }) {
   const [collapsed, setCollapsed] = useState(new Set());
   const [focused, setFocused] = useState(null);
   const [dialog, setDialog] = useState(null);
@@ -44,7 +44,10 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
   }, [files, pinned, collapsed]);
   const activePath = rows.some((row) => row.path === focused) ? focused : rows.find((row) => row.path === selectedPath)?.path || rows[0]?.path;
   const selectedFile = files.find((file) => file.path === selectedPath);
-  const protectedRoot = selectedPath === 'SKILL.md';
+  const protectedRoot = protectedPaths.includes(selectedPath);
+  const selectedReadOnly = Boolean(selectedFile?.readOnly || isPathReadOnly(selectedPath || ''));
+  const cannotChangeSelected = readOnly || protectedRoot || selectedReadOnly;
+  const protectedReason = protectedRoot ? `${selectedPath} is required and cannot be renamed or deleted.` : 'Linked and generated files are read-only.';
   const focus = (path) => { setFocused(path); refs.current.get(path)?.focus(); };
   const toggle = (path, collapse) => setCollapsed((previous) => {
     const next = new Set(previous);
@@ -84,6 +87,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     if (!pathInput) return 'Enter a relative path.';
     const segments = pathInput.split('/');
     if (pathInput.length > LIMITS.MAX_PATH || segments.length > LIMITS.MAX_PATH_SEGMENTS || pathInput.includes('\\') || hasControlCharacters(pathInput) || segments.some((part) => !part || part === '.' || part === '..' || /[ .]$/.test(part))) return 'Use a relative path without empty segments, backslashes, or dot segments.';
+    if (isPathReadOnly(pathInput) || protectedPaths.some((path) => path.toLowerCase() === pathInput.toLowerCase())) return 'That path is reserved and cannot be created or replaced.';
     const lower = pathInput.toLowerCase();
     if (files.some((file) => {
       if (dialog === 'rename' && file.path === selectedPath) return false;
@@ -93,7 +97,7 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     return '';
   })();
   const submitPath = () => {
-    if (pathError) return;
+    if (pathError || readOnly || (dialog === 'rename' && cannotChangeSelected)) return;
     if (dialog === 'folder') setFolderPrefix(`${pathInput}/`);
     if (dialog === 'create') { onCreate?.(pathInput); setFolderPrefix(''); }
     if (dialog === 'rename' && !protectedRoot) onRename?.(selectedPath, pathInput);
@@ -103,8 +107,8 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
     {!readOnly && <Stack direction="row" spacing={0.5} useFlexGap role="group" aria-label="File actions" sx={{ flexWrap: 'nowrap', '& > span': { display: 'inline-flex', flexShrink: 0 } }}>
       <Tooltip title={files.length >= LIMITS.MAX_FILES ? 'File limit reached.' : 'New file'}><span><IconButton size="small" color="inherit" aria-label="New file" onClick={() => openDialog('create')} disabled={!onCreate || files.length >= LIMITS.MAX_FILES}><Iconify icon="solar:file-add-linear" /></IconButton></span></Tooltip>
       <Tooltip title="New folder"><span><IconButton size="small" color="inherit" aria-label="New folder" onClick={() => openDialog('folder')} disabled={!onCreate}><Iconify icon="solar:folder-with-files-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be renamed.' : 'Rename'}><span><IconButton size="small" color="inherit" aria-label="Rename" disabled={!selectedFile || !onRename || protectedRoot} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
-      <Tooltip title={protectedRoot ? 'SKILL.md is required and cannot be deleted.' : 'Delete'}><span><IconButton size="small" color="inherit" aria-label="Delete" disabled={!selectedFile || !onDelete || protectedRoot} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Rename'}><span><IconButton size="small" color="inherit" aria-label="Rename" disabled={!selectedFile || !onRename || cannotChangeSelected} onClick={() => openDialog('rename')}><Iconify icon="solar:pen-linear" /></IconButton></span></Tooltip>
+      <Tooltip title={cannotChangeSelected ? protectedReason : 'Delete'}><span><IconButton size="small" color="inherit" aria-label="Delete" disabled={!selectedFile || !onDelete || cannotChangeSelected} onClick={() => setDialog('delete')}><Iconify icon="solar:trash-bin-trash-linear" /></IconButton></span></Tooltip>
     </Stack>}
     {folderPrefix && !readOnly && <Typography variant="s3" color="text.secondary">New files will start in {folderPrefix}</Typography>}
     {!rows.length && <Typography variant="s3" color="text.secondary">No files yet.</Typography>}
@@ -125,11 +129,11 @@ export default function FileTree({ files, selectedPath, onSelect, onCreate, onRe
       <TextField autoFocus size="small" label={dialog === 'folder' ? 'Folder path' : 'File path'} value={pathInput} onChange={(event) => setPathInput(event.target.value)} error={Boolean(pathInput && pathError)} helperText={pathInput && pathError ? pathError : dialog === 'folder' ? 'Folders are path prefixes. Add a file to keep this folder in the skill.' : 'Paths are relative to the skill, for example references/policy.md.'} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); submitPath(); } }} />
     </ModalWrapper>
     <ConfirmDialog open={dialog === 'delete'} onClose={() => setDialog(null)} title="Delete file?" content={`Remove ${selectedPath || 'this file'} from this draft? Published versions will not change.`}
-      action={<Button variant="contained" color="error" disabled={protectedRoot} onClick={() => { if (!protectedRoot) onDelete?.(selectedPath); setDialog(null); }}>Delete file</Button>} />
+      action={<Button variant="contained" color="error" disabled={!selectedFile || cannotChangeSelected} onClick={() => { if (selectedFile && !cannotChangeSelected) onDelete?.(selectedPath); setDialog(null); }}>Delete file</Button>} />
   </Stack>;
 }
 FileTree.propTypes = {
   files: PropTypes.arrayOf(PropTypes.shape({ path: PropTypes.string.isRequired, status: PropTypes.string })).isRequired,
   selectedPath: PropTypes.string, onSelect: PropTypes.func.isRequired, onCreate: PropTypes.func, onRename: PropTypes.func,
-  onDelete: PropTypes.func, pinned: PropTypes.arrayOf(PropTypes.string), readOnly: PropTypes.bool,
+  onDelete: PropTypes.func, pinned: PropTypes.arrayOf(PropTypes.string), protectedPaths: PropTypes.arrayOf(PropTypes.string), isPathReadOnly: PropTypes.func, readOnly: PropTypes.bool,
 };

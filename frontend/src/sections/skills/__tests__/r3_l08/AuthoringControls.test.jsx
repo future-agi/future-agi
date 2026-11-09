@@ -9,6 +9,7 @@ import MigrationPlanPanel from "../../library/MigrationPlanPanel";
 
 const scopeKey = "org:workspace:author:resource";
 const digest = `sha256:${"a".repeat(64)}`;
+const recoveryDigest = `sha256:${'b'.repeat(64)}`;
 const future = "2099-01-01T00:00:00Z";
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const button = (name) => screen.getByRole("button", { name, exact: true });
@@ -16,7 +17,7 @@ const click = (name) => fireEvent.click(button(name));
 const choose = (name, option) => { fireEvent.mouseDown(screen.getByRole("combobox", { name })); fireEvent.click(screen.getByRole("option", { name: option, exact: true })); };
 const check = (name) => fireEvent.click(screen.getByRole("checkbox", { name }));
 const draft = () => {
-  const value = { baseVersion: 4, revision: 12, digest, files: [{ path: "AGENTS.md", content: "Original standing rules" }], description: "Purpose", note: "", dirty: false, editSequence: 0, contextSpec: { links: [{ skillId: "child", selector: { label: "production" } }] }, resolvedLock: { links: [{ skillId: "child", mount: "skills/refunds/", requested: { label: "production" }, version: 8, digest }] } };
+  const value = { baseVersion: 4, revision: 12, digest, recoveryDigest, files: [{ path: "AGENTS.md", content: "Original standing rules" }], description: "Purpose", note: "", dirty: false, editSequence: 0, contextSpec: { links: [{ skillId: "child", selector: { label: "production" } }] }, resolvedLock: { links: [{ skillId: "child", mount: "skills/refunds/", requested: { label: "production" }, version: 8, digest }] } };
   value.flush = vi.fn(async () => value);
   value.mutateDraft = vi.fn(async (operation) => operation(value));
   value.reload = vi.fn();
@@ -115,7 +116,7 @@ describe("recoverable draft choices", () => {
     expect(button("Preserve and suspend draft")).toBeDisabled();
     check("Save a recovery checkpoint and suspend my current draft."); click("Preserve and suspend draft");
     await waitFor(() => expect(suspend).toHaveBeenCalledOnce());
-    expect(suspend.mock.calls[0][0]).toEqual({ revision: 12, expectedDigest: digest, reason: "switch" });
+    expect(suspend.mock.calls[0][0]).toEqual({ revision: 12, expectedDigest: recoveryDigest, reason: "switch" });
   });
   it("does not suspend when a server conflict prevents preserving local work", async () => {
     const session = draft(); session.flush.mockResolvedValue(null); const suspend = vi.fn();
@@ -140,7 +141,7 @@ describe("recoverable draft choices", () => {
 
 describe("lifecycle authority and exact consequences", () => {
   const resource = { id: "original-uuid", name: "refunds" };
-  const review = { subjectId: "original-uuid", releaseRevision: 7, labels: [{ name: "production", version: 4, isProtected: true }] };
+  const review = { subjectId: "original-uuid", releaseRevision: 7, reviewFingerprint: digest, labels: [{ name: "production", version: 4, isProtected: true }] };
   it("denies recovery without current authority and displays retained protected labels", () => {
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} onApply={vi.fn()} />);
     expect(screen.getByText("Retained production → v4 · protected")).toBeVisible();
@@ -154,7 +155,7 @@ describe("lifecycle authority and exact consequences", () => {
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover reviewed policy" } });
     check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
     await waitFor(() => expect(apply).toHaveBeenCalledOnce());
-    expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 7, note: "Recover reviewed policy" });
+    expect(apply.mock.calls[0][0]).toEqual({ expectedReleaseRevision: 7, expectedReviewFingerprint: digest, note: "Recover reviewed policy" });
   });
   it("uses the version safety revision rather than the resource-wide security counter", async () => {
     const apply = vi.fn(async () => ({ revision: 3 }));
@@ -189,7 +190,7 @@ describe("additional recovery boundaries", () => {
   });
   it("keeps the dialog close control visible but does not dismiss an in-flight mutation", async () => {
     const pending = deferred(); const close = vi.fn();
-    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={close} action="unarchive" resource={{ id: "resource", name: "policy" }} review={{ subjectId: "resource", releaseRevision: 1 }} canAct onApply={() => pending.promise} />);
+    render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={close} action="unarchive" resource={{ id: "resource", name: "policy" }} review={{ subjectId: "resource", releaseRevision: 1, reviewFingerprint: digest }} canAct onApply={() => pending.promise} />);
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Recover" } }); check("I reviewed this exact identity and its retained-label and load consequences."); click("Recover original identity");
     expect(button("Close")).toBeVisible(); click("Close"); expect(close).not.toHaveBeenCalled();
     await act(async () => pending.resolve({ id: "resource" }));

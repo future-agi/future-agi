@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { matchRoutes } from 'react-router-dom';
+import { paths } from 'src/routes/paths';
 
 const roots = ['src/sections/skills', 'src/api/skills', 'src/pages/dashboard/skills'];
 const belongsToFeature = (file) => roots.some((root) => file === root || file.startsWith(`${root}/`));
-const isProduction = (file) => !/\.(test|browser)|smoke/.test(file);
+const isProduction = (file) => !/\.(test|browser)|smoke|(^|\/)__tests__(\/|$)/.test(file);
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
   const file = path.join(dir, entry.name);
   return entry.isDirectory() ? walk(file) : /\.(js|jsx|mjs)$/.test(file) ? [file] : [];
@@ -33,13 +35,18 @@ function auditInterfaces() {
   const imported = new Set();
   for (const file of [...files, 'src/layouts/dashboard/config-navigation.jsx', 'src/routes/sections/dashboard.jsx']) {
     const visit = (node) => {
-      const specifier = ts.isImportDeclaration(node) ? node.moduleSpecifier.text
+      const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier?.text
         : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0]?.text : null;
       if (typeof specifier === 'string') {
         const base = specifier.startsWith('.') ? path.normalize(path.join(path.dirname(file), specifier)) : specifier;
         if (belongsToFeature(base)) {
           const target = [base, `${base}.js`, `${base}.jsx`, `${base}/index.js`, `${base}/index.jsx`].find((candidate) => exports.has(candidate));
-          if (!target) issues.push(`${file}: missing module ${specifier}`);
+          if (!target && base.endsWith('.json') && fs.existsSync(base)) {
+            // JSON modules have a real default export but are data, not orphan
+            // JavaScript production modules. Validate rather than skip them.
+            try { JSON.parse(fs.readFileSync(base, 'utf8')); }
+            catch { issues.push(`${file}: invalid JSON module ${specifier}`); }
+          } else if (!target) issues.push(`${file}: missing module ${specifier}`);
           else {
             if (isProduction(file)) imported.add(target);
             const clause = node.importClause;
@@ -59,6 +66,29 @@ function auditInterfaces() {
 }
 
 describe('Skills integration boundaries', () => {
+  it('distinguishes nested test support from shipped modules without hiding production helpers', () => {
+    expect(isProduction('src/sections/skills/__tests__/r3_l09/fixtures.js')).toBe(false);
+    expect(isProduction('src/api/skills/context-authoring.js')).toBe(true);
+    expect(isProduction('src/sections/skills/review/ReleaseInbox.jsx')).toBe(true);
+  });
+  it('registers literal context/review routes before leaf identities without rollout ambiguity', () => {
+    let children;
+    const visit = (node) => {
+      if (ts.isObjectLiteralExpression(node) && node.properties.some((property) => property.name?.getText() === 'path' && property.initializer?.text === 'skills')) {
+        children = node.properties.find((property) => property.name?.getText() === 'children')?.initializer;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parse('src/routes/sections/dashboard.jsx'));
+    expect(ts.isArrayLiteralExpression(children)).toBe(true);
+    const routePaths = children.elements.flatMap((node) => node.properties.filter((property) => property.name?.getText() === 'path').map((property) => property.initializer.text));
+    expect(routePaths.indexOf('contexts/rollouts')).toBeLessThan(routePaths.indexOf('contexts/:contextId'));
+    expect(routePaths.indexOf('reviews')).toBeLessThan(routePaths.indexOf(':skillId'));
+    const routes = [{ path: '/dashboard/skills', children: routePaths.map((routePath) => ({ path: routePath })) }];
+    for (const [url, expected] of [[paths.dashboard.skills.contexts, 'contexts'], [paths.dashboard.skills.contextReview('context-id'), 'contexts/:contextId/review'], [paths.dashboard.skills.contextRollout('campaign-id'), 'contexts/rollouts/:campaignId'], [paths.dashboard.skills.reviews, 'reviews'], [paths.dashboard.skills.archived, 'archived'], [paths.dashboard.skills.edit('skill-id'), ':skillId/edit']]) {
+      expect(matchRoutes(routes, url).at(-1).route.path).toBe(expected);
+    }
+  });
   const audit = auditInterfaces();
   it('resolves every cross-feature import and its named or default export', () => {
     expect(audit.issues).toEqual([]);

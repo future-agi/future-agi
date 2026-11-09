@@ -138,7 +138,7 @@ describe('paid starts and polling', () => {
     await act(async () => { await result.current.mutateAsync(input); });
     expect(axios.post.mock.calls.map((call) => call[2].headers['Idempotency-Key'])).toEqual([input.idempotencyKey, input.idempotencyKey]);
     expect(axios.post.mock.calls[1][1]).toMatchObject({ expected_fingerprint: 'plan', inventory_review: { fingerprint: 'plan' }, configuration: { candidate: { revision: 3 }, limits: { max_estimated_cost_usd: '1.00000000' } } });
-    expect(result.current.data.executionFingerprint).toBe('execution');
+    await waitFor(() => expect(result.current.data?.executionFingerprint).toBe('execution'));
   });
   it('refuses a missing key rather than making an unrepeatable paid request', async () => {
     const { result } = renderHook(() => api.useCreateSkillTestRun('skill'), { wrapper });

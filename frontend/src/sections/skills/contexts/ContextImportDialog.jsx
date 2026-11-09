@@ -10,7 +10,7 @@ import { AuthoringError, useAuthoringOperation, useExpired } from "../editor/Hot
 // Palette/depth/surfaces: shared dialog and neutral fields, warning for unsupported input.
 // Typography/spacing: m3/s1/s3 with compact 12px groups; no extra onboarding layer.
 function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate, onCreated }) {
-  const [mode, setMode] = useState("upload");
+  const [mode, setMode] = useState(onPreview ? 'upload' : 'write');
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
@@ -35,7 +35,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     const result = await operation.run(() => onPreview(form), { action: "preview", selection: crypto.randomUUID() });
     if (result) setPreview(result);
   };
-  const input = mode === "upload" ? { previewId: preview?.previewId, rootKey, name, description, tags: [], rightsConfirmed: true } : { name, description, tags: [], files: [{ path: "AGENTS.md", content: body }] };
+  const input = mode === "upload" ? { previewId: preview?.previewId, expectedFingerprint: preview?.fingerprint, rootKey, name, description, tags: [], rightsConfirmed: true } : { name, description, tags: [], files: [{ path: "AGENTS.md", content: body }] };
   const canSubmit = nameValid && descriptionValid && (mode === "upload" ? root && !root.blocked && !preview.closure?.blocked && (!expired || operation.canRetry(input)) && rights && Boolean(onImport) : Boolean(body.trim()) && new TextEncoder().encode(body).length <= 512 * 1024 && Boolean(onCreate));
   const submit = async () => {
     if (!canSubmit) return;
@@ -50,7 +50,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
       <Typography variant="s1">AGENTS.md is standing context. Skills load when needed. Import creates a private draft; production and source applications stay unchanged.</Typography>
       <AuthoringError error={operation.error} />
       {uploadError && <Alert severity="error">{uploadError}</Alert>}
-      <TextField select size="small" label="Start from" value={mode} disabled={locked} onChange={(event) => { setMode(event.target.value); setRights(false); }}><MenuItem value="upload">Folder or ZIP</MenuItem><MenuItem value="write">Write or paste AGENTS.md</MenuItem></TextField>
+      <TextField select size="small" label="Start from" value={mode} disabled={locked} onChange={(event) => { setMode(event.target.value); setRights(false); }}><MenuItem value="upload" disabled={!onPreview || !onImport}>Folder or ZIP</MenuItem><MenuItem value="write">Write or paste AGENTS.md</MenuItem></TextField>
       {mode === "upload" ? <>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           <Button component="label" variant="outlined" disabled={locked || !onPreview}>Choose ZIP or files<input type="file" hidden multiple onChange={(event) => upload(event.target.files)} /></Button>

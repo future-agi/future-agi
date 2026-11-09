@@ -43,7 +43,15 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
     const request = (async () => saveDraft(saveInput(snapshot, revision ?? snapshot.revision)))()
       .then((draft) => {
         if (!mounted.current || epoch !== generation.current) return null;
-        update({ ...latest.current, revision: draft.revision, source: draft.source, savedFiles: snapshot.files, savedSequence: snapshot.editSequence, status: latest.current.mutationError ? "error" : "saved", error: latest.current.mutationError });
+        if (!Array.isArray(draft?.files) || !Number.isSafeInteger(draft.revision)) throw new Error("The draft acknowledgment is incomplete. Reload the exact saved revision before continuing.");
+        if (draft.baseVersion !== snapshot.baseVersion || (snapshot.resolvedLock && JSON.stringify(draft.resolvedLock) !== JSON.stringify(snapshot.resolvedLock))) {
+          throw new Error("An ordinary save changed the content origin or accepted dependencies. Reload and review before continuing.");
+        }
+        const local = latest.current;
+        const authored = local.editSequence === snapshot.editSequence ? {} : { files: local.files, note: local.note, description: local.description };
+        // Retain the server's compiled/recovery identity and head preconditions,
+        // but never replace edits typed while that snapshot was being saved.
+        update({ ...local, ...draft, ...authored, editSequence: local.editSequence, pendingMutations: local.pendingMutations, mutationError: local.mutationError, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: local.mutationError ? "error" : "saved", error: local.mutationError });
         return draft;
       }).catch((error) => {
         if (mounted.current && epoch === generation.current) update({ ...latest.current, status: getSkillErrorCode(error) === "draft_conflict" ? "conflict" : "error", error });
@@ -55,7 +63,10 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
 
   const flushLocal = useCallback(async () => {
     if (!mounted.current || latest.current.status === "conflict") return null;
-    let acknowledged = inFlight.current ? await inFlight.current : await save(latest.current.revision);
+    // The safe resource adapter must not resave a clean acknowledgment: that
+    // advances revision and invalidates its head-review token. Keep the legacy
+    // leaf flow's explicit save/revalidation behavior unchanged.
+    let acknowledged = inFlight.current ? await inFlight.current : await save(resourceApi ? undefined : latest.current.revision);
     if (!acknowledged) return null;
     while (mounted.current && latest.current.editSequence !== latest.current.savedSequence) {
       if (latest.current.status === "conflict") return null;
@@ -63,7 +74,7 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
       if (!acknowledged) return null;
     }
     return mounted.current ? acknowledged : null;
-  }, [save]);
+  }, [save, resourceApi]);
 
   const flush = useCallback(async () => {
     if (flushing.current) return flushing.current;
@@ -101,11 +112,12 @@ export default function useDraftSession(skillId, initialDraft, paused = false, r
       update({ ...snapshot, status: "saving" });
       const mutation = Promise.resolve().then(() => operation(acknowledged)).then((draft) => {
         if (!mounted.current || epoch !== generation.current) return null;
+        if (!Array.isArray(draft?.files) || !Number.isSafeInteger(draft.revision)) throw new Error("This operation returned a receipt, not the acknowledged draft. Recover that exact revision before editing.");
         // Files/purpose typed during dependency Apply remain local and are saved
         // against its new revision; only the server can replace the accepted lock.
         const local = latest.current;
         const authored = local.editSequence === snapshot.editSequence ? {} : { files: local.files, note: local.note, description: local.description };
-        update({ ...local, ...draft, ...authored, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: "saved", error: null });
+        update({ ...local, ...draft, ...authored, editSequence: local.editSequence, pendingMutations: local.pendingMutations, mutationError: null, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: "saved", error: null });
         return draft;
       }).catch((error) => {
         if (mounted.current && epoch === generation.current) update({ ...latest.current, mutationError: error, status: getSkillErrorCode(error) === "draft_conflict" ? "conflict" : "error", error });

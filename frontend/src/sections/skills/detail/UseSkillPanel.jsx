@@ -37,9 +37,10 @@ const CLIENTS = [
 ];
 
 export default function UseSkillPanel({ skill }) {
+  const [group, setGroup] = useState('coding');
   const [clientId, setClientId] = useState("claude-code");
   const [location, setLocation] = useState("project");
-  const [selector, setSelector] = useState("label:production");
+  const [selector, setSelector] = useState(() => skill.labels.some((item) => item.name === 'production') ? 'label:production' : 'version');
   const [pinnedVersion, setPinnedVersion] = useState(skill.latestVersion);
   const [tag, setTag] = useState(skill.tags[0] || "");
   const client = CLIENTS.find((item) => item.id === clientId);
@@ -129,20 +130,24 @@ export default function UseSkillPanel({ skill }) {
       <Section title="Use in your agent">
         <Box sx={{ minWidth: 0, maxWidth: "100%", overflowX: "auto" }}>
           <SegmentedTabs
-            value={clientId}
-            onChange={(_event, value) => setClientId(value)}
+            value={group}
+            onChange={(_event, value) => { setGroup(value); setClientId(value === 'coding' ? 'claude-code' : value === 'application' ? 'curl' : 'mcp'); }}
             variant="scrollable"
             scrollButtons="auto"
             allowScrollButtonsMobile
             sx={{ maxWidth: "100%" }}
             aria-label="Agent or integration"
           >
-            {CLIENTS.map((item) => (
-              <Tab key={item.id} value={item.id} label={item.label} />
-            ))}
+            <Tab value="coding" label="Coding agent" />
+            <Tab value="application" label="Application" />
+            <Tab value="mcp" label="MCP" />
           </SegmentedTabs>
         </Box>
         <Stack spacing={1.5} sx={{ mt: 1.5, minWidth: 0 }}>
+          {group !== 'mcp' && <TextField select size="small" label={group === 'coding' ? 'Coding client' : 'Application transport'} value={clientId} onChange={(event) => setClientId(event.target.value)}>
+            {CLIENTS.filter((item) => group === 'coding' ? Boolean(item.projectDir) : ['curl', 'python', 'typescript'].includes(item.id)).map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
+          </TextField>}
+          {installClient && <Alert severity="warning">Legacy ZIP installation, not a safe updater. Extraction can overwrite local changes and does not remove deleted managed files. Use an empty reviewed destination; keep existing files and locks before replacing them. Installed files are not proof of model delivery.</Alert>}
           {installClient && (
             <SegmentedTabs
               value={location}

@@ -11,15 +11,17 @@ import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadRevie
 const labels = { archive: "Archive context", unarchive: "Recover original identity", quarantine: "Quarantine version", clear: "Clear quarantine" };
 function Safety({ scopeKey, open, onClose, action, resource, review, canAct = false, onApply, onApplied }) {
   const [reason, setReason] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmedReview, setConfirmedReview] = useState(null);
+  const reviewIdentity = JSON.stringify(review);
+  const confirmed = confirmedReview === reviewIdentity;
   const operation = useAuthoringOperation(scopeKey);
   const quarantine = action === "quarantine" || action === "clear";
-  const ready = canAct && review && review.subjectId === resource.id && (quarantine ? Number.isInteger(review.revision) && Boolean(review.versionId) : Number.isInteger(review.releaseRevision)) && (action !== "archive" || Boolean(review.impactFingerprint)) && !review.blocked;
+  const ready = canAct && review && review.subjectId === resource.id && (quarantine ? Number.isInteger(review.revision) && Boolean(review.versionId) : Number.isInteger(review.releaseRevision)) && (action !== "archive" || Boolean(review.impactFingerprint)) && (action !== 'unarchive' || /^sha256:[a-f0-9]{64}$/.test(review.reviewFingerprint || '')) && !review.blocked;
   const apply = async () => {
     if (!ready || !confirmed || !reason.trim()) return;
     const input = quarantine
       ? { revision: review.revision, quarantined: action === "quarantine", reason: reason.trim(), replacementVersionId: review.replacementVersionId || null }
-      : { expectedReleaseRevision: review.releaseRevision, note: reason.trim(), ...(action === "archive" ? { expectedImpactFingerprint: review.impactFingerprint } : {}) };
+      : { expectedReleaseRevision: review.releaseRevision, note: reason.trim(), ...(action === "archive" ? { expectedImpactFingerprint: review.impactFingerprint } : { expectedReviewFingerprint: review.reviewFingerprint }) };
     const result = await operation.run(onApply, input);
     if (result) onApplied?.(result);
   };
@@ -38,11 +40,11 @@ function Safety({ scopeKey, open, onClose, action, resource, review, canAct = fa
       {!review && <Alert severity="info">Load a current consequence review before acting.</Alert>}
       <AuthoringError error={operation.error} />
       <TextField label="Reason" size="small" fullWidth multiline minRows={2} value={reason} onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 500 }} disabled={operation.pending} />
-      <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={!ready || operation.pending} />} label="I reviewed this exact identity and its retained-label and load consequences." />
+      <FormControlLabel control={<Checkbox checked={confirmed} onChange={(event) => setConfirmedReview(event.target.checked ? reviewIdentity : null)} disabled={!ready || operation.pending} />} label="I reviewed this exact identity and its retained-label and load consequences." />
     </Stack></DialogContent>
     <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button variant="contained" color={action === "archive" || action === "quarantine" ? "error" : "primary"} disabled={!ready || !confirmed || !reason.trim() || !onApply || operation.pending || Boolean(operation.result)} onClick={apply}>{labels[action]}</Button></DialogActions>
   </ClosableDialog>;
 }
 Safety.propTypes = { scopeKey: PropTypes.string.isRequired, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, action: PropTypes.oneOf(Object.keys(labels)).isRequired, resource: PropTypes.object.isRequired, review: PropTypes.object, canAct: PropTypes.bool, onApply: PropTypes.func, onApplied: PropTypes.func };
-export default function ContextSafetyDialog(props) { return <Safety key={`${props.scopeKey}:${props.open}:${props.action}:${JSON.stringify(props.review)}`} {...props} />; }
+export default function ContextSafetyDialog(props) { return <Safety key={`${props.scopeKey}:${props.resource.id}:${props.open}:${props.action}`} {...props} />; }
 ContextSafetyDialog.propTypes = Safety.propTypes;

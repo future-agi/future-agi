@@ -35,8 +35,8 @@ SkillLink.propTypes = { href: PropTypes.string, children: PropTypes.node, curren
 function ImageDescription({ alt }) { return <span>{alt ? `[Image: ${alt}]` : '[Image]'}</span>; }
 ImageDescription.propTypes = { alt: PropTypes.string };
 
-export default function SkillMarkdownPreview({ content = '', currentPath = 'SKILL.md', onOpenPath }) {
-  const { frontmatter, body } = useMemo(() => splitFrontmatter(content), [content]);
+export default function SkillMarkdownPreview({ content = '', currentPath = 'SKILL.md', onOpenPath, literal = false }) {
+  const { frontmatter, body } = useMemo(() => literal ? { body: content } : splitFrontmatter(content), [content, literal]);
   return <Box sx={{ typography: 's1', color: 'text.primary', minWidth: 0, overflowWrap: 'anywhere', '& h1, & h2, & h3, & h4, & h5, & h6': { typography: 'm3', mt: 2, mb: 1 }, '& p': { my: 1 }, '& pre': { typography: 's1', fontFamily: 'monospace', bgcolor: 'background.neutral', p: 1.5, borderRadius: 1, overflowX: 'auto' }, '& code': { fontFamily: 'monospace' }, '& blockquote': { m: 0, pl: 1.5, borderLeft: 2, borderColor: 'divider', color: 'text.secondary' }, '& table': { width: '100%', borderCollapse: 'collapse' }, '& td, & th': { borderBottom: 1, borderColor: 'divider', p: 1, textAlign: 'left' }, '& th': { typography: 'm3' } }}>
     <FrontmatterTable frontmatter={frontmatter} />
     <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
@@ -45,4 +45,4 @@ export default function SkillMarkdownPreview({ content = '', currentPath = 'SKIL
     }}>{body}</ReactMarkdown>
   </Box>;
 }
-SkillMarkdownPreview.propTypes = { content: PropTypes.string, currentPath: PropTypes.string, onOpenPath: PropTypes.func };
+SkillMarkdownPreview.propTypes = { content: PropTypes.string, currentPath: PropTypes.string, onOpenPath: PropTypes.func, literal: PropTypes.bool };

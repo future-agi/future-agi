@@ -119,12 +119,13 @@ describe("Skill detail route", () => {
     );
     expect(screen.getByRole("alert")).not.toHaveTextContent("Me");
   });
-  it("labels the editor action Edit when there is no own draft", () => {
+  it("names latest explicitly instead of implying that Edit uses the viewed historical release", () => {
     useSkill.mockReturnValue(
       success({ ...skill, hasDraft: false, drafts: [] }),
     );
-    show();
-    expect(screen.getByRole("link", { name: "Edit" })).toBeInTheDocument();
+    show('?version=2');
+    expect(screen.getByRole('link', { name: 'Edit latest v4' })).toBeInTheDocument();
+    expect(screen.getByText(/Viewed v2 · Production v2 · Latest v4/)).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
   it("restores the URL tab and preserves deep links when changing it", () => {

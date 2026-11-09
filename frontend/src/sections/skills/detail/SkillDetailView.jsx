@@ -155,7 +155,7 @@ function DetailContent({ skill, preview }) {
               component={RouterLink}
               to={paths.dashboard.skills.edit(skill.id)}
             >
-              {skill.hasDraft ? "Continue draft" : "Edit"}
+              {skill.hasDraft ? 'Continue draft' : skill.latestVersion ? `Edit latest v${skill.latestVersion}` : 'Edit unpublished draft'}
             </Button>
             <IconButton
               aria-label="Skill actions"
@@ -169,6 +169,9 @@ function DetailContent({ skill, preview }) {
           </>
         }
       />
+      <Typography variant="s3" color="text.secondary" sx={{ mb: 1.5 }}>
+        Viewed {downloadNumber ? `v${downloadNumber}` : 'not available'} · Production {production ? `v${production.version}` : 'unassigned'} · Latest {skill.latestVersion ? `v${skill.latestVersion}` : 'unpublished'}. {skill.hasDraft ? 'Continue draft retains its original content basis.' : 'The current legacy editor starts from latest; it does not silently use the viewed release.'}
+      </Typography>
       {otherDrafts.length > 0 && (
         <Alert severity="info" sx={{ mb: 1.5 }}>
           {otherDrafts.map((draft) => draft.user.name).join(", ")}{" "}

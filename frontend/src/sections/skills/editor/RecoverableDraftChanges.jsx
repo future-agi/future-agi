@@ -16,7 +16,7 @@ function difference(before, after) {
   }));
 }
 
-function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints = [], onSuspend, onRestore, onPreserved, onReload, hasLiveDraft = true, targetVersion }) {
+function Recovery({ scopeKey, session, baseFiles, serverDraft, checkpoints = [], onSuspend, onRestore, onPreserved, onReload, hasLiveDraft = true, targetVersion }) {
   const [comparison, setComparison] = useState("base");
   const [confirmed, setConfirmed] = useState(false);
   const [selected, setSelected] = useState("");
@@ -26,6 +26,7 @@ function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints 
   const latestSession = useRef(session);
   latestSession.current = session;
   const [newerEdits, setNewerEdits] = useState(false);
+  const suspension = useRef(null);
   const checkpoint = checkpoints.find((item) => item.id === selected);
   const expired = useExpired(checkpoint?.expiresAt);
   const restoreInput = { checkpointId: checkpoint?.id, revision: session.revision, expectedDigest: checkpoint?.digest };
@@ -41,19 +42,24 @@ function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints 
   };
   const preserve = async () => {
     if (!confirmed) return;
-    let savedSequence;
-    let savedRevision;
     const result = await operation.run(async (_, options) => {
-      const saved = await session.flush();
-      if (!saved) throw Object.assign(new Error("Save conflict"), { code: "draft_conflict" });
-      savedSequence = latestSession.current.editSequence;
-      savedRevision = saved.revision;
-      // Server checkpoints and suspends atomically. Starting the selected origin is
-      // a separate explicit action in the caller; no overwrite fallback is allowed.
-      return onSuspend({ revision: saved.revision, expectedDigest: saved.digest, reason: "switch" }, options);
-    }, { action: "suspend", revision: session.revision, editSequence: session.editSequence });
+      if (!suspension.current) {
+        const saved = await session.flush();
+        if (!saved) throw Object.assign(new Error("Save conflict"), { code: "draft_conflict" });
+        // Never use the compiled digest as the recovery identity. The latter
+        // also binds note, origin, provenance, purpose and accepted links.
+        if (!/^sha256:[a-f0-9]{64}$/.test(saved.recoveryDigest || '')) throw new Error("The recovery identity is unavailable. Export your edits instead; compiled content is not a checkpoint identity.");
+        suspension.current = {
+          sequence: latestSession.current.editSequence,
+          input: { revision: saved.revision, expectedDigest: saved.recoveryDigest, reason: "switch" },
+        };
+      }
+      // A lost response may mean the live draft was already suspended. Retry
+      // the recorded request, not another save against that tombstone.
+      return onSuspend(suspension.current.input, options);
+    }, { action: "suspend" });
     if (result) {
-      if (latestSession.current.editSequence !== savedSequence || latestSession.current.revision !== savedRevision) setNewerEdits(true);
+      if (latestSession.current.editSequence !== suspension.current.sequence || latestSession.current.revision !== suspension.current.input.revision) setNewerEdits(true);
       else onPreserved?.(result);
     }
   };
@@ -78,7 +84,7 @@ function Recovery({ scopeKey, session, baseFiles = [], serverDraft, checkpoints 
       <MenuItem value="base">Content origin</MenuItem>
       <MenuItem value="server" disabled={!serverDraft}>Current server draft</MenuItem>
     </TextField>
-    <FileChanges files={difference(comparison === "base" ? baseFiles : (serverDraft?.files || []), session.files)} beforeTitle={comparison === "base" ? "Origin" : "Server"} afterTitle="Local" />
+    <FileChanges files={Array.isArray(comparison === 'base' ? baseFiles : serverDraft?.files) ? difference(comparison === 'base' ? baseFiles : serverDraft.files, session.files) : null} beforeTitle={comparison === "base" ? "Origin" : "Server"} afterTitle="Local" />
     {serverDraft && <Button variant="outlined" disabled={!exported || operation.pending || !onReload} onClick={() => onReload(serverDraft)}>Use server draft after export</Button>}
     {hasLiveDraft ? <>
       <Alert severity="warning">{targetVersion ? `Editing viewed v${targetVersion} requires suspending this draft first. ` : ""}A private checkpoint retains the saved files and accepted links until its expiry. Nothing is published.</Alert>

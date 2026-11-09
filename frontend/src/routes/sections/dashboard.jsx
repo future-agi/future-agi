@@ -109,6 +109,14 @@ const ProfileSettings = lazyWithRetry(
 const OrgSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/OrgSettings"),
 );
+const SkillsWorkspaceLayout = lazyWithRetry(() => import('src/sections/skills/components/SkillsWorkspaceLayout'));
+const ContextLibraryPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextLibraryPage'));
+const ContextDetailPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextDetailPage'));
+const ContextEditorPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextEditorPage'));
+const ContextReviewPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextReviewPage'));
+const ContextCampaignPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextCampaignPage'));
+const SkillsReviewsPage = lazyWithRetry(() => import('src/pages/dashboard/skills/SkillsReviewsPage'));
+const ArchivedSkillsPage = lazyWithRetry(() => import('src/pages/dashboard/skills/ArchivedSkillsPage'));
 const SkillsLibraryPage = lazyWithRetry(
   () => import("src/pages/dashboard/skills/SkillsLibraryPage"),
 );
@@ -1326,8 +1334,17 @@ export const dashboardRoutes = (
     },
     {
       path: "skills",
+      element: <SkillsWorkspaceLayout />,
       children: [
         { index: true, element: <SkillsLibraryPage /> },
+        { path: 'contexts', element: <ContextLibraryPage /> },
+        { path: 'contexts/rollouts', element: <ContextCampaignPage /> },
+        { path: 'contexts/rollouts/:campaignId', element: <ContextCampaignPage /> },
+        { path: 'contexts/:contextId/review', element: <ContextReviewPage /> },
+        { path: 'contexts/:contextId/edit', element: <ContextEditorPage /> },
+        { path: 'contexts/:contextId', element: <ContextDetailPage /> },
+        { path: 'reviews', element: <SkillsReviewsPage /> },
+        { path: 'archived', element: <ArchivedSkillsPage /> },
         { path: ":skillId", element: <SkillDetailPage /> },
         { path: ":skillId/edit", element: <SkillEditorPage /> },
         { path: ":skillId/compare", element: <SkillComparePage /> },
