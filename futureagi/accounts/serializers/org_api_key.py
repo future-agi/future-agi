@@ -33,6 +33,7 @@ class CreateSecretKeySerializer(serializers.Serializer):
                 get_error_message("API_KEY_EXPIRY_IN_PAST")
             )
         return value
+
     # A ``coding_agent`` key may make only the calls of a coding agent's fix loop,
     # on the one simulation environment it names.
     type = serializers.ChoiceField(
