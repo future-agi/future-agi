@@ -22,6 +22,7 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessExecution,
+    HostedHarnessEvent,
     HostedHarnessJob,
     HostedHarnessManifest,
     HostedHarnessReceipt,
@@ -261,6 +262,24 @@ def _complete_evidence(job, organization, workspace):
                 "scenario_key": f"e{i}",
             }
         )
+    certification = {
+        "campaign_id": "campaign-1",
+        "case_key": "agent_one__primary",
+        "suite_digest": "sha256:" + "0" * 64,
+    }
+    job.payload = {"metadata": {"certification": certification}}
+    job.save(update_fields=["payload", "updated_at"])
+    HostedHarnessEvent.no_workspace_objects.create(
+        event_id=f"terminal-{attempt.id}",
+        attempt=attempt,
+        sequence=1,
+        stage="completed",
+        event_type="terminal",
+        payload={"stage": "completed", "certification": certification},
+        digest="sha256:" + "8" * 64,
+        emitted_at=timezone.now(),
+        accepted=True,
+    )
     HostedHarnessManifest.no_workspace_objects.create(
         attempt=attempt,
         digest="sha256:" + "9" * 64,
@@ -287,6 +306,28 @@ def test_reconcile_passes_only_with_complete_evidence(organization, workspace):
     result = reconcile_case(case)
     assert result["ok"], result["missing"]
     assert result["failure_class"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_terminal_certification_provenance_must_match_submitted_job(
+    organization, workspace
+):
+    _campaign_row, case = _campaign(organization, workspace)
+    job = _job(organization, workspace)
+    case.hosted_harness_job = job
+    case.save(update_fields=["hosted_harness_job"])
+    attempt = _complete_evidence(job, organization, workspace)
+    event = attempt.events.get(event_type="terminal")
+    event.payload["certification"]["case_key"] = "another_case"
+    event.save(update_fields=["payload", "updated_at"])
+    HostedHarnessCleanupReceipt.no_workspace_objects.create(
+        attempt=attempt, provider_ref="p", verified_absent=True
+    )
+
+    result = reconcile_case(case)
+
+    assert result["ok"] is False
+    assert "terminal_provenance" in result["missing"]
 
 
 @pytest.mark.django_db(transaction=True)
