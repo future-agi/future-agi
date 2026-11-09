@@ -51,8 +51,29 @@ HINTS = {
 # Masking preserves offsets so annotations refer to the original source. Template
 # literals are treated as strings, including interpolation; this is not a JS AST.
 JS_NONCODE = re.compile(
-    r"//[^\n]*|/\*[\s\S]*?\*/|'(?:\\[\s\S]|[^'\\])*'|\"(?:\\[\s\S]|[^\"\\])*\"|`(?:\\[\s\S]|[^`\\])*`"
+    r"//[^\n]*|/\*[\s\S]*?\*/|'(?:\\[\s\S]|[^'\\\r\n])*'|\"(?:\\[\s\S]|[^\"\\\r\n])*\"|`(?:\\[\s\S]|[^`\\])*`"
 )
+JS_REGEX = re.compile(
+    r"/(?:\\[^\r\n]|\[(?:\\[^\r\n]|[^\]\\\r\n])*\]|[^/\\[\r\n])+/[a-z]*"
+)
+JS_TOKEN = re.compile(r"[\w$]+|\+\+|--|=>|[^\s]")
+JS_BEFORE_REGEX = set("([{,;:=!?&|+*-/%~^<>}") | {
+    "return",
+    "throw",
+    "case",
+    "delete",
+    "void",
+    "typeof",
+    "instanceof",
+    "in",
+    "of",
+    "yield",
+    "await",
+    "else",
+    "do",
+    "=>",
+}
+JS_CONTROL_PARENS = {"if", "while", "for", "with", "switch", "catch"}
 JS_FOCUS = re.compile(r"(?<![\w$.])(?:it|test|describe)\s*\.\s*only\s*\(")
 JS_SKIP = re.compile(r"(?<![\w$.])(?:it|test|describe)\s*\.\s*skip\s*\(")
 JS_TEST = re.compile(r"(?<![\w$.])(?:it|test)(?:\s*\.\s*\w+)*\s*\(")
@@ -114,6 +135,30 @@ def is_test(path: str) -> bool:
     )
 
 
+def is_discoverable_test(path: str) -> bool:
+    """Match runner filename/path conventions, not test-support directories.
+
+    Keep these patterns aligned with futureagi/**/pytest.ini,
+    frontend/vitest.config.js and e2e/playwright.config.ts. This does not model
+    command-line selection, ignored directories or configuration changes.
+    """
+    p = PurePosixPath(path)
+    if path.startswith("futureagi/"):
+        return p.suffix == ".py" and p.name.startswith("test_")
+    if path.startswith("e2e/"):
+        return path.startswith(("e2e/flows/", "e2e/harness/")) and p.name.endswith(
+            ".spec.ts"
+        )
+    if path.startswith("frontend/src/"):
+        return p.suffix in {".js", ".jsx", ".ts", ".tsx"} and (
+            path.startswith("frontend/src/__tests__/")
+            or bool(re.search(r"\.(?:test|spec)\.[^.]+$", p.name))
+        )
+    if path.startswith("frontend/scripts/api-journeys/"):
+        return p.name.endswith((".test.js", ".test.mjs"))
+    return False
+
+
 def changed_files(repo: Path, base: str) -> list[Change]:
     fields = git(
         repo, "diff", "--name-status", "--no-ext-diff", "-M", "-z", base, "HEAD", "--"
@@ -134,14 +179,45 @@ def changed_files(repo: Path, base: str) -> list[Change]:
 
 
 def js_source(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """Mask literals/comments without changing offsets or consuming division as regex.
+
+    A slash starts a regex where an expression can start. Control-statement
+    parentheses allow a regex statement after their closing parenthesis; call
+    parentheses do not. This remains lexical, not a JavaScript/JSX parser.
+    """
     comments = []
     masked = list(text)
-    for match in JS_NONCODE.finditer(text):
-        if match.group().startswith(("//", "/*")):
-            comments.append((match.start(), match.group()))
-        masked[match.start() : match.end()] = [
-            "\n" if char == "\n" else " " for char in match.group()
-        ]
+    offset = 0
+    regex_allowed = True
+    previous = ""
+    control_parens = []
+    while offset < len(text):
+        if text[offset].isspace():
+            offset += 1
+            continue
+        match = JS_NONCODE.match(text, offset)
+        if match is None and regex_allowed and text[offset] == "/":
+            match = JS_REGEX.match(text, offset)
+        if match:
+            if match.group().startswith(("//", "/*")):
+                comments.append((offset, match.group()))
+            else:
+                regex_allowed = False
+                previous = ""
+            masked[offset : match.end()] = [
+                "\n" if char == "\n" else " " for char in match.group()
+            ]
+            offset = match.end()
+            continue
+        token = JS_TOKEN.match(text, offset).group()
+        if token == "(":
+            control_parens.append(previous in JS_CONTROL_PARENS)
+        if token == ")":
+            regex_allowed = control_parens.pop() if control_parens else False
+        else:
+            regex_allowed = token in JS_BEFORE_REGEX and previous != "."
+        previous = token
+        offset += len(token)
     return "".join(masked), comments
 
 
@@ -168,26 +244,32 @@ def js_findings(path: str, text: str) -> list[Finding]:
                 )
     for offset, comment in comments:
         start_line = text.count("\n", 0, offset) + 1
-        for index, line_text in enumerate(comment.splitlines()):
-            directive = (
-                re.sub(r"^(?://|/\*|\*)?\s*", "", line_text.strip())
-                .removesuffix("*/")
-                .strip()
+        body = comment[2:-2] if comment.startswith("/*") else comment[2:]
+        comment_lines = [re.sub(r"^\s*\*?\s*", "", line) for line in body.splitlines()]
+        directive = "\n".join(comment_lines).strip()
+        eslint = re.match(r"eslint-disable(?:-next-line|-line)?\b([\s\S]*)", directive)
+        # ESLint consumes the whole block before separating its justification.
+        if eslint and not eslint.group(1).split("--", 1)[0].strip():
+            first_line = next(index for index, line in enumerate(comment_lines) if line)
+            found.append(
+                Finding(
+                    path,
+                    start_line + first_line,
+                    "BLANKET_ESLINT",
+                    "error",
+                    " ".join(directive.split()),
+                    "New blanket/type suppression.",
+                )
             )
-            eslint = re.match(r"eslint-disable(?:-next-line|-line)?\b(.*)", directive)
-            rule = ""
-            if eslint and not eslint.group(1).split("--", 1)[0].strip():
-                rule = "BLANKET_ESLINT"
-            elif re.match(r"@ts-(?:nocheck|ignore)\b", directive):
-                rule = "TS_SUPPRESSION"
-            if rule:
+        for index, line in enumerate(comment_lines):
+            if re.match(r"@ts-(?:nocheck|ignore)\b", line):
                 found.append(
                     Finding(
                         path,
                         start_line + index,
-                        rule,
+                        "TS_SUPPRESSION",
                         "error",
-                        directive,
+                        line.strip(),
                         "New blanket/type suppression.",
                     )
                 )
@@ -353,7 +435,14 @@ def inspect_change(change: Change, old: str, new: str) -> list[Finding]:
     if (
         change.old
         and is_test(change.old)
-        and (not change.new or not is_test(change.new))
+        and (
+            not change.new
+            or not is_test(change.new)
+            or (
+                is_discoverable_test(change.old)
+                and not is_discoverable_test(change.new)
+            )
+        )
     ):
         found.append(
             Finding(

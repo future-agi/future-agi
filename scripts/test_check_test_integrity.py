@@ -76,6 +76,53 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(gate.selections("frontend/a.test.ts", text), [])
         self.assertEqual(gate.selections("frontend/src/runner.ts", focused()), [])
 
+    def test_regex_quotes_escapes_and_classes_do_not_hide_executable_code(self):
+        for prefix in (
+            "const pattern = /can't/;\n",
+            'const pattern = /say "hello"/g;\n',
+            r"const pattern = /can\'t\/stop/;" + "\n",
+            "const pattern = /['\"/]/;\n",
+            r"const pattern = /[\]'\/]/;" + "\n",
+            "expect(screen.getByText(/isn't available/i)).toBeVisible();\n",
+            "if (ready) /can't/.test(value);\n",
+            "const pattern = () => /can't/;\n",
+        ):
+            with self.subTest(prefix=prefix):
+                text = prefix + focused()
+                code, comments = gate.js_source(text)
+                self.assertEqual(len(code), len(text))
+                self.assertEqual(code.count("\n"), text.count("\n"))
+                self.assertEqual(code.index("it"), text.index("it"))
+                self.assertEqual(comments, [])
+                found = gate.selections("frontend/src/a.test.ts", text)
+                self.assertEqual(rules(found), [("FOCUSED_TEST", "error")])
+                self.assertEqual(found[0].line, 2)
+
+    def test_regex_contents_are_not_code_or_comments(self):
+        text = "const example = /" + re.escape(focused().strip()) + "/;\n"
+        text += "const directive = /[/*]@ts-ignore/;\n// eslint-disable\n"
+        code, comments = gate.js_source(text)
+        self.assertNotIn("only", code)
+        self.assertEqual(comments, [(text.index("// eslint"), "// eslint-disable")])
+        found = gate.selections("frontend/src/a.test.ts", text)
+        self.assertEqual(rules(found), [("BLANKET_ESLINT", "error")])
+        self.assertEqual(found[0].line, 3)
+
+    def test_division_does_not_mask_a_focused_call(self):
+        for numerator in ("total", "getTotal()", "totals[0]", "total++", "10"):
+            with self.subTest(numerator=numerator):
+                text = (
+                    "const ratio = "
+                    + numerator
+                    + " / "
+                    + focused().strip().removesuffix(";")
+                    + " / divisor;\n"
+                )
+                self.assertEqual(
+                    rules(gate.selections("frontend/src/a.test.ts", text)),
+                    [("FOCUSED_TEST", "error")],
+                )
+
     def test_suppressions_are_errors_in_all_js_and_ts_source(self):
         for directive in (
             "// eslint-disable",
@@ -108,6 +155,29 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(
             gate.selections("futureagi/a.py", "x = 1  # type: ignore\n"), []
         )
+
+    def test_multiline_eslint_rule_lists_are_not_blanket_suppressions(self):
+        for directive in (
+            "/* eslint-disable\n no-alert -- browser API is mocked here\n */",
+            "/* eslint-disable-next-line\n no-alert,\n no-console -- mocked browser APIs\n */",
+            "/*\n * eslint-disable\n * no-alert -- browser API is mocked here\n */",
+        ):
+            with self.subTest(directive=directive):
+                self.assertEqual(gate.selections("frontend/src/app.ts", directive), [])
+
+    def test_multiline_blanket_eslint_reports_the_directive_line(self):
+        text = "const value = 1;\n/*\n * eslint-disable\n * -- browser API is mocked here\n */\n"
+        found = gate.selections("frontend/src/app.ts", text)
+        self.assertEqual(rules(found), [("BLANKET_ESLINT", "error")])
+        self.assertEqual(found[0].line, 3)
+
+    def test_removing_only_the_multiline_rule_list_is_a_new_error(self):
+        path = "frontend/src/app.ts"
+        old = "/* eslint-disable\n no-alert -- browser API is mocked here\n */\n"
+        new = "/* eslint-disable\n -- browser API is mocked here\n */\n"
+        found = gate.inspect_change(gate.Change(path, path), old, new)
+        self.assertEqual(rules(found), [("BLANKET_ESLINT", "error")])
+        self.assertEqual(found[0].line, 1)
 
     def test_backend_markers_warn_with_or_without_arguments(self):
         for marker in (
@@ -193,6 +263,58 @@ class DetectionTests(unittest.TestCase):
                     old if new_path else "",
                 )
                 self.assertEqual(rules(found), [("TEST_FILE_DELETED", "warning")])
+
+    def test_discovery_patterns_are_narrower_than_test_support_paths(self):
+        for path in (
+            "futureagi/app/tests/test_example.py",
+            "futureagi/model_serving/tests/test_model.py",
+            "futureagi/agentic_eval/tests/test_agent.py",
+            "frontend/src/a.test.tsx",
+            "frontend/src/a.spec.jsx",
+            "frontend/src/__tests__/helpers.js",
+            "frontend/scripts/api-journeys/a.test.mjs",
+            "e2e/flows/a.spec.ts",
+            "e2e/harness/nested/a.spec.ts",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.is_discoverable_test(path))
+        for path in (
+            "futureagi/app/tests/helper.py",
+            "futureagi/app/tests/example_test.py",
+            "frontend/src/sections/__tests__/helper.js",
+            "frontend/src/a.test.mjs",
+            "frontend/scripts/api-journeys/a.spec.js",
+            "e2e/flows/a.ts",
+            "e2e/flows/a.spec.js",
+            "e2e/lib/a.spec.ts",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.is_test(path))
+                self.assertFalse(gate.is_discoverable_test(path))
+
+    def test_renames_preserving_discovery_do_not_warn(self):
+        for old_path, new_path, text in (
+            (
+                "futureagi/app/tests/test_a.py",
+                "futureagi/app/tests/test_b.py",
+                "def test_a():\n    assert True\n",
+            ),
+            (
+                "frontend/src/a.test.ts",
+                "frontend/src/a.spec.ts",
+                "test('a', () => {});\n",
+            ),
+            (
+                "frontend/src/a.test.ts",
+                "frontend/src/__tests__/a.ts",
+                "test('a', () => {});\n",
+            ),
+            ("e2e/flows/a.spec.ts", "e2e/harness/a.spec.ts", "test('a', () => {});\n"),
+        ):
+            with self.subTest(new_path=new_path):
+                self.assertEqual(
+                    gate.inspect_change(gate.Change(old_path, new_path), text, text), []
+                )
 
     def test_multiset_matching_does_not_hide_an_extra_or_removed_duplicate(self):
         text = focused()
@@ -333,6 +455,80 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("4 error(s), 0 warning(s), 0 notice(s)", summary)
         self.assertIn(base[:12], summary)
         self.assertIn("Remove the focused marker", summary)
+
+    def test_cli_regex_apostrophe_does_not_hide_new_focused_test(self):
+        base = self.commit()
+        self.write(
+            "frontend/src/regex.test.ts", "const pattern = /can't/;\n" + focused()
+        )
+        self.commit()
+        proc, found = self.run_gate(base)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            found, [("error", "frontend/src/regex.test.ts", 2, "FOCUSED_TEST")]
+        )
+
+    def test_cli_multiline_named_eslint_passes_but_blanket_fails(self):
+        base = self.commit()
+        self.write(
+            "frontend/src/named.ts",
+            "/* eslint-disable\n no-alert -- browser API is mocked here\n */\n",
+        )
+        self.commit()
+        proc, found = self.run_gate(base)
+        self.assertEqual((proc.returncode, found), (0, []), proc.stdout + proc.stderr)
+        self.write(
+            "frontend/src/blanket.ts",
+            "/* eslint-disable\n -- browser API is mocked here\n */\n",
+        )
+        self.commit()
+        proc, found = self.run_gate(base)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            found, [("error", "frontend/src/blanket.ts", 1, "BLANKET_ESLINT")]
+        )
+
+    def test_cli_unchanged_renames_out_of_runner_patterns_warn(self):
+        for old, new, text in (
+            (
+                "futureagi/app/tests/test_example.py",
+                "futureagi/app/tests/helper.py",
+                "def test_example():\n    assert True\n",
+            ),
+            (
+                "e2e/flows/example.spec.ts",
+                "e2e/flows/example.ts",
+                "test('example', () => { expect(true).toBe(true); });\n",
+            ),
+            (
+                "e2e/harness/example.spec.ts",
+                "e2e/harness/example.ts",
+                "test('harness', () => {});\n",
+            ),
+            (
+                "frontend/src/tests/example.test.ts",
+                "frontend/src/tests/example.ts",
+                "test('frontend', () => {});\n",
+            ),
+            (
+                "frontend/src/__tests__/root.ts",
+                "frontend/src/tests/root.ts",
+                "test('root discovery', () => {});\n",
+            ),
+        ):
+            with self.subTest(old=old, new=new):
+                self.write(old, text)
+                base = self.commit()
+                (self.repo / new).parent.mkdir(parents=True, exist_ok=True)
+                self.git("mv", old, new)
+                self.commit()
+                proc, found = self.run_gate(base)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertEqual(
+                    found, [("warning", new, 1, "TEST_FILE_DELETED")], proc.stdout
+                )
+                self.assertIn(old, proc.stdout)
+                self.assertIn("code owner", proc.stdout)
 
     def test_cli_warning_only_changes_pass_and_ask_for_review(self):
         self.write(
