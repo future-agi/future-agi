@@ -9,10 +9,9 @@
       "category": "U",
       "changed_files": [
         "frontend/src/sections/projects/LLMTracing/SpanGrid.jsx",
-        "frontend/src/sections/projects/LLMTracing/TraceGrid.jsx",
-        "frontend/src/sections/projects/UsersView/UsersGrid.jsx"
+        "frontend/src/sections/projects/LLMTracing/TraceGrid.jsx"
       ],
-      "expected_finding": "A refresh during an in-flight grid load leaves the block failed because finishRequest does not retry the obsolete read, and the Users grid can remain blank during loading.",
+      "expected_finding": "A refresh during an in-flight span or trace grid load completes an obsolete read without retrying it, leaving the same-cache block failed.",
       "checklist_section": "Testing & scenarios"
     },
     {
