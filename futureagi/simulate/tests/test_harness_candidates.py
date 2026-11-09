@@ -22,11 +22,11 @@ from simulate.tests.test_harness_actors import (
     CRM_CONTRACT,
     MANAGER,
     NAMES,
-    _add,
     _saved_actors,
 )
 from simulate.tests.test_harness_review_api import (
     AUDITOR,
+    _add,
     _decide,
     _review,
     _with_world,
