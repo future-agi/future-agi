@@ -1557,7 +1557,7 @@ class HostedHarnessProvider:
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
 
-        from simulate.selectors.held_back import coding_agent_key
+        from simulate.selectors.held_back import coding_agent_key, refusal_body
         from simulate.services.harness_verify import require_default_suite
         from simulate.services.harness_versioning.run_warnings import created_run
         from simulate.services.hosted_harness import (
@@ -1674,11 +1674,7 @@ class HostedHarnessProvider:
                     retry_cfg["max_backoff_seconds"],
                 )
         except HostedHarnessError as exc:
-            refused = exc.as_dict()
-            if coder is not None:
-                # A refusal's selection names the suite's cases, held-back ones included.
-                refused.pop("selection", None)
-            return Response(refused, status=exc.status_code)
+            return Response(refusal_body(exc, request), status=exc.status_code)
         except Exception:
             logger.exception(
                 "selected harness Run dispatch failed environment=%s", environment.id

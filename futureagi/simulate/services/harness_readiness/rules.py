@@ -118,6 +118,10 @@ def rows(
     preflight = preflight_findings(pairing.runtime)
     named = failed_actions(bundle)
     stale = _stale(pairing, evidence)
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    structural = structural_findings(
+        contract if isinstance(contract, Mapping) else None
+    )
     gap = _agent_gap(pairing, agent_tools)
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
@@ -235,12 +239,39 @@ def rows(
                     checked_at=evidence.checked_at,
                     blocked_by=gate,
                 )
+        if capability.id == "tool_routing" and structural is not None:
+            # The contract's finding is a fact of the environment version: no other
+            # reading (another agent's tools, a stale certificate) can drop it.
+            _keep_structural(row, structural)
         statuses[capability.id] = row["status"]
         fresh.setdefault(capability.id, row["status"])
         row["fix"] = _fix(pairing, row, certified=evidence.source == "pair_certificate")
         row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
     return rows
+
+
+def _keep_structural(row: RowView, structural: Any) -> None:
+    """Make tool routing Blocked on the contract's finding, keeping what the row's own
+    reading adds (another agent's tool gaps)."""
+    if row["status"] == "blocked" and row["reason_code"] == structural.reason_code:
+        return
+    present = list(row["targets"])
+    row["targets"] = present + [one for one in structural.targets if one not in present]
+    if row["status"] == "blocked":
+        row["reason"] = (
+            f"{structural.reason}; {row['reason']}"
+            if row["reason"]
+            else structural.reason
+        )
+    else:
+        row["reason"] = structural.reason
+        row["reason_code"] = structural.reason_code
+        row["finding"] = "failed"
+        row["stale_because"] = None
+        row["was"] = None
+        row["blocked_by"] = None
+    row["status"] = "blocked"
 
 
 def _agent_gap(
