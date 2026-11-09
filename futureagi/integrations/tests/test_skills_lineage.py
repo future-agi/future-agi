@@ -102,3 +102,21 @@ def test_public_ingestion_cannot_assert_connector_origin(raw_langfuse_trace):
     )
     for row in transformer.transform_observations(raw, "trace", "hub"):
         assert "fi.external.langfuse" not in row["metadata"]
+
+
+def test_real_otlp_adapter_retains_availability_after_namespace_stripping():
+    from tracer.utils.adapters.langfuse import LangfuseAdapter
+
+    result = LangfuseAdapter().normalize(
+        {
+            "langfuse.observation.type": "generation",
+            "langfuse.project.id": "external-project",
+            "langfuse.skills.available": ["synthetic-refund"],
+        }
+    )
+    retained = result["fi.external.langfuse.skills"]
+    assert retained["langfuse.skills.available"] == ["synthetic-refund"]
+    assert retained["langfuse.project.id"] == "external-project"
+    assert result["fi.external.langfuse.skills_status"] == "retained"
+    assert "langfuse.project.id" not in result
+    assert not any(key.startswith("fi.skill.") for key in result)
