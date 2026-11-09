@@ -153,7 +153,7 @@ const CustomCallLogHeader = ({
             <>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <Iconify
-                  icon="material-symbols:schedule-outline"
+                  icon="solar:clock-circle-linear"
                   width="14px"
                   height="14px"
                   color="text.disabled"
@@ -207,13 +207,11 @@ const CustomCallLogHeader = ({
                 size="small"
                 sx={{
                   typography: "s1",
-                  fontWeight: "fontWeightMedium",
-                  color: "blue.700",
-                  bgcolor: "blue.o10",
-                  borderRadius: 0.25,
+                  color: "status.info.fg",
+                  bgcolor: "status.info.bg",
                   paddingX: 1,
                   "& .MuiChip-icon": {
-                    color: "blue.700",
+                    color: "status.info.fg",
                   },
                 }}
               />
@@ -256,11 +254,6 @@ const CustomCallLogHeader = ({
                 Provider Call ID : {serviceProviderCallId}
               </Typography>
               <IconButton
-                sx={{
-                  paddingY: 0,
-                  paddingX: 0.5,
-                  height: theme.spacing(3),
-                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   copyToClipboard(serviceProviderCallId);
@@ -271,7 +264,7 @@ const CustomCallLogHeader = ({
                 }}
               >
                 <Iconify
-                  icon="tabler:copy"
+                  icon="solar:copy-linear"
                   sx={{
                     width: theme.spacing(2),
                     height: theme.spacing(2),
@@ -292,11 +285,6 @@ const CustomCallLogHeader = ({
                 Customer Vapi Call ID : {customerCallId}
               </Typography>
               <IconButton
-                sx={{
-                  paddingY: 0,
-                  paddingX: 0.5,
-                  height: theme.spacing(3),
-                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   copyToClipboard(customerCallId);
@@ -307,7 +295,7 @@ const CustomCallLogHeader = ({
                 }}
               >
                 <Iconify
-                  icon="tabler:copy"
+                  icon="solar:copy-linear"
                   sx={{
                     width: theme.spacing(2),
                     height: theme.spacing(2),
@@ -334,11 +322,10 @@ const CustomCallLogHeader = ({
             variant="soft"
             size="small"
             onClick={onAnnotate}
-            startIcon={<Iconify icon="basil:edit-alt-outline" width={16} />}
+            startIcon={<Iconify icon="solar:pen-linear" width={16} />}
             sx={{
               color: "text.secondary",
               backgroundColor: "action.hover",
-              fontWeight: "fontWeightMedium",
             }}
           >
             Annotate
@@ -349,10 +336,7 @@ const CustomCallLogHeader = ({
         <LoadingButton
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="akar-icons:chevron-left-small" />}
-          sx={{
-            padding: "4px 12px",
-          }}
+          startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
           loading={isFetching === "prev"}
           onClick={onPrevClick}
           disabled={isFetching || rowIndex == null || rowIndex <= 0}
@@ -362,10 +346,7 @@ const CustomCallLogHeader = ({
         <LoadingButton
           variant="outlined"
           size="small"
-          endIcon={<Iconify icon="akar-icons:chevron-right-small" />}
-          sx={{
-            padding: "4px 12px",
-          }}
+          endIcon={<Iconify icon="solar:alt-arrow-right-linear" />}
           onClick={onNextClick}
           loading={isFetching === "next"}
           disabled={
@@ -384,10 +365,7 @@ const CustomCallLogHeader = ({
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
+            flexShrink: 0,
           }}
           onClick={() => {
             handleOnDocsClicked(

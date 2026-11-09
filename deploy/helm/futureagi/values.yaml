@@ -37,7 +37,7 @@ global:
   storageClass: ""
   # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (one minimal registration attempt remains; offline it fails harmlessly and is retried), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
   airgap: false
-  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) gets the variables but its provider connections do not use them yet: allow its egress to the providers directly.
+  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) uses them for every decision call (System One and OpenAI-format models, from config.yaml providers, organization providers and calls made with the caller's own key) and its speech relay; its chat providers do not: allow their egress directly.
   proxy:
     # -- [HTTP_PROXY, http_proxy] e.g. `http://proxy.example.com:3128`. Empty: no proxy.
     httpProxy: ""
@@ -315,8 +315,8 @@ postgres:
       storageClass: ""
     # -- Resources of the bundled PostgreSQL.
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
-      limits: {cpu: "2", memory: 2Gi}
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }
     # -- Node selector of the bundled PostgreSQL. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled PostgreSQL. Empty: the top-level `tolerations`.
@@ -369,8 +369,8 @@ clickhouse:
       storageClass: ""
     # -- Resources of the bundled ClickHouse.
     resources:
-      requests: {cpu: 500m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     # -- Node selector of the bundled ClickHouse. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled ClickHouse. Empty: the top-level `tolerations`.
@@ -421,8 +421,8 @@ redis:
       storageClass: ""
     # -- Resources of the bundled Redis.
     resources:
-      requests: {cpu: 50m, memory: 64Mi}
-      limits: {cpu: 500m, memory: 512Mi}
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 512Mi }
     # -- Node selector of the bundled Redis. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Redis. Empty: the top-level `tolerations`.
@@ -463,8 +463,8 @@ temporal:
     goMemLimit: 512MiB
     # -- Resources of the bundled Temporal server.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled Temporal. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Temporal. Empty: the top-level `tolerations`.
@@ -522,8 +522,8 @@ objectStorage:
       downloadPort: 9005
     # -- Resources of the bundled object storage.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled object storage. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled object storage. Empty: the top-level `tolerations`.
@@ -574,8 +574,8 @@ backend:
     annotations: {}
   # -- Resources of each API pod.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the API.
     enabled: false
@@ -651,8 +651,8 @@ worker:
     maxConcurrentWorkflowTasks: 50
     # -- Resources of each all-queues worker pod.
     resources:
-      requests: {cpu: 250m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     autoscaling:
       # -- HorizontalPodAutoscaler for the all-queues worker.
       enabled: false
@@ -671,8 +671,8 @@ worker:
     enabled: true
     # -- Resources of the exact-aggregation worker.
     resources:
-      requests: {cpu: 100m, memory: 512Mi}
-      limits: {cpu: "1", memory: 1536Mi}
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1536Mi }
   # -- Dedicated per-queue Deployments, added to the all-queues worker (which stops polling them, see `allQueues.excludeDedicatedQueues`), e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`; examples/sizes/large.yaml has a full split. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values), autoscaling {enabled, minReplicas, maxReplicas, targetCPUUtilizationPercentage, targetMemoryUtilizationPercentage, behavior} (gaps filled from `allQueues.autoscaling`), gracefulShutdownSeconds, preStopSleepSeconds, pdb {enabled, maxUnavailable}, and nodeSelector, tolerations, affinity, topologySpreadConstraints, priorityClassName, podAnnotations, podLabels (each falling back to the `worker` one).
   queues: []
   pdb:
@@ -728,8 +728,8 @@ frontend:
     annotations: {}
   # -- Resources of each UI pod.
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the UI.
     enabled: false
@@ -806,8 +806,8 @@ fiCollector:
   maxConnections: 0
   # -- Resources of each collector pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the collector.
     enabled: false
@@ -926,8 +926,8 @@ agentccGateway:
   goMemLimit: 450MiB
   # -- Resources of each gateway pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 512Mi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the gateway.
     enabled: false
@@ -985,8 +985,8 @@ serving:
   replicas: 1
   # -- Resources of each model server pod (add `nvidia.com/gpu` for the GPU image).
   resources:
-    requests: {cpu: 500m, memory: 2Gi}
-    limits: {cpu: "4", memory: 6Gi}
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { cpu: "4", memory: 6Gi }
   persistence:
     # -- Keep downloaded models on a volume (ReadWriteOnce: one replica). Off: an emptyDir, downloaded again after each restart.
     enabled: false
@@ -1031,8 +1031,8 @@ codeExecutor:
   replicas: 1
   # -- Resources of each sandbox pod.
   resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "2", memory: 1Gi}
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
   # -- With `networkPolicy.enabled`: let eval code reach the internet (every private, link-local and metadata range stays blocked). `false` blocks all egress but DNS.
   allowInternetEgress: true
   # -- Extra environment variables, as `NAME: value`.
@@ -1069,8 +1069,8 @@ bootstrap:
   ttlSecondsAfterFinished: 86400
   # -- Resources of the bootstrap job.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   serviceAccount:
     # -- Create a dedicated ServiceAccount for the job (it exists before any other resource on install).
     create: true

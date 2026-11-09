@@ -102,7 +102,7 @@ export function useTaskEvalAttributeInventory({ projectId, rowType, enabled }) {
             onClick={() =>
               inventory.fetchNextPage?.()?.catch?.(() => undefined)
             }
-            sx={{ flexShrink: 0, minWidth: 0, px: 0.5, fontSize: 11 }}
+            sx={{ flexShrink: 0, minWidth: 0 }}
           >
             {inventory.isFetchingNextPage
               ? "Loading…"

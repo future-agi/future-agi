@@ -5,7 +5,6 @@ import {
   Tab,
   Tabs,
   TextField,
-  useTheme,
 } from "@mui/material";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
@@ -19,8 +18,6 @@ import JobDetailDrawer from "./JobDetailDrawer";
 import DeleteJobModal from "./DeleteJobModal";
 
 const JobStatusView = () => {
-  const theme = useTheme();
-
   const [searchQuery, setSearchQuery] = useState("");
 
   const [selectedTab, setSelectedTab] = useState("all");
@@ -73,16 +70,11 @@ const JobStatusView = () => {
         }}
       >
         <Tabs
-          sx={{ borderBottom: 1, borderColor: "divider" }}
+          sx={{ boxShadow: "none", borderBottom: 1, borderColor: "divider" }}
           value={selectedTab}
           onChange={handleChange}
           aria-label="basic tabs example"
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
         >
           <Tab
             label="All"
@@ -128,7 +120,8 @@ const JobStatusView = () => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>

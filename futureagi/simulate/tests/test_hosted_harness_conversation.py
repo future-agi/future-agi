@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
@@ -246,6 +247,107 @@ def test_guest_command_and_event_channel_projects_streamed_reply(organization):
     assert duplicate.status_code == 200, duplicate.content
     projected.refresh_from_db()
     assert projected.content == "Sure — I'll add five scenarios."
+
+
+@pytest.mark.django_db
+def test_an_answered_question_stops_blocking_at_once(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-answered"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rider", client_request_id="ask"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    client = APIClient()
+    sent = iter(range(1, 10))
+
+    def emit(kind, *, acknowledged_through, message_id=None, payload=None):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-answered-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "authoring",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload or {},
+        }
+        event["digest"] = canonical_digest(event)
+        response = client.post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": acknowledged_through,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    question = str(uuid.uuid4())
+    emit("turn_started", acknowledged_through=1)
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change", "options": ["Yes", "No"]},
+    )
+    conversation.refresh_from_db()
+    assert serialize_conversation(conversation)["blocking_input"]["message_id"] == (
+        question
+    )
+
+    enqueue_message(
+        job,
+        content="Yes",
+        client_request_id="answer",
+        kind="user_response",
+        reply_to=uuid.UUID(question),
+    )
+
+    conversation.refresh_from_db()
+    serialized = serialize_conversation(conversation)
+    assert serialized["blocking_input"] is None
+    assert serialized["state"] == "responding"
+    with pytest.raises(HostedHarnessError) as second:
+        enqueue_message(
+            job,
+            content="No",
+            client_request_id="answer-again",
+            kind="user_response",
+            reply_to=uuid.UUID(question),
+        )
+    assert second.value.code == "conversation_reply_target_invalid"
+
+    # Asked again after a restart, the answered question stays closed.
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change", "options": ["Yes", "No"]},
+    )
+    conversation.refresh_from_db()
+    assert conversation.blocking_input is None
+    assert conversation.state == "responding"
+
+    emit(
+        "turn_completed",
+        acknowledged_through=2,
+        payload={"command_message_id": str(command.id)},
+    )
+    conversation.refresh_from_db()
+    assert conversation.state == "warm_idle"
+    assert conversation.blocking_input is None
 
 
 @pytest.mark.django_db
@@ -559,12 +661,33 @@ def _chat_checkpoint(names, *, one_liner):
         entries[f"{folder}/scenario.json"] = json.dumps(document).encode()
         entries[f"{folder}/ready.py"] = b"def ready(world):\n    return True\n"
     out = io.BytesIO()
-    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+    with (
+        gzip.GzipFile(fileobj=out, mode="wb", mtime=0) as zipped,
+        tarfile.open(fileobj=zipped, mode="w") as archive,
+    ):
         for path, data in entries.items():
             member = tarfile.TarInfo(path)
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
     return out.getvalue()
+
+
+def test_chat_checkpoints_a_second_apart_have_the_same_digest(monkeypatch):
+    from simulate.services.hosted_harness_gateway import with_authoring_basis
+    from simulate.tests.test_harness_amend_archive import NAMES
+
+    def checkpoint():
+        body = _chat_checkpoint(NAMES, one_liner="same")
+        return body, with_authoring_basis(body, "r1")
+
+    monkeypatch.setattr("time.time", lambda: 1_000_000.0)
+    first = checkpoint()
+    monkeypatch.setattr("time.time", lambda: 1_000_001.0)
+    second = checkpoint()
+
+    assert [hashlib.sha256(body).digest() for body in first] == [
+        hashlib.sha256(body).digest() for body in second
+    ]
 
 
 def _commit_checkpoint(client, conversation, headers, body):
@@ -689,9 +812,9 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
         promote, "apply_async", lambda args, **_: promote._original_func(*args)
     )
     environment = _run_environment(user, workspace, "chat-publish")
-    _prime_environment_archive(
-        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="original")
-    )
+    original = _chat_checkpoint(NAMES[:2], one_liner="original")
+    _prime_environment_archive(environment, storage, original)
+    old_key = environment.payload["metadata"]["authoring_object_key"]
     conversation, command, _ = enqueue_message(
         environment, content="Add a PIN scenario", client_request_id="add-pin"
     )
@@ -709,7 +832,9 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
         client, conversation, headers, _chat_checkpoint(NAMES, one_liner="halfway")
     )
     with django_capture_on_commit_callbacks(execute=True):
-        _send_events(client, conversation, headers, (1, "checkpoint_committed", halfway))
+        _send_events(
+            client, conversation, headers, (1, "checkpoint_committed", halfway)
+        )
     environment.refresh_from_db()
     assert environment.scenario_count == 2
 
@@ -742,11 +867,17 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
     outputs = {one["kind"]: one["data"] for one in environment.stage_outputs}
     assert [one["name"] for one in outputs["scenarios"]] == list(NAMES)
     assert outputs["contract"]["one_liner"] == "finished"
-    promoted = _archive_paths(
-        storage.objects[environment.payload["metadata"]["authoring_object_key"]]
+    new_key = environment.payload["metadata"]["authoring_object_key"]
+    assert storage.objects[old_key] == original
+    assert new_key == (
+        f"harness-authoring/{environment.organization_id}/{environment.id}/"
+        f"{hashlib.sha256(storage.objects[new_key]).hexdigest()}.tar.gz"
     )
+    promoted = _archive_paths(storage.objects[new_key])
     assert f"scenarios/{NAMES[2]}/ready.py" in promoted
-    assert not [path for path in promoted if path.startswith(".") or path == "cost.json"]
+    assert not [
+        path for path in promoted if path.startswith(".") or path == "cost.json"
+    ]
 
     run, created = create_selected_harness_run(
         environment,
@@ -968,9 +1099,9 @@ def test_stale_workspace_basis_is_rejected_even_for_a_later_message(
     assert conversation.latest_workspace_object_key != key
     rebased = storage.objects[conversation.latest_workspace_object_key]
     assert (
-        authoring_basis(rebased) == environment.payload["metadata"]["authoring_revision"]
+        authoring_basis(rebased)
+        == environment.payload["metadata"]["authoring_revision"]
     )
-
 
 
 @pytest.mark.django_db
@@ -1081,6 +1212,120 @@ def test_recovery_abandons_old_commands_without_redelivering_on_resend(
         f"{BASE}/{conversation.id}/commands/?after=0", **_headers(capability)
     )
     assert [row["message_id"] for row in response.json()["commands"]] == [str(retry.id)]
+
+
+def _started_turn(organization, key, *, queued_ago, polled_ago):
+    """A chat turn running on its command, whose sandbox last polled ``polled_ago``."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationLease
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    job.state = HostedHarnessJob.State.COMPLETED
+    job.save(update_fields=["state", "updated_at"])
+    conversation, command, _ = enqueue_message(
+        job, content="Add 30 more scenarios", client_request_id=key
+    )
+    # What the turn_started event leaves behind.
+    command.created_at = timezone.now() - queued_ago
+    command.state = HostedHarnessConversationMessage.State.DELIVERED
+    command.save(update_fields=["created_at", "state"])
+    conversation.state = "responding"
+    conversation.active_invocation_id = "turn-1"
+    conversation.save()
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox",
+        attempt=None,
+        ttl_seconds=1800,
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        id=capability.lease.id
+    ).update(state="active", heartbeat_at=timezone.now() - polled_ago)
+    return conversation, command
+
+
+@pytest.mark.django_db
+def test_recovery_restarts_a_long_turn_that_just_went_quiet(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Worked for 14 minutes, then stopped polling: past the stale mark, not the give-up.
+    conversation, command = _started_turn(
+        organization,
+        "long-turn",
+        queued_ago=timedelta(minutes=16),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 0
+    assert command.state == HostedHarnessConversationMessage.State.DELIVERED
+    assert scheduled == [str(conversation.id)]
+
+
+@pytest.mark.django_db
+def test_recovery_gives_up_a_turn_whose_restarts_keep_stopping(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Each restart polled once and stopped: recent polls, but an hour since the command.
+    conversation, command = _started_turn(
+        organization,
+        "restart-loop",
+        queued_ago=timedelta(minutes=61),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 1
+    assert command.state == HostedHarnessConversationMessage.State.FAILED
+    assert scheduled == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("started", [True, False])
+def test_give_up_reply_says_whether_the_turn_started(organization, started):
+    from django.utils import timezone
+
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    if started:
+        conversation, command = _started_turn(
+            organization,
+            "gave-up-started",
+            queued_ago=timedelta(minutes=40),
+            polled_ago=timedelta(minutes=16),
+        )
+    else:
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key="gave-up-cold"
+        )
+        conversation, command, _ = enqueue_message(
+            job, content="Add 30 more scenarios", client_request_id="gave-up-cold"
+        )
+        command.created_at = timezone.now() - timedelta(minutes=16)
+        command.save(update_fields=["created_at"])
+
+    counts = recover_stalled_conversations(lambda _conversation_id: None)
+
+    assert counts["abandoned"] == 1
+    reply = conversation.messages.filter(role="assistant").latest("sequence")
+    if started:
+        assert "stopped responding" in reply.content
+        assert "could not start" not in reply.content
+        assert "not delivered" not in reply.content
+    else:
+        assert reply.content.startswith("The environment chat could not start")
 
 
 @pytest.mark.django_db
@@ -1358,8 +1603,12 @@ def _stamped(body, revision):
 
 
 @pytest.mark.django_db
-def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspace, storage):
-    from simulate.services.hosted_harness_conversation import environment_authoring_revision
+def test_chat_publish_applies_now_and_names_changes_by_tab_number(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+    )
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-now")
@@ -1384,10 +1633,15 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
         headers,
         _stamped(_chat_checkpoint(NAMES, one_liner="added"), basis),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     response = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": first["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": first["digest"]},
+        format="json",
+        **headers,
     )
 
     assert response.status_code == 200, response.content
@@ -1404,11 +1658,18 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
         client,
         conversation,
         headers,
-        _stamped(_chat_checkpoint(NAMES[1:], one_liner="dropped"), published["revision"]),
+        _stamped(
+            _chat_checkpoint(NAMES[1:], one_liner="dropped"), published["revision"]
+        ),
     )
-    _send_events(client, conversation, headers, (2, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (2, "tool_started", {"tool": "save_changes"})
+    )
     again = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": second["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": second["digest"]},
+        format="json",
+        **headers,
     ).json()
     assert again["applied"] is True, again
     assert [one["name"] for one in again["removed"]] == [NAMES[0]]
@@ -1430,7 +1691,9 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
 
 @pytest.mark.django_db
 def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, storage):
-    from simulate.services.hosted_harness_conversation import environment_authoring_revision
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+    )
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-large")
@@ -1458,10 +1721,15 @@ def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, stor
             environment_authoring_revision(environment),
         ),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     published = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": checkpoint["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": checkpoint["digest"]},
+        format="json",
+        **headers,
     ).json()
 
     assert published["applied"] is True, published
@@ -1476,7 +1744,9 @@ def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, stor
 
 
 @pytest.mark.django_db
-def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(user, workspace, storage):
+def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(
+    user, workspace, storage
+):
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-old")
@@ -1491,7 +1761,9 @@ def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(user, workspac
         ttl_seconds=600,
     )
     client, headers = APIClient(), _headers(capability)
-    _commit_checkpoint(client, conversation, headers, _chat_checkpoint(NAMES, one_liner="x"))
+    _commit_checkpoint(
+        client, conversation, headers, _chat_checkpoint(NAMES, one_liner="x")
+    )
 
     refused = client.post(
         f"{BASE}/{conversation.id}/publish/",
@@ -1521,7 +1793,10 @@ def test_new_chat_sandbox_starts_from_the_environment_and_keeps_only_chat_state(
     accepted = _chat_checkpoint(NAMES[:2], one_liner="accepted")
     _prime_environment_archive(environment, storage, accepted)
     payload = dict(environment.payload)
-    payload["metadata"] = {**payload["metadata"], "authoring_revision": "sha256:current"}
+    payload["metadata"] = {
+        **payload["metadata"],
+        "authoring_revision": "sha256:current",
+    }
     environment.payload = payload
     environment.save(update_fields=["payload"])
     # A turn that died left an unsaved third scenario in the chat's copy.
@@ -1584,10 +1859,15 @@ def test_publishing_from_a_runs_chat_leaves_that_runs_scenarios_as_they_ran(
             environment_authoring_revision(run),
         ),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     published = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": edited["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": edited["digest"]},
+        format="json",
+        **headers,
     ).json()
 
     assert published["applied"] is True, published
@@ -1606,7 +1886,9 @@ def test_a_retried_chat_run_start_keeps_one_run_and_one_workflow(
     from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
 
     environment = _run_environment(user, workspace, f"run-start-{first_dispatch}")
-    _prime_environment_archive(environment, storage, _chat_checkpoint(NAMES[:2], one_liner="x"))
+    _prime_environment_archive(
+        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="x")
+    )
     HostedHarnessScenario.no_workspace_objects.filter(
         job=environment, scenario_key=_key(NAMES[0])
     ).update(number=1)
@@ -1632,8 +1914,12 @@ def test_a_retried_chat_run_start_keeps_one_run_and_one_workflow(
     client, headers = APIClient(raise_request_exception=False), _headers(capability)
     body = {"numbers": [1], "trials": 1, "operation_id": "start-1"}
 
-    first = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
-    retried = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
+    first = client.post(
+        f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers
+    )
+    retried = client.post(
+        f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers
+    )
 
     assert retried.status_code == 200, retried.content
     runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
@@ -1655,8 +1941,12 @@ def test_a_finished_builder_session_build_asks_its_builder_to_check_it(
         "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
         lambda conversation_id, base_url: scheduled.append((conversation_id, base_url)),
     )
-    built, _ = create_hosted_job(organization, _payload(), idempotency_key="built-in-session")
-    staged, _ = create_hosted_job(organization, _payload(), idempotency_key="built-in-stages")
+    built, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="built-in-session"
+    )
+    staged, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="built-in-stages"
+    )
     attempt_id = str(uuid.uuid4())
     enqueue_message(built, content="Build it", client_request_id=f"build-{attempt_id}")
 
@@ -1694,6 +1984,7 @@ def test_a_person_cannot_mark_their_message_as_sent_by_the_platform(
             "payload": {"from_platform": True, "note": "kept"},
         },
         build_absolute_uri=lambda _path: "https://platform.example.com/",
+        user=SimpleNamespace(id="author-1"),
     )
     assert provider.send_message(request, job.id).status_code == 202
 

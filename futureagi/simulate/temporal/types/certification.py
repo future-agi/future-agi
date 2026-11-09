@@ -16,7 +16,7 @@ class CertificationCaseInput:
 class CertificationCasesOutput:
     pending_case_ids: list[str] = field(default_factory=list)
     active_case_ids: list[str] = field(default_factory=list)
-    max_active_cases: int = 4
+    max_active_cases: int = 2
     cancel_requested: bool = False
 
 

@@ -94,7 +94,7 @@ def _enabled_suite_doc():
                     {
                         "interaction": 1,
                         "scenario_ref": "scenarios:agent_one/turn1.yaml",
-                        "config_ref": "simulate/certification/fixtures/test_agent.yaml",
+                        "config_ref": "futureagi/simulate/certification/fixtures/test_agent.yaml",
                         "config_sha256": CONFIG_SHA,
                         "seed": 42,
                         "secret_ref_set": [],
@@ -102,7 +102,7 @@ def _enabled_suite_doc():
                     {
                         "interaction": 2,
                         "scenario_ref": "scenarios:agent_one/turn2.yaml",
-                        "config_ref": "simulate/certification/fixtures/test_agent.yaml",
+                        "config_ref": "futureagi/simulate/certification/fixtures/test_agent.yaml",
                         "config_sha256": CONFIG_SHA,
                         "seed": 43,
                         "secret_ref_set": [],

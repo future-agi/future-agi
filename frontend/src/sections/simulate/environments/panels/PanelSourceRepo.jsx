@@ -80,7 +80,7 @@ export default function PanelSourceRepo() {
   });
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       <ProviderRow
         options={REPO_PROVIDERS}
         value={provider}
@@ -110,6 +110,8 @@ export default function PanelSourceRepo() {
           fullWidth
         />
       </Stack>
+      {/* TODO: hide Private once creation knows versioning is on: it then refuses
+          private repositories (github_private_unsupported, shown on Build). */}
       <Box>
         <Label>Visibility</Label>
         <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: "1fr 1fr", mt: 0.75 }}>

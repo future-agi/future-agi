@@ -38,7 +38,7 @@ COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SCENARIO_REF_RE = re.compile(r"^scenarios:[A-Za-z0-9_.\-/]+$")
 
 SUITE_DIR = Path(__file__).resolve().parent / "suites"
-REPO_ROOT = SUITE_DIR.parents[2]
+REPO_ROOT = SUITE_DIR.parents[3]
 
 TARGET_KINDS = frozenset({"local_test", "hosted_service"})
 AGENT_CONNECTORS = frozenset(
@@ -541,6 +541,23 @@ def _validate_interaction(
             if field in raw and raw[field] is not None:
                 _assert_no_secret_material(raw[field], f"{w}.{field}")
                 out[field] = raw[field]
+        stable_assertions = raw.get("stable_assertions")
+        if stable_assertions is not None:
+            if (
+                not isinstance(stable_assertions, list)
+                or not all(
+                    isinstance(name, str) and name.strip()
+                    for name in stable_assertions
+                )
+            ):
+                _fail(
+                    "invalid_schema",
+                    w,
+                    "stable_assertions must be a list of non-empty evaluation names",
+                )
+            out["stable_assertions"] = list(
+                dict.fromkeys(name.strip() for name in stable_assertions)
+            )
     else:
         # Placeholder interactions keep only their declared count; scenario and
         # config material is filled in when the case is materialized.
@@ -557,11 +574,8 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
     case_key = _canonical_case_key(raw.get("case_key"), w)
     w = f"{w}({case_key})"
     enabled = raw.get("enabled", False)
-    excluded = raw.get("excluded", False)
-    if type(enabled) is not bool or type(excluded) is not bool:
-        _fail("invalid_schema", w, "enabled and excluded must be booleans")
-    if enabled and excluded:
-        _fail("invalid_schema", w, "excluded cases cannot be enabled")
+    if type(enabled) is not bool:
+        _fail("invalid_schema", w, "enabled must be a boolean")
     tiers = raw.get("tiers", ["full"])
     if (
         not isinstance(tiers, list)
@@ -669,15 +683,6 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
                 "enabled cases must not carry pending markers",
             )
         authorization = _validate_authorization(raw.get("authorization"), w, kind)
-    elif excluded:
-        exclusion_reason = raw.get("exclusion_reason")
-        if not isinstance(exclusion_reason, str) or not exclusion_reason.strip():
-            _fail(
-                "invalid_schema",
-                w,
-                "excluded cases require exclusion_reason",
-            )
-        authorization = None
     else:
         pending = raw.get("pending")
         if (
@@ -701,7 +706,6 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
     out = {
         "case_key": case_key,
         "enabled": enabled,
-        "excluded": excluded,
         "tiers": list(dict.fromkeys(tiers)),
         "agent": {
             "name": name.strip(),
@@ -719,9 +723,7 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
     }
     if authorization is not None:
         out["authorization"] = authorization
-    if excluded:
-        out["exclusion_reason"] = raw["exclusion_reason"].strip()
-    elif not enabled:
+    if not enabled:
         out["pending"] = [p.strip() for p in raw["pending"]]
     if raw.get("notes"):
         _assert_no_secret_material(raw["notes"], f"{w}.notes")
@@ -831,11 +833,7 @@ def expand_enabled_cases(
 
     specs = []
     for case in normalized_suite["cases"]:
-        if (
-            not case["enabled"]
-            or case.get("excluded")
-            or tier not in case.get("tiers", ["full"])
-        ):
+        if not case["enabled"] or tier not in case["tiers"]:
             continue
         specs.append(
             {
@@ -878,16 +876,16 @@ def require_admission_ready(
     pending reasons; they must never be silently certified.
     """
 
-    included = [c for c in normalized_suite["cases"] if not c.get("excluded")]
-    if not included:
+    cases = normalized_suite["cases"]
+    if not cases:
         raise CertificationManifestError(
             "suite_not_admission_ready",
             f"suite {normalized_suite['suite_key']!r} has no cases for the selected tier",
         )
-    enabled = sum(1 for c in included if c["enabled"])
-    if enabled != len(included):
+    enabled = sum(1 for c in cases if c["enabled"])
+    if enabled != len(cases):
         pending: dict[str, list[str]] = {}
-        for c in included:
+        for c in cases:
             for p in c.get("pending", []):
                 pending.setdefault(p, []).append(c["case_key"])
         reasons = "; ".join(
@@ -896,11 +894,11 @@ def require_admission_ready(
         raise CertificationManifestError(
             "suite_not_admission_ready",
             f"suite {normalized_suite['suite_key']!r} has {enabled}/"
-            f"{len(included)} enabled cases; "
+            f"{len(cases)} enabled cases; "
             f"pending reasons — {reasons}",
         )
     now = (now or datetime.now(UTC)).astimezone(UTC)
-    for case in included:
+    for case in cases:
         authorization = case["authorization"]
         _parse_timestamp(
             authorization["approved_at"],
@@ -928,12 +926,10 @@ def require_admission_ready(
 def pending_summary(normalized_suite: Mapping[str, Any]) -> dict:
     """Machine-readable placeholder report for APIs and the campaign record."""
 
-    enabled, disabled, excluded = [], {}, {}
+    enabled, disabled = [], {}
     for c in normalized_suite["cases"]:
-        if c.get("excluded"):
-            excluded[c["case_key"]] = c["exclusion_reason"]
-        elif c["enabled"]:
+        if c["enabled"]:
             enabled.append(c["case_key"])
         else:
             disabled[c["case_key"]] = list(c.get("pending", []))
-    return {"enabled": enabled, "disabled": disabled, "excluded": excluded}
+    return {"enabled": enabled, "disabled": disabled}

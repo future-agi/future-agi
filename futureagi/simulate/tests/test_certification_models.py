@@ -158,6 +158,17 @@ def submission_mocks():
             return_value=(job, True),
         ) as create,
         patch(
+            "simulate.services.hosted_harness.find_replayed_job",
+            return_value=None,
+        ) as replay,
+        patch(
+            "simulate.services.harness_versioning.versions.versioning_enabled",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.harness_agent_versions.advisory_xact_lock"
+        ) as lock,
+        patch(
             "simulate.temporal.client.start_hosted_harness_gateway_workflow"
         ) as start,
     ):
@@ -170,6 +181,8 @@ def submission_mocks():
             creds=creds,
             call_usage=call_usage,
             create=create,
+            replay=replay,
+            lock=lock,
             start=start,
         )
 
@@ -190,6 +203,8 @@ def test_submit_runs_full_admission_and_schedules(organization, submission_mocks
     m.run_usage.assert_called_once()
     m.creds.assert_called_once()
     m.call_usage.assert_called_once()
+    assert m.replay.call_count == 2
+    m.lock.assert_called_once()
     m.create.assert_called_once()
     m.start.assert_called_once_with(str(m.job.id), "https://p.example", 2, 1, 15)
 

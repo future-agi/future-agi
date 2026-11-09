@@ -106,3 +106,35 @@ def test_replacement_receipt_clears_prior_provider_and_harness_end_reason(
     assert projected_call.call_metadata["hosted_harness_receipt"] == body
     receipt_call = projected_call.call_metadata["hosted_harness_receipt"]["call"]
     assert receipt_call is None or "target_metrics" not in receipt_call
+
+
+def _apply_ungraded_receipt(call, failure):
+    hosted_harness_ingestion._apply_receipt_to_call(
+        SimpleNamespace(call_execution=call, job=SimpleNamespace(), scenario_key="s"),
+        {
+            "digest": "ungraded",
+            "status": "errored" if failure else "failed",
+            "call": None,
+            "sub_goals": [{"name": "booked_at_most_once", "held": None}],
+            "failure": failure,
+        },
+    )
+    return call.call_metadata["harness_grading_error"]
+
+
+def test_an_errored_trial_is_not_called_a_grading_failure(projected_call):
+    message = _apply_ungraded_receipt(
+        projected_call,
+        {"code": "target_agent_stalled", "message": "the agent stopped responding"},
+    )
+
+    assert "grading failure" not in message
+    assert "target_agent_stalled" in message
+
+
+def test_a_completed_trial_with_missing_verdicts_is_a_grading_failure(
+    projected_call,
+):
+    message = _apply_ungraded_receipt(projected_call, None)
+
+    assert message.endswith("This is a grading failure, not an agent failure.")

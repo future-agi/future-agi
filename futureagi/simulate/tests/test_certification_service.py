@@ -37,6 +37,7 @@ from simulate.services.certification import (
     build_case_job_payload,
     classify_job_failure,
     create_campaign,
+    detect_exploratory_failures,
     detect_stable_behavior_failures,
     reconcile_case,
 )
@@ -60,7 +61,7 @@ def test_campaign_uses_at_most_half_the_minimum_runner_capacity(
     organization, workspace
 ):
     campaign, _case = _campaign(organization, workspace)
-    assert campaign.max_active_cases == 4
+    assert campaign.max_active_cases == 2
 
 
 @pytest.mark.django_db(transaction=True)
@@ -82,7 +83,6 @@ def test_new_campaign_reuses_one_previous_environment(organization, workspace):
             {
                 "case_key": "agent__primary",
                 "enabled": True,
-                "excluded": False,
                 "tiers": ["quick", "full"],
                 "scenario_count": 2,
                 "agent": {"name": "Agent", "connector": "vapi"},
@@ -420,6 +420,47 @@ def test_reconcile_passes_only_with_complete_evidence(organization, workspace):
     result = reconcile_case(case)
     assert result["ok"], result["missing"]
     assert result["failure_class"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_grade_keeps_complete_receipt_evidence(organization, workspace):
+    _campaign_row, case = _campaign(organization, workspace)
+    job = _job(organization, workspace)
+    case.hosted_harness_job = job
+    case.save(update_fields=["hosted_harness_job"])
+    attempt = _complete_evidence(job, organization, workspace)
+    HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt=attempt, scenario__scenario_key="k0"
+    ).update(status="failed")
+    HostedHarnessCleanupReceipt.no_workspace_objects.create(
+        attempt=attempt, provider_ref="p", verified_absent=True
+    )
+
+    result = reconcile_case(case)
+
+    assert result["ok"] is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("receipt_status", ("errored", "skipped"))
+def test_incomplete_receipt_status_blocks_certification(
+    organization, workspace, receipt_status
+):
+    _campaign_row, case = _campaign(organization, workspace)
+    job = _job(organization, workspace)
+    case.hosted_harness_job = job
+    case.save(update_fields=["hosted_harness_job"])
+    attempt = _complete_evidence(job, organization, workspace)
+    HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt=attempt, scenario__scenario_key="k0"
+    ).update(status=receipt_status)
+    HostedHarnessCleanupReceipt.no_workspace_objects.create(
+        attempt=attempt, provider_ref="p", verified_absent=True
+    )
+
+    result = reconcile_case(case)
+
+    assert "scenario:k0:receipt" in result["missing"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -779,7 +820,8 @@ def test_failed_terminal_receipts_are_stable_behavior_failures(
     campaign, case = _campaign(organization, workspace)
     job = _job(organization, workspace)
     case.hosted_harness_job = job
-    case.save(update_fields=["hosted_harness_job"])
+    case.spec["interactions"][0]["stable_assertions"] = ["tone"]
+    case.save(update_fields=["hosted_harness_job", "spec"])
     attempt = _complete_evidence(job, organization, workspace)
     hs = HostedHarnessScenario.no_workspace_objects.filter(job=job).first()
     HostedHarnessReceipt.no_workspace_objects.create(
@@ -793,7 +835,36 @@ def test_failed_terminal_receipts_are_stable_behavior_failures(
     )
     failures = detect_stable_behavior_failures(case)
     assert len(failures) == 1
+    assert failures[0]["evaluation"] == "tone"
     assert failures[0]["status"] == "failed"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unreviewed_grade_failure_is_alert_only(organization, workspace):
+    _campaign_row, case = _campaign(organization, workspace)
+    job = _job(organization, workspace)
+    case.hosted_harness_job = job
+    case.save(update_fields=["hosted_harness_job"])
+    attempt = _complete_evidence(job, organization, workspace)
+    receipt = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt=attempt
+    ).first()
+    receipt.status = "failed"
+    receipt.body = {
+        **receipt.body,
+        "evaluations": [{"name": "tone", "status": "failed"}],
+    }
+    receipt.save(update_fields=["status", "body"])
+
+    assert detect_stable_behavior_failures(case) == []
+    assert detect_exploratory_failures(case) == [
+        {
+            "receipt_id": str(receipt.id),
+            "evaluation": "tone",
+            "status": "failed",
+            "exploratory": False,
+        }
+    ]
 
 
 @pytest.mark.django_db(transaction=True)

@@ -163,7 +163,7 @@ def create_campaign(
         "cases": [
             case
             for case in normalized["cases"]
-            if case.get("excluded") or tier in case.get("tiers", ["full"])
+            if tier in case.get("tiers", ["full"])
         ],
     }
     try:
@@ -581,7 +581,7 @@ def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
             )
             _record(
                 f"{prefix}:receipt",
-                receipt is not None and receipt.status == "passed",
+                receipt is not None and receipt.status in {"passed", "failed"},
                 f"status={receipt.status if receipt else 'absent'}",
             )
             call = (receipt.body or {}).get("call") if receipt else None
@@ -676,11 +676,7 @@ def classify_job_failure(job) -> str:
 
 
 def detect_stable_behavior_failures(case) -> list[dict]:
-    """Behavioral assertion failures inside an otherwise-complete case.
-
-    Returns one entry per failed terminal receipt — stable-behavior failures
-    are blocking even when every artifact exists.
-    """
+    """Return failed evaluations explicitly frozen as stable assertions."""
     from simulate.models import HostedHarnessReceipt
 
     job = case.run_job or case.hosted_harness_job
@@ -689,20 +685,37 @@ def detect_stable_behavior_failures(case) -> list[dict]:
     attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
     if attempt is None:
         return []
-    return [
-        {
-            "scenario_key": r.scenario.scenario_key if r.scenario_id else None,
-            "receipt_id": str(r.id),
-            "status": r.status,
-        }
-        for r in HostedHarnessReceipt.no_workspace_objects.filter(
-            job=job, attempt=attempt, status="failed"
-        ).select_related("scenario")
-    ]
+    stable = {
+        name
+        for interaction in (case.spec or {}).get("interactions", [])
+        for name in interaction.get("stable_assertions", [])
+    }
+    failures = []
+    for receipt in HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt=attempt
+    ).select_related("scenario"):
+        for evaluation in (receipt.body or {}).get("evaluations") or []:
+            if (
+                evaluation.get("name") in stable
+                and evaluation.get("status") in {"failed", "error"}
+            ):
+                failures.append(
+                    {
+                        "scenario_key": (
+                            receipt.scenario.scenario_key
+                            if receipt.scenario_id
+                            else None
+                        ),
+                        "receipt_id": str(receipt.id),
+                        "evaluation": evaluation["name"],
+                        "status": evaluation["status"],
+                    }
+                )
+    return failures
 
 
 def detect_exploratory_failures(case) -> list[dict]:
-    """Non-blocking exploratory evaluation failures (alert only)."""
+    """Return evaluation failures not frozen as stable assertions."""
     from simulate.models import HostedHarnessReceipt
 
     job = case.run_job or case.hosted_harness_job
@@ -711,17 +724,26 @@ def detect_exploratory_failures(case) -> list[dict]:
     attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
     if attempt is None:
         return []
+    stable = {
+        name
+        for interaction in (case.spec or {}).get("interactions", [])
+        for name in interaction.get("stable_assertions", [])
+    }
     out = []
     for r in HostedHarnessReceipt.no_workspace_objects.filter(
         job=job, attempt=attempt
     ).exclude(body__isnull=True):
         for ev in (r.body or {}).get("evaluations") or []:
-            if ev.get("exploratory") and ev.get("status") in {"failed", "error"}:
+            if (
+                ev.get("name") not in stable
+                and ev.get("status") in {"failed", "error"}
+            ):
                 out.append(
                     {
                         "receipt_id": str(r.id),
                         "evaluation": ev.get("name"),
                         "status": ev.get("status"),
+                        "exploratory": bool(ev.get("exploratory")),
                     }
                 )
     return out

@@ -14,6 +14,10 @@ from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import (
@@ -44,6 +48,20 @@ from tfc.utils.api_errors import (
 
 logger = structlog.get_logger(__name__)
 security_logger = structlog.get_logger("saml2_auth.security")
+
+# Postgres or Redis being slow or down says nothing about a credential.
+INFRASTRUCTURE_ERRORS = (
+    DatabaseError,
+    InterfaceError,
+    ConnectionInterrupted,
+    RedisError,
+)
+# The cache could not be reached; any other Redis error is a bug and stays a 500.
+_CACHE_UNAVAILABLE_ERRORS = (
+    ConnectionInterrupted,
+    RedisConnectionError,
+    RedisTimeoutError,
+)
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -133,6 +151,12 @@ def _is_workspace_write_exempt_view(request):
     )
 
 
+def is_coding_agent_key(request) -> bool:
+    """Whether ``request`` authenticated with a coding agent's key."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
@@ -183,8 +207,8 @@ class APIKeyAuthentication(BaseAuthentication):
                     "saml_credential_denied", reason=exc.reason, transport="http"
                 )
                 raise
-            except (PermissionDenied, DatabaseError, InterfaceError):
-                raise  # Authorization denials and database failures are not bad tokens.
+            except (PermissionDenied, *INFRASTRUCTURE_ERRORS):
+                raise  # Authorization denials and database or cache failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -198,7 +222,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         try:
             org_api_key = OrgApiKey.objects.select_related(
-                "organization", "workspace"
+                "organization", "workspace", "minted_by"
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
@@ -211,6 +235,14 @@ class APIKeyAuthentication(BaseAuthentication):
             # so it can never act as the organisation's system user.
             if org_api_key.type == "ingest":
                 raise AuthenticationFailed("ingest keys cannot call the API")
+            # A coding agent's key runs on the developer's machine beside the
+            # agent being fixed; it may make only its loop's calls, on its own
+            # environment.
+            if org_api_key.type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import refuse_coding_agent_request
+
+                refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -228,8 +260,13 @@ class APIKeyAuthentication(BaseAuthentication):
                     .order_by("created_at")
                     .first()
                 )
+            elif org_api_key.type == "coding_agent":
+                # Its user is null, so an older build refuses it; its minter acts.
+                user = org_api_key.minted_by
             else:
                 user = org_api_key.user
+            if user is None:
+                raise AuthenticationFailed("No user found for API key")
 
             # Store the API key info in request for workspace context
             request.org_api_key = org_api_key
@@ -701,6 +738,10 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         # to the collector, even if a user was attached to it.
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
+        if org_api_key.type == "coding_agent":
+            from simulate.authentication import refuse_coding_agent_request
+
+            refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":
@@ -1084,7 +1125,7 @@ def decode_token(token: str, *, transport: str = "http"):
 
         return user, token, None
 
-    except (DatabaseError, InterfaceError, SamlCredentialInvalid):
+    except (*INFRASTRUCTURE_ERRORS, SamlCredentialInvalid):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -1110,6 +1151,12 @@ def _pydantic_error_response(exc):
 class DatabaseUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "Database temporarily unavailable."
+    default_code = "service_unavailable"
+
+
+class CacheUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Cache temporarily unavailable."
     default_code = "service_unavailable"
 
 
@@ -1172,6 +1219,9 @@ def custom_exception_handler(exc, context):
         )
         # Keep raw database details private and use DRF's normal rollback path.
         exc = DatabaseUnavailable()
+    elif isinstance(exc, _CACHE_UNAVAILABLE_ERRORS):
+        logger.warning("api_cache_unavailable", error_class=type(exc).__name__)
+        exc = CacheUnavailable()
     response = exception_handler(exc, context)
 
     if isinstance(exc, FeatureUnavailable):

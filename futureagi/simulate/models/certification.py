@@ -8,7 +8,9 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel, NoWorkspaceFilterManager
 
-DEFAULT_MAX_ACTIVE_CASES = 4
+# Keep half of the production simulation runner's four activity slots available
+# for user simulations. The value is stored per campaign for replay stability.
+DEFAULT_MAX_ACTIVE_CASES = 2
 
 
 class CertificationCampaign(BaseModel):

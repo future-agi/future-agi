@@ -22,8 +22,16 @@ def submit_hosted_harness_job(
     payload: dict[str, Any],
     idempotency_key: str,
     public_base_url: str,
+    *,
+    user=None,
+    secret_values: dict[str, str] | None = None,
 ):
+    from django.db import transaction
+
+    from simulate.services.harness_agent_versions import advisory_xact_lock
     from simulate.services.harness_provider import (
+        _environment_agent_maker,
+        _secret_ref_minter,
         _validate_known_hosted_egress,
         _validate_phone_connectivity,
         _validate_required_credential_files,
@@ -36,7 +44,10 @@ def submit_hosted_harness_job(
     from simulate.services.hosted_harness import (
         HostedHarnessError,
         create_hosted_job,
+        find_replayed_job,
+        idempotency_lock_name,
     )
+    from simulate.services.harness_versioning.versions import versioning_enabled
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
     # This uses only references/configuration and deployment env presence.
@@ -44,6 +55,16 @@ def submit_hosted_harness_job(
     _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
     _validate_phone_connectivity(payload)
     _validate_known_hosted_egress(payload, public_base_url)
+    replayed = find_replayed_job(
+        organization,
+        payload,
+        idempotency_key=idempotency_key,
+        workspace=workspace,
+    )
+    if replayed is None and versioning_enabled():
+        from simulate.services.harness_agent_changes import validate_public_github_source
+
+        validate_public_github_source(payload, lookup=False)
 
     require_harness_run_usage(str(organization.id), payload)
     source_analysis = _validate_required_credential_files(organization, payload)
@@ -54,12 +75,40 @@ def submit_hosted_harness_job(
     )
 
     try:
-        job, created = create_hosted_job(
-            organization,
-            payload,
-            idempotency_key=idempotency_key,
-            workspace=workspace,
-        )
+        with transaction.atomic():
+            advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
+            replayed = find_replayed_job(
+                organization,
+                payload,
+                idempotency_key=idempotency_key,
+                workspace=workspace,
+            )
+            on_create = None
+            if replayed is None and versioning_enabled():
+                from simulate.services.harness_agent_changes import (
+                    validate_public_github_source,
+                )
+
+                repository_id = validate_public_github_source(
+                    payload, organization_id=organization.id
+                )
+                on_create = _environment_agent_maker(
+                    organization,
+                    payload,
+                    secret_values or {},
+                    source_analysis,
+                    user,
+                    repository_id,
+                )
+            elif replayed is None and secret_values:
+                on_create = _secret_ref_minter(secret_values)
+            job, created = create_hosted_job(
+                organization,
+                payload,
+                idempotency_key=idempotency_key,
+                workspace=workspace,
+                on_create=on_create,
+            )
         retry_cfg = job.payload["retry"]
         start_hosted_harness_gateway_workflow(
             str(job.id),

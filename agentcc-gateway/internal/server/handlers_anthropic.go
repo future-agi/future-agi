@@ -16,6 +16,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/anthropicfmt"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
 	anthropictrans "github.com/futureagi/agentcc-gateway/internal/translation/anthropic"
 )
@@ -85,6 +86,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	rc.Metadata["timeout_ms"] = fmt.Sprintf("%d", timeout.Milliseconds())
 
 	// Peek key org_id before resolving org config (same as ChatCompletion).
 	h.peekKeyOrgID(rc)
@@ -153,7 +155,9 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		// A carrier with empty Messages would hash to the same cache key for
 		// every prompt (BuildCacheKey marshals Messages), and the response
 		// stored against it holds usage only — so a later request would be
-		// served a content-less 200. Request-shaped plugins skip on nil.
+		// served a content-less 200. Request-shaped plugins skip on nil;
+		// guardrails read the text from GuardrailRequest instead.
+		rc.GuardrailRequest = guardrailRequest("anthropic", body)
 		if isStream {
 			h.handleAnthropicStream(ctx, w, rc, ap, body, anthropicHeaders)
 		} else {
@@ -344,6 +348,7 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 		}
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
+			rc.GuardrailResponse = assistantText(anthropicResponseText(respBody))
 		}
 		return nil
 	})
@@ -454,8 +459,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 
 	// Without this the stream would be priced at zero and logged as such.
 	var usage anthropicfmt.StreamUsageScanner
+	var streamed streamedChars
 	finalize := func(detach bool) {
-		applyAnthropicStreamUsage(rc, &usage)
+		applyAnthropicStreamUsage(rc, &usage, streamed)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -491,13 +497,40 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	}
 	flusher.Flush()
 
-	// Relay SSE stream from Anthropic to client.
-	buf := make([]byte, 32*1024)
+	// fail ends a stream that stopped before message_stop, telling the client
+	// why unless the client is the one that left.
+	fail := func(err error) {
+		if apiErr := streamEndError(ctx, err); apiErr != nil {
+			writeAnthropicStreamError(w, flusher, rc, apiErr)
+		}
+		finalize(ctx.Err() != nil)
+	}
+
+	// Relay the stream one event at a time, each as it arrived. The boundaries
+	// let the relay act on message_stop and on an error event the upstream sends.
+	events := streaming.NewEventReader(stream)
 	for {
-		n, readErr := stream.Read(buf)
-		if n > 0 {
-			usage.Write(buf[:n])
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+		ev, readErr := events.Next()
+		usage.Write(ev.Raw)
+		if ev.Name == "content_block_delta" {
+			streamed.addEvent(ev.Data())
+		}
+		if readErr != nil && readErr != io.EOF {
+			// The event the error cut off is not forwarded: run into the error
+			// event, it would hide that event from the client's parser.
+			slog.Warn("error reading anthropic stream", "request_id", rc.RequestID, "error", readErr)
+			fail(readErr)
+			return
+		}
+		if ev.Name == "message_stop" && (readErr == nil || json.Valid(ev.Data())) {
+			endRelay(ctx, w, flusher, rc, ev, stream, finalize)
+			return
+		}
+		if ev.Name == "error" {
+			rc.AddError(upstreamStreamError(ev.Data()))
+		}
+		if len(ev.Raw) > 0 {
+			if _, writeErr := w.Write(ev.Raw); writeErr != nil {
 				slog.Warn("error writing anthropic stream", "request_id", rc.RequestID, "error", writeErr)
 				// Client gone, tokens still spent — detach from its context.
 				finalize(true)
@@ -505,29 +538,38 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 			}
 			flusher.Flush()
 		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				slog.Warn("error reading anthropic stream", "request_id", rc.RequestID, "error", readErr)
-			}
+		switch {
+		case readErr == io.EOF:
 			finalize(false)
 			return
-		}
-
-		select {
-		case <-ctx.Done():
-			finalize(true)
+		case ctx.Err() != nil:
+			fail(ctx.Err())
 			return
-		default:
 		}
 	}
 }
 
-// applyAnthropicStreamUsage moves collected counts onto rc.
-func applyAnthropicStreamUsage(rc *models.RequestContext, usage *anthropicfmt.StreamUsageScanner) {
+// writeAnthropicStreamError reports a failure inside a stream that has already
+// answered 200, and records it, so the request is logged as the failure it was.
+func writeAnthropicStreamError(w http.ResponseWriter, flusher http.Flusher, rc *models.RequestContext, apiErr *models.APIError) {
+	rc.AddError(apiErr)
+	if _, err := w.Write(anthropicfmt.StreamErrorEvent(apiErr)); err == nil {
+		flusher.Flush()
+	}
+}
+
+// applyAnthropicStreamUsage moves collected counts onto rc. A stream cut
+// before message_delta has only message_start's placeholder output_tokens, so
+// its output is estimated from what was relayed.
+func applyAnthropicStreamUsage(rc *models.RequestContext, usage *anthropicfmt.StreamUsageScanner, streamed streamedChars) {
 	if model := usage.Model(); model != "" {
 		rc.ResolvedModel = model
 	}
 	inputTokens, outputTokens, ok := usage.Usage()
+	if streamed > 0 && !usage.Finished() {
+		outputTokens = estimatedStreamUsage(rc, inputTokens, streamed).CompletionTokens
+		ok = true
+	}
 	if !ok {
 		// Leave rc.Response nil so the cost plugin skips it — a gap is honest
 		// where a zero is not.
@@ -572,7 +614,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -697,7 +739,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
 		for attempt := 0; attempt < 2; attempt++ {
-			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
+			rawChunkCh, errCh = translatedStreamChatCompletion(streamCtx, provider, canonicalReq)
 			if rawChunkCh == nil {
 				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 			}
@@ -813,6 +855,9 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	for {
 		select {
 		case <-ctx.Done():
+			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				writeAnthropicStreamError(w, flusher, rc, apiErr)
+			}
 			finalize(true)
 			return
 
@@ -822,20 +867,30 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				eventCh = nil
 				break
 			}
+			if bytes.HasPrefix(event, []byte("event: message_stop\n")) {
+				// The translator sends message_stop whenever the chunk channel
+				// closes, after a provider error or the deadline too.
+				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+					if apiErr != nil {
+						writeAnthropicStreamError(w, flusher, rc, apiErr)
+					}
+					finalize(ctx.Err() != nil)
+					return
+				}
+				// message_stop is the terminal Anthropic event. Some upstream
+				// providers leave an auxiliary channel open after their finish
+				// reason, so waiting for every channel keeps the HTTP body open.
+				streamCancel()
+				stop, _ := streaming.NewEventReader(bytes.NewReader(event)).Next()
+				endRelay(ctx, w, flusher, rc, stop, nil, finalize)
+				return
+			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
 				finalize(true)
 				return
 			}
 			flusher.Flush()
-			if bytes.HasPrefix(event, []byte("event: message_stop\n")) {
-				// message_stop is the terminal Anthropic event. Some upstream
-				// providers leave an auxiliary channel open after their finish
-				// reason, so waiting for every channel keeps the HTTP body open.
-				streamCancel()
-				finalize(false)
-				return
-			}
 
 		case err, ok := <-translatorErrCh:
 			if !ok {
@@ -849,7 +904,18 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
-				// Error event already emitted by the translator; just stop.
+				// The translator reports on errs first, then queues its own
+				// error event. Forward what it queued, or the client never
+				// learns why the stream ended.
+				rc.AddError(models.ErrUpstreamProvider(0, "translating the stream: "+err.Error()))
+				if eventCh != nil {
+					for event := range eventCh {
+						if _, writeErr := w.Write(event); writeErr != nil {
+							break
+						}
+					}
+					flusher.Flush()
+				}
 				finalize(false)
 				return
 			}
@@ -861,6 +927,9 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
+				if apiErr := streamEndError(ctx, err); apiErr != nil {
+					writeAnthropicStreamError(w, flusher, rc, apiErr)
+				}
 				finalize(false)
 				return
 			}
@@ -872,6 +941,24 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			return
 		}
 	}
+}
+
+// translatedChatCompletion calls provider with a request translated from
+// another dialect: over the Responses API when the model refuses the request on
+// chat completions, as gpt-5.6 refuses function tools while it reasons.
+func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
+		return rp.ChatCompletionViaResponses(ctx, req)
+	}
+	return provider.ChatCompletion(ctx, req)
+}
+
+// translatedStreamChatCompletion is translatedChatCompletion for a stream.
+func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
+		return rp.StreamChatCompletionViaResponses(ctx, req)
+	}
+	return provider.StreamChatCompletion(ctx, req)
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.
@@ -902,10 +989,12 @@ func takeToolNameMapping(req *models.ChatCompletionRequest) map[string]string {
 	return m
 }
 
-// streamUsage is what a finished stream reported about itself.
+// streamUsage is what a finished stream reported about itself, and how much
+// output it carried.
 type streamUsage struct {
 	usage *models.Usage
 	model string
+	chars streamedChars
 }
 
 // teeStreamUsage passes chunks through untouched, keeping the last usage and
@@ -916,6 +1005,7 @@ func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan m
 	done := make(chan streamUsage, 1)
 
 	record := func(seen *streamUsage, chunk models.StreamChunk) {
+		seen.chars.addChunk(chunk)
 		if chunk.Usage != nil {
 			seen.usage = chunk.Usage
 		}
@@ -971,12 +1061,16 @@ func rewriteStreamModel(ctx context.Context, in <-chan models.StreamChunk, model
 	return out
 }
 
-// applyCanonicalStreamUsage moves a finished stream's usage onto rc. Left nil
-// when the provider sent none, so the cost plugin skips rather than bills zero.
+// applyCanonicalStreamUsage moves a finished stream's usage onto rc. A stream
+// that relayed output without usage is estimated; one that relayed nothing is
+// left nil, so the cost plugin skips rather than bills zero.
 func applyCanonicalStreamUsage(rc *models.RequestContext, usageCh <-chan streamUsage) {
 	seen := <-usageCh
 	if seen.model != "" {
 		rc.ResolvedModel = seen.model
+	}
+	if seen.usage == nil && seen.chars > 0 {
+		seen.usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), seen.chars)
 	}
 	if seen.usage == nil {
 		return

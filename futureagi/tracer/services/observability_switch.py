@@ -68,6 +68,14 @@ PREREQUISITES = {
 }
 
 
+# Not a summary word: a row cannot be made without the agent's provider.
+PROVIDER_MISSING = MissingPrerequisite(
+    "provider_missing",
+    "provider",
+    "Provider is required when observability is enabled",
+)
+
+
 class ObservabilityRefused(Exception):
     def __init__(self, missing):
         missing = tuple(missing)
@@ -346,6 +354,10 @@ def set_agent_observability(
     # Read once: the check and the row's provider word both need it.
     summary = _agent_summary(agent_definition.id)
     _check_prerequisites(agent_definition, summary)
+    provider = _row_provider(agent_definition, summary)
+    if not (provider or "").strip():
+        # The row needs a provider word; a code agent with nothing stored has none.
+        _refuse(str(agent_definition.id), "", (PROVIDER_MISSING,))
     with transaction.atomic():
         # A second turn-on of this agent that reaches here finds the first one's row.
         locked = AgentDefinition.no_workspace_objects.select_for_update(
@@ -368,7 +380,7 @@ def set_agent_observability(
             project_name=_project_name_for_new_row(
                 agent_definition, organization, workspace
             ),
-            provider=_row_provider(agent_definition, summary),
+            provider=provider,
         )
         if not isinstance(row, ObservabilityProvider):
             # The helper returns its errors instead of raising. Their text can

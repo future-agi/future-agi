@@ -1,6 +1,11 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from simulate.views.agent_fix import (
+    AgentFixEngineViewSet,
+    AgentFixModelView,
+    AgentFixRunViewSet,
+)
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -105,6 +110,7 @@ from .views.agent_version import (
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.certification import CertificationCampaignViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
+from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -143,6 +149,8 @@ router.register(
     basename="agent-definition-operations",
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
+router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
@@ -170,6 +178,11 @@ router.register(
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "api/agent-fix-engine/<uuid:pk>/v1/chat/completions",
+        AgentFixModelView.as_view(),
+        name="agent-fix-engine-model",
+    ),
     path(
         "test-executions/<uuid:test_execution_id>/debug-analysis/",
         TestExecutionDebugAnalysisView.as_view(),
@@ -214,6 +227,11 @@ urlpatterns = [
         "api/harness/ingress/<str:token>/<path:target_path>",
         HostedHarnessIngressProxyView.as_view(),
         name="hosted-harness-ingress-proxy-path",
+    ),
+    path(
+        "api/harness/github/webhook/",
+        HarnessGitHubWebhookView.as_view(),
+        name="hosted-harness-github-webhook",
     ),
     # Persona duplicate endpoint with custom URL pattern
     path(

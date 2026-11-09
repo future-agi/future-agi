@@ -1,4 +1,5 @@
 from .agent_definition import AgentDefinition, ProviderCredentials
+from .agent_fix import AgentFixCandidate, AgentFixRun
 from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
@@ -24,6 +25,15 @@ from .harness_environment_credentials import (
     HarnessEnvironmentCredentials,
 )
 from .eval_config import SimulateEvalConfig
+from .harness_versioning import (
+    HarnessAgentVersionRuntime,
+    HarnessAssembledBundle,
+    HarnessEnvironmentVersion,
+    HarnessNudge,
+    HarnessSuiteMember,
+    HarnessSuiteValidation,
+    HarnessSuiteVersion,
+)
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
@@ -58,6 +68,8 @@ from .test_execution import (
 from .trial_item_result import TrialItemResult
 
 __all__ = [
+    "AgentFixCandidate",
+    "AgentFixRun",
     "Scenarios",
     "AgentDefinition",
     "ProviderCredentials",
@@ -73,6 +85,13 @@ __all__ = [
     "ComponentEvaluation",
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
+    "HarnessAgentVersionRuntime",
+    "HarnessAssembledBundle",
+    "HarnessEnvironmentVersion",
+    "HarnessNudge",
+    "HarnessSuiteMember",
+    "HarnessSuiteValidation",
+    "HarnessSuiteVersion",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",
