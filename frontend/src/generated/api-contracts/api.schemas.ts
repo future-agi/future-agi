@@ -19807,7 +19807,7 @@ export interface HarnessCapabilityFixApi {
 }
 
 /**
- * Selected cases this row holds back.
+ * Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.
  */
 export interface HarnessCapabilityAffectedApi {
   /** @minimum 0 */
