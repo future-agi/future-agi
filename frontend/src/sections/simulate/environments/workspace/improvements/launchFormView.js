@@ -8,12 +8,34 @@ export const HELD_BACK_MINIMUM = 12;
 export const heldBackCount = (picked) =>
   picked >= HELD_BACK_MINIMUM ? Math.floor(picked / 3) : 0;
 
-export function countsLine(picked, protectedCount) {
+// Fewer failing cases than a fix needs: it first writes variations of each.
+export const needsVariations = (picked, limits) =>
+  picked > 0 && picked < (limits?.cases_min ?? 0);
+
+export function countsLine(picked, protectedCount, limits) {
   const held = heldBackCount(picked);
-  const failing = held
-    ? `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`
-    : `${picked} failing to fix`;
+  let failing = `${picked} failing to fix`;
+  if (held) {
+    failing = `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`;
+  } else if (needsVariations(picked, limits)) {
+    failing = `${picked} failing, and up to ${picked * limits.variations_per_case} variations of them`;
+  }
   return `${failing} · ${protectedCount} must keep passing`;
+}
+
+export function variationsNote(picked, limits) {
+  if (!needsVariations(picked, limits)) return null;
+  return `A fix needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each (about 50 min), then fixes the ones the current version also fails.`;
+}
+
+// Why Start is disabled by the platform: the fix itself, or the variations it
+// would write first.
+export function blockedReason(options, picked) {
+  if (options.blocked) return options.blocked.message;
+  if (needsVariations(picked, options.limits)) {
+    return options.variations_blocked?.message || null;
+  }
+  return null;
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -59,7 +81,7 @@ export const minuteSteps = (value, limits) =>
 export function launchError({ targets, protectedKeys, surfaces, limits }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
   if (targets.length < limits.scenarios_min) {
-    return `Needs at least ${limits.scenarios_min} failing cases to prove a fix.`;
+    return `Needs at least ${limits.scenarios_min} failing cases: with ${limits.variations_per_case} variations of each, they can reach the ${limits.cases_min} a fix needs.`;
   }
   if (targets.length > limits.scenarios_max) {
     return `Pick at most ${limits.scenarios_max} cases to fix.`;
