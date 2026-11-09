@@ -27368,10 +27368,14 @@ export const MetricObservationConditionApiOperator = {
   gte: "gte",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type MetricObservationConditionApiValue = { [key: string]: unknown };
 
 export interface MetricObservationConditionApi {
   operator: MetricObservationConditionApiOperator;
+  /** Any valid JSON value. */
   value: MetricObservationConditionApiValue;
 }
 
@@ -27917,6 +27921,9 @@ export const MetricConditionApiConditionStage = {
   after_reduction: "after_reduction",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type MetricConditionApiValue = { [key: string]: unknown };
 
 export interface MetricConditionApi {
@@ -27926,6 +27933,7 @@ export interface MetricConditionApi {
    */
   alias: string;
   operator: MetricConditionApiOperator;
+  /** Any valid JSON value. */
   value?: MetricConditionApiValue;
   /**
    * @minLength 1
@@ -28586,12 +28594,20 @@ export interface MetricPreviewApi {
   sample_units?: MetricPreviewSampleApi[];
 }
 
+export type MetricUnavailableApiValueMode =
+  (typeof MetricUnavailableApiValueMode)[keyof typeof MetricUnavailableApiValueMode];
+
+export const MetricUnavailableApiValueMode = {
+  on_demand: "on_demand",
+} as const;
+
 export interface MetricUnavailableApi {
   /** @minLength 1 */
   code: string;
   /** @minLength 1 */
   message: string;
   retryable: boolean;
+  value_mode?: MetricUnavailableApiValueMode;
 }
 
 export interface MetricDraftPreviewCancelApi {
@@ -28691,11 +28707,203 @@ export const MetricHistoryEntryApiKind = {
   snapshot: "snapshot",
 } as const;
 
+export type MetricHistoryDefinitionApiKind =
+  (typeof MetricHistoryDefinitionApiKind)[keyof typeof MetricHistoryDefinitionApiKind];
+
+export const MetricHistoryDefinitionApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type MetricHistoryDefinitionApiLevel =
+  (typeof MetricHistoryDefinitionApiLevel)[keyof typeof MetricHistoryDefinitionApiLevel];
+
+export const MetricHistoryDefinitionApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type MetricHistoryDefinitionApiUserRule =
+  (typeof MetricHistoryDefinitionApiUserRule)[keyof typeof MetricHistoryDefinitionApiUserRule];
+
+export const MetricHistoryDefinitionApiUserRule = {
+  "": "",
+  any: "any",
+  every: "every",
+  average: "average",
+  total: "total",
+} as const;
+
+export type MetricHistoryDefinitionApiValueType =
+  (typeof MetricHistoryDefinitionApiValueType)[keyof typeof MetricHistoryDefinitionApiValueType];
+
+export const MetricHistoryDefinitionApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type MetricHistoryDefinitionApiBackfillStatus =
+  (typeof MetricHistoryDefinitionApiBackfillStatus)[keyof typeof MetricHistoryDefinitionApiBackfillStatus];
+
+export const MetricHistoryDefinitionApiBackfillStatus = {
+  pending: "pending",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type MetricHistoryDefinitionApiValueLabels = { [key: string]: unknown };
+
+export type MetricHistoryDefinitionApiSampling = { [key: string]: unknown };
+
+export interface MetricHistoryDefinitionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly id?: string;
+  kind?: MetricHistoryDefinitionApiKind;
+  level?: MetricHistoryDefinitionApiLevel;
+  user_rule?: MetricHistoryDefinitionApiUserRule;
+  field_spec?: MetricFieldSpecApi;
+  group_dims?: string[];
+  value_type?: MetricHistoryDefinitionApiValueType;
+  /** @maxLength 32 */
+  unit?: string;
+  /** @maxLength 32 */
+  value_format?: string;
+  value_labels?: MetricHistoryDefinitionApiValueLabels;
+  sampling?: MetricHistoryDefinitionApiSampling;
+  backfill_status?: MetricHistoryDefinitionApiBackfillStatus;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_done?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_total?: number;
+  activated_at?: string;
+  readonly needs_rebuild?: boolean;
+  readonly created_at?: string;
+}
+
+export type MetricHistorySnapshotApiKind =
+  (typeof MetricHistorySnapshotApiKind)[keyof typeof MetricHistorySnapshotApiKind];
+
+export const MetricHistorySnapshotApiKind = {
+  run: "run",
+  snapshot: "snapshot",
+} as const;
+
+export type MetricHistorySnapshotApiCleanupStatus =
+  (typeof MetricHistorySnapshotApiCleanupStatus)[keyof typeof MetricHistorySnapshotApiCleanupStatus];
+
+export const MetricHistorySnapshotApiCleanupStatus = {
+  "": "",
+  pending: "pending",
+  running: "running",
+  done: "done",
+  failed: "failed",
+} as const;
+
+export type MetricHistorySnapshotApiStatus =
+  (typeof MetricHistorySnapshotApiStatus)[keyof typeof MetricHistorySnapshotApiStatus];
+
+export const MetricHistorySnapshotApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export interface MetricHistorySnapshotApi {
+  readonly id?: string;
+  metric_id: string;
+  metric_version: number;
+  definition?: DerivedMetricVersionApi;
+  window_start: string;
+  window_end: string;
+  as_of: string;
+  /** @maxLength 255 */
+  source_run_id?: string;
+  filters: DerivedMetricFilterApi[];
+  snapshot_id?: string;
+  result_id?: string;
+  lease_expires_at?: string;
+  source_manifest?: DerivedMetricManifestApi;
+  kind?: MetricHistorySnapshotApiKind;
+  pinned_manifest?: string;
+  /**
+   * @minimum -9223372036854776000
+   * @maximum 9223372036854776000
+   */
+  pinned_generation?: number;
+  captured_at?: string;
+  /** @maxLength 16 */
+  supported_grain?: string;
+  changed_at?: string;
+  /** @maxLength 64 */
+  change_reason?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  removed_unit_count?: number;
+  deleted_at?: string;
+  cleanup_status?: MetricHistorySnapshotApiCleanupStatus;
+  status?: MetricHistorySnapshotApiStatus;
+  /** @maxLength 300 */
+  error?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  row_count?: number;
+  readonly created_at?: string;
+  completed_at?: string;
+}
+
 export interface MetricHistoryEntryApi {
   kind: MetricHistoryEntryApiKind;
   created_at: string;
-  definition: DerivedMetricVersionApi;
-  snapshot: DerivedMetricRunApi;
+  definition: MetricHistoryDefinitionApi;
+  snapshot: MetricHistorySnapshotApi;
   /** @minLength 1 */
   status: string;
 }
@@ -28757,6 +28965,57 @@ export interface MetricPointApi {
   uncertainty: DerivedMetricUncertaintyApi;
 }
 
+export type MetricKpiPreviousPointApiPointStatus =
+  (typeof MetricKpiPreviousPointApiPointStatus)[keyof typeof MetricKpiPreviousPointApiPointStatus];
+
+export const MetricKpiPreviousPointApiPointStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+  retention_expired: "retention_expired",
+  sampled_inputs_not_supported: "sampled_inputs_not_supported",
+} as const;
+
+export type MetricKpiPreviousPointApiValueMode =
+  (typeof MetricKpiPreviousPointApiValueMode)[keyof typeof MetricKpiPreviousPointApiValueMode];
+
+export const MetricKpiPreviousPointApiValueMode = {
+  materialized: "materialized",
+  on_demand: "on_demand",
+} as const;
+
+export interface MetricKpiPreviousPointApi {
+  value: number;
+  point_status: MetricKpiPreviousPointApiPointStatus;
+  rate_eligible: boolean;
+  weighted: boolean;
+  unit: string;
+  value_format: string;
+  /** @minLength 1 */
+  unit_noun: string;
+  value_mode: MetricKpiPreviousPointApiValueMode;
+  /** @minimum 0 */
+  eligible_count: number;
+  /** @minimum 0 */
+  evaluated_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  counted_users?: number;
+  /** @minimum 0 */
+  eligible_users?: number;
+  /** @minimum 0 */
+  no_value_users?: number;
+  /** @minimum 0 */
+  conversations_without_user?: number;
+  history_available_from?: string;
+  uncertainty: DerivedMetricUncertaintyApi;
+}
+
 export type DerivedMetricDeltaUncertaintyApiStatus =
   (typeof DerivedMetricDeltaUncertaintyApiStatus)[keyof typeof DerivedMetricDeltaUncertaintyApiStatus];
 
@@ -28778,7 +29037,7 @@ export interface MetricKpiApi {
   provenance: MetricReadProvenanceApi;
   effective_window: MetricEffectiveWindowApi;
   current: MetricPointApi;
-  previous: MetricPointApi;
+  previous: MetricKpiPreviousPointApi;
   delta: number;
   delta_uncertainty: DerivedMetricDeltaUncertaintyApi;
 }

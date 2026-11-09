@@ -46,9 +46,15 @@ export default function MetricResultActions({
       isValid={
         !readOnly &&
         (dashboard
-          ? Boolean(dashboardName.trim()) && matched && !pending && !dashboardBlocked
-          : !dirty && Boolean(monitorName.trim()) && threshold.trim() !== "" &&
-            Number.isFinite(Number(threshold)) && !monitorLocked)
+          ? Boolean(dashboardName.trim()) &&
+            matched &&
+            !pending &&
+            !dashboardBlocked
+          : !dirty &&
+            Boolean(monitorName.trim()) &&
+            threshold.trim() !== "" &&
+            Number.isFinite(Number(threshold)) &&
+            !monitorLocked)
       }
       onSubmit={dashboard ? onDashboard : onMonitor}
     >

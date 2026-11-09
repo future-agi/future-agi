@@ -47,7 +47,9 @@ function overOpaque(foreground, background) {
   const alpha = front.values[3] ?? 1;
   const channels = front.values
     .slice(0, 3)
-    .map((channel, index) => channel * alpha + back.values[index] * (1 - alpha));
+    .map(
+      (channel, index) => channel * alpha + back.values[index] * (1 - alpha),
+    );
   return `rgb(${channels.join(", ")})`;
 }
 function contrastOnSurface(foreground, background, surface) {

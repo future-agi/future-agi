@@ -25,7 +25,9 @@ export default function useMetricNavigationGuard(dirty, onBlock) {
       original[method] = navigator[method];
       navigator[method] = (...args) => {
         if (bypass.current) return original[method].apply(navigator, args);
-        block.current(() => allowNavigation(() => original[method].apply(navigator, args)));
+        block.current(() =>
+          allowNavigation(() => original[method].apply(navigator, args)),
+        );
         return undefined;
       };
     }
@@ -48,7 +50,8 @@ export default function useMetricNavigationGuard(dirty, onBlock) {
         return;
       }
       const nextIndex = window.history.state?.idx;
-      if (!Number.isInteger(currentIndex) || !Number.isInteger(nextIndex)) return;
+      if (!Number.isInteger(currentIndex) || !Number.isInteger(nextIndex))
+        return;
       const delta = nextIndex - currentIndex;
       if (!delta) return;
       event.stopImmediatePropagation();
@@ -58,7 +61,8 @@ export default function useMetricNavigationGuard(dirty, onBlock) {
     };
     window.addEventListener("popstate", pop, true);
     return () => {
-      for (const method of Object.keys(original)) navigator[method] = original[method];
+      for (const method of Object.keys(original))
+        navigator[method] = original[method];
       window.removeEventListener("popstate", pop, true);
     };
   }, [dirty, navigator]);

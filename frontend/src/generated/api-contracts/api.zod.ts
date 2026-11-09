@@ -56374,7 +56374,10 @@ export const TracerDashboardQueryResponse = zod.object({
                               "gt",
                               "gte",
                             ]),
-                            value: zod.object({}).passthrough(),
+                            value: zod
+                              .object({})
+                              .passthrough()
+                              .describe("Any valid JSON value."),
                           })
                           .optional(),
                       }),
@@ -57524,7 +57527,10 @@ export const TracerDashboardWidgetsPreviewQueryResponse = zod.object({
                               "gt",
                               "gte",
                             ]),
-                            value: zod.object({}).passthrough(),
+                            value: zod
+                              .object({})
+                              .passthrough()
+                              .describe("Any valid JSON value."),
                           })
                           .optional(),
                       }),
@@ -58389,7 +58395,10 @@ export const TracerDashboardWidgetsExecuteQueryResponse = zod.object({
                               "gt",
                               "gte",
                             ]),
-                            value: zod.object({}).passthrough(),
+                            value: zod
+                              .object({})
+                              .passthrough()
+                              .describe("Any valid JSON value."),
                           })
                           .optional(),
                       }),
@@ -59406,7 +59415,10 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -59521,7 +59533,10 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -59537,7 +59552,11 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
                     tracerDerivedMetricRunsReadResponseDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -60170,7 +60189,10 @@ export const TracerDerivedMetricsListResponse = zod.object({
               condition: zod
                 .object({
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
                 })
                 .optional(),
             }),
@@ -60304,7 +60326,10 @@ export const TracerDerivedMetricsListResponse = zod.object({
                           "gt",
                           "gte",
                         ]),
-                        value: zod.object({}).passthrough(),
+                        value: zod
+                          .object({})
+                          .passthrough()
+                          .describe("Any valid JSON value."),
                       })
                       .optional(),
                   }),
@@ -60320,7 +60345,11 @@ export const TracerDerivedMetricsListResponse = zod.object({
                         tracerDerivedMetricsListResponseResultsItemDraftDefinitionFieldSpecConditionsItemAliasRegExp,
                       ),
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
                     right_alias: zod
                       .string()
                       .min(1)
@@ -60481,7 +60510,10 @@ export const TracerDerivedMetricsListResponse = zod.object({
               condition: zod
                 .object({
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
                 })
                 .optional(),
             }),
@@ -60615,7 +60647,10 @@ export const TracerDerivedMetricsListResponse = zod.object({
                           "gt",
                           "gte",
                         ]),
-                        value: zod.object({}).passthrough(),
+                        value: zod
+                          .object({})
+                          .passthrough()
+                          .describe("Any valid JSON value."),
                       })
                       .optional(),
                   }),
@@ -60631,7 +60666,11 @@ export const TracerDerivedMetricsListResponse = zod.object({
                         tracerDerivedMetricsListResponseResultsItemDefinitionFieldSpecConditionsItemAliasRegExp,
                       ),
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
                     right_alias: zod
                       .string()
                       .min(1)
@@ -60835,7 +60874,10 @@ export const TracerDerivedMetricsCreateBody = zod.object({
         condition: zod
           .object({
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough(),
+            value: zod
+              .object({})
+              .passthrough()
+              .describe("Any valid JSON value."),
           })
           .optional(),
       }),
@@ -60919,7 +60961,10 @@ export const TracerDerivedMetricsCreateBody = zod.object({
             condition: zod
               .object({
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
               })
               .optional(),
           }),
@@ -60935,7 +60980,11 @@ export const TracerDerivedMetricsCreateBody = zod.object({
                 tracerDerivedMetricsCreateBodyFieldSpecConditionsItemAliasRegExp,
               ),
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough().optional(),
+            value: zod
+              .object({})
+              .passthrough()
+              .optional()
+              .describe("Any valid JSON value."),
             right_alias: zod
               .string()
               .min(1)
@@ -61223,7 +61272,10 @@ export const TracerDerivedMetricsPreviewDraftBody = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -61307,7 +61359,10 @@ export const TracerDerivedMetricsPreviewDraftBody = zod.object({
               condition: zod
                 .object({
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
                 })
                 .optional(),
             }),
@@ -61323,7 +61378,11 @@ export const TracerDerivedMetricsPreviewDraftBody = zod.object({
                   tracerDerivedMetricsPreviewDraftBodyDefinitionFieldSpecConditionsItemAliasRegExp,
                 ),
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough().optional(),
+              value: zod
+                .object({})
+                .passthrough()
+                .optional()
+                .describe("Any valid JSON value."),
               right_alias: zod
                 .string()
                 .min(1)
@@ -61723,7 +61782,10 @@ export const TracerDerivedMetricsValidateFormulaBody = zod.object({
         condition: zod
           .object({
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough(),
+            value: zod
+              .object({})
+              .passthrough()
+              .describe("Any valid JSON value."),
           })
           .optional(),
       }),
@@ -61807,7 +61869,10 @@ export const TracerDerivedMetricsValidateFormulaBody = zod.object({
             condition: zod
               .object({
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
               })
               .optional(),
           }),
@@ -61823,7 +61888,11 @@ export const TracerDerivedMetricsValidateFormulaBody = zod.object({
                 tracerDerivedMetricsValidateFormulaBodyFieldSpecConditionsItemAliasRegExp,
               ),
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough().optional(),
+            value: zod
+              .object({})
+              .passthrough()
+              .optional()
+              .describe("Any valid JSON value."),
             right_alias: zod
               .string()
               .min(1)
@@ -62112,7 +62181,10 @@ export const TracerDerivedMetricsReadResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -62227,7 +62299,10 @@ export const TracerDerivedMetricsReadResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -62243,7 +62318,11 @@ export const TracerDerivedMetricsReadResponse = zod.object({
                     tracerDerivedMetricsReadResponseDraftDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -62390,7 +62469,10 @@ export const TracerDerivedMetricsReadResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -62503,7 +62585,10 @@ export const TracerDerivedMetricsReadResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -62519,7 +62604,11 @@ export const TracerDerivedMetricsReadResponse = zod.object({
                     tracerDerivedMetricsReadResponseDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -62712,7 +62801,10 @@ export const TracerDerivedMetricsUpdateBody = zod.object({
         condition: zod
           .object({
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough(),
+            value: zod
+              .object({})
+              .passthrough()
+              .describe("Any valid JSON value."),
           })
           .optional(),
       }),
@@ -62796,7 +62888,10 @@ export const TracerDerivedMetricsUpdateBody = zod.object({
             condition: zod
               .object({
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
               })
               .optional(),
           }),
@@ -62812,7 +62907,11 @@ export const TracerDerivedMetricsUpdateBody = zod.object({
                 tracerDerivedMetricsUpdateBodyFieldSpecConditionsItemAliasRegExp,
               ),
             operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-            value: zod.object({}).passthrough().optional(),
+            value: zod
+              .object({})
+              .passthrough()
+              .optional()
+              .describe("Any valid JSON value."),
             right_alias: zod
               .string()
               .min(1)
@@ -63081,7 +63180,10 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -63198,7 +63300,10 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -63214,7 +63319,11 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
                     tracerDerivedMetricsUpdateResponseDraftDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -63365,7 +63474,10 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -63480,7 +63592,10 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -63496,7 +63611,11 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
                     tracerDerivedMetricsUpdateResponseDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -63777,7 +63896,10 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -63896,7 +64018,10 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -63912,7 +64037,11 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
                     tracerDerivedMetricsActivateResponseDraftDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -64063,7 +64192,10 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
           condition: zod
             .object({
               operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-              value: zod.object({}).passthrough(),
+              value: zod
+                .object({})
+                .passthrough()
+                .describe("Any valid JSON value."),
             })
             .optional(),
         }),
@@ -64178,7 +64310,10 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -64194,7 +64329,11 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
                     tracerDerivedMetricsActivateResponseDefinitionFieldSpecConditionsItemAliasRegExp,
                   ),
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough().optional(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
                 right_alias: zod
                   .string()
                   .min(1)
@@ -64607,7 +64746,10 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
             condition: zod
               .object({
                 operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                value: zod.object({}).passthrough(),
+                value: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
               })
               .optional(),
           }),
@@ -64741,7 +64883,10 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                         "gt",
                         "gte",
                       ]),
-                      value: zod.object({}).passthrough(),
+                      value: zod
+                        .object({})
+                        .passthrough()
+                        .describe("Any valid JSON value."),
                     })
                     .optional(),
                 }),
@@ -64757,7 +64902,11 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                       tracerDerivedMetricsHistoryResponseResultsItemDefinitionFieldSpecConditionsItemAliasRegExp,
                     ),
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough().optional(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .optional()
+                    .describe("Any valid JSON value."),
                   right_alias: zod
                     .string()
                     .min(1)
@@ -64916,7 +65065,10 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                 condition: zod
                   .object({
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .describe("Any valid JSON value."),
                   })
                   .optional(),
               }),
@@ -65052,7 +65204,10 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                             "gt",
                             "gte",
                           ]),
-                          value: zod.object({}).passthrough(),
+                          value: zod
+                            .object({})
+                            .passthrough()
+                            .describe("Any valid JSON value."),
                         })
                         .optional(),
                     }),
@@ -65075,7 +65230,11 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                         "gt",
                         "gte",
                       ]),
-                      value: zod.object({}).passthrough().optional(),
+                      value: zod
+                        .object({})
+                        .passthrough()
+                        .optional()
+                        .describe("Any valid JSON value."),
                       right_alias: zod
                         .string()
                         .min(1)
@@ -65934,7 +66093,10 @@ export const TracerDerivedMetricsRunsReadResponse = zod.object({
               condition: zod
                 .object({
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
                 })
                 .optional(),
             }),
@@ -66068,7 +66230,10 @@ export const TracerDerivedMetricsRunsReadResponse = zod.object({
                           "gt",
                           "gte",
                         ]),
-                        value: zod.object({}).passthrough(),
+                        value: zod
+                          .object({})
+                          .passthrough()
+                          .describe("Any valid JSON value."),
                       })
                       .optional(),
                   }),
@@ -66084,7 +66249,11 @@ export const TracerDerivedMetricsRunsReadResponse = zod.object({
                         tracerDerivedMetricsRunsReadResponseResultsItemDefinitionFieldSpecConditionsItemAliasRegExp,
                       ),
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
                     right_alias: zod
                       .string()
                       .min(1)
@@ -66464,7 +66633,10 @@ export const TracerDerivedMetricsSnapshotsReadResponse = zod.object({
               condition: zod
                 .object({
                   operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                  value: zod.object({}).passthrough(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
                 })
                 .optional(),
             }),
@@ -66598,7 +66770,10 @@ export const TracerDerivedMetricsSnapshotsReadResponse = zod.object({
                           "gt",
                           "gte",
                         ]),
-                        value: zod.object({}).passthrough(),
+                        value: zod
+                          .object({})
+                          .passthrough()
+                          .describe("Any valid JSON value."),
                       })
                       .optional(),
                   }),
@@ -66614,7 +66789,11 @@ export const TracerDerivedMetricsSnapshotsReadResponse = zod.object({
                         tracerDerivedMetricsSnapshotsReadResponseResultsItemDefinitionFieldSpecConditionsItemAliasRegExp,
                       ),
                     operator: zod.enum(["eq", "ne", "lt", "lte", "gt", "gte"]),
-                    value: zod.object({}).passthrough().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
                     right_alias: zod
                       .string()
                       .min(1)

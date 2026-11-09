@@ -76720,7 +76720,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/MetricPoint",
         },
         previous: {
-          $ref: "#/definitions/MetricPoint",
+          $ref: "#/definitions/MetricKpiPreviousPoint",
         },
         delta: {
           title: "Delta",
@@ -77003,6 +77003,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         retryable: {
           title: "Retryable",
           type: "boolean",
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["on_demand"],
         },
       },
     },
@@ -110844,10 +110849,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
         },
         definition: {
-          $ref: "#/definitions/DerivedMetricVersion",
+          $ref: "#/definitions/MetricHistoryDefinition",
         },
         snapshot: {
-          $ref: "#/definitions/DerivedMetricRun",
+          $ref: "#/definitions/MetricHistorySnapshot",
         },
         status: {
           title: "Status",
@@ -110894,6 +110899,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Ci high",
           type: "number",
           "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    MetricKpiPreviousPoint: {
+      required: [
+        "value",
+        "point_status",
+        "rate_eligible",
+        "weighted",
+        "unit",
+        "value_format",
+        "unit_noun",
+        "value_mode",
+        "eligible_count",
+        "evaluated_count",
+        "missing_count",
+        "uncertainty",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        point_status: {
+          title: "Point status",
+          type: "string",
+          enum: [
+            "ok",
+            "unavailable",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+            "retention_expired",
+            "sampled_inputs_not_supported",
+          ],
+        },
+        rate_eligible: {
+          title: "Rate eligible",
+          type: "boolean",
+        },
+        weighted: {
+          title: "Weighted",
+          type: "boolean",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit_noun: {
+          title: "Unit noun",
+          type: "string",
+          minLength: 1,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["materialized", "on_demand"],
+        },
+        eligible_count: {
+          title: "Eligible count",
+          type: "integer",
+          minimum: 0,
+        },
+        evaluated_count: {
+          title: "Evaluated count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        counted_users: {
+          title: "Counted users",
+          type: "integer",
+          minimum: 0,
+        },
+        eligible_users: {
+          title: "Eligible users",
+          type: "integer",
+          minimum: 0,
+        },
+        no_value_users: {
+          title: "No value users",
+          type: "integer",
+          minimum: 0,
+        },
+        conversations_without_user: {
+          title: "Conversations without user",
+          type: "integer",
+          minimum: 0,
+        },
+        history_available_from: {
+          title: "History available from",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
         },
       },
       "x-nullable": true,
@@ -124157,6 +124272,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         value: {
           title: "Value",
           type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },
@@ -124178,6 +124295,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         value: {
           title: "Value",
           type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         right_alias: {
           title: "Right alias",
@@ -128919,6 +129038,330 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    MetricHistoryDefinition: {
+      required: [
+        "version",
+        "formula",
+        "inputs",
+        "selection_unit",
+        "weighting",
+        "filters",
+        "definition_hash",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        user_rule: {
+          title: "User rule",
+          type: "string",
+          enum: ["", "any", "every", "average", "total"],
+        },
+        field_spec: {
+          $ref: "#/definitions/MetricFieldSpec",
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            title: "Group dims",
+            type: "string",
+            maxLength: 160,
+            minLength: 1,
+          },
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          maxLength: 32,
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+          maxLength: 32,
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+        },
+        sampling: {
+          title: "Sampling",
+          type: "object",
+        },
+        backfill_status: {
+          title: "Backfill status",
+          type: "string",
+          enum: ["pending", "running", "complete", "failed"],
+        },
+        backfill_days_done: {
+          title: "Backfill days done",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        backfill_days_total: {
+          title: "Backfill days total",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        activated_at: {
+          title: "Activated at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        needs_rebuild: {
+          title: "Needs rebuild",
+          type: "boolean",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+      "x-nullable": true,
+    },
+    MetricHistorySnapshot: {
+      required: [
+        "metric_id",
+        "metric_version",
+        "window_start",
+        "window_end",
+        "as_of",
+        "filters",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_version: {
+          title: "Metric version",
+          type: "integer",
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        as_of: {
+          title: "As of",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          maxLength: 255,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        snapshot_id: {
+          title: "Snapshot id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        result_id: {
+          title: "Result id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        source_manifest: {
+          $ref: "#/definitions/DerivedMetricManifest",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["run", "snapshot"],
+        },
+        pinned_manifest: {
+          title: "Pinned manifest",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        pinned_generation: {
+          title: "Pinned generation",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: -9223372036854776000,
+          "x-nullable": true,
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        supported_grain: {
+          title: "Supported grain",
+          type: "string",
+          maxLength: 16,
+        },
+        changed_at: {
+          title: "Changed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        change_reason: {
+          title: "Change reason",
+          type: "string",
+          maxLength: 64,
+        },
+        removed_unit_count: {
+          title: "Removed unit count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        deleted_at: {
+          title: "Deleted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        cleanup_status: {
+          title: "Cleanup status",
+          type: "string",
+          enum: ["", "pending", "running", "done", "failed"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "running", "complete", "failed"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          maxLength: 300,
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     EvalConfig: {
       required: [

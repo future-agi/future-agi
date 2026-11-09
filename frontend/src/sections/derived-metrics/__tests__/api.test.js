@@ -434,37 +434,28 @@ describe("contracted metric transport", () => {
   });
 });
 
-describe("nullable backend comparison versus the current generated contract", () => {
-  // B05 permits previous=null, but C01's referenced MetricPoint lacks nullability.
-  // Do not hand-edit that contract or fabricate a previous point in production.
-  it("preserves a null previous point under the application's default response policy", async () => {
-    vi.stubEnv("VITE_API_CONTRACT_STRICT_RESPONSES", "false");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+describe("nullable comparison in the generated contract", () => {
+  // The backend returns previous=null when there is no previous period; the
+  // regenerated contract marks it nullable, so strict validation accepts it.
+  it("accepts a null previous point under strict response validation", async () => {
     const data = { ...kpi, previous: null };
     serve(data);
-    const result = await metricsApi.kpi({ ...args, params: range });
-    expect(result).toEqual(data);
-    expect(result.previous).toBeNull();
-    expect(result.delta).toBeNull();
-    expect(result.provenance.updated_at).toBeNull();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("previous: Expected object, received null"),
-      expect.objectContaining({ kind: "response" }),
-    );
+    const hook = mount(() => useMetricKpi({ ...args, params: range }));
+    await waitFor(() => expect(hook.result.current.readState).toBe("ready"));
+    expect(hook.result.current.error).toBeNull();
+    expect(hook.result.current.data).toEqual(data);
+    expect(hook.result.current.data.previous).toBeNull();
+    expect(adapter).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces the nullability mismatch as an explicit error when strict validation is enabled", async () => {
-    serve({ ...kpi, previous: null });
+  it("still rejects a previous point of the wrong shape under strict validation", async () => {
+    serve({ ...kpi, previous: "not-a-point" });
     const hook = mount(() => useMetricKpi({ ...args, params: range }));
     await waitFor(() => expect(hook.result.current.readState).toBe("error"));
     expect(hook.result.current.error).toMatchObject({
       name: "ApiContractValidationError",
-      message: expect.stringContaining(
-        "previous: Expected object, received null",
-      ),
     });
     expect(hook.result.current.data).toBeUndefined();
-    expect(adapter).toHaveBeenCalledTimes(1);
   });
 });
 

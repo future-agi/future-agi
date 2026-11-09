@@ -3,6 +3,7 @@
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.derived_metric import (
     DerivedMetric,
     DerivedMetricRun,
@@ -20,7 +21,9 @@ from tracer.services.derived_metrics.uncertainty import (
 
 class MetricObservationConditionSerializer(StrictInputSerializer):
     operator = serializers.ChoiceField(choices=["eq", "ne", "lt", "lte", "gt", "gte"])
-    value = serializers.JSONField()
+    # Scalar comparison values (number, boolean or string); the compiler checks
+    # the type against the input. An object-only schema would reject them.
+    value = JsonValueField()
 
 
 class DerivedMetricInputSerializer(StrictInputSerializer):
@@ -100,7 +103,7 @@ class DerivedMetricFilterSerializer(StrictInputSerializer):
 class MetricConditionSerializer(StrictInputSerializer):
     alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$")
     operator = serializers.ChoiceField(choices=["eq", "ne", "lt", "lte", "gt", "gte"])
-    value = serializers.JSONField(required=False)
+    value = JsonValueField(required=False)
     right_alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$", required=False)
     condition_stage = serializers.ChoiceField(
         choices=["after_reduction"], required=False
@@ -223,6 +226,12 @@ class DerivedMetricVersionSerializer(serializers.ModelSerializer):
         ]
 
 
+class MetricHistoryDefinitionSerializer(DerivedMetricVersionSerializer):
+    class Meta(DerivedMetricVersionSerializer.Meta):
+        # Snapshot history entries carry no definition.
+        swagger_schema_fields = {"x-nullable": True}
+
+
 class DerivedMetricSerializer(serializers.ModelSerializer):
     definition = DerivedMetricVersionSerializer(
         source="active_version", read_only=True, allow_null=True
@@ -321,6 +330,10 @@ class DerivedMetricManifestSerializer(serializers.Serializer):
     captured_at = serializers.DateTimeField()
     semantics = serializers.CharField()
 
+    class Meta:
+        # Only referenced by the nullable DerivedMetricRun.source_manifest.
+        swagger_schema_fields = {"x-nullable": True}
+
 
 class DerivedMetricRunSerializer(serializers.ModelSerializer):
     # The run already selects this immutable FK, including on paginated reads.
@@ -363,6 +376,12 @@ class DerivedMetricRunSerializer(serializers.ModelSerializer):
             "created_at",
             "completed_at",
         ]
+
+
+class MetricHistorySnapshotSerializer(DerivedMetricRunSerializer):
+    class Meta(DerivedMetricRunSerializer.Meta):
+        # Version and recalculation history entries carry no snapshot.
+        swagger_schema_fields = {"x-nullable": True}
 
 
 class DerivedMetricRecomputeSerializer(StrictInputSerializer):
@@ -516,6 +535,10 @@ class DerivedMetricDeltaUncertaintySerializer(serializers.Serializer):
     std_error = serializers.FloatField(allow_null=True)
     ci_low = serializers.FloatField(allow_null=True)
     ci_high = serializers.FloatField(allow_null=True)
+
+    class Meta:
+        # Only referenced by the nullable MetricKpi.delta_uncertainty.
+        swagger_schema_fields = {"x-nullable": True}
 
 
 class DerivedMetricComparisonSerializer(serializers.Serializer):
@@ -790,11 +813,17 @@ class MetricPointSerializer(serializers.Serializer):
     uncertainty = DerivedMetricUncertaintySerializer()
 
 
+class MetricKpiPreviousPointSerializer(MetricPointSerializer):
+    class Meta:
+        # The previous period can be absent (no data or before retention).
+        swagger_schema_fields = {"x-nullable": True}
+
+
 class MetricKpiSerializer(serializers.Serializer):
     provenance = MetricReadProvenanceSerializer()
     effective_window = MetricEffectiveWindowSerializer()
     current = MetricPointSerializer()
-    previous = MetricPointSerializer(allow_null=True)
+    previous = MetricKpiPreviousPointSerializer(allow_null=True)
     delta = serializers.FloatField(allow_null=True)
     delta_uncertainty = DerivedMetricDeltaUncertaintySerializer(allow_null=True)
 
@@ -896,8 +925,8 @@ class MetricRefreshSerializer(serializers.Serializer):
 class MetricHistoryEntrySerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=["version", "recalculation", "snapshot"])
     created_at = serializers.DateTimeField()
-    definition = DerivedMetricVersionSerializer(allow_null=True)
-    snapshot = DerivedMetricRunSerializer(allow_null=True)
+    definition = MetricHistoryDefinitionSerializer(allow_null=True)
+    snapshot = MetricHistorySnapshotSerializer(allow_null=True)
     status = serializers.CharField()
 
 
