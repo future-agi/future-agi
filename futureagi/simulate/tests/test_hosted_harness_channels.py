@@ -545,9 +545,11 @@ def test_receipt_projects_actual_call_end_time_and_duration():
         artifacts.filter.return_value.order_by.return_value.last.return_value = None
         _apply_receipt_to_call(registration, body)
 
-    assert call.started_at == "2026-08-27T10:00:00Z"
-    assert call.ended_at == "2026-08-27T10:01:22Z"
-    assert call.completed_at == "2026-08-27T10:01:22Z"
+    assert call.started_at == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    assert call.ended_at == datetime(2026, 8, 27, 10, 1, 22, tzinfo=UTC)
+    assert call.completed_at == call.ended_at
+    assert body["call"]["started_at"] == "2026-08-27T10:00:00Z"
+    assert body["call"]["ended_at"] == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
     assert call.ended_reason == "simulator_end_call"
     assert (

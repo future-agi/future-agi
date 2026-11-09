@@ -172,7 +172,7 @@ def ingest_result_receipt(
         )
     _assert_body_binding(attempt, body)
     # Offline spool replay bypasses DRF's datetime conversion. Reject malformed
-    # call timestamps before receipt writes, while retaining the signed wire body.
+    # call timestamps before receipt writes, while retaining the original wire body.
     if body.get("call") is not None:
         receipt_call_times(body["call"])
     with transaction.atomic():
