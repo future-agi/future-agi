@@ -2232,3 +2232,94 @@ def test_nothing_stored_yet_keeps_the_read_as_it_is():
 
     read = _record("no_evidence", [], spans=False)
     assert kept_record(None, read) is read
+
+
+def test_a_control_pass_in_both_the_spans_and_the_sealed_rows_is_one_transfer():
+    # The spans read the pass as a hand-off from tool span T; the harness recorded it as a transfer with the same id.
+    spans = [
+        *_RESEARCH[:2],
+        _span(
+            "T",
+            "c",
+            "tool",
+            "transfer_to_agent",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:05",
+        ),
+        _span(
+            "r1",
+            "T",
+            "agent",
+            "researcher",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:05",
+        ),
+        _span(
+            "r1l", "r1", "llm", "think", "2024-11-01T09:50:02", "2024-11-01T09:50:02"
+        ),
+    ]
+    rows = [
+        {
+            **_sealed(
+                "transfer_to_agent",
+                _T0 + 1,
+                by="coordinator",
+                kind="transferred",
+                span="T",
+                to="researcher",
+            ),
+        }
+    ]
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    hand_offs = [
+        (one["type"], one["delegation_id"])
+        for one in events
+        if one["type"] in ("delegated", "transferred", "returned")
+    ]
+    assert hand_offs == [("transferred", "T")]
+
+
+def test_a_span_shows_only_the_sealed_call_whose_outcome_it_shares():
+    # One successful span; the sealed rows hold a failed and a successful call with the same input.
+    spans = [*_RESEARCH, _search_span("a", "x", 2)]
+    spans[-1]["output"] = "found"
+    rows = [
+        _search_row("x", 2, ok=False, error="timed out"),
+        _search_row("x", 2, result="found"),
+    ]
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    assert sorted(
+        (one["status"], one.get("output"))
+        for one in events
+        if one["type"] == "tool_call"
+    ) == [("error", "timed out"), ("ok", "found")]
+
+
+def test_a_control_pass_the_spans_saw_only_as_a_tool_call_is_one_transfer():
+    spans = [
+        *_RESEARCH,
+        _span(
+            "T",
+            "c",
+            "tool",
+            "transfer_to_agent",
+            "2024-11-01T09:50:01",
+            "2024-11-01T09:50:01",
+        ),
+    ]
+    rows = [
+        _sealed(
+            "transfer_to_agent",
+            _T0 + 1,
+            by="coordinator",
+            kind="transferred",
+            span="T",
+            to="researcher",
+        )
+    ]
+    events = worker_timeline(spans, [], run_key=RUN, traced_calls=rows)["events"]
+    assert [
+        (one["type"], one.get("delegation_id") or one.get("span_id"))
+        for one in events
+        if "T" in (one.get("delegation_id"), one.get("span_id"))
+    ] == [("transferred", "T")]

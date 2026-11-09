@@ -211,9 +211,26 @@ def _shown_by_spans(spans: list[WorkerEvent], rows: list[dict[str, Any]]) -> set
             sig(open_[at]) for at in paired_spans
         }
         alike = None not in sigs and len(sigs) == 1
-        if (len(paired_rows) == 1 and len(paired_spans) == 1) or alike:
-            shown.update(row["index"] for row in paired_rows[: len(paired_spans)])
+        if not ((len(paired_rows) == 1 and len(paired_spans) == 1) or alike):
+            continue
+        # The same input is not the same call: a span stands for a row only when their outcomes agree too.
+        left = list(paired_rows)
+        for at in paired_spans:
+            match = next((row for row in left if _same_outcome(row, open_[at])), None)
+            if match is not None:
+                left.remove(match)
+                shown.add(match["index"])
     return shown
+
+
+def _same_outcome(row: dict[str, Any], span: WorkerEvent) -> bool:
+    """Whether a sealed row and a span agree on how the call ended, where both recorded it."""
+    if row["kind"] != "tool_call":
+        return True
+    if row.get("status") and span.get("status") and row["status"] != span["status"]:
+        return False
+    mine, theirs = row.get("output"), _digest(span.get("output"))
+    return mine is None or theirs is None or mine == theirs
 
 
 def _bounded(events: list[WorkerEvent]) -> tuple[list[WorkerEvent], int]:
@@ -591,6 +608,14 @@ def worker_timeline(
                     else traced_worker(by, str(call.get("worker_label") or by))
                 ),
                 "tool": str(call.get("name") or ""),
+                "status": (
+                    "error" if call.get("ok") is False or call.get("refused") else "ok"
+                ),
+                "output": _digest(
+                    call.get("result")
+                    if call.get("result") is not None
+                    else call.get("error")
+                ),
                 "sig": (
                     _summary(
                         (
@@ -626,6 +651,29 @@ def worker_timeline(
         )
         if index in transfers:
             target = transfers[index]
+            # Spans may have read this control pass as a hand-off: the recorded transfer replaces it.
+            ids = ids_of(call)
+            from_spans = [
+                one
+                for one in events
+                if one["type"] == "delegated" and one.get("delegation_id") in ids
+            ]
+            events[:] = [
+                one
+                for one in events
+                if not (
+                    (
+                        one["type"] in ("delegated", "returned")
+                        and one.get("delegation_id") in ids
+                    )
+                    or (one["type"] == "tool_call" and one.get("span_id") in ids)
+                )
+            ]
+            link = {
+                key: from_spans[0][key]
+                for key in ("span_id", "trace_id")
+                if from_spans and from_spans[0].get(key)
+            }
             events.append(
                 {
                     "type": "transferred",
@@ -637,6 +685,7 @@ def worker_timeline(
                     "at": started(call) or when(call.get("ended_at")),
                     "attribution": "reported",
                     **placed_in(call),
+                    **link,
                 }
             )
             continue
