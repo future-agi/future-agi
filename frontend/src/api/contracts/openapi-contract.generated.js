@@ -104539,7 +104539,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     HarnessRunReadinessSelection: {
       description:
-        "The cases readiness held back from this run and why; null when runs are not pinned to versions.",
+        "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
       required: [
         "suite_total",
         "excluded",
@@ -127066,7 +127066,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     HarnessCapabilityReport: {
       description:
-        "The run readiness of the run's versions when it was created.",
+        "The run readiness of the run's versions when it was created; null for a coding agent's key.",
       required: [
         "pairing",
         "validation",
