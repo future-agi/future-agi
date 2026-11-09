@@ -80458,6 +80458,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["num_rows", "columns", "dataset"],
       type: "object",
       properties: {
+        generation_mode: {
+          title: "Generation mode",
+          type: "string",
+          enum: ["append_synthetic"],
+        },
         num_rows: {
           title: "Num rows",
           type: "integer",

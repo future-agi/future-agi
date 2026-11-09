@@ -86,11 +86,21 @@ class SyntheticDataSerializer(SyntheticDatasetCreationSerializer):
 class SyntheticDatasetConfigSerializer(serializers.Serializer):
     """Serializer for getting and updating synthetic dataset configuration"""
 
+    generation_mode = serializers.ChoiceField(
+        choices=["append_synthetic"], required=False
+    )
     num_rows = serializers.IntegerField()
     columns = SyntheticDatasetColumnSerializer(many=True)
     dataset = SyntheticDatasetPayloadSerializer()
     kb_id = serializers.UUIDField(required=False, allow_null=True)
     regenerate = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, data):
+        if data.get("generation_mode") == "append_synthetic" and data.get("regenerate"):
+            raise serializers.ValidationError(
+                "Choose either append or replace, not both."
+            )
+        return data
 
     def validate_dataset(self, value):
         if not value.get("name"):

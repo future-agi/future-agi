@@ -10131,7 +10131,15 @@ export interface SyntheticDatasetConfigResponseApi {
   result: SyntheticDatasetConfigResultApi;
 }
 
+export type SyntheticDatasetConfigApiGenerationMode =
+  (typeof SyntheticDatasetConfigApiGenerationMode)[keyof typeof SyntheticDatasetConfigApiGenerationMode];
+
+export const SyntheticDatasetConfigApiGenerationMode = {
+  append_synthetic: "append_synthetic",
+} as const;
+
 export interface SyntheticDatasetConfigApi {
+  generation_mode?: SyntheticDatasetConfigApiGenerationMode;
   num_rows: number;
   columns: SyntheticDatasetColumnApi[];
   dataset: SyntheticDatasetPayloadApi;

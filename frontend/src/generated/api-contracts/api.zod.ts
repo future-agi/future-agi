@@ -21465,6 +21465,7 @@ export const modelHubDevelopsUpdateSyntheticConfigUpdateBodyRegenerateDefault =
   false;
 
 export const ModelHubDevelopsUpdateSyntheticConfigUpdateBody = zod.object({
+  generation_mode: zod.enum(["append_synthetic"]).optional(),
   num_rows: zod.number(),
   columns: zod.array(
     zod.object({
