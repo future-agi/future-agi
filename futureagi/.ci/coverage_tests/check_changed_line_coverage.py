@@ -75,14 +75,14 @@ class ChangedLineCoverageTest(unittest.TestCase):
             message,
         )
 
-    def collect(self):
+    def collect(self, extra_test=""):
         checks = self.backend / "checks"
         checks.mkdir()
         for group, (function, value) in enumerate((("first", 11), ("second", 12)), 1):
             test = checks / f"test_{function}.py"
             test.write_text(
                 f"from tracer.sample import {function}\n\n"
-                f"def test_result():\n    assert {function}() == {value}\n"
+                f"def test_result():\n    assert {function}() == {value}\n" + extra_test
             )
             env = dict(
                 os.environ, COVERAGE_FILE=str(self.artifacts / f".coverage.{group}")
@@ -143,6 +143,60 @@ class ChangedLineCoverageTest(unittest.TestCase):
             "::notice file=futureagi/tracer/unimported.py,line=1,", result.stdout
         )
         self.assertNotIn("::error", result.stdout)
+
+    def test_same_module_name_in_two_packages_keeps_independent_line_hits(self):
+        package = self.backend / "model_hub"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "sample.py").write_text(
+            "def first():\n    value = 20\n    return value\n\n"
+            "def second():\n    value = 30\n    return value\n"
+        )
+        self.command("git", "add", str(package))
+        self.commit("add same-named module with different executable lines")
+        self.filters = json.dumps(["coverage_tracer", "coverage_model_hub"])
+        self.command(
+            sys.executable,
+            "-I",
+            str(SCRIPT),
+            "configure",
+            "--filters",
+            self.filters,
+            "--config",
+            str(self.config),
+        )
+        self.collect(
+            "\nfrom model_hub.sample import first as model_first\n\n"
+            "def test_model_first():\n    assert model_first() == 20\n"
+        )
+        result = self.report()
+        report = json.loads((self.output / "diff-coverage.json").read_text())
+        tracer = report["src_stats"]["futureagi/tracer/sample.py"]
+        model_hub = report["src_stats"]["futureagi/model_hub/sample.py"]
+        self.assertEqual(tracer["covered_lines"], [2, 5])
+        self.assertEqual(tracer["violation_lines"], [8])
+        self.assertEqual(model_hub["covered_lines"], [1, 2, 3, 5])
+        self.assertEqual(model_hub["violation_lines"], [6, 7])
+        self.assertEqual(report["total_num_lines"], 10)
+        self.assertEqual(report["total_num_violations"], 4)
+        self.assertIn(
+            "60.00% (6/10 changed executable lines)", self.summary.read_text()
+        )
+        for path, uncovered in (("tracer", [8]), ("model_hub", [6, 7])):
+            for line in uncovered:
+                self.assertIn(
+                    f"::notice file=futureagi/{path}/sample.py,line={line},",
+                    result.stdout,
+                )
+        self.assertNotIn(
+            "::notice file=futureagi/model_hub/sample.py,line=8,", result.stdout
+        )
+        self.assertNotIn(
+            "::notice file=futureagi/tracer/sample.py,line=6,", result.stdout
+        )
+        lcov = (self.output / "coverage.lcov").read_text()
+        self.assertIn("SF:futureagi/tracer/sample.py\n", lcov)
+        self.assertIn("SF:futureagi/model_hub/sample.py\n", lcov)
 
     def test_missing_shard_is_unavailable_not_perfect_coverage(self):
         result = self.report()

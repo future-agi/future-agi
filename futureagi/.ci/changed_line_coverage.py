@@ -84,6 +84,21 @@ def summarize(report: dict, packages: list[str], merge_base: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def normalize_lcov_paths(report: Path) -> None:
+    """diff-cover's LCOV reader expects Git-root paths, not coverage's cwd paths."""
+    root = Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True
+        ).strip()
+    )
+    lines = report.read_text().splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("SF:"):
+            source = Path(line[3:]).resolve().relative_to(root)
+            lines[index] = f"SF:{source.as_posix()}"
+    report.write_text("\n".join(lines) + "\n")
+
+
 def report_coverage(args: argparse.Namespace) -> None:
     """Union all shard execution data before comparing the checkout to its merge base."""
     packages = configure(json.loads(args.filters), args.config)
@@ -110,24 +125,25 @@ def report_coverage(args: argparse.Namespace) -> None:
         "--keep",
         *map(str, data),
     )
-    xml = args.output / "coverage.xml"
+    lcov = args.output / "coverage.lcov"
     run(
         sys.executable,
         "-m",
         "coverage",
-        "xml",
+        "lcov",
         "--rcfile",
         str(args.config),
         "-o",
-        str(xml),
+        str(lcov),
     )
+    normalize_lcov_paths(lcov)
     merge_base = subprocess.check_output(
         ["git", "merge-base", args.base, "HEAD"], text=True
     ).strip()
     report = args.output / "diff-coverage.json"
     run(
         "diff-cover",
-        str(xml),
+        str(lcov),
         "--compare-branch",
         merge_base,
         "--diff-range-notation",
