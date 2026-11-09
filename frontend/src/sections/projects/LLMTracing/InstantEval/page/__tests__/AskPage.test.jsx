@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 import axios, { endpoints } from "src/utils/axios";
 import { askLink, readHandoff } from "src/sections/projects/observeHandoff";
+import { EXAMPLES } from "../askExamples";
 
 const fakes = vi.hoisted(() => ({
   startAskRun: vi.fn(),
@@ -601,6 +602,26 @@ function focusRing(element) {
     ),
   );
 }
+
+describe("the example questions", () => {
+  it("stay in place once one is picked, so the Ask button doesn't move", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    const [first, second] = EXAMPLES.sessions;
+    fireEvent.click(screen.getByRole("button", { name: first.question }));
+    expect(screen.getByRole("textbox", { name: "Question 1" })).toHaveValue(
+      first.question,
+    );
+    // Still shown: the one asked can't be added twice, the others still can.
+    expect(screen.getByText("Try one")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: first.question }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: second.question }),
+    ).not.toHaveAttribute("aria-disabled");
+  });
+});
 
 describe("the Ask page", () => {
   it("reads a sample of a big view by default and opens the run", async () => {

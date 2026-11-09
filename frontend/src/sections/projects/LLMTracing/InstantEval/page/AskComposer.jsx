@@ -970,7 +970,14 @@ export default function AskComposer({
     : "";
   const questionWords = `${filled} question${filled === 1 ? "" : "s"}`;
 
-  const showExamples = !questions.some((question) => question.question.trim());
+  // The examples stay put once a question has text, so the Ask button below
+  // doesn't move; one already asked, or with no room left, is disabled.
+  const askedKeys = new Set(
+    questions.map((question) => question.question.trim().toLowerCase()),
+  );
+  const roomForExample =
+    questions.length < MAX_QUESTIONS ||
+    questions.some((question) => !question.question.trim());
   const recent = (saved.items || []).slice(0, 6);
   const nothingInView =
     !population.isLoading &&
@@ -1075,32 +1082,34 @@ export default function AskComposer({
         </Stack>
       </Stack>
 
-      {showExamples && (
-        <Box>
-          <Typography
-            variant="s3"
-            color="text.secondary"
-            component="h2"
-            fontWeight="fontWeightMedium"
-            sx={{ display: "block", mb: 0.75 }}
-          >
-            Try one
-          </Typography>
-          <Stack direction="row" gap={0.75} flexWrap="wrap">
-            {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
-              <Chip
-                key={example.question}
-                size="small"
-                variant="outlined"
-                label={example.question}
-                title={example.question}
-                onClick={() => addQuestion(example)}
-                sx={{ maxWidth: "100%" }}
-              />
-            ))}
-          </Stack>
-        </Box>
-      )}
+      <Box>
+        <Typography
+          variant="s3"
+          color="text.secondary"
+          component="h2"
+          fontWeight="fontWeightMedium"
+          sx={{ display: "block", mb: 0.75 }}
+        >
+          Try one
+        </Typography>
+        <Stack direction="row" gap={0.75} flexWrap="wrap">
+          {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
+            <Chip
+              key={example.question}
+              size="small"
+              variant="outlined"
+              label={example.question}
+              title={example.question}
+              disabled={
+                askedKeys.has(example.question.trim().toLowerCase()) ||
+                !roomForExample
+              }
+              onClick={() => addQuestion(example)}
+              sx={{ maxWidth: "100%" }}
+            />
+          ))}
+        </Stack>
+      </Box>
 
       <Box sx={{ maxWidth: 432 }}>
         <TextField
