@@ -66,7 +66,7 @@ const ExperimentBarSummaryRightSection = () => {
             isDownloading ? (
               <CircularProgress color="inherit" size={16} />
             ) : (
-              <Iconify icon="material-symbols:download" />
+              <Iconify icon="solar:download-minimalistic-linear" />
             )
           }
           disabled={isDownloading}
@@ -78,7 +78,7 @@ const ExperimentBarSummaryRightSection = () => {
       <Button
         variant="contained"
         color="primary"
-        startIcon={<Iconify icon="mdi:crown-outline" />}
+        startIcon={<Iconify icon="solar:crown-linear" />}
         onClick={() => {
           trackEvent(Events.expWinnerClick);
           setChooseWinnerOpen(true);

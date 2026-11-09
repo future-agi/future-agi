@@ -1,22 +1,13 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
   Autocomplete, Box, Stack, Typography, Button, TextField, Slider,
   ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
 
 import SideDrawer from "../../components/SideDrawer";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { EDITOR_COPY, noiseKey, noiseValue, subTasksToText } from "./scenarioEditor.constants";
-
-const fieldSx = { typography: "s2" };
-const selectedToggleSx = (t) => ({
-  bgcolor: alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.09),
-  color: BUILD_TONES.accent,
-  borderColor: BUILD_TONES.accent,
-});
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
@@ -154,37 +145,34 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
   return (
     <SideDrawer open={open} onClose={onClose} width={620}>
       <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+        <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+          <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
             {EDITOR_COPY.title}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
             {EDITOR_COPY.subtitle}
           </Typography>
         </Box>
 
-        <Stack spacing={2.5} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
+        <Stack spacing={3} sx={{ flex: 1, overflow: "auto", p: 3 }}>
           <SectionHeader title={EDITOR_COPY.scenarioSection} />
           <TextField
             size="small" label="Name" value={draft.name || ""} disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: { ...fieldSx, fontFamily: "ui-monospace, Menlo, monospace" } }}
+            InputProps={{ sx: { fontFamily: "ui-monospace, Menlo, monospace" } }}
           />
           <TextField
             size="small" label="Use case" value={draft.useCase || ""} disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="Branch" value={draft.branch || ""} disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="What the caller wants" multiline minRows={2}
             value={draft.instruction || ""} disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="Passes when" multiline minRows={2}
@@ -194,13 +182,11 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
             helperText={canEdit("tests")
               ? "What a pass looks like. Evals grade against this."
               : READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="Sub-goals" multiline minRows={3}
             value={draft.subGoalsText || ""} disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
 
           <SectionHeader title={EDITOR_COPY.personaSection} hint="Who is on the other end of the run." />
@@ -208,18 +194,15 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
             <TextField
               size="small" label="Name" fullWidth value={draft.persona?.name || ""} disabled
               helperText={READ_ONLY_HINT}
-              InputProps={{ sx: fieldSx }}
-            />
+              />
             <TextField
               size="small" label="Age group" fullWidth value={draft.persona?.ageGroup || ""} disabled
               helperText={READ_ONLY_HINT}
-              InputProps={{ sx: fieldSx }}
-            />
+              />
             <TextField
               size="small" label="Gender" fullWidth value={draft.persona?.gender || ""} disabled
               helperText={READ_ONLY_HINT}
-              InputProps={{ sx: fieldSx }}
-            />
+              />
           </Stack>
           {[
             ["Accent", "accent", "accent"],
@@ -243,7 +226,6 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
             disabled={!canEdit("keywords")}
             onChange={(e) => set("keywords")(e.target.value)}
             helperText={canEdit("keywords") ? "Comma-separated, how the scenario is found." : READ_ONLY_HINT}
-            InputProps={{ sx: fieldSx }}
           />
 
           {(canEdit("max_turns") || canEdit("background_noise")) && (
@@ -252,8 +234,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
               {canEdit("max_turns") && (
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", flex: 1 }}>Max turns</Typography>
-                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>{draft.maxTurns ? `~${draft.maxTurns}` : "Default"}</Typography>
+                    <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", flex: 1 }}>Max turns</Typography>
+                    <Typography sx={{ typography: "s1", fontVariantNumeric: "tabular-nums" }}>{draft.maxTurns ? `~${draft.maxTurns}` : "Default"}</Typography>
                   </Stack>
                   <Slider size="small" min={2} max={20} value={Number(draft.maxTurns) || 0} onChange={(_, v) => set("maxTurns")(v)} />
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -263,20 +245,10 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
               )}
               {canEdit("background_noise") && (
                 <Box>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", mb: 0.75 }}>Background noise</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", mb: 1 }}>Background noise</Typography>
                   <ToggleButtonGroup
-                    size="small" exclusive value={draft.backgroundNoise || ""}
+                    size="small" exclusive fullWidth value={draft.backgroundNoise || ""}
                     onChange={(_, v) => v && set("backgroundNoise")(v)}
-                    sx={{
-                      display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 0.75,
-                      "& .MuiToggleButtonGroup-grouped": { m: 0, border: "1px solid", borderRadius: 1 },
-                      "& .MuiToggleButton-root": {
-                        typography: "s2", fontWeight: "fontWeightSemiBold", textTransform: "none",
-                        px: 1.5, py: 0.375, color: "text.secondary", borderColor: "divider",
-                        borderRadius: 1,
-                        "&.Mui-selected": selectedToggleSx,
-                      },
-                    }}
                   >
                     {noiseChoices.map((n) => <ToggleButton key={n} value={n}>{levelLabels[n] ?? n}</ToggleButton>)}
                   </ToggleButtonGroup>
@@ -288,15 +260,14 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
 
         <Stack
           direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Button onClick={onClose} sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>
+          <Button onClick={onClose} size="small" variant="outlined" color="inherit">
             {EDITOR_COPY.cancel}
           </Button>
           <Button
             variant="contained" color="primary" size="small" disabled={!changes.length}
             onClick={save}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
           >
             {EDITOR_COPY.save}
           </Button>
@@ -365,7 +336,7 @@ PersonaField.propTypes = {
 function SectionHeader({ title, hint }) {
   return (
     <Box>
-      <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", color: "text.primary", textTransform: "uppercase", letterSpacing: 0.6, mb: 0.375 }}>
+      <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
         {title}
       </Typography>
       {hint && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>}

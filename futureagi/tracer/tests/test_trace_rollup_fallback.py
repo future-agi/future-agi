@@ -112,6 +112,25 @@ def test_null_rollup_values_never_blank_a_row():
     assert row == _root_row(cost=0.25, total_tokens=8, model="m")
 
 
+@pytest.mark.parametrize("root_cost", [0.0, 0.5])
+def test_unknown_coverage_replaces_zero_or_partial_root_cost(root_cost):
+    row = _root_row(cost=root_cost)
+    apply_trace_rollup(
+        row, _rollup(trace_rollup_cost=None, trace_rollup_cost_unknown=1)
+    )
+    assert row["cost"] is None
+    assert row["total_tokens"] == 61
+
+
+@pytest.mark.parametrize("cost", [0.0, 0.50])
+def test_known_rollup_never_becomes_unknown(cost):
+    row = _root_row(cost=None)
+    apply_trace_rollup(
+        row, _rollup(trace_rollup_cost=cost, trace_rollup_cost_unknown=0)
+    )
+    assert row["cost"] == cost
+
+
 def test_privacy_mode_generation_leaves_content_empty():
     row = _root_row()
     apply_trace_rollup(row, _rollup(first_llm_input="", first_llm_output=""))

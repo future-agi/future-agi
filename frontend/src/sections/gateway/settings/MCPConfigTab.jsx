@@ -15,6 +15,7 @@ import {
   IconButton,
   Button,
 } from "@mui/material";
+import Section from "src/components/section";
 import { Icon } from "@iconify/react";
 
 const MCPConfigTab = ({ mcp, onChange }) => {
@@ -123,7 +124,7 @@ const MCPConfigTab = ({ mcp, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:connection" width={24} />
+        <Icon icon="solar:plug-circle-linear" width={24} />
         <Typography variant="h6">MCP Configuration</Typography>
       </Stack>
 
@@ -148,8 +149,8 @@ const MCPConfigTab = ({ mcp, onChange }) => {
               spacing={1}
               sx={{ mb: 1 }}
             >
-              <Icon icon="mdi:server-network" width={20} />
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Icon icon="solar:server-linear" width={20} />
+              <Typography variant="subtitle1" fontWeight="600">
                 MCP Servers
               </Typography>
             </Stack>
@@ -163,10 +164,13 @@ const MCPConfigTab = ({ mcp, onChange }) => {
             {Object.keys(servers).length > 0 && (
               <Stack spacing={1} sx={{ mb: 2 }}>
                 {Object.entries(servers).map(([id, srv]) => (
-                  <Paper
+                  <Section
                     key={id}
-                    variant="outlined"
-                    sx={{ p: 1.5, bgcolor: "action.hover" }}
+                    sx={{
+                      py: 1.5,
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                    }}
                   >
                     <Stack
                       direction="row"
@@ -202,15 +206,15 @@ const MCPConfigTab = ({ mcp, onChange }) => {
                           {srv.url}
                         </Typography>
                       </Stack>
-                      <IconButton size="small" onClick={() => removeServer(id)}>
-                        <Icon
-                          icon="mdi:delete-outline"
-                          width={18}
-                          color="#d32f2f"
-                        />
+                      <IconButton
+                        sx={{ color: "status.danger.fg" }}
+                        size="small"
+                        onClick={() => removeServer(id)}
+                      >
+                        <Icon icon="solar:trash-bin-trash-linear" width={18} />
                       </IconButton>
                     </Stack>
-                  </Paper>
+                  </Section>
                 ))}
               </Stack>
             )}
@@ -322,8 +326,8 @@ const MCPConfigTab = ({ mcp, onChange }) => {
               spacing={1}
               sx={{ mb: 1 }}
             >
-              <Icon icon="mdi:shield-check-outline" width={20} />
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Icon icon="solar:shield-check-linear" width={20} />
+              <Typography variant="subtitle1" fontWeight="600">
                 MCP Guardrails
               </Typography>
             </Stack>
@@ -493,8 +497,8 @@ const MCPConfigTab = ({ mcp, onChange }) => {
               spacing={1}
               sx={{ mb: 1 }}
             >
-              <Icon icon="mdi:speedometer" width={20} />
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Icon icon="solar:speedometer-middle-linear" width={20} />
+              <Typography variant="subtitle1" fontWeight="600">
                 Tool Rate Limits
               </Typography>
             </Stack>
@@ -520,14 +524,11 @@ const MCPConfigTab = ({ mcp, onChange }) => {
                     />
                     <Typography variant="body2">{rpm} RPM</Typography>
                     <IconButton
+                      sx={{ color: "status.danger.fg" }}
                       size="small"
                       onClick={() => removeToolRateLimit(tool)}
                     >
-                      <Icon
-                        icon="mdi:delete-outline"
-                        width={16}
-                        color="#d32f2f"
-                      />
+                      <Icon icon="solar:trash-bin-trash-linear" width={16} />
                     </IconButton>
                   </Stack>
                 ))}

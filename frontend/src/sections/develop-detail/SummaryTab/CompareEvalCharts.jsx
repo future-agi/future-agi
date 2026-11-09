@@ -32,7 +32,7 @@ const CustomYAxisTick = (props) => {
               backgroundColor: tagBackground,
               color: tagForeground,
               // padding: "2px 4px",
-              borderRadius: "5px",
+              borderRadius: "6px",
               fontSize: "12px",
               marginRight: "8px",
               display: "flex",
@@ -117,7 +117,7 @@ const CompareEvalCharts = ({ multiChartData, metricColumns }) => {
                 border: "1px solid var(--border-light)",
                 paddingX: "10px",
                 paddingY: "20px",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 mb: 3,
               }}
             >
@@ -125,25 +125,21 @@ const CompareEvalCharts = ({ multiChartData, metricColumns }) => {
                 <IconButton
                   size="small"
                   sx={{
-                    color: "#22B3B7",
-                    border: "1px solid #22B3B7",
+                    color: "status.success.fg",
+                    border: "1px solid",
+                    borderColor: "status.success.fg",
                     width: "15px",
-                    height: "15px",
                     padding: 0,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
-                  <Iconify
-                    icon="material-symbols:check"
-                    width={14}
-                    height={14}
-                  />
+                  <Iconify icon="solar:check-linear" width={14} height={14} />
                 </IconButton>
                 <Typography
                   sx={{
-                    fontSize: "14px",
+                    fontSize: "13px",
                     fontWeight: 500,
                     color: "text.primary",
                   }}

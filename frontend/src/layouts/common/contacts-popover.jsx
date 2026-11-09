@@ -74,7 +74,7 @@ export default function ContactsPopover() {
                   primaryTypographyProps={{ typography: "subtitle2" }}
                   secondaryTypographyProps={{
                     typography: "caption",
-                    color: "text.disabled",
+                    color: "text.secondary",
                   }}
                 />
               </MenuItem>

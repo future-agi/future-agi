@@ -1,6 +1,6 @@
-import { Box } from "@mui/material";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useMemo, useState } from "react";
-import { CustomTab, CustomTabs, TabWrapper } from "../SummaryStyle";
 import ColumnBarChart from "./ColumnBarChart";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
@@ -41,29 +41,21 @@ const AnnotationBarChartWrapper = ({ item, names }) => {
   return (
     <Box height="max-content">
       <Box>
-        <TabWrapper sx={{ marginBottom: "0px" }}>
-          <CustomTabs
-            textColor="primary"
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs
             value={currentTab}
             onChange={(e, value) => setCurrentTab(value)}
-            TabIndicatorProps={{
-              style: {
-                opacity: 0,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
           >
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
       </Box>
       <ShowComponent condition={currentTab === "graph"}>
         <ColumnBarChart

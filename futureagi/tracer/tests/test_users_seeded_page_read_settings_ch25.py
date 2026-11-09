@@ -64,6 +64,8 @@ def seeded_tables(ch_client):
             start_time DateTime64(6, 'UTC'),
             trace_id String,
             id String,
+            name String DEFAULT '',
+            parent_span_id String DEFAULT '',
             end_user_id Nullable(UUID),
             end_time Nullable(DateTime64(6, 'UTC')),
             attrs_string Map(LowCardinality(String), String),

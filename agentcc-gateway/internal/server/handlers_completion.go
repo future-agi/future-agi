@@ -336,7 +336,8 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteError(w, models.ErrInternal(err.Error()))
+		// A pre-plugin's refusal — auth, rate limit, budget — keeps its status.
+		models.WriteErrorFromError(w, err)
 		return
 	}
 
@@ -352,8 +353,6 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		models.WriteError(w, models.ErrInternal("no stream from provider"))
 		return
 	}
-
-	sseWriter.WriteHeaders()
 
 	// Track last usage from stream chunks for post-plugin cost/credits tracking.
 	var lastUsage *models.Usage
@@ -375,54 +374,108 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		h.engine.RunPostPlugins(pluginCtx, rc)
 	}
 
+	// The provider asks for usage on every stream, so the cost is known; the
+	// chunk that carries it goes to the client only if the client asked too.
+	clientWantsUsage := rc.Request.StreamOptions != nil && rc.Request.StreamOptions.IncludeUsage
+
+	// relay sends one chunk on as a legacy completion chunk; false ends the stream.
+	relay := func(chunk models.StreamChunk) bool {
+		if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {
+			rc.ResolvedModel = chunk.Model
+		}
+		if chunk.Usage != nil {
+			lastUsage = chunk.Usage
+		}
+		capture.observe(chunk)
+		if len(chunk.Choices) == 0 && chunk.Usage != nil && !clientWantsUsage {
+			return true
+		}
+
+		data, err := json.Marshal(models.CompletionStreamChunkFromChat(chunk))
+		if err != nil {
+			slog.Warn("error marshaling completion stream chunk",
+				"request_id", rc.RequestID,
+				"error", err,
+			)
+			return true
+		}
+		if err := sseWriter.WriteRaw(data); err != nil {
+			slog.Warn("error writing completion stream chunk",
+				"request_id", rc.RequestID,
+				"error", err,
+			)
+			finalizeStream(false)
+			return false
+		}
+		return true
+	}
+
+	// Commit to the 200 only once the upstream has produced a chunk, so a
+	// stream that fails to start — a provider's 4xx included — answers with
+	// its own status, as /v1/chat/completions does.
+	first, startErr := waitForFirstStreamChunk(ctx, chunks, errCh)
+	if startErr != nil {
+		if apiErr := streamEndError(ctx, startErr); apiErr != nil {
+			rc.AddError(apiErr)
+			models.WriteError(w, apiErr)
+		}
+		finalizeStream(ctx.Err() != nil)
+		return
+	}
+	sseWriter.WriteHeaders()
+	if !relay(*first) {
+		return
+	}
+
 	for {
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+					if apiErr != nil {
+						rc.AddError(apiErr)
+						sseWriter.WriteError(apiErr)
+					}
+					finalizeStream(ctx.Err() != nil)
+					return
+				}
+				if wantsStreamMetadata(rc) {
+					// Finalise first: the last chunk carries the cost.
+					finalizeStream(false)
+					metadataChunk := models.CompletionStreamChunkFromChat(*h.buildStreamingMetadataChunk(rc, "", 0, lastUsage))
+					if data, err := json.Marshal(metadataChunk); err == nil {
+						sseWriter.WriteRaw(data)
+					}
+					sseWriter.WriteDone()
+					return
+				}
 				sseWriter.WriteDone()
 				finalizeStream(false)
 				return
 			}
-			if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {
-				rc.ResolvedModel = chunk.Model
-			}
-			if chunk.Usage != nil {
-				lastUsage = chunk.Usage
-			}
-			capture.observe(chunk)
-
-			// Convert chat chunk to legacy completion chunk.
-			completionChunk := models.CompletionStreamChunkFromChat(chunk)
-			data, err := json.Marshal(completionChunk)
-			if err != nil {
-				slog.Warn("error marshaling completion stream chunk",
-					"request_id", rc.RequestID,
-					"error", err,
-				)
-				continue
-			}
-			if err := sseWriter.WriteRaw(data); err != nil {
-				slog.Warn("error writing completion stream chunk",
-					"request_id", rc.RequestID,
-					"error", err,
-				)
-				finalizeStream(false)
+			if !relay(chunk) {
 				return
 			}
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
 				finalizeStream(false)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — drain channel and run post-plugins.
+			// The client left, or the request reached its deadline; only the
+			// second has anyone to tell. Drain the channel and run post-plugins.
+			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
+			}
 			go func() {
 				for range chunks {
 				}

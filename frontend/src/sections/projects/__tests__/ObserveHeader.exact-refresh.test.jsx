@@ -160,7 +160,9 @@ describe("ObserveHeader exact aggregation refresh state", () => {
       once: true,
     });
 
-    fireEvent.click(screen.getByTestId("mdi:refresh").closest("button"));
+    fireEvent.click(
+      screen.getByTestId("solar:refresh-linear").closest("button"),
+    );
 
     expect(refreshData).toHaveBeenCalledWith({ includeAggregations: false });
     expect(aggregationRefresh).toHaveBeenCalledOnce();

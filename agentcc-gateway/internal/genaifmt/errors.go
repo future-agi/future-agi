@@ -2,6 +2,7 @@ package genaifmt
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -12,21 +13,35 @@ import (
 // Redacted like the OpenAI-shaped writer: a dialect response is the same
 // boundary, and an upstream message can carry a credential in a URL.
 func WriteError(w http.ResponseWriter, code int, status string, message string) {
-	message = models.RedactCredentials(message)
-	resp := struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}{}
-	resp.Error.Code = code
-	resp.Error.Message = message
-	resp.Error.Status = status
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(newErrorBody(code, status, message))
+}
+
+// errorBody is a Google error, as a response body and as a stream chunk.
+type errorBody struct {
+	Error struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
+}
+
+func newErrorBody(code int, status, message string) errorBody {
+	var body errorBody
+	body.Error.Code = code
+	body.Error.Message = models.RedactCredentials(message)
+	body.Error.Status = status
+	return body
+}
+
+// StreamErrorEvent is an error as a GenAI stream chunk. Once a stream has
+// sent its 200 the status can no longer change, so this chunk is the only way
+// left to tell the client the stream failed; the Google GenAI SDK raises on a
+// chunk that is an error object.
+func StreamErrorEvent(apiErr *models.APIError) []byte {
+	data, _ := json.Marshal(newErrorBody(apiErr.Status, MapStatusToGoogleStatus(apiErr.Status), apiErr.Message))
+	return fmt.Appendf(nil, "data: %s\n\n", data)
 }
 
 // MapStatusToGoogleStatus maps HTTP status codes to Google error status strings.

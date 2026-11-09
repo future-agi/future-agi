@@ -58,16 +58,10 @@ export default function Calendar({
       >
         <IconButton
           size="small"
-          sx={{
-            width: 24, // reduced width
-            height: 24, // reduced height
-            borderRadius: "4px",
-            padding: "2px", // very tight padding
-            border: "1px solid var(--border-light)",
-          }}
+          sx={{ border: "1px solid var(--border-light)" }}
           onClick={onPrevMonth}
         >
-          <Iconify icon="ep:arrow-left" sx={{ fontSize: 14 }} />{" "}
+          <Iconify icon="solar:alt-arrow-left-linear" sx={{ fontSize: 13 }} />{" "}
           {/* smaller icon */}
         </IconButton>
 
@@ -75,16 +69,11 @@ export default function Calendar({
           {format(monthStart, "MMMM yyyy")}
         </Typography>
         <IconButton
-          sx={{
-            width: 24, // reduced width
-            height: 24, // reduced height
-            borderRadius: "4px",
-            padding: "2px", // very tight padding
-            border: "1px solid var(--border-light)",
-          }}
+          size="small"
+          sx={{ border: "1px solid var(--border-light)" }}
           onClick={onNextMonth}
         >
-          <Iconify icon="ep:arrow-right" />
+          <Iconify icon="solar:alt-arrow-right-linear" />
         </IconButton>
       </Box>
       {/* Weekdays */}
