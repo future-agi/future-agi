@@ -9,6 +9,9 @@ import {
   launchError,
   variationsNote,
   blockedReason,
+  costLimitOf,
+  isTraced,
+  marginSteps,
 } from "../launchFormView";
 
 const LIMITS = {
@@ -162,7 +165,39 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
+    [{ ...ok, traced: true, models: ["m1"] }, null],
+    [{ ...ok, traced: true, models: [] }, "Allow at least one model."],
+    // An untraced agent's fix sees no model, so it needs none allowed.
+    [{ ...ok, traced: false, models: [] }, null],
+    [{ ...ok, costLimit: "0.05" }, null],
+    [
+      { ...ok, costLimit: "0" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
+    [
+      { ...ok, costLimit: "five" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
   ])("passes a valid pick and refuses the rest %#", (input, message) => {
     expect(launchError(input)).toBe(message);
+  });
+});
+
+describe("constraints", () => {
+  it("reads an empty cost limit as none", () => {
+    expect(costLimitOf("")).toBeNull();
+    expect(costLimitOf("  ")).toBeNull();
+    expect(costLimitOf(" 0.02 ")).toBe(0.02);
+    expect(costLimitOf("-1")).toBeNaN();
+  });
+
+  it("offers the margins with the default among them", () => {
+    expect(marginSteps(25)).toEqual([10, 25, 50, 100]);
+    expect(marginSteps(40)).toEqual([10, 25, 40, 50, 100]);
+  });
+
+  it("calls an agent traced only when the run's spans named a model", () => {
+    expect(isTraced({ defaults: { allowed_models: [] } })).toBe(false);
+    expect(isTraced({ defaults: { allowed_models: ["m1"] } })).toBe(true);
   });
 });

@@ -133,11 +133,24 @@ export function verdictCards(fix) {
   ];
 }
 
+// A check that ran but could not measure reads skipped: not verified. After a
+// failed check, the ones left read skipped too, as not run.
 export function checksLine(tiers = []) {
   const counted = tiers.filter((t) => t.status !== "skipped");
   const passed = counted.filter((t) => t.status === "passed").length;
-  return `Checks · ${passed} of ${counted.length} passed`;
+  const line = `Checks · ${passed} of ${counted.length} passed`;
+  const unverified = tiers.length - counted.length;
+  if (!unverified || counted.some((t) => t.status === "failed")) return line;
+  return `${line} · ${unverified} not verified`;
 }
+
+export const tierIcon = (status) =>
+  ({
+    passed: "solar:check-circle-linear",
+    failed: "solar:close-circle-bold",
+    pending: "solar:clock-circle-linear",
+    skipped: "solar:minus-circle-linear",
+  })[status] || "solar:question-circle-linear";
 
 // A trial still being scored has no target rate yet.
 export const hasTargetRate = (c) => Array.isArray(c.verdict?.target_pass_rate);

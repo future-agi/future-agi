@@ -125,6 +125,27 @@ describe("FixVerdict", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks a check the fix could not measure as not verified in the decision drawer", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers = [
+      ...winner.verdict.tiers,
+      {
+        name: "model-lock",
+        status: "skipped",
+        detail: "static check only: no added line names a model",
+      },
+    ];
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    expect(
+      screen.getByText("Checks · 5 of 5 passed · 1 not verified"),
+    ).toBeInTheDocument();
+    const row = screen.getByText("model-lock").parentElement;
+    expect(within(row).getByText("not verified")).toBeInTheDocument();
+    expect(screen.getAllByText("not verified")).toHaveLength(1);
+  });
+
   it("renders a verdict without tiers, here and in the decision drawer", () => {
     const fix = fixOf("fix-ready-archive");
     fix.candidates.forEach((c) => delete c.verdict.tiers);

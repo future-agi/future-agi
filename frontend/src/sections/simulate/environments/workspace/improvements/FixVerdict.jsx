@@ -10,6 +10,7 @@ import {
   checksLine,
   headline,
   pct,
+  tierIcon,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
@@ -52,14 +53,6 @@ function Card({ card }) {
   );
 }
 Card.propTypes = { card: PropTypes.object.isRequired };
-
-const tierIcon = (status) =>
-  ({
-    passed: "solar:check-circle-linear",
-    failed: "solar:close-circle-bold",
-    pending: "solar:clock-circle-linear",
-    skipped: "solar:minus-circle-linear",
-  })[status] || "solar:question-circle-linear";
 
 function Checks({ tiers }) {
   const [all, setAll] = useState(false);

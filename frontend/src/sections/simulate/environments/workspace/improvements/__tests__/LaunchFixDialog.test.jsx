@@ -93,9 +93,9 @@ function formState() {
     fix: picked("cases-fix"),
     protect: picked("cases-protect"),
     surfaces: ["Instructions", "Tools", "Settings", "Code"].filter(surface),
-    locked: [...document.querySelectorAll(".MuiChip-label")].map(
-      (c) => c.textContent,
-    ),
+    locked: [
+      ...screen.getByTestId("locked-files").querySelectorAll(".MuiChip-label"),
+    ].map((c) => c.textContent),
     budget: screen.getByLabelText("Budget").closest(".MuiInputBase-root")
       .textContent,
     time: screen.getByLabelText("Time limit").closest(".MuiInputBase-root")
@@ -373,18 +373,107 @@ describe("LaunchFixDialog", () => {
     const [url, body] = axios.post.mock.calls.at(-1);
     expect(url).toBe("/simulate/api/agent-fix-runs/");
     expect(Object.keys(body).sort()).toEqual([
+      "allowed_models",
       "budget_credits",
+      "cost_limit_usd",
+      "cost_margin_pct",
       "locked_paths",
       "max_minutes",
       "protected_scenario_keys",
+      "reply_latency_margin_pct",
       "source_run_id",
       "surfaces",
       "target_scenario_keys",
     ]);
     expect(body.source_run_id).toBe("te-run-6");
+    // An untraced agent: no model to lock, the default margins, no cost limit.
+    expect([
+      body.allowed_models,
+      body.reply_latency_margin_pct,
+      body.cost_margin_pct,
+      body.cost_limit_usd,
+    ]).toEqual([[], 25, 25, null]);
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("says plainly when the agent is not traced", async () => {
+    renderDialog();
+
+    expect(
+      await screen.findByText(/This agent is not traced/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add an allowed model")).toBeNull();
+  });
+
+  it("locks a traced agent to the models its run called, and sends the user's limits", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = [
+      "gpt-5-mini",
+      "vertex_ai/gemini-3.8-flash",
+    ];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    const models = within(await screen.findByTestId("allowed-models"));
+    expect(
+      [
+        ...screen
+          .getByTestId("allowed-models")
+          .querySelectorAll(".MuiChip-label"),
+      ].map((c) => c.textContent),
+    ).toEqual(["gpt-5-mini", "vertex_ai/gemini-3.8-flash"]);
+    expect(screen.queryByText(/This agent is not traced/)).toBeNull();
+
+    await user.click(models.getAllByTestId("CancelIcon")[0]);
+    await pickOption(user, "Reply time margin", "Up to 10% slower than now");
+    await pickOption(user, "Agent's cost margin", "Up to 50% more than now");
+    await user.type(
+      screen.getByLabelText("Agent's cost limit per conversation"),
+      "0.02",
+    );
+    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect([
+      body.allowed_models,
+      body.reply_latency_margin_pct,
+      body.cost_margin_pct,
+      body.cost_limit_usd,
+    ]).toEqual([["vertex_ai/gemini-3.8-flash"], 10, 50, 0.02]);
+  });
+
+  it("disables Start when a traced agent may call no model, or the cost limit is not a price", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = ["gpt-5-mini"];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    const start = await screen.findByRole("button", {
+      name: "Start improvement",
+    });
+
+    await user.click(
+      within(screen.getByTestId("allowed-models")).getByTestId("CancelIcon"),
+    );
+    expect(start).toBeDisabled();
+    expect(screen.getByText("Allow at least one model.")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Add an allowed model"),
+      "gpt-5{Enter}",
+    );
+    expect(start).toBeEnabled();
+    await user.type(
+      screen.getByLabelText("Agent's cost limit per conversation"),
+      "0",
+    );
+    expect(start).toBeDisabled();
+    expect(
+      screen.getByText("The cost limit must be a number of dollars above 0."),
+    ).toBeInTheDocument();
   });
 });

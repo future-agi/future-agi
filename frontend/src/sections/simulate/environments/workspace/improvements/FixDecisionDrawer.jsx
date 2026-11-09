@@ -13,6 +13,7 @@ import {
   headline,
   pct,
   pts,
+  tierIcon,
   winnerOf,
 } from "./fixRunView";
 
@@ -155,9 +156,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600 }}
                   >{`Trial ${c.attempt}`}</Typography>
-                  <Typography
-                    sx={{ typography: "s3", ...num }}
-                  >
+                  <Typography sx={{ typography: "s3", ...num }}>
                     {c.verdict.target_pass_rate
                       ? `${pct(c.verdict.target_pass_rate[1])}%`
                       : "Pending"}
@@ -198,17 +197,14 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   sx={{ ...rowSx(i + 1), display: "flex" }}
                 >
                   <Iconify
-                    icon={
-                      t.status === "failed"
-                        ? "solar:close-circle-bold"
-                        : "solar:check-circle-linear"
-                    }
+                    icon={tierIcon(t.status)}
                     width={14}
                     sx={{
                       color:
                         t.status === "failed"
                           ? BUILD_TONES.red
                           : "text.secondary",
+                      flexShrink: 0,
                     }}
                   />
                   <Typography
@@ -216,6 +212,19 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   >
                     {t.name}
                   </Typography>
+                  {t.status === "skipped" && (
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "text.secondary",
+                        flexShrink: 0,
+                      }}
+                    >
+                      not verified
+                    </Typography>
+                  )}
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary" }}
                   >

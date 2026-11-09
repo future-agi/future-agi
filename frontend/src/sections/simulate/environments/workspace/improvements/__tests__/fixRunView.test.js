@@ -101,6 +101,19 @@ describe("verdict", () => {
     const rejected = fix.candidates.find((c) => c.outcome === "rejected");
     expect(checksLine(rejected.verdict.tiers)).toBe("Checks · 1 of 2 passed");
   });
+
+  it("says how many checks could not be measured on a verdict that failed none", () => {
+    const tiers = [
+      { name: "repeats", status: "passed" },
+      { name: "ceilings", status: "skipped" },
+      { name: "model-lock", status: "skipped" },
+    ];
+    expect(checksLine(tiers)).toBe("Checks · 1 of 1 passed · 2 not verified");
+    // After a failed check the rest were not run, not unverified.
+    expect(
+      checksLine([{ name: "target", status: "failed" }, ...tiers.slice(1)]),
+    ).toBe("Checks · 0 of 1 passed");
+  });
 });
 
 describe("step rows", () => {
