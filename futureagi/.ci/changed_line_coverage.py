@@ -138,8 +138,6 @@ def report_coverage(args: argparse.Namespace) -> None:
         "0",
         "--format",
         f"json:{report}",
-        "--include",
-        *(f"futureagi/{name}/*" for name in packages),
     )
     args.summary.write_text(
         summarize(json.loads(report.read_text()), packages, merge_base)
