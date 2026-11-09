@@ -33,7 +33,13 @@ class ReadFault:
         self.error_factory = error_factory
 
     def __call__(self, execute, sql, params, many, context):
-        if sql.startswith("SELECT") and f'FROM "{self.table}"' in sql:
+        is_metadata = sql.startswith("SELECT") and f'FROM "{self.table}"' in sql
+        if self.table == "model_hub_column":
+            # Do not fault later full-model reads made by cell persistence.
+            is_metadata = is_metadata and sql.startswith(
+                'SELECT "model_hub_column"."id", "model_hub_column"."data_type"'
+            )
+        if is_metadata:
             self.calls += 1
             if self.calls <= self.failures:
                 raise self.error_factory()
@@ -43,35 +49,57 @@ class ReadFault:
 @pytest.fixture
 def evaluation_case(organization, workspace, user, monkeypatch):
     dataset = Dataset.objects.create(
-        name="metadata-recovery", organization=organization, workspace=workspace,
-        user=user, column_order=[], column_config={},
+        name="metadata-recovery",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
     )
     column = Column.objects.create(
-        dataset=dataset, name="input", data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        name="input",
+        data_type=DataTypeChoices.TEXT.value,
         source=SourceChoices.OTHERS.value,
     )
     row = Row.objects.create(dataset=dataset, order=0)
     Cell.objects.create(dataset=dataset, row=row, column=column, value="sample")
     template = EvalTemplate.objects.create(
-        name="metadata-check", organization=organization, workspace=workspace,
+        name="metadata-check",
+        organization=organization,
+        workspace=workspace,
         config={"required_keys": ["text"], "output": "float"},
     )
     mappings = {"text": str(column.id)}
     metric = UserEvalMetric.objects.create(
-        name="metadata-check", dataset=dataset, template=template, user=user,
-        organization=organization, workspace=workspace,
+        name="metadata-check",
+        dataset=dataset,
+        template=template,
+        user=user,
+        organization=organization,
+        workspace=workspace,
         config={"mapping": mappings, "config": {}},
     )
     output_column = Column.objects.create(
-        dataset=dataset, name="score", data_type=DataTypeChoices.FLOAT.value,
-        source=SourceChoices.EVALUATION.value, source_id=str(metric.id),
+        dataset=dataset,
+        name="score",
+        data_type=DataTypeChoices.FLOAT.value,
+        source=SourceChoices.EVALUATION.value,
+        source_id=str(metric.id),
     )
     output_cell = Cell.objects.create(
-        dataset=dataset, row=row, column=output_column, status=CellStatus.RUNNING.value,
+        dataset=dataset,
+        row=row,
+        column=output_column,
+        status=CellStatus.RUNNING.value,
+        value_infos=json.dumps({}),
     )
     runner = EvaluationRunner(
-        user_eval_metric_id=str(metric.id), is_only_eval=True, format_output=True,
-        organization_id=organization.id, workspace_id=workspace.id,
+        user_eval_metric_id=str(metric.id),
+        is_only_eval=True,
+        format_output=True,
+        organization_id=organization.id,
+        workspace_id=workspace.id,
     )
     runner.user_eval_metric = metric
     runner.dataset = dataset
@@ -85,9 +113,15 @@ def evaluation_case(organization, workspace, user, monkeypatch):
     runner.map_fields = MagicMock(return_value={"text": "sample"})
     evaluator = MagicMock()
     evaluator.format_result = None
-    evaluator.run.return_value = SimpleNamespace(eval_results=[{
-        "data": 1.0, "reason": "matched", "metadata": {},
-    }])
+    evaluator.run.return_value = SimpleNamespace(
+        eval_results=[
+            {
+                "data": 1.0,
+                "reason": "matched",
+                "metadata": {},
+            }
+        ]
+    )
     runner._create_eval_instance = MagicMock(return_value=evaluator)
     runner._run_evaluation = MagicMock(return_value=(None, [], [], {}, evaluator, None))
     runner._format_response = MagicMock(return_value={"data": 1.0, "reason": "matched"})
@@ -98,21 +132,37 @@ def evaluation_case(organization, workspace, user, monkeypatch):
     runner._create_reason_cell = MagicMock()
     log = MagicMock(config="{}", status="processing")
     logger = MagicMock(return_value=log)
-    monkeypatch.setattr("model_hub.views.eval_runner.log_and_deduct_cost_for_api_request", logger)
+    monkeypatch.setattr(
+        "model_hub.views.eval_runner.log_and_deduct_cost_for_api_request", logger
+    )
     statuses = SimpleNamespace(
         PROCESSING=SimpleNamespace(value="processing"),
-        SUCCESS=SimpleNamespace(value="success"), ERROR=SimpleNamespace(value="error"),
+        SUCCESS=SimpleNamespace(value="success"),
+        ERROR=SimpleNamespace(value="error"),
     )
     monkeypatch.setattr("model_hub.views.eval_runner.APICallStatusChoices", statuses)
     monkeypatch.setattr("model_hub.views.utils.evals.APICallStatusChoices", statuses)
-    monkeypatch.setattr("model_hub.services.experiment_utils.is_user_eval_stopped", lambda _: False)
-    monkeypatch.setattr("model_hub.views.utils.evals.GroundTruthService.resolve_preview_examples", lambda **_: [])
+    monkeypatch.setattr(
+        "model_hub.services.experiment_utils.is_user_eval_stopped", lambda _: False
+    )
+    monkeypatch.setattr(
+        "model_hub.views.utils.evals.GroundTruthService.resolve_preview_examples",
+        lambda **_: [],
+    )
     # Keep real connection disposal and database queries; skip only the backoff wait.
     monkeypatch.setattr("model_hub.utils.eval_metadata.time.sleep", MagicMock())
     return SimpleNamespace(
-        runner=runner, row_id=row.id, dataset=dataset, mappings=mappings,
-        output_cell=output_cell, user=user, template=template, workspace=workspace,
-        logger=logger, log=log, evaluator=evaluator,
+        runner=runner,
+        row_id=row.id,
+        dataset=dataset,
+        mappings=mappings,
+        output_cell=output_cell,
+        user=user,
+        template=template,
+        workspace=workspace,
+        logger=logger,
+        log=log,
+        evaluator=evaluator,
     )
 
 
@@ -126,8 +176,17 @@ def run_case(case, path):
         runner.run_evaluation_for_row(case.row_id)
     else:
         return process_eval_for_single_row(
-            runner, case.user, row, case.mappings, {}, False, None,
-            case.template, False, "dataset", case.dataset.id,
+            runner,
+            case.user,
+            row,
+            case.mappings,
+            {},
+            False,
+            None,
+            case.template,
+            False,
+            "dataset",
+            case.dataset.id,
         )
     case.output_cell.refresh_from_db()
     return json.loads(case.output_cell.value_infos)
@@ -138,7 +197,10 @@ def run_case(case, path):
 def test_transient_metadata_read_recovers_once(evaluation_case, path, table):
     case = evaluation_case
     fault = ReadFault(table)
-    with connection.execute_wrapper(fault), patch.object(connection, "close", wraps=connection.close) as close:
+    with (
+        connection.execute_wrapper(fault),
+        patch.object(connection, "close", wraps=connection.close) as close,
+    ):
         result = run_case(case, path)
     assert result["reason"] == "matched"
     assert fault.calls == 2
@@ -157,7 +219,9 @@ def test_transient_metadata_read_recovers_once(evaluation_case, path, table):
 
 @pytest.mark.parametrize("path", ["threaded", "direct", "preview"])
 @pytest.mark.parametrize("table", ["model_hub_column", "accounts_workspace"])
-def test_exhausted_metadata_is_infrastructure_not_evaluator_failure(evaluation_case, path, table):
+def test_exhausted_metadata_is_infrastructure_not_evaluator_failure(
+    evaluation_case, path, table
+):
     case = evaluation_case
     case.runner.user_eval_metric.config["reason_column"] = True
     fault = ReadFault(table, failures=10)
@@ -165,7 +229,9 @@ def test_exhausted_metadata_is_infrastructure_not_evaluator_failure(evaluation_c
         result = run_case(case, path)
     assert fault.calls == 3
     assert result["error_code"] == "EVALUATION_METADATA_UNAVAILABLE"
-    assert result["reason"].startswith("Evaluation not started: database temporarily unavailable")
+    assert result["reason"].startswith(
+        "Evaluation not started: database temporarily unavailable"
+    )
     case.logger.assert_not_called()
     case.runner._run_evaluation.assert_not_called()
     case.evaluator.run.assert_not_called()
@@ -186,14 +252,19 @@ def test_invalid_mapping_stays_terminal(evaluation_case):
 
 def test_missing_workspace_stays_terminal(evaluation_case):
     case = evaluation_case
-    with patch("accounts.models.workspace.Workspace.from_db", side_effect=ValueError("Workspace missing")):
+    with patch(
+        "accounts.models.workspace.Workspace.from_db",
+        side_effect=ValueError("Workspace missing"),
+    ):
         result = run_case(case, "threaded")
     assert case.output_cell.status == CellStatus.ERROR.value
     assert "error_code" not in result
     case.logger.assert_not_called()
 
 
-@pytest.mark.parametrize("phase", ["logging", "provider", "result_save", "usage", "cell_save"])
+@pytest.mark.parametrize(
+    "phase", ["logging", "provider", "result_save", "usage", "cell_save"]
+)
 def test_failures_after_metadata_never_replay_side_effects(evaluation_case, phase):
     case = evaluation_case
     if phase == "logging":
@@ -204,7 +275,11 @@ def test_failures_after_metadata_never_replay_side_effects(evaluation_case, phas
         case.log.save.side_effect = connection_timeout()
     elif phase == "usage":
         case.runner._emit_cell_usage.side_effect = connection_timeout()
-    with patch.object(Cell, "save", side_effect=connection_timeout()) if phase == "cell_save" else patch("model_hub.utils.eval_metadata.time.sleep"):
+    with (
+        patch.object(Cell, "save", side_effect=connection_timeout())
+        if phase == "cell_save"
+        else patch("model_hub.utils.eval_metadata.time.sleep")
+    ):
         run_case(case, "threaded")
     case.logger.assert_called_once()
     assert case.runner._run_evaluation.call_count == (0 if phase == "logging" else 1)
@@ -213,8 +288,9 @@ def test_failures_after_metadata_never_replay_side_effects(evaluation_case, phas
 
 def test_outage_during_error_persistence_does_not_restart_evaluation(evaluation_case):
     case = evaluation_case
-    with connection.execute_wrapper(ReadFault("model_hub_column", failures=10)), patch.object(
-        Cell, "save", side_effect=connection_timeout()
+    with (
+        connection.execute_wrapper(ReadFault("model_hub_column", failures=10)),
+        patch.object(Cell, "save", side_effect=connection_timeout()),
     ):
         run_case(case, "threaded")
     case.output_cell.refresh_from_db()
@@ -225,10 +301,17 @@ def test_outage_during_error_persistence_does_not_restart_evaluation(evaluation_
 
 
 def test_retry_does_not_close_or_replay_inside_atomic(evaluation_case):
-    from model_hub.utils.eval_metadata import EvaluationMetadataUnavailable, read_evaluation_column_types
+    from model_hub.utils.eval_metadata import (
+        EvaluationMetadataUnavailable,
+        read_evaluation_column_types,
+    )
 
     fault = ReadFault("model_hub_column")
-    with transaction.atomic(), connection.execute_wrapper(fault), patch.object(connection, "close") as close:
+    with (
+        transaction.atomic(),
+        connection.execute_wrapper(fault),
+        patch.object(connection, "close") as close,
+    ):
         with pytest.raises(EvaluationMetadataUnavailable):
             read_evaluation_column_types(evaluation_case.mappings.values())
     assert fault.calls == 1

@@ -34,9 +34,18 @@ def _is_connection_failure(error: Exception) -> bool:
     if isinstance(cause, ConnectionTimeout):
         return True
     sqlstate = getattr(cause, "sqlstate", None)
-    return bool(sqlstate and (sqlstate.startswith("08") or sqlstate in {
-        "57P01", "57P02", "57P03",
-    }))
+    return bool(
+        sqlstate
+        and (
+            sqlstate.startswith("08")
+            or sqlstate
+            in {
+                "57P01",
+                "57P02",
+                "57P03",
+            }
+        )
+    )
 
 
 def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:

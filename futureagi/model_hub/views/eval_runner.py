@@ -47,11 +47,6 @@ from model_hub.models.develop_dataset import (
     KnowledgeBaseFile,
     Row,
 )
-from model_hub.utils.eval_metadata import (
-    EvaluationMetadataUnavailable,
-    read_evaluation_column_types,
-    read_evaluation_workspace,
-)
 from model_hub.models.evals_metric import (
     EvalTemplate,
     EvalTemplateVersion,
@@ -69,6 +64,11 @@ from model_hub.serializers.eval_runner import (
     CustomEvalTemplateCreateSerializer,
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
+)
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
 )
 from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
