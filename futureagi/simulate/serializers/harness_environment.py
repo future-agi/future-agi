@@ -1405,7 +1405,11 @@ class HarnessCapabilitySelectionRowSerializer(HarnessCapabilityRowSerializer):
         min_value=0, help_text="Selected cases that need this row."
     )
     affected = HarnessCapabilityAffectedSerializer(
-        help_text="Selected cases this row holds back."
+        help_text=(
+            "Selected cases that need this row while it is not Supported. A run holds"
+            " back only the cases under a Blocked row (selection.held_back); cases"
+            " under a Partial, Unavailable, Stale or Untested row still run."
+        )
     )
 
 
