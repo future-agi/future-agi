@@ -1,11 +1,12 @@
 import uuid
+from functools import partial
 
 from django.contrib.auth.models import (
     AbstractBaseUser,
     BaseUserManager,
     PermissionsMixin,
 )
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -404,7 +405,27 @@ class OrgApiKey(BaseModel):
             self.api_key = self.generate_api_key()
         if not self.secret_key:
             self.secret_key = self.generate_secret_key()
+        # Do not compare with a previous timestamp: concurrent full saves can
+        # restore an old value, and every persisted expiry must evict snapshots.
+        # Respect partial/deferred saves that do not write expires_at at all.
+        update_fields = kwargs.get("update_fields")
+        writes_expiry = (
+            "expires_at" not in self.get_deferred_fields()
+            if update_fields is None
+            else "expires_at" in update_fields
+        )
+        invalidate = not self._state.adding and writes_expiry
         super().save(*args, **kwargs)
+        if invalidate:
+            from accounts.key_cache import publish_key_revocation
+
+            # Admin saves run in an outer transaction. Publishing before commit
+            # lets a collector refill its cache from the old row. Snapshot the
+            # credentials now; a later edit of this Python object is irrelevant.
+            transaction.on_commit(
+                partial(publish_key_revocation, self.api_key, self.secret_key),
+                using=self._state.db,
+            )
 
     @staticmethod
     def generate_api_key():
