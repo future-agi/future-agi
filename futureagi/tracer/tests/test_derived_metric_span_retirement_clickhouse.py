@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from clickhouse_driver.errors import ServerException
 
 from tracer.models.derived_metric import MetricProjectRefresh
 from tracer.services.derived_metrics import reads, span_evidence
@@ -253,6 +254,93 @@ def test_new_bucket_cannot_mask_uncovered_legacy_expiry(
     )
 
 
+@pytest.mark.parametrize("purpose", ["incremental", "backfill"])
+def test_same_bucket_arrivals_cannot_mask_uncovered_legacy_partial_expiry(
+    live_writer, workspace, observe_project, monkeypatch, purpose
+):
+    writer = live_writer
+    wall = datetime.now(UTC).replace(second=0, microsecond=0)
+    now = wall.replace(minute=wall.minute // 15 * 15 + 7)
+    if now > wall:
+        now -= timedelta(minutes=15)
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    cutoff = now - timedelta(days=1)
+    bucket = cutoff.replace(minute=cutoff.minute // 15 * 15)
+    definition = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    trace, session = uuid4(), uuid4()
+    old = []
+    for index in range(2):
+        at = cutoff - timedelta(minutes=index + 1)
+        name = f"old-{index}"
+        seed_span_revision(writer, scope, trace, name, session, at, 10, revision=1)
+        old.append(Dependency(str(trace), name, str(session), str(session), "", "", at))
+    head = writer.refresh(
+        change_for(session, dependencies=old),
+        [definition],
+        scope,
+        start=bucket,
+        end=now,
+        as_of=now,
+    )
+    expected = metric_bucket_rows(writer, head, definition)
+    assert [row[2:] for row in expected] == [(2, 20.0, 2.0)]
+    legacy = legacy_head(writer, head)
+    fields, params = committed_rows_select(
+        FIELD_VALUES, legacy, org_id=writer.org_id, project_id=observe_project.id
+    )
+    assert writer.store.execute(
+        f"SELECT count() FROM ({fields}) WHERE is_deleted = 0", params
+    ) == [(0,)]
+    new = []
+    for index in range(2):
+        at = cutoff + timedelta(minutes=index + 1)
+        name = f"new-{index}"
+        seed_span_revision(writer, scope, trace, name, session, at, 100, revision=1)
+        new.append(Dependency(str(trace), name, str(session), str(session), "", "", at))
+    captures = []
+    original = span_evidence.captured_span_fields
+
+    @contextmanager
+    def recorded(*args, **kwargs):
+        with original(*args, **kwargs) as captured:
+            captures.append(
+                writer.store.execute(
+                    f"SELECT unit_id, bucket_start FROM ({captured[0]}) ORDER BY unit_id"
+                )
+            )
+            yield captured
+
+    monkeypatch.setattr(span_evidence, "captured_span_fields", recorded)
+    writer.retention_days = lambda: 1
+    with pytest.raises(MetricAdmissionUnproven, match="requires backfill"):
+        writer.refresh(
+            change_for(session, cursor=2, dependencies=new),
+            [definition],
+            scope,
+            start=bucket,
+            end=now,
+            as_of=now,
+            purpose=purpose,
+        )
+    # The proposed count equals the legacy count in exactly the same bucket,
+    # but it contains only retained arrivals, not either retiring identity.
+    assert captures == [
+        [
+            (json.dumps([str(trace), f"new-{index}"], separators=(",", ":")), bucket)
+            for index in range(2)
+        ]
+    ]
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.head_manifest_id == legacy.id
+    assert state.watermark_ns == 1
+    assert metric_bucket_rows(writer, legacy, definition) == expected
+    assert writer.store.execute("SELECT count() FROM metric_bucket_retired_parts") == [
+        (0,)
+    ]
+
+
 @pytest.mark.parametrize("budget", ["rows", "bytes"])
 def test_idle_retirement_streams_multiple_admitted_batches_and_terminal_moves(
     live_writer, workspace, observe_project, monkeypatch, budget
@@ -313,6 +401,100 @@ def test_idle_retirement_streams_multiple_admitted_batches_and_terminal_moves(
     assert writer.store.execute(
         "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
     ) == [(0,)]
+    assert not expire_project(
+        writer, [definition], retention_days=writer.retention_days
+    )["purged"]
+
+
+def test_retirement_restarts_all_pages_after_later_capture_byte_overflow(
+    live_writer, workspace, observe_project, monkeypatch
+):
+    writer = live_writer
+    monkeypatch.setattr(span_evidence, "SPAN_CAPTURE_ROWS", 3)
+    definition, scope, trace, session, head, batches = two_publications(
+        writer, workspace, observe_project
+    )
+    fields, params = committed_rows_select(
+        FIELD_VALUES, head, org_id=writer.org_id, project_id=observe_project.id
+    )
+    columns = ", ".join(c for c, _ in SOURCE_SCHEMA if c != "source_rows")
+    sizes = writer.store.execute(
+        f"SELECT length(formatRow('RowBinary', {columns}, toUInt64(1))) "
+        f"FROM ({fields}) ORDER BY unit_id",
+        params,
+    )
+    assert len(sizes) == 6 and len({size for (size,) in sizes}) == 1
+    row_bytes = sizes[0][0]
+    bound = 3 * row_bytes
+    monkeypatch.setattr(span_evidence, "SPAN_CAPTURE_BYTES", bound)
+    # Committed preimages fit three per page. Only the second page grows: each
+    # corrected field still fits alone, while the whole page exceeds the cap.
+    group = "w" * (len("west") + row_bytes)
+    for index in range(3):
+        seed_span_revision(
+            writer,
+            scope,
+            trace,
+            f"1-{index}",
+            session,
+            AT + timedelta(minutes=20),
+            10 + index,
+            revision=2,
+            group=group,
+        )
+    captures, overflows = [], []
+    original = span_evidence.captured_span_fields
+
+    @contextmanager
+    def recorded(*args, **kwargs):
+        lower = kwargs["previous_page"][1]["retiring_after"]
+        try:
+            with original(*args, **kwargs) as captured:
+                captures.append((lower, captured[3], captured[4]))
+                yield captured
+        except ServerException as exc:
+            assert "metric_span_capture_budget" in str(exc)
+            assert writer.store.client.connection.socket is None
+            # The first page has already succeeded and owns an accumulator in
+            # the now-discarded session. This is not a first-page overflow.
+            assert len(captures) == 1 and captures[0][1] == 3
+            overflows.append(lower)
+            raise
+
+    monkeypatch.setattr(span_evidence, "captured_span_fields", recorded)
+    writer.retention_days = lambda: 1
+    assert expire_project(writer, [definition], retention_days=writer.retention_days)[
+        "purged"
+    ]
+    assert overflows == [json.dumps([str(trace), "0-2"], separators=(",", ":"))]
+    # The discarded three-row prefix is read again; all six identities then
+    # succeed once under the reduced cap, which must survive successful pages.
+    assert [count for _, count, _ in captures] == [3, 1, 1, 1, 1, 1, 1]
+    assert captures[0][0] == captures[1][0] == ""
+    assert captures[0][2] == bound
+    assert all(size <= bound for _, _, size in captures)
+    assert all(size > row_bytes for _, _, size in captures[-3:])
+    new_head = MetricProjectRefresh.for_project(observe_project.id).head_manifest
+    assert metric_bucket_rows(writer, new_head, definition) == [
+        (AT, json.dumps(["value", "west"], separators=(",", ":")), 3, 6.0, 3.0),
+        (
+            AT + timedelta(minutes=15),
+            json.dumps(["value", group], separators=(",", ":")),
+            3,
+            33.0,
+            3.0,
+        ),
+    ]
+    assert writer.store.execute(
+        "SELECT sum(unit_count), sum(weighted_n), sum(weighted_d) "
+        "FROM metric_bucket_retired_parts WHERE is_deleted = 0"
+    ) == [(6, 39.0, 6.0)]
+    for name in ("metric_field_values", "metric_field_values_checkpoint"):
+        assert writer.store.execute(f"SELECT count() FROM {name}") == [(0,)]
+    assert writer.store.execute(
+        "SELECT count() FROM system.tables WHERE is_temporary AND (startsWith(name, 'metric_span_capture_') OR startsWith(name, 'metric_frozen_'))"
+    ) == [(0,)]
+    monkeypatch.setattr(span_evidence, "captured_span_fields", original)
     assert not expire_project(
         writer, [definition], retention_days=writer.retention_days
     )["purged"]
