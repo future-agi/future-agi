@@ -8,6 +8,7 @@ import structlog
 from structlog.testing import capture_logs
 
 
+@pytest.mark.requires_ee
 @pytest.mark.parametrize("count", range(5))
 def test_small_summary_skips_without_model_work_or_errors(count, monkeypatch):
     from ee.agenthub.explanation_agent import exp_agent
@@ -28,6 +29,7 @@ def test_small_summary_skips_without_model_work_or_errors(count, monkeypatch):
     assert "synthetic reason" not in str(records)
 
 
+@pytest.mark.requires_ee
 def test_sufficient_run_with_missing_reasons_stays_error(monkeypatch):
     from ee.agenthub.explanation_agent import exp_agent
 
@@ -41,6 +43,7 @@ def test_sufficient_run_with_missing_reasons_stays_error(monkeypatch):
     agent._embed.assert_not_called()
 
 
+@pytest.mark.requires_ee
 def test_five_supported_reasons_enter_embedding():
     from ee.agenthub.explanation_agent.exp_agent import ExplanationAgent
 
