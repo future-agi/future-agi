@@ -208,7 +208,9 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
       project_ids: form.project_id,
       source: "spans",
       cursor_mode: true,
-      page_size: 100,
+      // The property catalog rejects cursor pages above its server maximum
+      // (PROPERTY_CATALOG_MAX_PAGE_SIZE, 50 by default) with HTTP 400.
+      page_size: 50,
       search: sourceSearch,
       ...(cursor ? { cursor } : {}),
     },

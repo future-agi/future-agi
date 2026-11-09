@@ -47,7 +47,10 @@ vi.mock("../api", () => ({
     data: state.capabilities,
     readState: "ready",
   }),
-  useMetricCatalog: () => ({ data: state.catalog, readState: "ready" }),
+  useMetricCatalog: (args) => {
+    state.catalogArgs = args;
+    return { data: state.catalog, readState: "ready" };
+  },
   useMetricEvaluators: () => ({ data: state.evaluators, readState: "ready" }),
   useCreateMetric: () => ({ mutateAsync: state.create }),
   useUpdateMetric: () => ({ mutateAsync: state.update }),
@@ -260,5 +263,12 @@ describe("metric builder page", () => {
       true,
     );
     expect(screen.getByLabelText("Metric name").disabled).toBe(true);
+  });
+
+  it("requests source catalog pages within the server's cursor maximum", () => {
+    renderPage();
+    // PROPERTY_CATALOG_MAX_PAGE_SIZE defaults to 50; larger pages are a 400.
+    expect(state.catalogArgs.params).toMatchObject({ cursor_mode: true });
+    expect(state.catalogArgs.params.page_size).toBeLessThanOrEqual(50);
   });
 });
