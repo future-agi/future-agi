@@ -1218,6 +1218,120 @@ def test_recovery_abandons_old_commands_without_redelivering_on_resend(
     assert [row["message_id"] for row in response.json()["commands"]] == [str(retry.id)]
 
 
+def _started_turn(organization, key, *, queued_ago, polled_ago):
+    """A chat turn running on its command, whose sandbox last polled ``polled_ago``."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationLease
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    job.state = HostedHarnessJob.State.COMPLETED
+    job.save(update_fields=["state", "updated_at"])
+    conversation, command, _ = enqueue_message(
+        job, content="Add 30 more scenarios", client_request_id=key
+    )
+    # What the turn_started event leaves behind.
+    command.created_at = timezone.now() - queued_ago
+    command.state = HostedHarnessConversationMessage.State.DELIVERED
+    command.save(update_fields=["created_at", "state"])
+    conversation.state = "responding"
+    conversation.active_invocation_id = "turn-1"
+    conversation.save()
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox",
+        attempt=None,
+        ttl_seconds=1800,
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        id=capability.lease.id
+    ).update(state="active", heartbeat_at=timezone.now() - polled_ago)
+    return conversation, command
+
+
+@pytest.mark.django_db
+def test_recovery_restarts_a_long_turn_that_just_went_quiet(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Worked for 14 minutes, then stopped polling: past the stale mark, not the give-up.
+    conversation, command = _started_turn(
+        organization,
+        "long-turn",
+        queued_ago=timedelta(minutes=16),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 0
+    assert command.state == HostedHarnessConversationMessage.State.DELIVERED
+    assert scheduled == [str(conversation.id)]
+
+
+@pytest.mark.django_db
+def test_recovery_gives_up_a_turn_whose_restarts_keep_stopping(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Each restart polled once and stopped: recent polls, but an hour since the command.
+    conversation, command = _started_turn(
+        organization,
+        "restart-loop",
+        queued_ago=timedelta(minutes=61),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 1
+    assert command.state == HostedHarnessConversationMessage.State.FAILED
+    assert scheduled == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("started", [True, False])
+def test_give_up_reply_says_whether_the_turn_started(organization, started):
+    from django.utils import timezone
+
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    if started:
+        conversation, command = _started_turn(
+            organization,
+            "gave-up-started",
+            queued_ago=timedelta(minutes=40),
+            polled_ago=timedelta(minutes=16),
+        )
+    else:
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key="gave-up-cold"
+        )
+        conversation, command, _ = enqueue_message(
+            job, content="Add 30 more scenarios", client_request_id="gave-up-cold"
+        )
+        command.created_at = timezone.now() - timedelta(minutes=16)
+        command.save(update_fields=["created_at"])
+
+    counts = recover_stalled_conversations(lambda _conversation_id: None)
+
+    assert counts["abandoned"] == 1
+    reply = conversation.messages.filter(role="assistant").latest("sequence")
+    if started:
+        assert "stopped responding" in reply.content
+        assert "could not start" not in reply.content
+        assert "not delivered" not in reply.content
+    else:
+        assert reply.content.startswith("The environment chat could not start")
+
+
 @pytest.mark.django_db
 def test_recovery_reaches_stalled_chat_past_live_candidates(organization):
     from django.utils import timezone
