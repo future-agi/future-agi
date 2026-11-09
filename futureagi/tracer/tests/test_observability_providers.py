@@ -231,11 +231,12 @@ class TestFetchVapiLogs:
         ).ObservabilityService,
         "_get_agent_definition",
     )
-    def test_classifies_missing_agent(
-        self, mock_get_agent, mock_requests_get
-    ):
+    def test_classifies_missing_agent(self, mock_get_agent, mock_requests_get):
         """Incomplete setup must not look like a successful empty import."""
-        from tracer.services.observability_providers import ObservabilityService, VapiConfigurationError
+        from tracer.services.observability_providers import (
+            ObservabilityService,
+            VapiConfigurationError,
+        )
 
         mock_get_agent.return_value = None
         mock_provider = Mock()
@@ -2482,7 +2483,10 @@ class TestObservabilityServiceIntegration:
         self, mock_get, vapi_provider_without_agent
     ):
         """Missing links surface as configuration health instead of empty success."""
-        from tracer.services.observability_providers import ObservabilityService, VapiConfigurationError
+        from tracer.services.observability_providers import (
+            ObservabilityService,
+            VapiConfigurationError,
+        )
 
         with pytest.raises(VapiConfigurationError) as raised:
             ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
@@ -2592,7 +2596,7 @@ class TestGetCallLogsForRowsWithoutHostedHistory:
             result = ObservabilityService.get_call_logs(provider)
 
         assert result == [{"id": "call-1"}]
-        fetch.assert_called_once_with(provider, None, None, api_key=None)
+        fetch.assert_called_once_with(provider, None, None, configuration=None)
 
     def test_an_unlisted_provider_still_raises(self):
         provider = Mock()

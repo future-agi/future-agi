@@ -233,7 +233,9 @@ def fetch_logs_for_provider(
             _record_configuration_failure(provider.id, exc.reason_code)
             return None
         logger.error(
-            f"{provider.provider}_configuration_error",
+            "retell_configuration_error"
+            if provider.provider == ProviderChoices.RETELL
+            else "vapi_configuration_error",
             provider_id=str(provider_id),
             error_type=type(exc).__name__,
             reason_code=exc.reason_code,
@@ -298,7 +300,9 @@ def _record_configuration_failure(provider_id, reason_code: str) -> None:
     if changed:
         log = logger.error if reason_code == "credential_unreadable" else logger.warning
         log(
-            f"{provider.provider}_configuration_changed",
+            "retell_configuration_changed"
+            if provider.provider == ProviderChoices.RETELL
+            else "vapi_configuration_changed",
             provider_id=str(provider_id),
             status="misconfigured",
             reason_code=reason_code,
@@ -337,7 +341,9 @@ def _provider_configuration_ready(provider) -> bool:
     ):
         provider.poll_state = updated
         logger.info(
-            f"{provider.provider}_configuration_changed",
+            "retell_configuration_changed"
+            if provider.provider == ProviderChoices.RETELL
+            else "vapi_configuration_changed",
             provider_id=str(provider.id),
             status="configured",
         )

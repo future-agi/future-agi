@@ -7,7 +7,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 import structlog
@@ -18,6 +18,9 @@ from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
 from tracer.utils.attribute_accessor import vapi_customer
+
+if TYPE_CHECKING:
+    from tracer.utils.vapi_recording import VapiConfiguration
 
 logger = structlog.get_logger(__name__)
 
@@ -284,7 +287,7 @@ class ObservabilityService:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         *,
-        vapi_configuration=None,
+        vapi_configuration: "VapiConfiguration | None" = None,
     ):
         """
         Fetches call logs from the specified provider.
@@ -325,7 +328,9 @@ class ObservabilityService:
         return VapiRecordingService._api_key_from_agent_definition(agent)
 
     @staticmethod
-    def resolve_vapi_configuration(provider: ObservabilityProvider):
+    def resolve_vapi_configuration(
+        provider: ObservabilityProvider,
+    ) -> "VapiConfiguration":
         """Resolve and validate a provider-scoped key/assistant pair, without HTTP."""
         from tracer.utils.vapi_recording import VapiRecordingService
 
@@ -339,7 +344,9 @@ class ObservabilityService:
                 "Vapi linked agent is deleted", reason_code="deleted_agent"
             )
         try:
-            configuration = VapiRecordingService.configuration_from_agent_definition(agent)
+            configuration = VapiRecordingService.configuration_from_agent_definition(
+                agent
+            )
         except ValueError as exc:
             raise VapiConfigurationError(
                 "Vapi credential could not be decrypted",
@@ -347,7 +354,8 @@ class ObservabilityService:
             ) from exc
         if not configuration.api_key:
             raise VapiConfigurationError(
-                "Vapi API key is not configured for this agent", reason_code="missing_key"
+                "Vapi API key is not configured for this agent",
+                reason_code="missing_key",
             )
         if not configuration.assistant_id:
             raise VapiConfigurationError(
@@ -362,7 +370,7 @@ class ObservabilityService:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         *,
-        configuration=None,
+        configuration: "VapiConfiguration | None" = None,
     ):
         """
         Fetches call logs from Vapi using time-based pagination.

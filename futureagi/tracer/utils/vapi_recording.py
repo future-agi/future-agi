@@ -11,13 +11,16 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone as dt_timezone
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import httpx
 import requests
 import structlog
 
 from simulate.temporal.utils.async_storage import MAX_AUDIO_FILE_SIZE
+
+if TYPE_CHECKING:
+    from simulate.models.agent_definition import AgentDefinition
 
 logger = structlog.get_logger(__name__)
 
@@ -69,8 +72,8 @@ class VapiRateLimitError(Exception):
 class VapiConfiguration:
     """One selected agent version's listing and recording configuration."""
 
-    api_key: Optional[str] = field(repr=False)
-    assistant_id: Optional[str]
+    api_key: str | None = field(repr=False)
+    assistant_id: str | None
 
 
 class VapiRecordingService:
@@ -233,7 +236,9 @@ class VapiRecordingService:
         return cls.configuration_from_agent_definition(agent_def).api_key
 
     @classmethod
-    def configuration_from_agent_definition(cls, agent_def) -> VapiConfiguration:
+    def configuration_from_agent_definition(
+        cls, agent_def: AgentDefinition
+    ) -> VapiConfiguration:
         """Select a version once so its key cannot be paired with another assistant.
 
         Activating a historical version does not restore AgentDefinition's fields.

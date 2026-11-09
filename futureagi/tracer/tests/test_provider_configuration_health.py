@@ -88,7 +88,9 @@ def test_setup_backoff_survives_reload_and_logs_only_transition(
         )
         if reason == "credential_unreadable":
             ProviderCredentials.objects.create(
-                agent_definition=agent, provider_type=provider.provider, api_key="enc::invalid"
+                agent_definition=agent,
+                provider_type=provider.provider,
+                api_key="enc::invalid",
             )
     now = timezone.now()
     monkeypatch.setattr(op.timezone, "now", lambda: now)
@@ -116,9 +118,14 @@ def test_setup_backoff_survives_reload_and_logs_only_transition(
             provider.poll_state["configuration_health"]["next_retry_at"]
         ) == now + timedelta(minutes=20)
     transitions = [
-        entry for entry in logs if entry["event"] == f"{provider.provider}_configuration_changed"
+        entry
+        for entry in logs
+        if entry["event"] == f"{provider.provider}_configuration_changed"
     ]
     assert len(transitions) == 1
+    assert sum(entry["log_level"] == "error" for entry in logs) == (
+        1 if reason == "credential_unreadable" else 0
+    )
     assert transitions[0]["log_level"] == (
         "error" if reason == "credential_unreadable" else "warning"
     )
@@ -427,34 +434,41 @@ def test_unreadable_vapi_credential_never_uses_plaintext(provider, monkeypatch):
 
 
 @pytest.mark.parametrize("provider", ["vapi"], indirect=True)
-def test_vapi_reactivation_uses_one_version_for_listing_and_recording(provider, monkeypatch):
+def test_vapi_reactivation_uses_one_version_for_listing_and_recording(
+    provider, monkeypatch
+):
     agent = attach_agent(provider, assistant_id="older-assistant")
     older = AgentVersion.objects.create(
-        agent_definition=agent, organization=provider.organization,
-        workspace=provider.workspace, version_number=1, status="archived",
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=1,
+        status="archived",
         commit_message="Synthetic older version",
     )
     agent.assistant_id = "newer-assistant"
     agent.save(update_fields=["assistant_id"])
     newer = AgentVersion.objects.create(
-        agent_definition=agent, organization=provider.organization,
-        workspace=provider.workspace, version_number=2, status="active",
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=2,
+        status="active",
         commit_message="Synthetic newer version",
     )
     for version, key in [(older, "older-key"), (newer, "newer-key")]:
         credentials = ProviderCredentials(
-            agent_version=version, provider_type="vapi",
+            agent_version=version,
+            provider_type="vapi",
             assistant_id=version.configuration_snapshot["assistant_id"],
         )
-        credentials.set_api_key(key)
+        credentials.api_key = key
         credentials.save()
     older.activate()
     agent.refresh_from_db()
     assert agent.assistant_id == "newer-assistant"  # activation does not restore this
 
     def respond(*args, **kwargs):
-        assert kwargs["headers"]["Authorization"] == "Bearer older-key"
-        assert kwargs["params"]["assistantId"] == "older-assistant"
         # A concurrent version change must not affect the in-flight rehost key.
         newer.activate()
         return Mock(json=lambda: [{"id": "synthetic-call"}])
@@ -465,14 +479,23 @@ def test_vapi_reactivation_uses_one_version_for_listing_and_recording(provider, 
     monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
     assert poll(provider) is not None
     listing.assert_called_once()
+    assert listing.call_args.kwargs["headers"]["Authorization"] == "Bearer older-key"
+    assert listing.call_args.kwargs["params"]["assistantId"] == "older-assistant"
     assert normalizer.call_args.kwargs["api_key"] == "older-key"
-    assert ObservabilityService.resolve_vapi_configuration(provider).assistant_id == "newer-assistant"
+    assert (
+        ObservabilityService.resolve_vapi_configuration(provider).assistant_id
+        == "newer-assistant"
+    )
 
 
 @pytest.mark.parametrize("provider", ["vapi"], indirect=True)
 @pytest.mark.parametrize("initial_reason", ["missing_agent", "missing_key"])
 def test_vapi_repair_resumes_before_cooldown(provider, monkeypatch, initial_reason):
-    agent = attach_agent(provider, api_key=None) if initial_reason == "missing_key" else None
+    agent = (
+        attach_agent(provider, api_key=None)
+        if initial_reason == "missing_key"
+        else None
+    )
     listing = Mock(return_value=Mock(json=lambda: []))
     monkeypatch.setattr("tracer.services.observability_providers.requests.get", listing)
     watermark = provider.last_fetched_at
@@ -480,19 +503,24 @@ def test_vapi_repair_resumes_before_cooldown(provider, monkeypatch, initial_reas
         for _ in range(3):
             op.fetch_observability_logs._original_func(provider_id=str(provider.id))
         provider.refresh_from_db()
-        assert provider.poll_state["configuration_health"]["reason_code"] == initial_reason
+        assert (
+            provider.poll_state["configuration_health"]["reason_code"] == initial_reason
+        )
         assert provider.poll_state["configuration_health"]["failure_count"] == 1
         assert provider.last_fetched_at == watermark
         listing.assert_not_called()
         if agent is None:
             agent = attach_agent(provider, api_key=None)
         version = AgentVersion.objects.create(
-            agent_definition=agent, organization=provider.organization,
-            workspace=provider.workspace, version_number=1, status="active",
+            agent_definition=agent,
+            organization=provider.organization,
+            workspace=provider.workspace,
+            version_number=1,
+            status="active",
             commit_message="Synthetic repaired version",
         )
         credentials = ProviderCredentials(agent_version=version, provider_type="vapi")
-        credentials.set_api_key("repaired-key")
+        credentials.api_key = "repaired-key"
         credentials.save()
         op.fetch_observability_logs._original_func(provider_id=str(provider.id))
     provider.refresh_from_db()
@@ -500,10 +528,14 @@ def test_vapi_repair_resumes_before_cooldown(provider, monkeypatch, initial_reas
     assert provider.last_fetched_at > watermark
     assert provider.poll_state["other"] == {"sentinel": "preserved"}
     assert provider.enabled
-    assert ObservabilityProviderSerializer(provider).data["configuration_health"] is None
+    assert (
+        ObservabilityProviderSerializer(provider).data["configuration_health"] is None
+    )
     listing.assert_called_once()
     assert listing.call_args.kwargs["headers"]["Authorization"] == "Bearer repaired-key"
-    transitions = [entry for entry in logs if entry["event"] == "vapi_configuration_changed"]
+    transitions = [
+        entry for entry in logs if entry["event"] == "vapi_configuration_changed"
+    ]
     assert [entry["status"] for entry in transitions] == ["misconfigured", "configured"]
     assert not [entry for entry in logs if entry["log_level"] == "error"]
     assert "repaired-key" not in str(logs)
@@ -537,10 +569,15 @@ def test_vapi_disabled_and_manual_runs_do_not_quarantine(provider, monkeypatch):
         assert poll(provider) == op.StoreOutcome(0, 0, 0)
     assert not logs
     with capture_logs() as logs:
-        assert op.fetch_logs_for_provider(
-            provider.id, scheduled=False,
-            start_time=timezone.now() - timedelta(hours=1), end_time=timezone.now(),
-        ) is None
+        assert (
+            op.fetch_logs_for_provider(
+                provider.id,
+                scheduled=False,
+                start_time=timezone.now() - timedelta(hours=1),
+                end_time=timezone.now(),
+            )
+            is None
+        )
     provider.refresh_from_db()
     assert provider.poll_state == before
     assert logs[-1]["event"] == "vapi_configuration_error"
@@ -549,20 +586,27 @@ def test_vapi_disabled_and_manual_runs_do_not_quarantine(provider, monkeypatch):
 
 
 @pytest.mark.parametrize("provider", ["vapi"], indirect=True)
-def test_vapi_version_without_assistant_never_uses_definition_assistant(provider, monkeypatch):
+def test_vapi_version_without_assistant_never_uses_definition_assistant(
+    provider, monkeypatch
+):
     agent = attach_agent(provider)
     version = AgentVersion.objects.create(
-        agent_definition=agent, organization=provider.organization,
-        workspace=provider.workspace, version_number=1,
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=1,
         configuration_snapshot={"assistant_id": ""},
         commit_message="Synthetic incomplete version",
     )
     credentials = ProviderCredentials(agent_version=version, provider_type="vapi")
-    credentials.set_api_key("version-key")
+    credentials.api_key = "version-key"
     credentials.save()
     http = Mock()
     monkeypatch.setattr("tracer.services.observability_providers.requests.get", http)
     assert poll(provider) is None
     provider.refresh_from_db()
-    assert provider.poll_state["configuration_health"]["reason_code"] == "missing_assistant_id"
+    assert (
+        provider.poll_state["configuration_health"]["reason_code"]
+        == "missing_assistant_id"
+    )
     http.assert_not_called()
