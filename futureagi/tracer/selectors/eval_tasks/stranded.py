@@ -79,8 +79,9 @@ def find_stranded_tasks(
         .order_by("id")
     )
     idle_ids = list(
-        (idle.filter(id__gt=idle_after) if idle_after else idle)
-        .values_list("id", flat=True)[:idle_budget]
+        (idle.filter(id__gt=idle_after) if idle_after else idle).values_list(
+            "id", flat=True
+        )[:idle_budget]
     )
     if idle_after and len(idle_ids) < idle_budget:
         idle_ids += list(

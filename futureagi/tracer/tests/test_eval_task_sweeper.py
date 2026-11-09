@@ -47,9 +47,7 @@ def only_this_modules_entries(db):
     so leftovers survive between sessions. The delete runs inside the test's own
     transaction and rolls back with it, leaving nothing changed for anyone else.
     """
-    from tracer.services.eval_tasks.recovery import _SWEEP_POSITION_KEY
-
-    cache.delete(_SWEEP_POSITION_KEY)
+    cache.delete("eval-task-sweep:position:v1")
     EvalLogger.all_objects.filter(status__in=_UNDRAINED).delete()
     EvalTask.all_objects.filter(run_type=RunType.CONTINUOUS).delete()
 
@@ -911,8 +909,12 @@ def test_thresholds_are_derived_and_the_wait_cap_clears_the_blind_floor():
 @pytest.mark.django_db
 class TestIdleContinuousRecovery:
     @pytest.mark.parametrize("status", [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING])
-    @pytest.mark.parametrize("terminal", [None, EvalEntryStatus.COMPLETED, EvalEntryStatus.ERRORED])
-    @pytest.mark.parametrize("verdict", [eval_task_client.WF_CLOSED, eval_task_client.WF_ABSENT])
+    @pytest.mark.parametrize(
+        "terminal", [None, EvalEntryStatus.COMPLETED, EvalEntryStatus.ERRORED]
+    )
+    @pytest.mark.parametrize(
+        "verdict", [eval_task_client.WF_CLOSED, eval_task_client.WF_ABSENT]
+    )
     def test_idle_or_never_dispatched_tasks_are_recovered(
         self, make_task, make_entry, temporal, status, terminal, verdict
     ):
@@ -923,7 +925,8 @@ class TestIdleContinuousRecovery:
 
         result = sweeper.sweep_stranded_eval_tasks._original_func()
 
-        assert result["candidates"] == result["idle_continuous_candidates"] == 1
+        assert result["candidates"] == 1
+        assert result["idle_continuous_candidates"] == 1
         assert result["backlog_candidates"] == 0
         assert result["restarted"] == 1
         assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
@@ -934,8 +937,12 @@ class TestIdleContinuousRecovery:
             entry.refresh_from_db()
             assert (entry.status, entry.updated_at, entry.attempts) == before
 
-    @pytest.mark.parametrize("verdict", [eval_task_client.WF_PROGRESSING, RuntimeError("unavailable")])
-    def test_idle_live_or_unknown_workflow_is_left_untouched(self, make_task, temporal, verdict):
+    @pytest.mark.parametrize(
+        "verdict", [eval_task_client.WF_PROGRESSING, RuntimeError("unavailable")]
+    )
+    def test_idle_live_or_unknown_workflow_is_left_untouched(
+        self, make_task, temporal, verdict
+    ):
         task = make_task(run_type=RunType.CONTINUOUS)
         temporal["verdict"] = verdict
         result = sweeper.sweep_stranded_eval_tasks._original_func()
@@ -946,7 +953,15 @@ class TestIdleContinuousRecovery:
         assert task.start_time is None
         assert result["errors"] == int(isinstance(verdict, Exception))
 
-    @pytest.mark.parametrize("status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED, EvalTaskStatus.COMPLETED])
+    @pytest.mark.parametrize(
+        "status",
+        [
+            EvalTaskStatus.PAUSED,
+            EvalTaskStatus.DELETED,
+            EvalTaskStatus.FAILED,
+            EvalTaskStatus.COMPLETED,
+        ],
+    )
     def test_idle_inactive_tasks_are_excluded(self, make_task, temporal, status):
         make_task(status=status, run_type=RunType.CONTINUOUS)
         assert sweeper.find_stranded_tasks() == []
@@ -983,7 +998,9 @@ class TestIdleContinuousRecovery:
                 assert result["backlog_candidates"] == 1
         assert {str(t.id) for t in idle} <= set(temporal["described"])
 
-    def test_one_slot_budget_alternates_idle_and_backlog(self, make_task, make_entry, temporal, settings):
+    def test_one_slot_budget_alternates_idle_and_backlog(
+        self, make_task, make_entry, temporal, settings
+    ):
         idle = make_task(run_type=RunType.CONTINUOUS)
         backlog = make_task()
         make_entry(backlog)
@@ -1003,32 +1020,46 @@ class TestIdleContinuousRecovery:
         found = sweeper.find_stranded_tasks(limit=4)
         assert len(found) == 4
         assert len({t.id for t in found}) == 4
-        assert [t.id for t in found if t.sweep_candidate_kind == "backlog"][0] == oldest.id
+        assert [t.id for t in found if t.sweep_candidate_kind == "backlog"][
+            0
+        ] == oldest.id
         assert sum(t.sweep_candidate_kind == "idle_continuous" for t in found) == 2
 
-    @pytest.mark.parametrize("status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED])
+    @pytest.mark.parametrize(
+        "status", [EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED, EvalTaskStatus.FAILED]
+    )
     def test_lifecycle_change_during_describe_prevents_entry_mutation(
         self, make_task, make_entry, temporal, monkeypatch, status
     ):
         task = make_task(run_type=RunType.CONTINUOUS)
         entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10000)
+
         def describe(task_id):
             EvalTask.no_workspace_objects.filter(id=task_id).update(status=status)
             return eval_task_client.WF_CLOSED
-        monkeypatch.setattr(eval_task_client, "describe_eval_task_workflow_sync", describe)
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe
+        )
         result = sweeper.sweep_stranded_eval_tasks._original_func()
         entry.refresh_from_db()
         assert (entry.status, entry.attempts) == (EvalEntryStatus.RUNNING, 0)
         assert result["skipped"] == 1
         assert temporal["started"] == []
 
-    def test_soft_delete_during_describe_prevents_reap(self, make_task, make_entry, temporal, monkeypatch):
+    def test_soft_delete_during_describe_prevents_reap(
+        self, make_task, make_entry, temporal, monkeypatch
+    ):
         task = make_task(run_type=RunType.CONTINUOUS)
         entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10000)
+
         def describe(task_id):
             EvalTask.all_objects.filter(id=task_id).update(deleted=True)
             return eval_task_client.WF_CLOSED
-        monkeypatch.setattr(eval_task_client, "describe_eval_task_workflow_sync", describe)
+
+        monkeypatch.setattr(
+            eval_task_client, "describe_eval_task_workflow_sync", describe
+        )
         result = sweeper.sweep_stranded_eval_tasks._original_func()
         entry.refresh_from_db()
         assert (entry.status, entry.attempts) == (EvalEntryStatus.RUNNING, 0)
@@ -1037,11 +1068,18 @@ class TestIdleContinuousRecovery:
 
     def test_pause_after_reap_prevents_dispatch(self, make_task, temporal, monkeypatch):
         from tracer.services.eval_tasks import recovery
+
         task = make_task(run_type=RunType.CONTINUOUS)
+
         def deferred_check(*args, **kwargs):
-            EvalTask.no_workspace_objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+            EvalTask.no_workspace_objects.filter(id=task.id).update(
+                status=EvalTaskStatus.PAUSED
+            )
             return False
-        monkeypatch.setattr(recovery, "only_unreclaimable_claims_remain", deferred_check)
+
+        monkeypatch.setattr(
+            recovery, "only_unreclaimable_claims_remain", deferred_check
+        )
         result = sweeper.sweep_stranded_eval_tasks._original_func()
         assert result["skipped"] == 1
         assert temporal["started"] == []
@@ -1054,9 +1092,13 @@ class TestIdleContinuousRecovery:
         task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
         floor = timezone.now() - timedelta(days=2)
         cursor = floor + timedelta(hours=1)
-        EvalTask.no_workspace_objects.filter(id=task.id).update(start_time=floor, continuous_cursor=cursor)
+        EvalTask.no_workspace_objects.filter(id=task.id).update(
+            start_time=floor, continuous_cursor=cursor
+        )
+
         def start(*args, **kwargs):
             raise RuntimeError("dispatch unavailable")
+
         monkeypatch.setattr(eval_task_client, "start_eval_task_workflow_sync", start)
         for _ in range(2):
             result = sweeper.sweep_stranded_eval_tasks._original_func()
@@ -1066,8 +1108,11 @@ class TestIdleContinuousRecovery:
             assert task.start_time == floor
             assert task.continuous_cursor == cursor
 
-    def test_continuous_restart_uses_real_coalescing_starter(self, make_task, monkeypatch):
+    def test_continuous_restart_uses_real_coalescing_starter(
+        self, make_task, monkeypatch
+    ):
         from temporalio.common import WorkflowIDConflictPolicy
+
         task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
         starts = TestTheRestartRunsOnTheSweepsOwnDescribe()._real_starter(
             monkeypatch, lambda _: eval_task_client.WF_ABSENT
@@ -1078,3 +1123,36 @@ class TestIdleContinuousRecovery:
         assert start["workflow_id"] == f"eval-task-{task.id}"
         assert start["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
         assert start["workflow_input"].workflow_confirmed_stopped
+
+    def test_pause_immediately_before_dispatch_wins(
+        self, make_task, temporal, monkeypatch
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS)
+        manager = EvalTask.no_workspace_objects
+        original_filter = manager.filter
+
+        def pause_before_final_read(*args, **kwargs):
+            if kwargs == {"id": task.id, "status": EvalTaskStatus.RUNNING}:
+                EvalTask.all_objects.filter(id=task.id).update(
+                    status=EvalTaskStatus.PAUSED
+                )
+            return original_filter(*args, **kwargs)
+
+        monkeypatch.setattr(manager, "filter", pause_before_final_read)
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["skipped"] == 1
+        assert temporal["started"] == []
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.PAUSED
+
+    def test_lost_rotation_cache_does_not_disable_recovery(
+        self, make_task, temporal, monkeypatch
+    ):
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("cache unavailable")
+
+        make_task(run_type=RunType.CONTINUOUS)
+        monkeypatch.setattr(cache, "get", unavailable)
+        monkeypatch.setattr(cache, "set", unavailable)
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["restarted"] == 1

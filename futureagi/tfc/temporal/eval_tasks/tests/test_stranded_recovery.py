@@ -359,3 +359,152 @@ class TestContinuousRestartReapsClaimsThatAge:
         await sync_to_async(close_old_connections)()
         assert reaped
         assert status_while_draining == EvalTaskStatus.RUNNING
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("no_leftover_workflow")
+class TestIdleContinuousCatchup:
+    @pytest.mark.parametrize(
+        "status",
+        [EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED],
+    )
+    @pytest.mark.parametrize("has_cursor", [False, True])
+    async def test_restart_preserves_coverage_across_partial_catchup_slices(
+        self,
+        temporal_env,
+        eval_task,
+        make_pending_entries,
+        monkeypatch,
+        settings,
+        status,
+        has_cursor,
+    ):
+        """Real describe/start, workflow, state activity, materializer and cursor.
+
+        Only CH's row proof/metadata and the evaluator are doubled. Two proven
+        prefixes predate the restart by days: resetting start_time to now must
+        not clamp the first prefix past the second and silently lose its rows.
+        """
+        from tfc.temporal.eval_tasks import client
+        from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
+        from tracer.services.eval_tasks.config_hash import resolved_config_hash
+        from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_CURSOR_OVERLAP
+
+        env = temporal_env
+        _point_the_client_at(monkeypatch, env)
+        _patch_completing_run_entry(monkeypatch)
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = status == EvalTaskStatus.FAILED
+        task_id = str(eval_task.id)
+        floor = timezone.now() - timedelta(days=2)
+        rows = await sync_to_async(make_pending_entries)(eval_task, 3)
+        first_span, second_span = [r.observation_span_id for r in rows[1:]]
+
+        class SpanMetadata:
+            def list_by_ids(self, ids, *, project_id, columns):
+                assert project_id == str(eval_task.project_id)
+                return [
+                    {"id": r.observation_span_id, "trace_id": str(r.trace_id)}
+                    for r in rows
+                    if r.observation_span_id in ids
+                ]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.entries.get_reader", SpanMetadata
+        )
+
+        @sync_to_async
+        def prepare():
+            EvalLogger.all_objects.filter(id__in=[r.id for r in rows[1:]]).delete()
+            cfg = eval_task.evals.get()
+            EvalLogger.objects.filter(id=rows[0].id).update(
+                status=EvalEntryStatus.COMPLETED, config_hash=resolved_config_hash(cfg)
+            )
+            EvalTask.objects.filter(id=eval_task.id).update(
+                status=status,
+                run_type=RunType.CONTINUOUS,
+                created_at=floor,
+                start_time=floor if has_cursor else None,
+                continuous_cursor=floor if has_cursor else None,
+            )
+            return EvalLogger.objects.get(id=rows[0].id).updated_at
+
+        completed_at = await prepare()
+        seen_floors = []
+
+        def bounded_proof(task, *, ceiling):
+            current_floor = task.continuous_cursor or task.start_time or task.created_at
+            seen_floors.append(current_floor)
+            if current_floor < floor + timedelta(hours=3):
+                spans = (first_span,)
+                covered = floor + timedelta(hours=3) + CONTINUOUS_CURSOR_OVERLAP
+            elif current_floor < floor + timedelta(hours=6):
+                spans = (second_span,)
+                covered = floor + timedelta(hours=6) + CONTINUOUS_CURSOR_OVERLAP
+            else:
+                spans, covered = (), ceiling
+            return ResolvedRowSet(
+                spans, spans, task.continuous_cursor is None, covered_through=covered
+            )
+
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.reconciler.resolve_desired_rows", bounded_proof
+        )
+        select = client._select
+
+        def quick_poll(*args, **kwargs):
+            workflow_class, state = select(*args, **kwargs)
+            state.poll_interval_seconds = 1
+            return workflow_class, state
+
+        monkeypatch.setattr(client, "_select", quick_poll)
+
+        async with _worker(env, _SWEEP_QUEUE):
+            outcome = await _recover(task_id)
+            assert outcome["restarted"]
+
+            async def all_completed():
+                return await _entries(task_id) == [(EvalEntryStatus.COMPLETED, 0)] * 3
+
+            completed = await _wait_for(all_completed, seconds=30)
+            assert seen_floors[:2] == [floor, floor + timedelta(hours=3)]
+            assert completed
+            live = await _recover(task_id)
+            assert live["progressing"] and not live["restarted"]
+            await env.client.get_workflow_handle(f"eval-task-{task_id}").terminate(
+                "test complete"
+            )
+
+        @sync_to_async
+        def check_preserved():
+            task = EvalTask.objects.get(id=task_id)
+            assert task.start_time == floor
+            assert task.continuous_cursor >= floor + timedelta(hours=6)
+            assert EvalLogger.objects.get(id=rows[0].id).updated_at == completed_at
+
+        await check_preserved()
+
+    async def test_concurrent_idle_recoveries_coalesce_on_one_live_execution(
+        self, temporal_env, eval_task, monkeypatch
+    ):
+        env = temporal_env
+        _point_the_client_at(monkeypatch, env)
+        task_id = str(eval_task.id)
+        await _set_task(
+            task_id, status=EvalTaskStatus.PENDING, run_type=RunType.CONTINUOUS
+        )
+        assert await _sweepable(task_id)
+        # No worker yet: both starts can race, but neither may replace the
+        # execution the other just started under this per-task workflow id.
+        outcomes = await asyncio.gather(_recover(task_id), _recover(task_id))
+        assert any(o["restarted"] for o in outcomes)
+        handle = env.client.get_workflow_handle(f"eval-task-{task_id}")
+        before = await handle.describe()
+        again = await _recover(task_id)
+        after = await handle.describe()
+        assert again["progressing"] and not again["restarted"]
+        assert before.run_id == after.run_id
+        assert after.status.name == "RUNNING"
+        await handle.terminate("test complete")
