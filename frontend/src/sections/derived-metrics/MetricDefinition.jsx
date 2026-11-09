@@ -30,6 +30,12 @@ export default function MetricDefinition({ metric }) {
     ? definition.field_spec.inputs
     : definition.inputs || [];
   const conditions = definition.field_spec?.conditions || [];
+  const isPercentile = definition.kind === "percentile";
+  const percentile = definition.field_spec?.percentile;
+  const percentileLabel =
+    Number.isFinite(percentile) && percentile > 0 && percentile < 1
+      ? `P${new Intl.NumberFormat("en-US", { maximumFractionDigits: 10 }).format(percentile * 100)}`
+      : null;
   return (
     <Stack spacing={5}>
       <Box>
@@ -70,7 +76,13 @@ export default function MetricDefinition({ metric }) {
         }}
       >
         {[
-          ["Calculation", KIND_LABELS[definition.kind] || definition.kind],
+          [
+            "Calculation",
+            isPercentile
+              ? "Percentile"
+              : KIND_LABELS[definition.kind] || definition.kind,
+          ],
+          ...(isPercentile ? [["Selected percentile", percentileLabel]] : []),
           [
             "Measured across",
             LEVEL_LABELS[definition.level] || definition.level,
@@ -108,7 +120,22 @@ export default function MetricDefinition({ metric }) {
           </Stack>
         ))}
       </Stack>
-      {definition.formula && (
+      {isPercentile && (
+        <Box>
+          <Typography component="h3" variant="subtitle2" sx={{ mb: 2 }}>
+            Percentile calculation
+          </Typography>
+          <Typography variant="body2">
+            Estimates {percentileLabel || "the selected percentile"} of{" "}
+            {definition.field_spec?.value_alias ||
+              inputs[0]?.alias ||
+              "the input"}{" "}
+            from the combined distribution of per-unit values using a t-digest.
+            This is a percentile, not an average.
+          </Typography>
+        </Box>
+      )}
+      {!isPercentile && definition.formula && (
         <Box>
           <Typography component="h3" variant="subtitle2" sx={{ mb: 2 }}>
             Formula

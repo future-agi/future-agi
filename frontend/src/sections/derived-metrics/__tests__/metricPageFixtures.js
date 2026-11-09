@@ -52,6 +52,39 @@ export const metric = {
     backfill_days_total: 7,
   },
 };
+const percentileInput = {
+  alias: "duration",
+  source: "span",
+  field: "latency_ms",
+  value_type: "number",
+  reducer: "mean",
+};
+export const percentileMetrics = [0.5, 0.95].map((percentile) => ({
+  ...metric,
+  id: `metric-p${percentile * 100}`,
+  name: "Conversation duration",
+  current_version: 1,
+  active_version: "percentile-version-1",
+  draft_definition: null,
+  definition: {
+    ...metric.definition,
+    id: "percentile-version-1",
+    version: 1,
+    kind: "percentile",
+    value_type: "number",
+    value_format: "number",
+    unit: "ms",
+    value_labels: {},
+    formula: "mean(duration)",
+    inputs: [percentileInput],
+    field_spec: {
+      inputs: [percentileInput],
+      value_alias: "duration",
+      percentile,
+    },
+  },
+}));
+
 export const provenance = {
   manifest_id: "manifest-1",
   generation: 1,

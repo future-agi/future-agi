@@ -65,11 +65,20 @@ const calls = (kind) =>
   mock.get.mock.calls.filter(([url]) => url.endsWith(`/${kind}`));
 const deferred = () => {
   let resolve;
-  const promise = new Promise((r) => {
-    resolve = r;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { resolve, promise };
+  return { resolve, reject, promise };
 };
+async function refetchResource(resource) {
+  await act(async () => {
+    void client.invalidateQueries({
+      predicate: ({ queryKey }) => queryKey[4] === resource,
+    });
+  });
+}
 function mount() {
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 300000 } },
@@ -497,6 +506,185 @@ it("renders history and cursor paging without calling snapshot placeholders", as
     }),
   );
   expect(mock.post).not.toHaveBeenCalled();
+});
+
+it.each(["success", "error"])(
+  "preserves the later history page through a background detail refetch and %s",
+  async (outcome) => {
+    responses.history.next_cursor = "history-anchor";
+    mount();
+    await screen.findByTestId("metric-hero");
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    await screen.findByRole("table", { name: "Metric history" });
+    fireEvent.click(screen.getByRole("button", { name: "Older events" }));
+    await waitFor(() =>
+      expect(calls("history").at(-1)[1].params.before).toBe("history-anchor"),
+    );
+    await screen.findByRole("table", { name: "Metric history" });
+    expect(screen.getByText("Page 2")).toBeVisible();
+
+    const pending = deferred();
+    mock.get.mockImplementation((url) =>
+      url.endsWith("/detail")
+        ? pending.promise
+        : Promise.resolve({ data: responses[url.split("/").at(-1)] }),
+    );
+    await refetchResource("detail");
+    expect(await screen.findByText("Loading metric…")).toBeVisible();
+    expect(
+      screen.queryByRole("table", { name: "Metric history", hidden: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Definition v2")).not.toBeInTheDocument();
+
+    if (outcome === "error") {
+      await act(async () => pending.reject({ statusCode: 503 }));
+      expect(await screen.findByText(/Could not load metric\./)).toBeVisible();
+      expect(screen.queryByText("Definition v2")).not.toBeInTheDocument();
+      mock.get.mockImplementation(async (url) => ({
+        data: responses[url.split("/").at(-1)],
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Retry metric" }));
+    } else {
+      await act(async () => pending.resolve({ data: responses.detail }));
+    }
+
+    expect(
+      await screen.findByRole("table", { name: "Metric history" }),
+    ).toBeVisible();
+    expect(screen.getByText("Page 2")).toBeVisible();
+    expect(screen.queryByText("Page 1")).not.toBeInTheDocument();
+    expect(calls("history").at(-1)[1].params.before).toBe("history-anchor");
+    expect(screen.getByRole("button", { name: "Newer events" })).toBeEnabled();
+  },
+);
+
+it("restores the selected driver source and page after a background detail refetch", async () => {
+  responses.drivers.next_cursor = "signed-driver-page";
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "Drivers" }));
+  await screen.findByRole("table", { name: "Metric drivers" });
+  fireEvent.click(screen.getByRole("button", { name: "Next drivers" }));
+  await waitFor(() =>
+    expect(calls("drivers").at(-1)[1].params.after).toBe("signed-driver-page"),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "session-a" }));
+  await screen.findByRole("dialog", { name: "Conversation source" });
+
+  const pending = deferred();
+  mock.get.mockImplementation((url) =>
+    url.endsWith("/detail")
+      ? pending.promise
+      : Promise.resolve({ data: responses[url.split("/").at(-1)] }),
+  );
+  await refetchResource("detail");
+  expect(await screen.findByText("Loading metric…")).toBeVisible();
+  expect(
+    screen.queryByRole("dialog", { hidden: true }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("passed: false")).not.toBeInTheDocument();
+  await act(async () => pending.resolve({ data: responses.detail }));
+
+  const source = await screen.findByRole("dialog", {
+    name: "Conversation source",
+  });
+  expect(source).toHaveTextContent("session-a");
+  expect(source).toHaveTextContent('"workspace_id":"ws-a"');
+  expect(screen.getByText("Page 2")).toBeVisible();
+  expect(calls("drivers").at(-1)[1].params.after).toBe("signed-driver-page");
+});
+
+it.each(["detail", "trend"])(
+  "preserves the trend table through a background %s refetch, but resets on explicit refresh",
+  async (resource) => {
+    mount();
+    await screen.findByTestId("metric-hero");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "View data table" }),
+    );
+    expect(
+      screen.getByRole("table", { name: "Metric trend data" }),
+    ).toBeVisible();
+    const pending = deferred();
+    mock.get.mockImplementation((url) =>
+      url.endsWith(`/${resource}`)
+        ? pending.promise
+        : Promise.resolve({ data: responses[url.split("/").at(-1)] }),
+    );
+    await refetchResource(resource);
+    expect(
+      await screen.findByText(
+        resource === "detail" ? "Loading metric…" : "Loading trend…",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("table", { name: "Metric trend data", hidden: true }),
+    ).not.toBeInTheDocument();
+    if (resource === "detail")
+      expect(screen.queryByTestId("metric-hero")).not.toBeInTheDocument();
+    await act(async () => pending.resolve({ data: responses[resource] }));
+
+    expect(
+      await screen.findByRole("table", { name: "Metric trend data" }),
+    ).toBeVisible();
+    expect(screen.queryByTestId("trend-chart")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh values" }));
+    expect(await screen.findByTestId("trend-chart")).toBeVisible();
+    expect(
+      screen.queryByRole("table", { name: "Metric trend data" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("resets history pagination when the active definition actually changes", async () => {
+  responses.history.next_cursor = "history-anchor";
+  mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(screen.getByRole("tab", { name: "History" }));
+  await screen.findByRole("table", { name: "Metric history" });
+  fireEvent.click(screen.getByRole("button", { name: "Older events" }));
+  await waitFor(() =>
+    expect(calls("history").at(-1)[1].params.before).toBe("history-anchor"),
+  );
+  await screen.findByRole("table", { name: "Metric history" });
+  expect(screen.getByText("Page 2")).toBeVisible();
+  responses.detail = {
+    ...responses.detail,
+    active_version: "version-3",
+    definition: { ...responses.detail.definition, id: "version-3", version: 3 },
+  };
+  await refetchResource("detail");
+  expect(await screen.findByText("Page 1")).toBeVisible();
+  await screen.findByRole("table", { name: "Metric history" });
+  expect(calls("history").at(-1)[1].params.before).toBeUndefined();
+  expect(screen.getByRole("button", { name: "Newer events" })).toBeDisabled();
+});
+
+it("clears tab interaction state when the workspace changes", async () => {
+  const view = mount();
+  await screen.findByTestId("metric-hero");
+  fireEvent.click(
+    await screen.findByRole("button", { name: "View data table" }),
+  );
+  expect(
+    screen.getByRole("table", { name: "Metric trend data" }),
+  ).toBeVisible();
+  mock.workspace = { ...mock.workspace, currentWorkspaceId: "ws-b" };
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <Routes>
+        <Route
+          path="/dashboard/metrics/:metricId"
+          element={<MetricDetailPage />}
+        />
+      </Routes>
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByTestId("trend-chart")).toBeVisible();
+  expect(
+    screen.queryByRole("table", { name: "Metric trend data" }),
+  ).not.toBeInTheDocument();
+  expect(calls("detail").at(-1)[1].headers["X-Workspace-Id"]).toBe("ws-b");
 });
 
 it("reads the active definition instead of silently substituting the newer draft", async () => {

@@ -97,11 +97,17 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
   const [custom, setCustom] = useState(false);
   const [menu, setMenu] = useState(null);
   const [readRevision, setReadRevision] = useState(0);
+  // Keep only the identity across masked reads, never an unverified definition
+  // or value. A background refetch must not reset the current tab's controls.
+  const [definitionId, setDefinitionId] = useState(null);
+  if (metric && definitionId !== (metric.definition?.id ?? null)) {
+    setDefinitionId(metric.definition?.id ?? null);
+  }
   const userMetric =
     metric?.definition?.level === "user" ||
     (!metric?.definition && metric?.draft_definition?.level === "user");
   const scopeWithProject = { ...scope, projectId: metric?.project_id };
-  const readKey = `${metric?.definition?.id}:${window.window_start}:${window.window_end}:${readRevision}`;
+  const readKey = `${definitionId}:${window.window_start}:${window.window_end}:${readRevision}`;
   return (
     <Stack
       spacing={2}
@@ -331,40 +337,41 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
               </Button>
             </Stack>
           )}
-          <Box
-            role="tabpanel"
-            id={`metric-panel-${tab}`}
-            aria-labelledby={`metric-tab-${tab}`}
-            tabIndex={0}
-            sx={{ pt: 3, minWidth: 0 }}
-          >
-            {tab === "Overview" && (
-              <MetricOverview
-                key={readKey}
-                metric={metric}
-                scope={scopeWithProject}
-                window={window}
-              />
-            )}
-            {tab === "Drivers" && (
-              <MetricDrivers
-                key={readKey}
-                metric={metric}
-                scope={scopeWithProject}
-                window={window}
-              />
-            )}
-            {tab === "History" && (
-              <MetricHistory
-                key={readKey}
-                metric={metric}
-                scope={scopeWithProject}
-              />
-            )}
-            {tab === "Definition" && <MetricDefinition metric={metric} />}
-          </Box>
         </>
       )}
+      <Box
+        role="tabpanel"
+        id={`metric-panel-${tab}`}
+        aria-labelledby={`metric-tab-${tab}`}
+        tabIndex={0}
+        hidden={!metric}
+        sx={{ pt: 3, minWidth: 0 }}
+      >
+        {tab === "Overview" && (
+          <MetricOverview
+            key={readKey}
+            metric={metric}
+            scope={scopeWithProject}
+            window={window}
+          />
+        )}
+        {tab === "Drivers" && (
+          <MetricDrivers
+            key={readKey}
+            metric={metric}
+            scope={scopeWithProject}
+            window={window}
+          />
+        )}
+        {tab === "History" && (
+          <MetricHistory
+            key={readKey}
+            metric={metric}
+            scope={scopeWithProject}
+          />
+        )}
+        {tab === "Definition" && metric && <MetricDefinition metric={metric} />}
+      </Box>
       {custom && (
         <CustomWindow
           window={window}
