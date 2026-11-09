@@ -80,7 +80,7 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     )
     # Whose result this is: the task, or one of the agent's workers; reported beside the task verdict.
     subject = serializers.RegexField(
-        r"^(task|worker:\S+)$", required=False, max_length=255
+        r"^(task|worker:.*\S.*)$", required=False, max_length=255
     )
 
 
