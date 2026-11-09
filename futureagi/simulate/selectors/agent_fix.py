@@ -6,8 +6,10 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
+from statistics import median
 from typing import Any
 
+import structlog
 from django.conf import settings
 from django.db.models import (
     Case,
@@ -33,6 +35,7 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HarnessSuiteVersion,
@@ -47,6 +50,7 @@ from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
     HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     VARIATIONS_PER_CASE,
@@ -82,7 +86,11 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     live_eval_specs,
 )
+from simulate.services.run_traces_v3 import CallUsage, run_usage
 from simulate.temporal.constants import AGENT_FIX_VARIATIONS_MINUTES
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 TRANSCRIPT_CHARS = 8000
 # A lost model is skipped for this long after it was lost: a short outage may be over.
@@ -285,6 +293,11 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     # transcripts, the heavy part, come only then.
     calls = [execution.call_execution for execution in executions]
     transcripts = _transcripts(call.id for call in calls) if finished else {}
+    # Only a fix whose source run exported the agent's model calls reads its runs' spans.
+    request = FixRequest.model_validate(run.fix_run.request)
+    traced = request.observes_models or request.meters_agent_cost
+    usage = call_usage(run) if finished and traced else {}
+    latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
         receipt = (execution.call_execution.call_metadata or {}).get(
@@ -298,6 +311,8 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
                 execution.trial_index,
                 receipt,
                 transcripts.get(execution.call_execution_id, ""),
+                usage=usage.get(str(execution.call_execution_id)),
+                reply_latency_ms=latencies.get(execution.call_execution_id),
             )
         )
     return CheckRunStatus(
@@ -375,7 +390,13 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
 
 
 def _record(
-    scenario_key: str, trial: int, receipt: Mapping[str, Any], transcript: str
+    scenario_key: str,
+    trial: int,
+    receipt: Mapping[str, Any],
+    transcript: str,
+    *,
+    usage: CallUsage | None = None,
+    reply_latency_ms: float | None = None,
 ) -> CheckRecord:
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
     judged = judged_sub_goals(receipt)
@@ -407,7 +428,75 @@ def _record(
         },
         transcript=transcript,
         duration_s=duration_ms / 1000 if duration_ms else None,
+        models=usage.models if usage else [],
+        spans_seen=usage.llm_spans if usage else 0,
+        agent_cost_usd=usage.cost_usd if usage else None,
+        reply_latency_ms=reply_latency_ms,
     )
+
+
+def call_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
+    """Each call's model calls in a run, from the spans its agent exported, by call id.
+    Empty when the agent is not traced, and when the read fails: the calls then read as
+    unmeasured, and what depends on them as not verified."""
+    if run.test_execution_id is None:
+        return {}
+    try:
+        return run_usage(run.test_execution) or {}
+    except CHError:
+        logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
+        return {}
+
+
+def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
+    return sorted({model for one in usage.values() for model in one.models})
+
+
+def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
+    """Each call's reply latency in ms. A voice call has its agent's average latency. A
+    chat has the median, over its exchanges, of the agent's first message time less the
+    user message's: hosted chat stores both on each row's items, and an exchange's two
+    rows share their created_at."""
+    latencies: dict[Any, float | None] = {}
+    chats = []
+    for call in calls:
+        if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+            chats.append(call.id)
+        else:
+            latencies[call.id] = (
+                float(call.avg_agent_latency_ms)
+                if call.avg_agent_latency_ms is not None
+                else None
+            )
+    exchanges: dict[Any, dict[Any, dict[str, int]]] = defaultdict(dict)
+    rows = ChatMessageModel.no_workspace_objects.filter(
+        call_execution_id__in=chats,
+        role__in=[
+            ChatMessageModel.RoleChoices.USER,
+            ChatMessageModel.RoleChoices.ASSISTANT,
+        ],
+    ).values_list("call_execution_id", "created_at", "role", "content")
+    for call_id, created_at, role, content in rows:
+        at = next(
+            (
+                item["start_time_ms"]
+                for item in content or []
+                if isinstance(item, Mapping)
+                and isinstance(item.get("start_time_ms"), int)
+            ),
+            None,
+        )
+        if at is not None:
+            exchanges[call_id].setdefault(created_at, {})[role] = at
+    for call_id in chats:
+        gaps = [
+            times["assistant"] - times["user"]
+            for times in exchanges[call_id].values()
+            if times.keys() >= {"user", "assistant"}
+            and times["assistant"] >= times["user"]
+        ]
+        latencies[call_id] = float(median(gaps)) if gaps else None
+    return latencies
 
 
 # The engine's speaker for a chat row's role.
@@ -650,7 +739,18 @@ def limited_validation(fix_run: AgentFixRun) -> bool:
 
 
 # The tiers the engine's final check records for a finalist, in order.
-VERDICT_TIERS = ("static", "target", "held-back", "must-pass", "repeats", "ceilings")
+VERDICT_TIERS = (
+    "static",
+    "target",
+    "held-back",
+    "must-pass",
+    "repeats",
+    "ceilings",
+    "model-lock",
+)
+# The tiers that read skipped when what they check could not be measured. That proves
+# nothing either way, and refuses no candidate.
+UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
 
 
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
@@ -663,17 +763,23 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     verdict = candidate.verdict or {}
     # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
     tiers = [
-        (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+        (name, "passed" if name in UNVERIFIED_TIERS and status == "skipped" else status)
+        for name, status in (
+            (tier.get("name"), tier.get("status"))
+            for tier in verdict.get("tiers") or []
+        )
     ]
     # The frozen plan, not the verdict being checked, says whether the final check owed a
     # held-back tier: the engine drops that tier when it froze no held-back case.
     held_back = (candidate.fix_run.plan or {}).get("held_back")
     if not isinstance(held_back, int) or isinstance(held_back, bool):
         return []
+    # An engine before the model-lock tier checked the lock inside the screens' tiers.
+    locked = any(name == "model-lock" for name, _ in tiers)
     expected = [
         (name, "failed" if name == "must-pass" else "passed")
         for name in VERDICT_TIERS
-        if held_back or name != "held-back"
+        if (held_back or name != "held-back") and (locked or name != "model-lock")
     ]
     regressions = verdict.get("must_pass_regressions") or []
     # The engine names a lost protected case only in prose, so every regression on a
@@ -1015,6 +1121,9 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
             max_minutes=default_max_minutes(len(scenarios) + variations),
+            allowed_models=models_called(call_usage(source_run)),
+            reply_latency_margin_pct=MARGIN_PCT_DEFAULT,
+            cost_margin_pct=MARGIN_PCT_DEFAULT,
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,

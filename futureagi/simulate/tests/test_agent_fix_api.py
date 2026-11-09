@@ -208,6 +208,10 @@ class TestEngineAuthentication:
                 "transcript",
                 "failure",
                 "duration_s",
+                "models",
+                "spans_seen",
+                "agent_cost_usd",
+                "reply_latency_ms",
             }
         ]
 
@@ -885,10 +889,14 @@ class TestUserApi:
             ("settings", True),
             ("code", True),
         ]
+        # A GitHub agent is not traced: no model it called can be seen.
         assert options["defaults"] == {
             "surfaces": ["prompt"],
             "budget_credits": 1500,
             "max_minutes": 180,
+            "allowed_models": [],
+            "reply_latency_margin_pct": 25,
+            "cost_margin_pct": 25,
         }
         assert options["limits"] == {
             "budget_credits_max": 50000,
@@ -908,6 +916,63 @@ class TestUserApi:
     )
     def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
         assert default_max_minutes(cases) == minutes
+
+    @pytest.mark.parametrize(
+        ("field", "refused", "taken"),
+        [
+            ("cost_limit_usd", 0, 0.01),
+            ("reply_latency_margin_pct", 1001, 1000),
+            ("cost_margin_pct", -1, 0),
+            ("allowed_models", ["m" * 201], ["m" * 200]),
+        ],
+    )
+    def test_a_constraint_out_of_bounds_starts_nothing(
+        self, auth_client, source_run, field, refused, taken
+    ):
+        bad = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: refused}), format="json"
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+        good = auth_client.post(
+            f"{BASE}/", _launch_body(source_run, **{field: taken}), format="json"
+        )
+
+        assert (bad.status_code, good.status_code) == (400, 201)
+        assert AgentFixRun.no_workspace_objects.get().request[field] == taken
+
+    def test_a_launch_keeps_the_constraints_it_was_given(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["gpt-5-mini"],
+                reply_latency_margin_pct=10,
+                cost_margin_pct=40,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        request = AgentFixRun.no_workspace_objects.get().request
+        assert {
+            key: request[key]
+            for key in (
+                "allowed_models",
+                "reply_latency_margin_pct",
+                "cost_margin_pct",
+                "cost_limit_usd",
+                "observes_models",
+                "meters_agent_cost",
+            )
+        } == {
+            "allowed_models": ["gpt-5-mini"],
+            "reply_latency_margin_pct": 10,
+            "cost_margin_pct": 40,
+            "cost_limit_usd": 0.02,
+            "observes_models": False,
+            "meters_agent_cost": False,
+        }
 
     def test_a_launch_without_a_time_limit_gets_the_suggested_one(
         self, auth_client, source_run
@@ -1768,6 +1833,31 @@ class TestUserApi:
 
         assert self._override(auth_client, fix_run)["allowed"] is True
         assert (response.status_code, len(calls)) == (200, 1)
+
+    @pytest.mark.parametrize(
+        ("ceilings", "lock"),
+        [("skipped", "skipped"), ("passed", "skipped"), ("skipped", "passed")],
+        ids=["nothing-measured", "lock-not-verified", "cost-not-verified"],
+    )
+    def test_a_check_that_could_not_be_measured_does_not_stop_an_override(
+        self, auth_client, source_run, github, ceilings, lock
+    ):
+        def allowed(ceilings, lock):
+            AgentFixRun.no_workspace_objects.all().delete()
+            tiers = [
+                *self._final(skip=("ceilings",)),
+                {"name": "ceilings", "status": ceilings},
+                {"name": "model-lock", "status": lock},
+            ]
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            return self._override(auth_client, fix_run)["allowed"]
+
+        # A measured breach still refuses it.
+        assert (
+            allowed(ceilings, lock),
+            allowed("failed", lock),
+            allowed(ceilings, "failed"),
+        ) == (True, False, False)
 
     def _final(self, failed="must-pass", skip=()):
         return [

@@ -2,9 +2,9 @@
 
 A run of a ``source`` agent marks every span its process exports with the job id
 as a resource attribute, and every span of a scenario with that call's id. The
-collector stores them in the agent's hidden simulation project. This read lists
-one call's traces by the job mark, scoped to that project and to the job's own
-time window, newest first.
+collector stores them in the agent's hidden simulation project. These reads list
+one call's traces, newest first, and sum each call's model calls, by the job
+mark, scoped to that project and to the job's own time window.
 """
 
 from __future__ import annotations
@@ -49,6 +49,16 @@ class RunTracesSource:
 class RunTraces:
     project_id: str | None
     traces: list[RunTrace]
+
+
+@dataclass(frozen=True)
+class CallUsage:
+    """One call's model calls, from the LLM spans of its traces."""
+
+    models: list[str]
+    llm_spans: int
+    # None when a span counted tokens but no cost: an unpriced model is not free.
+    cost_usd: float | None
 
 
 def run_traces_source(execution: TestExecution) -> RunTracesSource | None:
@@ -100,10 +110,35 @@ def list_run_traces(
     )
 
 
-def run_traces_sql() -> str:
+def _job_scope_sql() -> str:
+    """The job's spans in its agent's hidden project, within the job's own window."""
     job_mark = cols.json_path(cols.RESOURCE_ATTRS, RUN_MARK_KEY, "String")
-    call_mark = f"{cols.ATTRS_STRING}['{CALL_MARK_KEY}']"
-    has_call_mark = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
+    return (
+        "WHERE project_id = %(project_id)s "
+        "AND start_time >= %(window_start)s "
+        "AND start_time <= %(window_end)s "
+        f"AND {job_mark} = %(job_id)s "
+    )
+
+
+def _job_scope_params(source: RunTracesSource) -> dict[str, Any]:
+    job = source.job
+    return {
+        "project_id": source.project_id,
+        "job_id": str(job.id),
+        "window_start": job.created_at,
+        "window_end": job.terminal_at or timezone.now(),
+    }
+
+
+# A trace belongs to the call named on its earliest span that names one.
+_CALL_OF_TRACE = (
+    f"argMinIf({cols.ATTRS_STRING}['{CALL_MARK_KEY}'], start_time, "
+    f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')) AS call_execution_id"
+)
+
+
+def run_traces_sql() -> str:
     is_root = "parent_span_id = ''"
     return (
         "SELECT trace_id, "
@@ -112,12 +147,9 @@ def run_traces_sql() -> str:
         f"minIf(start_time, {is_root}) AS root_start_time, "
         f"argMinIf(status, start_time, {is_root}) AS root_status, "
         f"argMinIf(latency_ms, start_time, {is_root}) AS root_latency_ms, "
-        f"argMinIf({call_mark}, start_time, {has_call_mark}) AS call_execution_id "
+        f"{_CALL_OF_TRACE} "
         "FROM spans FINAL "
-        "WHERE project_id = %(project_id)s "
-        "AND start_time >= %(window_start)s "
-        "AND start_time <= %(window_end)s "
-        f"AND {job_mark} = %(job_id)s "
+        f"{_job_scope_sql()}"
         "GROUP BY trace_id "
         "HAVING call_execution_id = %(call_execution_id)s "
         "ORDER BY has_root ASC, root_start_time DESC, trace_id "
@@ -128,14 +160,56 @@ def run_traces_sql() -> str:
 def run_traces_params(
     source: RunTracesSource, call_execution_id: str
 ) -> dict[str, Any]:
-    job = source.job
     return {
-        "project_id": source.project_id,
-        "job_id": str(job.id),
-        "window_start": job.created_at,
-        "window_end": job.terminal_at or timezone.now(),
+        **_job_scope_params(source),
         "call_execution_id": call_execution_id,
         "limit": MAX_TRACES,
+    }
+
+
+def run_usage_sql() -> str:
+    """Each call's LLM spans: the models they named, how many there were, their cost, and
+    how many counted tokens but no cost. A trace counts for its call, as in the list."""
+    is_llm = "observation_type = 'llm'"
+    model = cols.LLM_REQUEST_MODEL
+    return (
+        "SELECT call_execution_id, "
+        "groupUniqArrayArray(trace_models) AS models, "
+        "sum(trace_llm_spans) AS llm_spans, "
+        "sum(trace_cost) AS cost, "
+        "sum(trace_unpriced) AS unpriced "
+        "FROM ("
+        f"SELECT {_CALL_OF_TRACE}, "
+        f"groupUniqArrayIf({model}, {is_llm} AND {model} != '') AS trace_models, "
+        f"countIf({is_llm}) AS trace_llm_spans, "
+        f"sumIf(cost, {is_llm}) AS trace_cost, "
+        f"countIf({is_llm} AND total_tokens > 0 AND cost = 0) AS trace_unpriced "
+        "FROM spans FINAL "
+        f"{_job_scope_sql()}"
+        "GROUP BY trace_id"
+        ") "
+        "WHERE call_execution_id != '' "
+        "GROUP BY call_execution_id"
+    )
+
+
+def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
+    """Each call's model calls in a run, by call id; a call that exported no LLM span is
+    missing. None when the run's agent is not traced, so none of its calls can be seen."""
+    source = run_traces_source(execution)
+    if source is None:
+        return None
+    rows, _columns, _elapsed_ms = get_clickhouse_client().execute_read(
+        run_usage_sql(), _job_scope_params(source), timeout_ms=READ_TIMEOUT_MS
+    )
+    return {
+        str(call_id): CallUsage(
+            models=sorted(models),
+            llm_spans=int(llm_spans),
+            cost_usd=None if unpriced else float(cost),
+        )
+        for call_id, models, llm_spans, cost, unpriced in rows
+        if llm_spans
     }
 
 

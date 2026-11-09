@@ -17,6 +17,11 @@ HELD_BACK_VERIFIED_MIN = 4
 HELD_BACK_SHARE = 3
 # A run with too few failing cases gets this many variations of each written first.
 VARIATIONS_PER_CASE = 3
+# How much slower a candidate's replies, and how much more its own model calls per
+# conversation, may be than the base version's, in percent, unless the user says.
+MARGIN_PCT_DEFAULT = 25
+MARGIN_PCT_MAX = 1000
+ALLOWED_MODELS_MAX = 50
 
 
 class Surface(StrEnum):
@@ -76,6 +81,24 @@ class FixRequest(BaseModel):
     # Each variation that became a target, with the failing case it varies: it is held
     # back with that case, and counts as that case toward verified.
     variation_parents: dict[str, str] = Field(default_factory=dict)
+    # The models the agent may call. Every model call a check run's spans show must name
+    # one of them; with no spans, only the candidate's diff is checked.
+    allowed_models: list[str] = Field(
+        default_factory=list, max_length=ALLOWED_MODELS_MAX
+    )
+    # How much slower a candidate's median reply, and how much more its agent's median
+    # spend per conversation, may be than the base version's, in percent; and a limit on
+    # that spend in US dollars.
+    reply_latency_margin_pct: int = Field(
+        default=MARGIN_PCT_DEFAULT, ge=0, le=MARGIN_PCT_MAX
+    )
+    cost_margin_pct: int = Field(default=MARGIN_PCT_DEFAULT, ge=0, le=MARGIN_PCT_MAX)
+    cost_limit_usd: float | None = Field(default=None, gt=0)
+    # Set at launch from the source run's spans: whether they named the agent's models,
+    # and whether the agent exported its model calls at all. Without them a check run's
+    # models and agent cost cannot be read, and those checks read as not verified.
+    observes_models: bool = False
+    meters_agent_cost: bool = False
 
 
 class InventoryScenario(BaseModel):
@@ -154,6 +177,15 @@ class CheckRecord(BaseModel):
     transcript: str
     # How long the conversation took; none for a trial that never had one.
     duration_s: float | None = None
+    # The agent's own model calls, from the spans it exported: the models they named, how
+    # many LLM spans arrived, and what they cost. The cost is none when no span arrived,
+    # or when one counted tokens but no cost: an unpriced model is not free.
+    models: list[str] = Field(default_factory=list)
+    spans_seen: int = 0
+    agent_cost_usd: float | None = None
+    # The median time from a user turn to the agent's first reply to it; for a voice call,
+    # the agent's average latency. None when the conversation does not say.
+    reply_latency_ms: float | None = None
 
 
 class CheckRunStatus(BaseModel):
@@ -309,6 +341,10 @@ class LaunchDefaults(BaseModel):
     surfaces: list[Surface]
     budget_credits: int
     max_minutes: int
+    # The models the run's spans show the agent called; empty when it exported none.
+    allowed_models: list[str]
+    reply_latency_margin_pct: int
+    cost_margin_pct: int
 
 
 class LaunchLimits(BaseModel):

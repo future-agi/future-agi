@@ -3,7 +3,10 @@ from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import (
+    ALLOWED_MODELS_MAX,
     BUDGET_CREDITS_MAX,
+    MARGIN_PCT_DEFAULT,
+    MARGIN_PCT_MAX,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     CandidateOutcome,
@@ -58,6 +61,27 @@ class AgentFixLaunchSerializer(serializers.Serializer):
     max_minutes = serializers.IntegerField(
         min_value=1, max_value=MAX_MINUTES_MAX, required=False
     )
+    # The models the agent may call; left out, the run's defaults.allowed_models.
+    allowed_models = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        max_length=ALLOWED_MODELS_MAX,
+        required=False,
+    )
+    # How much slower a candidate's median reply, and how much more its agent's median
+    # spend per conversation, may be than the current version's, in percent.
+    reply_latency_margin_pct = serializers.IntegerField(
+        min_value=0, max_value=MARGIN_PCT_MAX, default=MARGIN_PCT_DEFAULT
+    )
+    cost_margin_pct = serializers.IntegerField(
+        min_value=0, max_value=MARGIN_PCT_MAX, default=MARGIN_PCT_DEFAULT
+    )
+    # The most the agent may spend per conversation, in US dollars; none by default.
+    cost_limit_usd = serializers.FloatField(required=False, allow_null=True)
+
+    def validate_cost_limit_usd(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("must be more than 0")
+        return value
 
 
 class AgentFixListQuerySerializer(serializers.Serializer):
@@ -493,6 +517,11 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
     )
     budget_credits = serializers.IntegerField()
     max_minutes = serializers.IntegerField()
+    # The models the run's spans show the agent called; empty when the agent is not
+    # traced, so a fix cannot see its model calls or their cost.
+    allowed_models = serializers.ListField(child=serializers.CharField())
+    reply_latency_margin_pct = serializers.IntegerField()
+    cost_margin_pct = serializers.IntegerField()
 
 
 class AgentFixLaunchLimitsSerializer(serializers.Serializer):

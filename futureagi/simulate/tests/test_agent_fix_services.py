@@ -19,6 +19,7 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HarnessSuiteVersion,
     HostedHarnessAttempt,
@@ -67,6 +68,7 @@ from simulate.services.hosted_harness import (
     hash_secret,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
 from simulate.tests.test_harness_versioning_backfill import (
@@ -79,6 +81,7 @@ from simulate.tests.test_harness_versioning_record import _authoring
 from simulate.utils.test_execution_utils import eval_source
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
+from tracer.services.clickhouse.client import CHError
 
 pytestmark = pytest.mark.django_db
 
@@ -1522,13 +1525,14 @@ class TestCheckRunStatus:
                 speaker_role="user",
                 content=key,
             )
-        # A finished run, so the transcripts and its last attempt are read too.
+        # A finished run, so the transcripts, its fix's request (whether its agent is
+        # traced) and its last attempt are read too.
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
             state="completed"
         )
         run.refresh_from_db()
 
-        with django_assert_num_queries(3):
+        with django_assert_num_queries(4):
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10
@@ -1571,8 +1575,18 @@ def _chat(call, *rows):
     ]
 
 
-def _finished_trials(source_run, trials=1):
-    run = _check(_fix_run(source_run), trials=trials)
+def _finished_trials(source_run, trials=1, *, traced=False):
+    """A finished check run's calls, of a fix whose source run exported the agent's model
+    calls when ``traced``."""
+    fix_run = _fix_run(source_run)
+    if traced:
+        fix_run.request = {
+            **fix_run.request,
+            "observes_models": True,
+            "meters_agent_cost": True,
+        }
+        fix_run.save(update_fields=["request"])
+    run = _check(fix_run, trials=trials)
     executions = sorted(_executions(run), key=lambda one: one.trial_index)
     for execution in executions:
         _receipt(execution.call_execution, KEYS[0], {"refunded": True})
@@ -1715,8 +1729,9 @@ class TestChatTranscripts:
                 call, ("user", [{"content": "hi"}]), ("assistant", [{"content": "ok"}])
             )
 
-        # The executions, the last attempt, the call transcripts and the chat rows.
-        with django_assert_num_queries(4):
+        # The executions, the last attempt, the call transcripts, the chat rows and the
+        # fix's request.
+        with django_assert_num_queries(5):
             status = check_run_status(run)
 
         assert {one.transcript for one in status.records} == {"user: hi\nassistant: ok"}
@@ -2269,3 +2284,243 @@ def test_the_base_source_is_fetched_once_per_fix(source_run):
 
     assert first == again == body
     assert acquirer.return_value.acquire.call_count == 1
+
+
+# The spans a traced agent exported, as the run reader returns them for one run.
+TRACED = "simulate.selectors.agent_fix.run_usage"
+
+
+def _usage(by_call):
+    """``run_usage`` for runs whose calls exported ``by_call``; None for an untraced agent."""
+    return lambda execution: by_call
+
+
+class TestMeasuredConversations:
+    def test_a_finished_run_s_records_carry_each_call_s_models_spans_and_cost(
+        self, source_run
+    ):
+        run, [priced, unpriced, silent] = _finished_trials(
+            source_run, trials=3, traced=True
+        )
+        usage = {
+            str(priced.id): CallUsage(models=["m1", "m2"], llm_spans=3, cost_usd=0.03),
+            str(unpriced.id): CallUsage(models=["m1"], llm_spans=1, cost_usd=None),
+        }
+
+        with patch(TRACED, _usage(usage)):
+            records = check_run_status(run).records
+
+        assert [
+            (one.models, one.spans_seen, one.agent_cost_usd)
+            for one in sorted(records, key=lambda one: one.trial)
+        ] == [(["m1", "m2"], 3, 0.03), (["m1"], 1, None), ([], 0, None)]
+
+    def test_a_run_still_going_reads_no_span(self, source_run):
+        run, [call] = _finished_trials(source_run, traced=True)
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(state="running")
+        run.refresh_from_db()
+
+        with patch(TRACED) as read:
+            [record] = check_run_status(run).records
+
+        read.assert_not_called()
+        assert (record.spans_seen, record.agent_cost_usd) == (0, None)
+
+    def test_an_untraced_fix_reads_no_span(self, source_run):
+        run, [call] = _finished_trials(source_run)
+
+        with patch(TRACED) as read:
+            [record] = check_run_status(run).records
+
+        read.assert_not_called()
+        assert (record.models, record.spans_seen) == ([], 0)
+
+    def test_a_span_read_that_fails_leaves_the_calls_unmeasured(self, source_run):
+        run, [call] = _finished_trials(source_run, traced=True)
+
+        with patch(TRACED, side_effect=CHError("down")):
+            [record] = check_run_status(run).records
+
+        assert (record.models, record.spans_seen, record.agent_cost_usd) == (
+            [],
+            0,
+            None,
+        )
+
+    def test_a_chat_s_reply_latency_is_its_median_reply_after_a_user_turn(
+        self, source_run
+    ):
+        run, [call] = _finished_trials(source_run)
+        CallExecution.objects.filter(id=call.id).update(
+            simulation_call_type=CallExecution.SimulationCallType.TEXT
+        )
+        start = timezone.now()
+        # (user turn at, agent's first message at) per exchange, in ms; the last one's
+        # user message has no time, so it says nothing.
+        for n, (asked, answered) in enumerate(
+            [(0, 1000), (5000, 8000), (12000, 14000), (None, 30000)]
+        ):
+            ask, answer = _chat(
+                call,
+                ("user", [{"role": "user", "content": "q", "start_time_ms": asked}]),
+                (
+                    "assistant",
+                    [
+                        {
+                            "role": "assistant",
+                            "kind": "tool_calls",
+                            "content": "x",
+                            "start_time_ms": answered,
+                        },
+                        {
+                            "role": "assistant",
+                            "content": "a",
+                            "start_time_ms": answered + 500,
+                        },
+                    ],
+                ),
+            )
+            ChatMessageModel.no_workspace_objects.filter(
+                id__in=[ask.id, answer.id]
+            ).update(created_at=start + timedelta(seconds=n))
+
+        [record] = check_run_status(run).records
+
+        assert record.reply_latency_ms == 2000
+
+    def test_a_voice_call_s_reply_latency_is_its_agent_s_average(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        CallExecution.objects.filter(id=call.id).update(
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            avg_agent_latency_ms=820,
+        )
+
+        [record] = check_run_status(run).records
+
+        assert record.reply_latency_ms == 820
+
+
+class TestLaunchConstraints:
+    def _source_usage(self, source_run, by_call):
+        calls = [one.call_execution_id for one in _executions(source_run)]
+        return {str(call): usage for call, usage in zip(calls, by_call, strict=False)}
+
+    def test_the_form_allows_the_models_the_run_s_spans_show(self, source_run):
+        usage = self._source_usage(
+            source_run,
+            [
+                CallUsage(
+                    models=["vertex_ai/gemini-3.8-flash"], llm_spans=2, cost_usd=0.01
+                ),
+                CallUsage(
+                    models=["gpt-5-mini", "vertex_ai/gemini-3.8-flash"],
+                    llm_spans=1,
+                    cost_usd=0.0,
+                ),
+            ],
+        )
+        with patch(TRACED, _usage(usage)):
+            defaults = launch_options(source_run).defaults
+
+        assert (
+            defaults.allowed_models,
+            defaults.reply_latency_margin_pct,
+            defaults.cost_margin_pct,
+        ) == (["gpt-5-mini", "vertex_ai/gemini-3.8-flash"], 25, 25)
+
+    def test_an_untraced_agent_s_form_allows_no_model(self, source_run):
+        with patch(TRACED, _usage(None)):
+            assert launch_options(source_run).defaults.allowed_models == []
+
+    def test_a_traced_agent_s_fix_is_locked_to_its_models_and_measures_its_calls(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        request = engine_brief(fix_run).request
+        assert (
+            request.allowed_models,
+            request.observes_models,
+            request.meters_agent_cost,
+            request.reply_latency_margin_pct,
+            request.cost_margin_pct,
+            request.cost_limit_usd,
+        ) == (["m1"], True, True, 25, 25, None)
+
+    def test_an_untraced_agent_s_fix_measures_nothing_it_cannot_see(
+        self, source_run, user
+    ):
+        with patch(TRACED, _usage(None)):
+            fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.allowed_models,
+            request.observes_models,
+            request.meters_agent_cost,
+        ) == ([], False, False)
+
+    def test_spans_that_name_no_model_meter_cost_but_lock_nothing(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=[], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (request.observes_models, request.meters_agent_cost) == (False, True)
+
+    def test_the_user_s_models_and_limits_are_kept(self, source_run, user):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = launch_fix_run(
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=["m1", "m2", "m1"],
+                reply_latency_margin_pct=10,
+                cost_margin_pct=50,
+                cost_limit_usd=0.02,
+            )
+
+        request = FixRequest.model_validate(fix_run.request)
+        assert (
+            request.allowed_models,
+            request.reply_latency_margin_pct,
+            request.cost_margin_pct,
+            request.cost_limit_usd,
+        ) == (["m1", "m2"], 10, 50, 0.02)
+
+    def test_a_traced_agent_s_fix_with_no_model_allowed_is_refused(
+        self, source_run, user
+    ):
+        usage = self._source_usage(
+            source_run, [CallUsage(models=["m1"], llm_spans=2, cost_usd=0.01)]
+        )
+        with patch(TRACED, _usage(usage)):
+            refused = _refusal(
+                launch_fix_run,
+                source_run,
+                target_scenario_keys=[KEYS[0]],
+                surfaces=[Surface.PROMPT],
+                locked_paths=[],
+                budget_usd=5.0,
+                max_minutes=30,
+                user=user,
+                allowed_models=[],
+            )
+
+        assert refused == ("fix_models_empty", 400)
+        assert not AgentFixRun.no_workspace_objects.exists()

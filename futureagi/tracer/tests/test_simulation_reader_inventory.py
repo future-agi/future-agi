@@ -928,6 +928,13 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "caller who can read the run (see the callers map)"
             ),
         ),
+        "run_usage_sql": filed(
+            HIDDEN_ON_PURPOSE,
+            why=(
+                "each call's model calls in the hidden project of a run's agent, "
+                "for a fix that checks its own runs (see the callers map)"
+            ),
+        ),
     },
     "tfc.deployment_telemetry.ch_counts": {
         "count_spans": _TELEMETRY_COUNTS,
@@ -1975,6 +1982,10 @@ HIDDEN_READERS = {
         None,
         frozenset({"simulate/services/run_traces_v3.py"}),
     ),
+    "simulate.services.run_traces_v3:run_usage_sql": (
+        None,
+        frozenset({"simulate/services/run_traces_v3.py"}),
+    ),
 }
 _RUN_SCOPE_CALLERS = frozenset(
     {
@@ -1985,6 +1996,10 @@ _RUN_SCOPE_CALLERS = frozenset(
 )
 _RUN_TRACES_CALLERS = frozenset(
     {"simulate/services/run_traces_v3.py", "simulate/views/run_results_v3.py"}
+)
+# A fix reads its own check runs' and its source run's model calls.
+_RUN_USAGE_CALLERS = frozenset(
+    {"simulate/services/run_traces_v3.py", "simulate/selectors/agent_fix.py"}
 )
 # The entry points that hand those readers their project ids, pinned the same
 # way so that a new route to a builder fails here too.
@@ -2006,6 +2021,7 @@ ENTRY_POINTS = {
     "simulation_scope_for_run": (None, _RUN_SCOPE_CALLERS),
     "run_scope_project_ids": (None, _RUN_SCOPE_CALLERS),
     "list_run_traces": (None, _RUN_TRACES_CALLERS),
+    "run_usage": (None, _RUN_USAGE_CALLERS),
     "simulation_project_of": (None, frozenset({"simulate/services/run_traces_v3.py"})),
     # The launcher makes or reads the hidden project of the agent one run is bound
     # to, in that run's organisation, so it can send the project's name and find the
@@ -2385,6 +2401,7 @@ def test_reader_inventory_only_exempts_absent_private_cloud(
     ("name", "files"),
     [
         ("list_run_traces", _RUN_TRACES_CALLERS),
+        ("run_usage", _RUN_USAGE_CALLERS),
         ("simulation_project_of", frozenset({"simulate/services/run_traces_v3.py"})),
     ],
 )
@@ -2938,7 +2955,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]

@@ -50829,6 +50829,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 1440,
           minimum: 1,
         },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          default: 25,
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          default: 25,
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
       },
     },
     AgentFixLaunchOptions: {
@@ -92857,7 +92885,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
-      required: ["surfaces", "budget_credits", "max_minutes"],
+      required: [
+        "surfaces",
+        "budget_credits",
+        "max_minutes",
+        "allowed_models",
+        "reply_latency_margin_pct",
+        "cost_margin_pct",
+      ],
       type: "object",
       properties: {
         surfaces: {
@@ -92873,6 +92908,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_minutes: {
           title: "Max minutes",
+          type: "integer",
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
           type: "integer",
         },
       },

@@ -36445,6 +36445,18 @@ export const simulateApiAgentFixRunsCreateBodyBudgetCreditsMax = 50000;
 
 export const simulateApiAgentFixRunsCreateBodyMaxMinutesMax = 1440;
 
+export const simulateApiAgentFixRunsCreateBodyAllowedModelsItemMax = 200;
+
+export const simulateApiAgentFixRunsCreateBodyAllowedModelsMax = 50;
+
+export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin = 0;
+export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax = 1000;
+
+export const simulateApiAgentFixRunsCreateBodyCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsCreateBodyCostMarginPctMin = 0;
+export const simulateApiAgentFixRunsCreateBodyCostMarginPctMax = 1000;
+
 export const SimulateApiAgentFixRunsCreateBody = zod.object({
   source_run_id: zod.string().uuid(),
   target_scenario_keys: zod
@@ -36483,6 +36495,26 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
     .min(1)
     .max(simulateApiAgentFixRunsCreateBodyMaxMinutesMax)
     .optional(),
+  allowed_models: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyAllowedModelsItemMax),
+    )
+    .max(simulateApiAgentFixRunsCreateBodyAllowedModelsMax)
+    .optional(),
+  reply_latency_margin_pct: zod
+    .number()
+    .min(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin)
+    .max(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax)
+    .default(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctDefault),
+  cost_margin_pct: zod
+    .number()
+    .min(simulateApiAgentFixRunsCreateBodyCostMarginPctMin)
+    .max(simulateApiAgentFixRunsCreateBodyCostMarginPctMax)
+    .default(simulateApiAgentFixRunsCreateBodyCostMarginPctDefault),
+  cost_limit_usd: zod.number().optional(),
 });
 
 /**
@@ -36536,6 +36568,9 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     surfaces: zod.array(zod.enum(["prompt", "tools", "settings", "code"])),
     budget_credits: zod.number(),
     max_minutes: zod.number(),
+    allowed_models: zod.array(zod.string().min(1)),
+    reply_latency_margin_pct: zod.number(),
+    cost_margin_pct: zod.number(),
   }),
   limits: zod.object({
     budget_credits_max: zod.number(),

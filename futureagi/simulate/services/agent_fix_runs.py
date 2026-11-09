@@ -22,16 +22,19 @@ from simulate.models import (
 from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     VARIATIONS_PER_CASE,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
+    call_usage,
     default_max_minutes,
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
+    models_called,
     overridable_regressions,
     recent_lost_models,
     scenario_results,
@@ -108,9 +111,14 @@ def launch_fix_run(
     max_minutes: int | None,
     user: Any,
     protected_scenario_keys: Sequence[str] = (),
+    allowed_models: Sequence[str] | None = None,
+    reply_latency_margin_pct: int = MARGIN_PCT_DEFAULT,
+    cost_margin_pct: int = MARGIN_PCT_DEFAULT,
+    cost_limit_usd: float | None = None,
 ) -> AgentFixRun:
     """Start fixing the agent of a finished run on the scenarios the user chose; without
-    ``max_minutes``, within the time the launch form suggests for the run's suite."""
+    ``max_minutes``, within the time the launch form suggests for the run's suite, and
+    without ``allowed_models``, locked to the models the run's spans show."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
@@ -178,6 +186,17 @@ def launch_fix_run(
         max_minutes = default_max_minutes(
             len(ran) + (VARIATIONS_PER_CASE * failing_cases if variations else 0)
         )
+    usage = call_usage(source_run)
+    seen = models_called(usage)
+    allowed = list(dict.fromkeys(seen if allowed_models is None else allowed_models))
+    # A fix that sees the agent's models with none allowed would refuse every candidate.
+    if seen and not allowed:
+        raise HostedHarnessError(
+            "fix_models_empty",
+            "allow at least one model: this agent's model calls are traced, and each"
+            " must name an allowed model",
+            status_code=400,
+        )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
@@ -188,6 +207,12 @@ def launch_fix_run(
         budget_usd=budget_usd,
         max_minutes=max_minutes,
         variations_pending=variations,
+        allowed_models=allowed,
+        reply_latency_margin_pct=reply_latency_margin_pct,
+        cost_margin_pct=cost_margin_pct,
+        cost_limit_usd=cost_limit_usd,
+        observes_models=bool(seen),
+        meters_agent_cost=bool(usage),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))

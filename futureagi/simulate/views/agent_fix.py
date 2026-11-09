@@ -195,6 +195,10 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             budget_usd=data["budget_credits"] / 100,
             max_minutes=data.get("max_minutes"),
             user=request.user,
+            allowed_models=data.get("allowed_models"),
+            reply_latency_margin_pct=data["reply_latency_margin_pct"],
+            cost_margin_pct=data["cost_margin_pct"],
+            cost_limit_usd=data.get("cost_limit_usd"),
         )
         return Response(
             AgentFixRunSerializer(self._fix_run(request, fix_run.id)).data,
@@ -383,9 +387,13 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     )
     def check_run(self, request, pk=None, run_id=None):
         # A retry reads the check runs the fixes it retries finished, as its own.
-        run = HostedHarnessJob.no_workspace_objects.filter(
-            id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
-        ).first()
+        run = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
+            )
+            .select_related("fix_run")
+            .first()
+        )
         if run is None:
             return _not_found()
         return Response(check_run_status(run).model_dump(mode="json"))

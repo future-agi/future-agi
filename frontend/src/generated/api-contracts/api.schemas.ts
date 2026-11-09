@@ -18120,6 +18120,19 @@ export interface AgentFixLaunchApi {
    * @maximum 1440
    */
   max_minutes?: number;
+  /** @maxItems 50 */
+  allowed_models?: string[];
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  reply_latency_margin_pct?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -18185,6 +18198,9 @@ export interface AgentFixLaunchDefaultsApi {
   surfaces: AgentFixLaunchDefaultsApiSurfacesItem[];
   budget_credits: number;
   max_minutes: number;
+  allowed_models: string[];
+  reply_latency_margin_pct: number;
+  cost_margin_pct: number;
 }
 
 export interface AgentFixLaunchLimitsApi {
