@@ -69,8 +69,17 @@ def builder(items, days=7):
         (LONG, "equals"),
         (["Alpha", "Beta"], "in"),
         (["123456"], "typed_in"),
+        (["true"], "typed_in"),
+        (['{"a":1}'], "typed_in"),
     ],
-    ids=["digit-string", "long-text", "multi-value", "picker"],
+    ids=[
+        "digit-string",
+        "long-text",
+        "multi-value",
+        "picker",
+        "boolean-looking-picker",
+        "json-looking-picker",
+    ],
 )
 def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
     sql, params = builder([leaf(value, op)]).build_dimension_candidate_query(limit=65)
@@ -97,7 +106,7 @@ def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
         (None, "is_null"),
         ("value", "contains"),
         (["safe", "true"], "in"),
-        (["true"], "typed_in"),
+        (["\u0130"], "typed_in"),
     ],
 )
 def test_unproven_text_shapes_keep_existing_complete_path(value, op):

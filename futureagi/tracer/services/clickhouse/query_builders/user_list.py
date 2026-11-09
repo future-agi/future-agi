@@ -824,9 +824,19 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 witness = plan.raw_witness_predicate or ""
             raw_values = config.get("filter_value", config.get("filterValue"))
             values = raw_values if isinstance(raw_values, list) else [raw_values]
+            value_types = config.get(
+                "attribute_value_types", config.get("attributeValueTypes")
+            )
+            picked_strings = (
+                isinstance(value_types, list)
+                and len(value_types) == len(values)
+                and all(value_type == "string" for value_type in value_types)
+            )
             # Users canonicalizes boolean/JSON-looking text and uses Python's
-            # Unicode lower(). Do not narrow those domains with a raw string
-            # comparison. Unsupported shapes keep the complete existing path.
+            # Unicode lower(). Picker provenance makes the storage domain
+            # explicit, so boolean/JSON-looking *strings* may use the raw
+            # string witness; typed input without provenance still keeps the
+            # canonical comparison. Unsupported shapes keep the complete path.
             plain_text = (
                 (config.get("filter_type") or config.get("filterType"))
                 in {"text", "string"}
@@ -836,8 +846,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     isinstance(value, str)
                     and value
                     and value.isascii()
-                    and value.strip().lower() not in {"true", "false"}
-                    and not value.strip().startswith(("{", "["))
+                    and (
+                        picked_strings
+                        or (
+                            value.strip().lower() not in {"true", "false"}
+                            and not value.strip().startswith(("{", "["))
+                        )
+                    )
                     for value in values
                 )
             )

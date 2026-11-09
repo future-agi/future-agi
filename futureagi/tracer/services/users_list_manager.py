@@ -632,16 +632,27 @@ class UsersListManager:
                 filter_type = config.get("filter_type") or config.get("filterType")
                 raw_value = config.get("filter_value", config.get("filterValue"))
                 raw_values = raw_value if isinstance(raw_value, list) else [raw_value]
-                value_types = config.get("attribute_value_types")
+                value_types = config.get(
+                    "attribute_value_types", config.get("attributeValueTypes")
+                )
+                picked_strings = (
+                    isinstance(value_types, list)
+                    and len(value_types) == len(raw_values)
+                    and all(value_type == "string" for value_type in value_types)
+                )
                 if (
                     operation not in {"equals", "in"}
                     or filter_type not in {"text", "string"}
                     or not raw_values
                     or any(not isinstance(value, str) for value in raw_values)
                     or any(
-                        value.strip().lower() in {"true", "false"}
-                        or value.strip().startswith(("{", "["))
-                        or self._canonical_filter_value(value).lower() != value.lower()
+                        not picked_strings
+                        and (
+                            value.strip().lower() in {"true", "false"}
+                            or value.strip().startswith(("{", "["))
+                            or self._canonical_filter_value(value).lower()
+                            != value.lower()
+                        )
                         for value in raw_values
                         if isinstance(value, str)
                     )
