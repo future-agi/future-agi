@@ -421,9 +421,11 @@ class OrgApiKey(BaseModel):
             if update_fields is None
             else "expires_at" in update_fields
         )
-        invalidate = not self._state.adding and writes_expiry
         super().save(*args, **kwargs)
-        if invalidate:
+        if writes_expiry:
+            # A detached instance can force-update an existing row while its
+            # pre-save _state.adding is True. Invalidate creates too: a caller
+            # may already have cached a negative lookup for that credential.
             from accounts.key_cache import publish_key_revocation
 
             # Admin saves run in an outer transaction. Publishing before commit

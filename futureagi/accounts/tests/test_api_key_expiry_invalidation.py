@@ -91,6 +91,41 @@ def test_deferred_expiry_is_not_written(key, django_capture_on_commit_callbacks)
         factory.assert_not_called()
 
 
+def test_detached_force_update_invalidates(key, django_capture_on_commit_callbacks):
+    expiry = timezone.now() - timedelta(seconds=1)
+    detached = OrgApiKey(
+        pk=key.pk, api_key=key.api_key, secret_key=key.secret_key,
+        expires_at=expiry,
+    )
+    assert detached._state.adding is True
+    digest = hashlib.sha256(f"{key.api_key}:{key.secret_key}".encode()).hexdigest()
+    with patch("redis.Redis.from_url") as factory:
+        with django_capture_on_commit_callbacks(execute=True):
+            detached.save(force_update=True, update_fields=["expires_at"])
+            factory.assert_not_called()
+        factory.return_value.__enter__.return_value.publish.assert_called_once_with(
+            "fi:auth:revoke", digest,
+        )
+    key.refresh_from_db()
+    assert key.expires_at == expiry
+
+
+def test_create_invalidates_a_preexisting_negative_cache(
+    user, workspace, django_capture_on_commit_callbacks,
+):
+    with patch("redis.Redis.from_url") as factory:
+        with django_capture_on_commit_callbacks(execute=True):
+            created = OrgApiKey.no_workspace_objects.create(
+                name="new-negative-cache", organization=user.organization,
+                workspace=workspace, user=user, type="user",
+            )
+            factory.assert_not_called()
+        digest = hashlib.sha256(f"{created.api_key}:{created.secret_key}".encode()).hexdigest()
+        factory.return_value.__enter__.return_value.publish.assert_called_once_with(
+            "fi:auth:revoke", digest,
+        )
+
+
 @pytest.mark.parametrize("positional", [False, True])
 def test_iterable_update_fields_preserves_the_expiry_write(
     key, positional, django_capture_on_commit_callbacks,
