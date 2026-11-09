@@ -1227,8 +1227,8 @@ def test_migration_0126_legacy_user_recipe_is_readable_but_never_calculated(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("action", ["kpi", "trend", "drivers", "history"])
-def test_frozen_read_routes_are_explicitly_unavailable_not_successful_zeros(
+@pytest.mark.parametrize("action", ["kpi", "trend", "drivers"])
+def test_reads_without_committed_manifest_are_unavailable_not_successful_zeros(
     auth_client, saved, action
 ):
     data = run_body()

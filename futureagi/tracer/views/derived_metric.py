@@ -37,7 +37,7 @@ from tracer.serializers.derived_metric import (
     DerivedMetricValidationSerializer,
     DerivedMetricWriteSerializer,
 )
-from tracer.services.derived_metrics import service
+from tracer.services.derived_metrics import reads, service
 from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.cursor import newest_first_page
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
@@ -97,7 +97,12 @@ class MetricViewSet(viewsets.GenericViewSet):
     def handle_exception(self, exc):
         if isinstance(exc, service.MetricUnavailableError):
             return Response(
-                {"code": exc.code, "message": exc.message, "retryable": True},
+                {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": True,
+                    **({"value_mode": exc.value_mode} if exc.value_mode else {}),
+                },
                 status=503,
             )
         if isinstance(exc, service.SnapshotNotSupportedError):
@@ -409,8 +414,7 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     @action(detail=True, methods=["get"])
     def kpi(self, request, pk=None):
-        self.get_object()
-        raise service.MetricUnavailableError()
+        return Response(reads.read_kpi(self.get_object(), request.validated_query_data))
 
     @validated_request(
         query_serializer=contracts.MetricTrendQuerySerializer,
@@ -421,8 +425,9 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     @action(detail=True, methods=["get"])
     def trend(self, request, pk=None):
-        self.get_object()
-        raise service.MetricUnavailableError()
+        return Response(
+            reads.read_trend(self.get_object(), request.validated_query_data)
+        )
 
     @validated_request(
         query_serializer=contracts.MetricDriversQuerySerializer,
@@ -433,8 +438,11 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     @action(detail=True, methods=["get"])
     def drivers(self, request, pk=None):
-        self.get_object()
-        raise service.MetricUnavailableError()
+        return Response(
+            reads.read_units(
+                self.get_object(), request.validated_query_data, drivers=True
+            )
+        )
 
     @validated_request(
         query_serializer=DerivedMetricListQuerySerializer,
@@ -445,8 +453,9 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     @action(detail=True, methods=["get"])
     def history(self, request, pk=None):
-        self.get_object()
-        raise service.MetricUnavailableError()
+        return Response(
+            reads.read_history(self.get_object(), request.validated_query_data)
+        )
 
     @validated_request(
         query_serializer=contracts.MetricFieldsQuerySerializer,
@@ -467,10 +476,9 @@ class DerivedMetricViewSet(MetricViewSet):
             MetricFilterError,
             metric_filter_type,
         )
-        from tracer.services.derived_metrics.spec import require_computable
         from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 
-        require_computable(metric.active_version)
+        reads.require_materialized(metric.active_version)
         metadata = MetricFieldMetadata.from_metric(metric)
         context = request.validated_query_data["context"]
         try:
@@ -517,8 +525,9 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     @action(detail=True, methods=["get", "post"], url_path="unit-values")
     def unit_values(self, request, pk=None):
-        self.get_object()
-        raise service.MetricUnavailableError()
+        return Response(
+            reads.read_units(self.get_object(), request.validated_query_data)
+        )
 
     @validated_request(
         request_serializer=contracts.MetricRefreshRequestSerializer,

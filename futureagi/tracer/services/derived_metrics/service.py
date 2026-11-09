@@ -650,9 +650,12 @@ class MetricUnavailableError(Exception):
     def __init__(
         self,
         code="metric_unavailable",
-        message="Metric reads are not available until a committed reader is installed.",
+        message="Metric reads are temporarily unavailable. Retry after a committed refresh.",
+        *,
+        value_mode=None,
     ):
         self.code, self.message = code, message
+        self.value_mode = value_mode
         super().__init__(message)
 
 
@@ -1063,6 +1066,7 @@ def preview(
         raise MetricUnavailableError(
             "user_preview_unavailable",
             "User preview is not available until the shared user-level reader is installed.",
+            value_mode="on_demand",
         )
     if definition.level == "trace":
         raise MetricUnavailableError(
