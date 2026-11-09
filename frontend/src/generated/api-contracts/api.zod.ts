@@ -39100,7 +39100,9 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
           keys: zod.array(zod.string().min(1)),
           truncated: zod.boolean(),
         })
-        .describe("Selected cases this row holds back."),
+        .describe(
+          "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
+        ),
     }),
   ),
   counts: zod.object({
@@ -39479,7 +39481,9 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
             keys: zod.array(zod.string().min(1)),
             truncated: zod.boolean(),
           })
-          .describe("Selected cases this row holds back."),
+          .describe(
+            "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
+          ),
       }),
     ),
     counts: zod.object({

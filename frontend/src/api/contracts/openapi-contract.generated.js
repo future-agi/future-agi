@@ -122299,7 +122299,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityAffected: {
-      description: "Selected cases this row holds back.",
+      description:
+        "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
       required: ["count", "of", "keys", "truncated"],
       type: "object",
       properties: {
