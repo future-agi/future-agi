@@ -228,6 +228,13 @@ EXTRA_DISPOSABLE_EMAIL_DOMAINS = frozenset(
     {
         "insight-travel.my.id",
         "uberip.com",
+        # Requested in #signup-details, Aug–Nov 2026.
+        "hackermail.com",
+        "hackermail.net",
+        "hackermail.org",
+        "passbox.pw",
+        "spamgourmet.com",
+        "strixsecuritytest.com",
     }
 )
 
