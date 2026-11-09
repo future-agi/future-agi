@@ -1859,6 +1859,28 @@ class TestUserApi:
             allowed(ceilings, "failed"),
         ) == (True, False, False)
 
+    def test_a_verdict_from_before_the_model_lock_tier_reads_as_it_always_did(
+        self, auth_client, source_run, github
+    ):
+        def override(tiers):
+            AgentFixRun.no_workspace_objects.all().delete()
+            fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
+            [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+            return shown["verdict"]["tiers"], shown["override"]["allowed"]
+
+        old = self._final()
+        # The old engine's six tiers, only must-pass failed: it ships on a reason.
+        shown, allowed = override(old)
+        # Its skipped ceilings were never run, not unverified: that still refuses it.
+        _, unrun = override(
+            [*old[:5], {"name": "ceilings", "status": "skipped", "detail": ""}]
+        )
+
+        assert [(one["name"], one["status"]) for one in shown] == [
+            (one["name"], one["status"]) for one in old
+        ]
+        assert (allowed, unrun) == (True, False)
+
     def _final(self, failed="must-pass", skip=()):
         return [
             {"name": name, "status": "failed" if name == failed else "passed"}

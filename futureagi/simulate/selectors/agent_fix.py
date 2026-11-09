@@ -762,20 +762,26 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
         return []
     verdict = candidate.verdict or {}
     # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
+    recorded = [
+        (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+    ]
+    # An engine before the model-lock tier checked the lock inside the screens' tiers,
+    # and every tier it skipped went unrun: its verdicts are read as they always were.
+    locked = any(name == "model-lock" for name, _ in recorded)
     tiers = [
-        (name, "passed" if name in UNVERIFIED_TIERS and status == "skipped" else status)
-        for name, status in (
-            (tier.get("name"), tier.get("status"))
-            for tier in verdict.get("tiers") or []
+        (
+            name,
+            "passed"
+            if locked and name in UNVERIFIED_TIERS and status == "skipped"
+            else status,
         )
+        for name, status in recorded
     ]
     # The frozen plan, not the verdict being checked, says whether the final check owed a
     # held-back tier: the engine drops that tier when it froze no held-back case.
     held_back = (candidate.fix_run.plan or {}).get("held_back")
     if not isinstance(held_back, int) or isinstance(held_back, bool):
         return []
-    # An engine before the model-lock tier checked the lock inside the screens' tiers.
-    locked = any(name == "model-lock" for name, _ in tiers)
     expected = [
         (name, "failed" if name == "must-pass" else "passed")
         for name in VERDICT_TIERS
