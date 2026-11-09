@@ -647,7 +647,9 @@ SELECT ce.id, ce.status, ce.duration_seconds,
       || COALESCE((e.value -> 'output_type')::text, 'null') || ','
       || COALESCE((e.value -> 'source')::text, 'null') || ']',
       chr(30))
-    FROM jsonb_each(ce.eval_outputs) e), '')
+    FROM jsonb_each(ce.eval_outputs) e
+    -- A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+    WHERE left(COALESCE(e.value ->> 'subject', ''), 7) <> 'worker:'), '')
   ELSE ce.eval_outputs::text END,
   NULLIF(s.metadata ->> 'use_case', ''), NULLIF(s.metadata ->> 'goal', ''), s.name
 FROM (
