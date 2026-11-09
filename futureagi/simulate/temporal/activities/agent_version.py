@@ -15,14 +15,14 @@ from simulate.temporal.types.agent_version import (
 from tfc.temporal.common.heartbeat import Heartbeater
 
 
-async def _run_db(fn, *args):
+async def _run_db(fn, *args, **kwargs):
     """Run a step on a thread of its own: a reading holds its call for up to half
     an hour, and the shared thread would hold every other activity behind it."""
 
     def _call():
         close_old_connections()
         try:
-            return fn(*args)
+            return fn(*args, **kwargs)
         finally:
             close_old_connections()
 

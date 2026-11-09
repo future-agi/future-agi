@@ -174,3 +174,36 @@ class TestReadingThread:
         first, second = asyncio.run(both())
 
         assert first != second
+
+    def test_a_failed_version_is_recorded_with_its_code(self, monkeypatch):
+        from simulate.services import agent_version_steps
+        from simulate.temporal.types.agent_version import AgentVersionFailure
+
+        calls = []
+        monkeypatch.setattr(
+            agent_version_steps,
+            "fail",
+            lambda version_id, **kwargs: calls.append((version_id, kwargs)),
+        )
+
+        asyncio.run(
+            activities.fail_agent_version(
+                AgentVersionFailure(
+                    version_id="v1",
+                    code="agent_reading_unavailable",
+                    message="Reading the agent couldn't finish.",
+                    retryable=True,
+                )
+            )
+        )
+
+        assert calls == [
+            (
+                "v1",
+                {
+                    "code": "agent_reading_unavailable",
+                    "message": "Reading the agent couldn't finish.",
+                    "retryable": True,
+                },
+            )
+        ]
