@@ -7,6 +7,9 @@ import SelectedRunSummary from "../SelectedRunSummary";
 import wire from "./fixtures/committedResults.json";
 import { initialForm } from "../metricForm";
 
+vi.mock("../api", () => ({
+  useMetricKpi: () => ({ readState: "ready", data: { current: null } }),
+}));
 const mock = vi.hoisted(() => ({ get: vi.fn(), projects: vi.fn() }));
 vi.mock("src/utils/axios", () => ({
   default: { get: mock.get },
@@ -59,7 +62,7 @@ function listElement(projects) {
           ],
         },
       }}
-      scope="org:ws"
+      scope={{ organizationId: "org", workspaceId: "ws" }}
       projects={projects}
       onSelect={vi.fn()}
       onBefore={vi.fn()}

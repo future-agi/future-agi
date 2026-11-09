@@ -14,6 +14,9 @@ import MetricList from "../MetricList";
 import MetricContributors from "../MetricContributors";
 import wire from "./fixtures/committedResults.json";
 
+vi.mock("../api", () => ({
+  useMetricKpi: () => ({ readState: "ready", data: { current: null } }),
+}));
 const mock = vi.hoisted(() => ({ get: vi.fn(), projects: vi.fn() }));
 vi.mock("src/utils/axios", () => ({
   default: { get: mock.get },
@@ -54,12 +57,13 @@ const metric = {
   name: "Support resolution",
   project_id: "project",
   current_version: 1,
+  definition: { version: 1 },
 };
 function list() {
   return (
     <MetricList
       definitions={{ data: { results: [metric], next_cursor: "next-page" } }}
-      scope="org:workspace"
+      scope={{ organizationId: "org", workspaceId: "workspace" }}
       onSelect={vi.fn()}
     />
   );
@@ -177,7 +181,7 @@ it.each(["light", "dark"])(
 );
 
 it.each(["light", "dark"])(
-  "keeps the Latest value fallback short with the full committed-value explanation available in %s mode",
+  "keeps the current value fallback explicit with the shared missing-value explanation in %s mode",
   async (mode) => {
     mock.get.mockImplementation(async (url) => {
       if (url.endsWith("/runs")) return { data: { results: [wire.run] } };
@@ -186,11 +190,11 @@ it.each(["light", "dark"])(
       throw new Error(`Unexpected read ${url}`);
     });
     mount(list(), mode);
-    const label = await screen.findByText("No result");
+    const label = await screen.findByText("No value");
     expect(label.closest('[role="row"]')).toHaveTextContent(metric.name);
     fireEvent.mouseOver(label);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "No committed value",
+      "Missing values are not zero",
     );
   },
 );
