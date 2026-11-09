@@ -237,9 +237,12 @@ def test_transcript_retention_limit_is_still_atomic(
 
 
 @pytest.fixture
-def receipt_channel(organization):
+def receipt_channel(organization, workspace):
     job, _ = create_hosted_job(
-        organization, _payload(), idempotency_key="receipt-validation"
+        organization,
+        _payload(),
+        idempotency_key="receipt-validation",
+        workspace=workspace,
     )
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     client = APIClient()
@@ -342,9 +345,21 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
         serializer.is_valid(raise_exception=True)
         projected = serializer.validated_data
     storage.get_object.return_value.read.return_value = content
-    with patch(
-        "simulate.services.hosted_harness_ingestion.get_storage_client",
-        return_value=storage,
+    scheduled_times = []
+    bulk_create = ChatMessageModel.objects.bulk_create
+
+    def store_rows(rows, **kwargs):
+        # Observe the arithmetic before BaseModel's auto_now_add stamps inserts;
+        # the real PostgreSQL insert still runs on both receipt deliveries.
+        scheduled_times.append([row.created_at for row in rows])
+        return bulk_create(rows, **kwargs)
+
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        patch.object(ChatMessageModel.objects, "bulk_create", side_effect=store_rows),
     ):
         receipt, created = ingest_result_receipt(
             capability.attempt, projected, digest_body=body, replay_usage=False
@@ -366,9 +381,11 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
         ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
     )
     assert len(rows) == 4
-    assert rows[0].created_at == rows[1].created_at == call.started_at
-    assert rows[2].created_at == rows[3].created_at
-    assert (rows[2].created_at - rows[0].created_at).total_seconds() == 1
+    assert scheduled_times[0] == scheduled_times[1]
+    first, reply, second, second_reply = scheduled_times[0]
+    assert first == reply == call.started_at
+    assert second == second_reply
+    assert (second - first).total_seconds() == 1
 
 
 @pytest.mark.parametrize("field", ["started_at", "ended_at"])
@@ -464,8 +481,11 @@ def test_supported_cancellation_persists_job_and_attempt_reason(organization, re
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = SimpleNamespace(name="synthetic")
+    # Deletion cancellation hides the job once cleanup completes. Repeating the
+    # request before that transition must retain the supported machine code.
+    request_cancellation(job, reason)
+    request_cancellation(job, reason)
     with patch("simulate.services.phone_telephony.cleanup_hosted_phone_rooms"):
-        gateway.cancel(job, reason=reason)
         gateway.cancel(job, reason=reason)
     job.refresh_from_db()
     capability.attempt.refresh_from_db()
