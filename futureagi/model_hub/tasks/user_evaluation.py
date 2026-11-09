@@ -8,6 +8,8 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
 from django.db import close_old_connections
 
+from model_hub.services.localization_errors import LocalizationFailure
+
 logger = structlog.get_logger(__name__)
 try:
     from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
@@ -55,6 +57,7 @@ from tracer.models.observation_span import EvalLogger
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
     from simulate.models.test_execution import CallExecution
+    from tracer.models.observation_span import ObservationSpan
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -881,11 +884,24 @@ def trigger_error_localization_for_span(
     eval_explanation: str,
     log_id: str | None = None,
     eval_config: dict | None = None,
+    *,
+    observation_span: "ObservationSpan",
 ) -> None:
+    """Use the evaluator's project-scoped span, which may exist only in CH."""
     try:
-        """
-        Helper function to create ErrorLocalizerTask records for spans.
-        """
+        project = observation_span.project
+        if (
+            str(eval_logger.observation_span_id) != str(observation_span.id)
+            or str(eval_logger.trace_id) != str(observation_span.trace_id)
+            or str(eval_logger.custom_eval_config.project_id) != str(project.id)
+            or str(eval_logger.custom_eval_config.eval_template_id)
+            != str(eval_template.id)
+        ):
+            logger.warning(
+                "error_localizer_span_context_mismatch",
+                eval_logger_id=str(eval_logger.id),
+            )
+            return
         input_data_dict = mapping
         input_keys = list(input_data_dict.keys())
         input_type_dict = _get_input_type(input_data_dict)
@@ -893,13 +909,19 @@ def trigger_error_localization_for_span(
         task_exists = ErrorLocalizerTask.objects.filter(
             source_id=eval_logger.id
         ).exists()
-        workspace = eval_logger.observation_span.project.workspace
+        workspace = project.workspace
         if not workspace:
             workspace = Workspace.objects.get(
-                organization=eval_logger.observation_span.project.organization,
+                organization=project.organization,
                 is_default=True,
                 is_active=True,
             )
+        if workspace.organization_id != project.organization_id:
+            logger.warning(
+                "error_localizer_workspace_mismatch",
+                eval_logger_id=str(eval_logger.id),
+            )
+            return
 
         rule_prompt = (
             eval_template.config.get("rule_prompt")
@@ -915,7 +937,12 @@ def trigger_error_localization_for_span(
         pass_threshold = resolve_pass_threshold(eval_template, eval_config)
 
         if task_exists:
-            task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
+            task = ErrorLocalizerTask.objects.get(
+                source_id=eval_logger.id,
+                source=ErrorLocalizerSource.OBSERVE,
+                organization=project.organization,
+                workspace=workspace,
+            )
             metadata = task.metadata or {}
             metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
             task.eval_result = value
@@ -940,7 +967,7 @@ def trigger_error_localization_for_span(
                 eval_result=value,
                 eval_explanation=eval_explanation,
                 rule_prompt=rule_prompt,
-                organization=eval_logger.observation_span.project.organization,
+                organization=project.organization,
                 metadata={"log_id": log_id, "pass_threshold": pass_threshold},
                 workspace=workspace,
                 status=initial_status,
@@ -950,7 +977,12 @@ def trigger_error_localization_for_span(
 
         logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
     except Exception as e:
-        logger.error(f"Error in trigger_error_localization_for_span: {str(e)}")
+        logger.error(
+            "error_localizer_span_trigger_failed",
+            eval_logger_id=str(eval_logger.id),
+            span_id=str(observation_span.id),
+            error_type=type(e).__name__,
+        )
 
 
 def _get_input_keys(input_data):
@@ -1294,12 +1326,20 @@ def process_single_error_localization(task_id):
 
             result = localizer.localize_errors()
         except Exception as e:
-            import traceback
-
-            logger.error(
-                f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
+            # SDK exceptions can contain prompts or provider bodies. Persist only
+            # our typed reason, and never attach the raw exception to diagnostics.
+            failure_code = (
+                e.code.value
+                if isinstance(e, LocalizationFailure)
+                else "unexpected_error"
             )
-            task.mark_as_failed(str(e))
+            logger.error(
+                "error_localizer_failed",
+                task_id=str(task.id),
+                source_id=str(task.source_id),
+                failure_code=failure_code,
+            )
+            task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
