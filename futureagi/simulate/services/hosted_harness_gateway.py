@@ -5139,7 +5139,7 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
 
 # The provider key each inspected target needs. Connect-only targets of these connectors are
 # inspected before authoring; must match ALK's PROVIDER_MANAGED_CONNECTORS, whose builder
-# waits for the provider profile cache.
+# waits for the provider profile cache (pinned by a test in test_hosted_harness_gateway.py).
 _INSPECTION_KEYS = {
     "vapi": "VAPI_API_KEY",
     "retell": "RETELL_API_KEY",
@@ -5153,7 +5153,7 @@ def _provider_import_authoring_material(
     """Resolve only the provider key needed for read-only imported-target inspection."""
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
-    mode = str(agent.get("mode") or "")
+    mode = str(agent.get("mode") or "").strip().lower()
     secret_name = _INSPECTION_KEYS.get(connector)
     if mode not in ("provider_import", "connect_only") or not secret_name:
         return {}, connector

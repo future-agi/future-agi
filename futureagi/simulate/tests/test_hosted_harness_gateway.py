@@ -505,6 +505,32 @@ def test_connect_only_non_provider_authoring_gets_no_key(connector):
     resolve.assert_not_called()
 
 
+# agent-learning-kit inspects a connect-only target only for these connectors
+# (`PROVIDER_MANAGED_CONNECTORS` in `fi/alk/harness/authoring_entrypoint.py`); a connector it
+# inspects without a key here stalls authoring. Change both together.
+_ALK_PROVIDER_MANAGED_CONNECTORS = {"vapi", "retell", "retell_chat"}
+
+
+def test_every_connector_alk_inspects_gets_a_key_and_no_other_does():
+    from simulate.services.hosted_harness_gateway import _INSPECTION_KEYS
+
+    assert set(_INSPECTION_KEYS) == _ALK_PROVIDER_MANAGED_CONNECTORS
+
+
+@pytest.mark.parametrize("mode", ["Connect_Only", " connect_only ", "PROVIDER_IMPORT"])
+def test_the_mode_is_read_the_way_the_connector_is(mode):
+    payload = {"agent": {"connector": "Vapi ", "mode": mode}}
+    with patch(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        return_value={"VAPI_API_KEY": "v"},
+    ):
+        material, connector = _provider_import_authoring_material(
+            SimpleNamespace(), payload
+        )
+
+    assert (material, connector) == ({"VAPI_API_KEY": "v"}, "vapi")
+
+
 def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     settings, monkeypatch, tmp_path
 ):
