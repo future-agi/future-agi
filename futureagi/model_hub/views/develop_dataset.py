@@ -6,7 +6,6 @@ import json
 import math
 import os
 import re
-import shutil
 import time
 import traceback
 import uuid
@@ -287,6 +286,7 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
+from model_hub.utils.compare_cleanup import cleanup_compare_folder
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
@@ -315,7 +315,6 @@ from tfc.utils.functions import (
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
-    delete_compare_folder,
     download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
@@ -13591,10 +13590,7 @@ class GetCompareDatasetRow(APIView):
             return self._gm.internal_server_error_response(str(e))
 
     def thread_delete(self, compare_id):
-        compare_dir = get_compare_local_dir(compare_id)
-        if os.path.isdir(compare_dir):
-            shutil.rmtree(compare_dir)
-        delete_compare_folder(compare_id)
+        cleanup_compare_folder(compare_id)
 
     @swagger_auto_schema(
         responses={

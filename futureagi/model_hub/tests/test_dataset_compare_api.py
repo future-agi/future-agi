@@ -1,5 +1,6 @@
 import uuid
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rest_framework import status
@@ -127,16 +128,44 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
         "tfc.temporal.drop_in.start_activity",
         raise_temporal_unavailable,
     )
-    monkeypatch.setattr(
-        "model_hub.views.develop_dataset.delete_compare_folder",
-        lambda compare_id: None,
-    )
+    storage_client = Mock()
+    storage_client.list_objects.return_value = []
+    monkeypatch.setattr("tfc.utils.storage.get_storage_client", lambda: storage_client)
 
     response = auth_client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == {"message": "File(s) deleted successfully"}
     assert compare_dir.resolve().parent == tmp_path / "media" / "compare"
+    assert not compare_dir.exists()
+
+
+@pytest.mark.django_db
+def test_compare_delete_fallback_preserves_marker_on_storage_failure(
+    auth_client, monkeypatch, tmp_path
+):
+    compare_id = uuid.uuid4()
+    monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+    compare_dir = Path(get_compare_local_dir(compare_id))
+    compare_dir.mkdir(parents=True)
+    (compare_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "tfc.temporal.drop_in.start_activity",
+        Mock(side_effect=RuntimeError("Temporal unavailable")),
+    )
+    storage_client = Mock()
+    storage_client.list_objects.side_effect = PermissionError("remote denied")
+    monkeypatch.setattr("tfc.utils.storage.get_storage_client", lambda: storage_client)
+
+    response = auth_client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert (compare_dir / "metadata.json").exists()
+
+    storage_client.list_objects.side_effect = None
+    storage_client.list_objects.return_value = []
+    response = auth_client.delete(f"/model-hub/datasets/delete-compare/{compare_id}/")
+    assert response.status_code == status.HTTP_200_OK
     assert not compare_dir.exists()
 
 
