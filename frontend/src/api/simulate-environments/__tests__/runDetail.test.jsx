@@ -1796,6 +1796,8 @@ describe("actor turns in a call", () => {
         ["kid", "son", "audio_handoff"],
       ],
     );
+  });
+});
 
 describe("useCallWorkers", () => {
   it("reads an empty answer (204) as no worker record, not a failure", async () => {
