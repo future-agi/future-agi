@@ -1174,7 +1174,7 @@ class RunPrompts:
                 self.run_prompt_model.tools.all()
             )  # This will give you the related Tools instances
             for tool in tools:
-                self.tools_config.append(tool.config)
+                self.tools_config.append(tool.as_openai_tool())
             logger.info(
                 "RunPrompts_load_run_prompt_id_tools_loaded",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1904,7 +1904,7 @@ class PreviewRunPromptColumnView(APIView):
                 tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
                 if tool_ids:
                     tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+                    tools_config = [tool.as_openai_tool() for tool in tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):

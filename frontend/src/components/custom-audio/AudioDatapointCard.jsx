@@ -79,7 +79,7 @@ const AudioDatapointCard = ({ value, column }) => {
               <Typography
                 sx={{
                   typography: "s2_1",
-                  color: "red.500",
+                  color: "status.danger.fg",
                   fontWeight: "fontWeightMedium",
                 }}
               >

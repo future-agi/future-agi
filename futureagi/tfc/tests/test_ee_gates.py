@@ -23,6 +23,86 @@ from tfc import ee_gates
 from tfc.licensing.types import DeploymentLocation
 
 
+def test_r02_r14_jev_capability_and_exact_ids():
+    from tfc.capabilities.registry import FEATURE_REGISTRY
+
+    feature = FEATURE_REGISTRY["jev_models"]
+    # Community: open on every self-hosted install; still a paid feature so
+    # Cloud resolves it through the plan (has_jev_models).
+    assert not feature.oss_locked and feature.requires_license
+    # Bring your own key: no FutureAGI service or managed credits.
+    assert feature.execution_location.value == "local"
+    assert feature.required_service is None
+    assert feature.metering_dimension is None
+    assert ee_gates.is_jev_model("jev-1.13.0")
+    assert ee_gates.is_jev_model("jev-latest")
+    assert not ee_gates.is_jev_model("jev-preview")
+    assert not ee_gates.is_jev_model("JEV-LATEST")
+
+
+def test_r06_jev_unknown_denied_before_transport():
+    with patch("httpx.post") as dispatch:
+        response = ee_gates.ee_model_gate_for_template("jev-2.0.0")
+    assert response.status_code == 400
+    assert response.data["code"] == "JEV_MODEL_UNKNOWN"
+    dispatch.assert_not_called()
+
+
+def test_r14_jev_off_cloud_allowed():
+    cfg, loc, chk = _cfg(DeploymentLocation.SELF_HOSTED, allowed=True)
+    with cfg, loc, chk as check:
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+    check.assert_called_once_with("jev_models")
+
+
+def test_r14_jev_off_cloud_still_honours_a_capability_denial():
+    cfg, loc, chk = _cfg(DeploymentLocation.SELF_HOSTED, allowed=False)
+    with cfg, loc, chk as check:
+        response = ee_gates.ee_model_gate_for_template("jev-latest")
+    assert response.status_code == 402
+    assert response.data["code"] == "ENTITLEMENT_DENIED"
+    assert response.data["feature"] == "jev"
+    check.assert_called_once_with("jev_models")
+
+
+def test_r14_jev_allowed_before_the_service_is_configured():
+    with patch("tfc.capabilities.service.is_configured", return_value=False):
+        assert ee_gates._jev_denied_off_cloud() is False
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+
+
+def test_r14_jev_cloud_defers_to_engine():
+    cfg, loc, chk = _cfg(DeploymentLocation.CLOUD, allowed=False)
+    with cfg, loc, chk as check:
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+    check.assert_not_called()
+
+
+def test_jev_error_text_without_jev_falls_back_to_the_generic_handling(monkeypatch):
+    """A build without ee/jev reports no Jev error, so callers keep their own
+    text."""
+    import sys
+
+    from tfc.utils.error_codes import get_specific_error_message
+
+    monkeypatch.setitem(sys.modules, "ee.jev.errors", None)
+    error = ValueError("JEV_TIMEOUT")
+    assert ee_gates.describe_jev_error(error) is None
+    assert ee_gates.jev_error_message(error) is None
+    assert get_specific_error_message(error) == "JEV_TIMEOUT"
+
+
+def test_r18_combined_gate_preserves_turing():
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+        response = ee_gates.ee_model_gate_for_template("turing_large")
+        assert response.status_code == 402
+        assert response.data["feature"] == "turing"
+        assert (
+            ee_gates.ee_model_gate_for_template("turing_large", eval_type="code")
+            is None
+        )
+
+
 def _cfg(location, *, allowed=True):
     """Patch the capability service into a configured state at `location`,
     with check("turing_models") returning `allowed`."""

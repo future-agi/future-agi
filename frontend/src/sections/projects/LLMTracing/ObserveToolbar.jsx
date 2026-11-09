@@ -1,22 +1,27 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
+import EvaluateMenu from "./InstantEval/EvaluateMenu";
 import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
-import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../timeWindowPresets";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 import {
-  buildApiFilterFromPanelRow,
-  isNativeColumnType,
-  normalizeColumnType,
-} from "src/api/contracts/filter-contract";
+  apiFiltersToPanelRows,
+  filterPanelSettings,
+} from "../observeFilterConfig";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -28,6 +33,10 @@ const DATE_OPTIONS = [
   { key: "12M", label: "Past 12M" },
   { key: "Custom", label: "Custom range" },
 ];
+
+// Views whose rows Instant eval can ask about (traces mode covers the Spans
+// tab too). Insights runs on all of them but spans.
+const ASK_MODES = new Set(["traces", "sessions", "users"]);
 
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
@@ -115,38 +124,37 @@ const ObserveToolbar = ({
   // Compare mode: which graph's filter is being edited
   filterTarget,
   onApplyCompareExtraFilters,
-  // Add Evals — opens prefilled task-create draft
+  // Evaluate menu: Add evaluators opens a prefilled task-create draft;
+  // Ask a question opens the Ask page on this view's date and filters; Find
+  // patterns hands the view to a new Insights report.
   onAddEvals,
+  onInstantEval,
+  onInsights,
   // Spans view — swaps "Trace Name" filter label to "Span Name"
   isSpansView = false,
 }) => {
+  // Asking needs a project (the views only pass handlers when they have one)
+  // and isn't offered in compare mode, nor on a simulator (voice) project:
+  // Ask and Find patterns read the trace list, not the calls on screen (and
+  // not its "Show simulated calls" toggle). The tab bar hides Insights there
+  // the same way.
+  const canAsk = ASK_MODES.has(mode) && !isCompareActive && !isSimulator;
+  const askUnit = mode === "traces" && isSpansView ? "spans" : mode;
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
   const [filterButtonEl, setFilterButtonEl] = useState(null);
-  const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
+  // Callers without graphFilters keep the last applied rows locally.
+  const [appliedPanelFilters, setAppliedPanelFilters] = useState(null);
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
-  // Simulator projects render CallLogsGrid in the trace slot. The URL/tab
-  // remains `trace`, but the visible rows and list endpoint use the canonical
-  // voice-call field contract.
-  const effectiveFilterTab = isSimulator ? "voiceCalls" : tab;
-  const propertyNamespace =
-    effectiveFilterTab === "voiceCalls"
-      ? "voice_calls"
-      : mode === "sessions"
-        ? "sessions"
-        : mode === "users"
-          ? "users"
-          : "traces";
-  const filterValueSource =
-    mode === "sessions" || mode === "users" ? "sessions" : "traces";
-  // Session and user rows retain their native list/value transport, while
-  // custom-attribute definitions and values live in the tracing catalog.
-  // Keep those identities separate: using the session source for definitions
-  // is unsupported, while the spans source misses trace catalog attributes.
-  const attributeSource =
-    mode === "sessions" || mode === "users" ? "traces" : undefined;
+  // The panel's catalog settings for this mode (see filterPanelSettings).
+  const {
+    effectiveFilterTab,
+    propertyNamespace,
+    source: filterValueSource,
+    attributeSource,
+  } = filterPanelSettings({ mode, tab, isSimulator });
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
@@ -159,47 +167,9 @@ const ObserveToolbar = ({
       setCustomDateOpen(true);
       return;
     }
-    let filter = null;
-    switch (option) {
-      case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-        break;
-      case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-        break;
-      case "7D":
-        filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "30D":
-        filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "3M":
-        filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "6M":
-        filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "12M":
-        filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      default:
-        break;
-    }
+    // One shared window per preset: hour-floored start, next-midnight end,
+    // identical to the default load (see observePresetDateFilter).
+    const filter = observePresetDateFilter(option);
     if (filter)
       setDateFilter((prev) => ({
         ...prev,
@@ -208,133 +178,16 @@ const ObserveToolbar = ({
       }));
   };
 
-  // Sync extra filters (the single source of truth) into panelFilters
-  useEffect(() => {
-    if (!graphFilters?.length) {
-      setPanelFilters(null);
-      return;
-    }
-    const RANGE_OPS = new Set(["between", "not_between"]);
-    const newPanelFilters = graphFilters.map((gf) => {
-      const rawOp = gf.filter_config?.filter_op || "equals";
-      const rawType = gf.filter_config?.filter_type;
-      const rawVal = gf.filter_config?.filter_value;
-      // Trust explicit `filter_type` only; ops are shared across types.
-      const isNumberType = rawType === "number";
-      const isBooleanType = rawType === "boolean";
-      const isArrayType = rawType === "array" || rawType === "list";
-      const isMapType =
-        rawType === "map" ||
-        rawType === "object" ||
-        (rawType === "json" &&
-          rawVal !== null &&
-          typeof rawVal === "object" &&
-          !Array.isArray(rawVal));
-      const isRange = RANGE_OPS.has(rawOp);
-      let value;
-      if (isRange) {
-        // Normalize to a 2-element string array for the TextField pair.
-        if (Array.isArray(rawVal)) {
-          value = rawVal.map((v) => (v == null ? "" : String(v)));
-        } else if (rawVal != null) {
-          value = String(rawVal)
-            .split(",")
-            .map((v) => v.trim());
-        } else {
-          value = ["", ""];
-        }
-      } else if (isBooleanType) {
-        // MUI Select needs "true"/"false" strings; backend uses native bool.
-        value = rawVal === true || rawVal === "true" ? "true" : "false";
-      } else if (isNumberType) {
-        value = rawVal != null ? String(rawVal) : "";
-      } else if (isMapType) {
-        value = rawVal && typeof rawVal === "object" ? rawVal : "";
-      } else {
-        // Canonical list members and exact scalar strings must stay intact.
-        // Splitting commas also corrupts aligned attribute_value_types.
-        value = Array.isArray(rawVal)
-          ? rawVal
-          : rawVal !== undefined && rawVal !== null && rawVal !== ""
-            ? [rawVal]
-            : [];
-      }
-      // Derive fieldCategory from col_type (reverse of colTypeMap)
-      const colTypeReverseMap = {
-        SPAN_ATTRIBUTE: "attribute",
-        SYSTEM_METRIC: "system",
-        EVAL_METRIC: "eval",
-        ANNOTATION: "annotation",
-      };
-      const explicitColType = normalizeColumnType(
-        gf.filter_config?.col_type || gf.col_type,
-      );
-      const isDirectIdFilter =
-        ID_ONLY_FIELDS.has(gf.column_id) && !explicitColType;
-      const rawColType =
-        explicitColType ||
-        (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
-      const rawFilterType = gf.filter_config?.filter_type;
-      const isGlobalAnnotatorFilter =
-        gf.column_id === "annotator" &&
-        (isNativeColumnType(explicitColType) || explicitColType === "ANNOTATION");
-      // Auto-migrate legacy saved views: thumbs annotations used to be
-      // stored as filter_type=categorical with values like ["Thumbs Up",
-      // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
-      // so the BE thumbs branch handles them and the panel renders the
-      // right operators/picker.
-      const looksLikeThumbsValues = (() => {
-        if (rawColType !== "ANNOTATION") return false;
-        if (rawFilterType !== "categorical") return false;
-        const vals = Array.isArray(value) ? value : value ? [value] : [];
-        if (vals.length === 0) return false;
-        const tokens = new Set(["thumbs up", "thumbs down", "up", "down"]);
-        return vals.every((v) => tokens.has(String(v).trim().toLowerCase()));
-      })();
-      return {
-        field: gf.column_id,
-        registryId: gf.property_id,
-        fieldName:
-          gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
-        fieldCategory: isDirectIdFilter
-          ? undefined
-          : isGlobalAnnotatorFilter
-            ? "annotation"
-            : colTypeReverseMap[rawColType] || "system",
-        fieldType: isGlobalAnnotatorFilter
-          ? "annotator"
-          : isBooleanType
-            ? "boolean"
-            : isNumberType
-              ? "number"
-              : isMapType
-                ? "map"
-                : isArrayType || rawFilterType === "json"
-                  ? "array"
-                  : rawFilterType === "number"
-                    ? "number"
-                    : rawFilterType === "thumbs" || looksLikeThumbsValues
-                      ? "thumbs"
-                      : rawFilterType === "categorical"
-                        ? "categorical"
-                        : rawFilterType === "text" &&
-                            rawColType === "ANNOTATION"
-                          ? "text"
-                          : "string",
-        apiColType:
-          explicitColType ||
-          (isDirectIdFilter
-            ? undefined
-            : isGlobalAnnotatorFilter
-              ? "SYSTEM_METRIC"
-              : rawColType),
-        operator: rawOp,
-        value,
-        valueTypes: gf.filter_config?.attribute_value_types,
-      };
-    });
-    setPanelFilters(newPanelFilters);
-  }, [graphFilters]);
+  // Derived during render, not synced in an effect: TraceFilterPanel seeds its
+  // rows on the render it opens, which is also the render a graph Filter
+  // button switches filterTarget, so an effect would hand it the other
+  // graph's filters.
+  const graphPanelFilters = useMemo(
+    () => apiFiltersToPanelRows(graphFilters),
+    [graphFilters],
+  );
+  const panelFilters =
+    graphFilters === undefined ? appliedPanelFilters : graphPanelFilters;
   const { openCreateModal } = useTabStoreShallow((s) => ({
     openCreateModal: s.openCreateModal,
   }));
@@ -362,8 +215,8 @@ const ObserveToolbar = ({
             ref={dateButtonRef}
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-            endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+            startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
             onClick={(e) => setDateAnchor(e.currentTarget)}
             sx={{ ...pillSx }}
           >
@@ -384,7 +237,7 @@ const ObserveToolbar = ({
                 key={opt.key}
                 selected={dateFilter?.dateOption === opt.key}
                 onClick={() => handleDateOptionChange(opt.key)}
-                sx={{ fontSize: 13, py: 0.75 }}
+                sx={{ py: 0.75 }}
               >
                 {opt.label}
               </MenuItem>
@@ -394,6 +247,7 @@ const ObserveToolbar = ({
             open={customDateOpen}
             onClose={() => setCustomDateOpen(false)}
             anchorEl={dateButtonRef.current}
+            value={dateFilter?.dateFilter}
             setDateFilter={(range) => {
               setDateFilter?.((prev) => ({
                 ...prev,
@@ -429,10 +283,10 @@ const ObserveToolbar = ({
               startIcon={
                 hasActiveFilter ? (
                   <Badge variant="dot" color="error" overlap="circular">
-                    <Iconify icon="mdi:filter-outline" width={16} />
+                    <Iconify icon="solar:filter-linear" width={16} />
                   </Badge>
                 ) : (
-                  <Iconify icon="mdi:filter-outline" width={16} />
+                  <Iconify icon="solar:filter-linear" width={16} />
                 )
               }
               onClick={onFilterToggle}
@@ -463,7 +317,7 @@ const ObserveToolbar = ({
             projectId={projectId}
             allowWorkspaceScope={allowWorkspaceScope}
             onApply={(newFilters) => {
-              setPanelFilters(newFilters);
+              setAppliedPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {
@@ -495,7 +349,7 @@ const ObserveToolbar = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mdi:content-save-outline" width={16} />}
+              startIcon={<Iconify icon="solar:diskette-linear" width={16} />}
               onClick={() => {
                 if (typeof onSaveView === "function") {
                   onSaveView();
@@ -528,7 +382,7 @@ const ObserveToolbar = ({
           <Button
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:tune-vertical" width={16} />}
+            startIcon={<Iconify icon="solar:tuning-2-linear" width={16} />}
             onClick={(e) => setDisplayAnchor(e.currentTarget)}
             sx={{
               ...pillSx,
@@ -571,20 +425,14 @@ const ObserveToolbar = ({
             onToggleSimulationCalls={onToggleSimulationCalls}
           />
 
-          {/* Add Evals — opens task create with project + filters pre-filled */}
-          {onAddEvals && (
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
-              onClick={onAddEvals}
-              sx={{
-                ...pillSx,
-              }}
-            >
-              Add Evals
-            </Button>
-          )}
+          {/* Evaluate: ask Jev a question about a sample or every row in
+              view, find patterns with Insights, or run saved evaluators. */}
+          <EvaluateMenu
+            unit={askUnit}
+            onAsk={canAsk ? onInstantEval : undefined}
+            onFindPatterns={canAsk && !isSpansView ? onInsights : undefined}
+            onAddEvaluators={onAddEvals}
+          />
         </>
       )}
     </Stack>
@@ -644,6 +492,8 @@ ObserveToolbar.propTypes = {
   onBulkAction: PropTypes.func,
   bulkActions: PropTypes.array,
   onAddEvals: PropTypes.func,
+  onInstantEval: PropTypes.func,
+  onInsights: PropTypes.func,
   isSimulator: PropTypes.bool,
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,

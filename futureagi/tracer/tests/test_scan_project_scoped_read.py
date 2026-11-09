@@ -164,8 +164,10 @@ def test_project_cluster_inputs_corpus_scopes_read():
     reader = _FakeReaderCM(sink, "roots_by_trace_ids")
     with (
         patch("tracer.queries.feed.get_reader", return_value=reader),
-        patch("tracer.queries.feed.ErrorClusterTraces") as ect,
+        patch("tracer.queries.feed._current_memberships") as memberships,
     ):
-        ect.objects.filter.return_value.values_list.return_value = [("cluster-1", "t-1")]
+        memberships.return_value.filter.return_value.values_list.return_value = [
+            ("cluster-1", "t-1")
+        ]
         _project_cluster_inputs_corpus("proj-corpus")
     assert sink["project_id"] == "proj-corpus"

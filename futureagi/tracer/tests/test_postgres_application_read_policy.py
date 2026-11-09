@@ -182,6 +182,43 @@ def test_mock_only_scope_does_not_open_connection_or_change_settings(outer):
 
 
 @pytest.mark.parametrize("outer", [False, True])
+def test_bounded_reads_recalculate_and_restore_statement_budget(outer):
+    pg = FakePostgres(outer=outer)
+    budgets = iter([500, 200])
+    with pg.scope(statement_timeout_ms=lambda: next(budgets)):
+        pg.execute("SELECT first")
+        pg.execute("SELECT second")
+    assert pg.query_timeouts == ["500", "200"]
+    assert pg.timeout == "750ms" and pg.in_atomic_block is outer
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, "500"])
+def test_invalid_statement_budget_never_disables_timeout(budget):
+    pg = FakePostgres(outer=True)
+    with pytest.raises(ValueError, match="statement budget must be positive"):
+        with pg.scope(statement_timeout_ms=lambda: budget):
+            pg.execute("SELECT must_not_start")
+    assert pg.query_timeouts == [] and pg.timeout == "750ms"
+
+
+@pytest.mark.parametrize("inner_fails", [False, True])
+def test_nested_bounded_scope_restores_enclosing_read_policy(inner_fails):
+    pg = FakePostgres(outer=True)
+    with pg.scope():
+        pg.execute("SELECT outer")
+        try:
+            with pg.scope(statement_timeout_ms=lambda: 100):
+                pg.execute("SELECT bounded")
+                if inner_fails:
+                    raise ValueError("caller failure")
+        except ValueError:
+            pass
+        pg.execute("SELECT outer_again")
+    assert pg.query_timeouts == ["0", "100", "0"]
+    assert pg.timeout == "750ms" and pg.in_atomic_block
+
+
+@pytest.mark.parametrize("outer", [False, True])
 def test_snapshot_characteristics_precede_first_read_and_never_override_outer(outer):
     pg = FakePostgres(outer=outer)
     with pg.scope(read_only=True, repeatable_read=True):
@@ -228,7 +265,7 @@ def test_failed_read_savepoint_preserves_prior_outer_work_and_usable_transaction
     assert pg.timeout == "750ms"
 
 
-def test_pg_scope_source_has_only_unlimited_install_and_previous_setting_restore():
+def test_pg_callers_share_policy_and_restore_previous_setting():
     import ast
     import inspect
     from textwrap import dedent
@@ -281,6 +318,6 @@ def test_pg_scope_source_has_only_unlimited_install_and_previous_setting_restore
     ]
     assert len(setting_calls) == 2
     assert {ast.unparse(node.args[2]) for node in setting_calls} == {
-        "('0',)",
+        "(str(timeout),)",
         "(previous_timeout,)",
     }

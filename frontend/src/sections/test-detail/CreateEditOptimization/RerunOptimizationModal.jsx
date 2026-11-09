@@ -5,12 +5,12 @@ import {
   DialogTitle,
   IconButton,
   Typography,
+  Alert,
 } from "@mui/material";
 import React from "react";
 import Iconify from "src/components/iconify";
 import CreateEditOptimizationForm from "./CreateEditOptimizationForm";
 import PropTypes from "prop-types";
-import SvgColor from "src/components/svg-color";
 
 const RerunOptimizationModal = ({
   open,
@@ -19,7 +19,7 @@ const RerunOptimizationModal = ({
   onSuccess,
 }) => {
   return (
-    <Dialog open={open} onClose={onClose} width="480px" fullWidth>
+    <Dialog open={open} onClose={onClose} width="560px" fullWidth>
       <DialogTitle
         sx={{
           padding: 2,
@@ -38,30 +38,13 @@ const RerunOptimizationModal = ({
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ padding: 2 }}>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            backgroundColor: "blue.o5",
-            paddingX: "12px",
-            paddingY: "4px",
-            borderRadius: "4px",
-            marginBottom: 2,
-          }}
-        >
-          <SvgColor
-            src="/assets/icons/ic_info.svg"
-            sx={{ width: 16, height: 16, color: "blue.500" }}
-          />
-          <Typography typography="s2">
-            Rerunning this optimization will create a new run
-          </Typography>
-        </Box>
+        <Alert severity="info" sx={{ marginBottom: 2 }}>
+          Rerunning this optimization will create a new run
+        </Alert>
         <Box sx={{ paddingTop: 0.5 }}>
           <CreateEditOptimizationForm
             onClose={onClose}
