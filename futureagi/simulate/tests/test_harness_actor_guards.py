@@ -73,3 +73,18 @@ def test_an_unmeasured_sub_goal_stays_requested_and_is_never_counted_as_evaluate
         "unmeasured": 1,
         "complete": False,
     }
+
+
+def test_an_unmeasured_sub_goal_is_never_published_as_an_eval():
+    from simulate.services.hosted_harness_ingestion import _receipt_evaluations
+
+    published = _receipt_evaluations(
+        {
+            "sub_goals": [
+                {"name": "a", "verdict": "pass"},
+                {"name": "b", "verdict": "unmeasured"},
+            ]
+        }
+    )
+    # Only what was decided becomes an eval; an unmeasured one would read as a Failed output.
+    assert [one["name"] for one in published] == ["a"]
