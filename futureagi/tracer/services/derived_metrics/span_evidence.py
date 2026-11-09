@@ -34,9 +34,9 @@ def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff
     """Prove coverage of every bucket this publication can replace or expire.
 
     A bounded backfill may use its generation-pinned frozen proposal to upgrade a
-    legacy bucket. Untouched retained buckets can wait for the next pass; missing
-    evidence in an expiring bucket cannot. Compare per bucket, so new arrivals in
-    another bucket cannot disguise a deficit in legacy history.
+    fully retained legacy bucket. Untouched retained buckets can wait for the next
+    pass; expiring buckets need independently committed coverage. Proposed counts
+    cannot distinguish new retained arrivals from missing legacy identities.
     """
     if head is None:
         return
@@ -120,11 +120,17 @@ def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff
                 "AND field_version = %(proof_version)s GROUP BY bucket_start) p "
                 "ON t.bucket_start = p.bucket_start"
             )
-            proposal_proof = (
-                " AND t.total > ifNull(p.proposed, 0) + ifNull(r.retired, 0)"
+            uncovered_proposal = (
+                "t.total > ifNull(p.proposed, 0) + ifNull(r.retired, 0)"
             )
-        # Complete parents permit terminal corrections/retractions. Deficient
-        # parents instead need a complete proposed bucket before replacement.
+            proposal_proof = (
+                f" AND (t.bucket_start < %(proof_cutoff)s OR {uncovered_proposal})"
+                if cutoff is not None
+                else f" AND ({uncovered_proposal})"
+            )
+        # Complete parents permit terminal corrections/retractions. A proposal
+        # may repair a deficient parent only where the whole bucket is retained:
+        # at a partial cutoff, captured fields can omit uncovered old identities.
         if writer.store.execute(
             f"SELECT count() FROM ({total}) t LEFT JOIN ({live}) l "
             "ON t.bucket_start = l.bucket_start "
@@ -384,8 +390,8 @@ def retiring_span_parts(
                 f"SELECT * FROM ({candidates}) WHERE unit_id <= %(retiring_through)s",
                 merge_bindings(page_params, {"retiring_through": upper}),
             )
-            # A correction can be wider than its committed preimage. Retry only
-            # the unconsumed capture, with fewer identities, never weaker limits.
+            # A correction can be wider than its committed preimage. Overflow
+            # discards the native session, including every prior accumulator.
             replacement = ExitStack()
             try:
                 with captured_span_fields(
@@ -432,6 +438,11 @@ def retiring_span_parts(
                     and "metric_span_capture_budget" in str(exc)
                     and count > 1
                 ):
+                    current.close()
+                    lower, parts = "", None
+                    # Restart the complete pinned scan and keep the smaller cap
+                    # for all subsequent pages, or the same later overflow can
+                    # repeatedly destroy a successfully rebuilt prefix.
                     target_rows = max(1, count // 2)
                     continue
                 raise
@@ -440,7 +451,6 @@ def retiring_span_parts(
             current.close()
             current.enter_context(replacement.pop_all())
             parts, lower = next_parts, upper
-            target_rows = SPAN_CAPTURE_ROWS
         yield (
             parts
             if parts is not None
