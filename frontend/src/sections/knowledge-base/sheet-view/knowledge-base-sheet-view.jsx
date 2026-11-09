@@ -34,6 +34,7 @@ export default function KnowledgeBaseSheetView() {
   const gridRef = useRef(null);
   const theme = useTheme();
   const [selectedAll, setSelectedAll] = useState(false);
+  const [selectedAllFileIds, setSelectedAllFileIds] = useState([]);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -54,6 +55,19 @@ export default function KnowledgeBaseSheetView() {
   const allRowSelected = useRef(false);
   const [totalRows, setTotalRows] = useState(0);
   const [excludingIds, setExcludingIds] = useState(new Set());
+  const selectedAllIdSet = new Set(selectedAllFileIds);
+  const excludedSelectedIds = Array.from(excludingIds).filter((id) =>
+    selectedAllIdSet.has(id),
+  );
+
+  useEffect(() => {
+    gridRef.current?.api?.deselectAll();
+    setSelectedFiles([]);
+    setSelectedAll(false);
+    setSelectedAllFileIds([]);
+    setExcludingIds(new Set());
+    setOpenDeleteDialog(false);
+  }, [searchQuery, debouncedSearchQuery, knowledgeId]);
 
   const currentTab = searchParams.get("tab") || tabOptions[0]?.value;
 
@@ -104,9 +118,7 @@ export default function KnowledgeBaseSheetView() {
       }),
     onSuccess: (_, variables) => {
       allRowSelected.current = false;
-      const filesLength = variables?.delete_all
-        ? totalRows - Array.from(excludingIds).length
-        : variables?.file_ids?.length ?? 0;
+      const filesLength = variables?.file_ids?.length ?? 0;
       const message =
         filesLength === 1
           ? "One file has been deleted."
@@ -115,6 +127,8 @@ export default function KnowledgeBaseSheetView() {
       gridRef.current?.api?.deselectAll();
       setSelectedFiles([]);
       setSelectedAll(false);
+      setSelectedAllFileIds([]);
+      setExcludingIds(new Set());
       gridRef.current?.api?.refreshServerSide();
       enqueueSnackbar(message, { variant: "success" });
       setOpenDeleteDialog(false);
@@ -122,23 +136,17 @@ export default function KnowledgeBaseSheetView() {
   });
 
   const onDeleteFiles = async () => {
-    const deletePayload = {};
-    const ids = selectedFiles.map((file) => file.id);
+    const ids = selectedAll
+      ? selectedAllFileIds.filter((id) => !excludingIds.has(id))
+      : selectedFiles.map((file) => file.id);
 
-    if (ids.length === 0 && !selectedAll) {
+    if (ids.length === 0) {
       enqueueSnackbar("No files selected.", { variant: "warning" });
       return;
     }
 
-    if (selectedAll) {
-      deletePayload["delete_all"] = true;
-      deletePayload["excluded_file_ids"] = Array.from(excludingIds);
-    } else {
-      deletePayload["delete_all"] = false;
-      deletePayload["file_ids"] = ids;
-    }
-
-    deleteSelectedFiles(deletePayload);
+    // The server validates these IDs against the KB before queuing removal.
+    deleteSelectedFiles({ delete_all: false, file_ids: ids });
   };
 
   const refreshGrid = () => {
@@ -179,10 +187,10 @@ export default function KnowledgeBaseSheetView() {
 
         {/* search and action buttons */}
         <Actions
-          excludingIds={Array.from(excludingIds)}
+          excludingIds={excludedSelectedIds}
           setTotalRows={setTotalRows}
           selectedAll={selectedAll}
-          totalRows={totalRows}
+          totalRows={selectedAllFileIds.length}
           allRowSelected={allRowSelected}
           setOpenEditDialog={setOpenEditDialog}
           knowledgeId={knowledgeId}
@@ -259,15 +267,16 @@ export default function KnowledgeBaseSheetView() {
             ref={gridRef}
             setSelectedFiles={setSelectedFiles}
             setSelectedAll={setSelectedAll}
+            setSelectedAllFileIds={setSelectedAllFileIds}
             selectedAll={selectedAll}
             status={status?.status}
           />
         </ShowComponent>
       </Box>
       <ConfirmDelete
-        excludingIds={Array.from(excludingIds)}
+        excludingIds={excludedSelectedIds}
         selectedAll={selectedAll}
-        totalRows={totalRows}
+        totalRows={selectedAllFileIds.length}
         onConfirm={onDeleteFiles}
         isLoading={isDeleting}
         selectedFiles={selectedFiles}

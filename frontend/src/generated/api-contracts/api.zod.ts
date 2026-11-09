@@ -26286,6 +26286,7 @@ export const ModelHubKnowledgeBaseFilesCreateResponse = zod.object({
         error: zod.string().optional(),
       }),
     ),
+    matching_file_ids: zod.array(zod.string().uuid()),
     last_updated: zod.string().datetime({ offset: true }),
     status: zod.string().min(1),
     status_count: zod.number(),

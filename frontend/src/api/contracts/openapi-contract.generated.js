@@ -99332,6 +99332,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     LegacyKnowledgeBaseFilesResult: {
       required: [
         "table_data",
+        "matching_file_ids",
         "last_updated",
         "status",
         "status_count",
@@ -99343,6 +99344,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/LegacyKnowledgeBaseFileRow",
+          },
+        },
+        matching_file_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
           },
         },
         last_updated: {
