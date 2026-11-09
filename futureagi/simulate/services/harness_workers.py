@@ -689,7 +689,78 @@ def worker_timeline(
                 ),
             }
         )
+    # A launching call the spans read as a plain tool call (its agent run not read as a hand-off, as when the read has
+    # no top-level span yet) is the sealed hand-off with its id, shown once, as the hand-off.
+    handed_ids = {
+        one for row in sealed if row["kind"] == "delegated" for one in row["ids"]
+    }
+    events[:] = [
+        one
+        for one in events
+        if not (one["type"] == "tool_call" and one.get("span_id") in handed_ids)
+    ]
     shown = _shown_by_spans(events, sealed)
+    # The sealed row is the call as the harness recorded it while it ran; the span shows it, links to it and times
+    # it, but who made it, where it sits and how it ended are the row's, so an incomplete span tree never moves a
+    # worker's call to the coordinator or reads a refusal as a success.
+    # The agent the spans read at the top, unless the rows show it being handed work, is the coordinator: a row naming
+    # it is the coordinator's own call, not a worker's.
+    span_top = {
+        _slug(name_of(span))
+        for span in by_id.values()
+        if span["span_id"] in participants
+        and agent_ancestor(span) is None
+        and _slug(name_of(span)) not in handed
+    }
+
+    def row_worker(by: str, label: str) -> str | None:
+        if _slug(by) in span_top or _slug(label) in span_top:
+            return None
+        return traced_worker(by, label)
+
+    for index, span_event in shown.items():
+        call = rows[index]
+        by = by_of(call)
+        label = str(call.get("worker_label") or by)
+        if span_event["type"] == "tool_call":
+            if by:
+                span_event["worker_id"] = row_worker(by, label)
+            span_event["status"] = (
+                "error" if call.get("ok") is False or call.get("refused") else "ok"
+            )
+            ended = (
+                call.get("result")
+                if call.get("result") is not None
+                else call.get("error")
+            )
+            if ended is not None:
+                span_event["output"] = _payload(ended)
+            place = placed_in(call)
+            if place:
+                span_event.pop("delegation_id", None)
+                span_event.pop("relationship", None)
+                if "parent_delegation_id" in place:
+                    span_event["delegation_id"] = place["parent_delegation_id"]
+                elif place.get("relationship"):
+                    span_event["relationship"] = place["relationship"]
+        else:
+            target = str(call.get("delegated_to") or "").strip()
+            if target:
+                span_event["worker_id"] = traced_worker(target, target)
+            if by:
+                span_event["by"] = row_worker(by, label)
+            for one in events:
+                if one["type"] == "returned" and one.get(
+                    "delegation_id"
+                ) == span_event.get("delegation_id"):
+                    one["worker_id"] = span_event["worker_id"]
+                    if call.get("ended_at"):
+                        one["status"] = (
+                            "error"
+                            if call.get("ok") is False or call.get("refused")
+                            else "ok"
+                        )
+                        one["result"] = _summary(call.get("result"))
     # Sealed rows are the same in every read, so an event keeps the row it stands for: a read without spans and a
     # later one with them then join on it.
     for index, span_event in shown.items():
@@ -736,6 +807,8 @@ def worker_timeline(
                     or (one["type"] == "tool_call" and one.get("span_id") in ids)
                 )
             ]
+            # The link is the span the hand-off was read from, its launching call: Open in Traces lands on that call,
+            # not on the agent run it started.
             link = {
                 key: from_spans[0][key]
                 for key in ("span_id", "trace_id")
@@ -848,11 +921,15 @@ def worker_timeline(
             },
         )
     # The coordinator as the app names it: the top-level agent span, else the runtime's label for it.
+    # A top-level agent span the sealed rows show being handed work is a worker whose launcher this read lacks, not the
+    # coordinator.
     coordinator = next(
         (
             name_of(span)
             for span in by_id.values()
-            if span["span_id"] in participants and agent_ancestor(span) is None
+            if span["span_id"] in participants
+            and agent_ancestor(span) is None
+            and _slug(name_of(span)) not in handed
         ),
         None,
     ) or next(
@@ -1094,6 +1171,14 @@ def _event_keys(one: Mapping[str, Any]) -> set[tuple[Any, ...]]:
         ident = one.get("delegation_id") or ident
     if ident:
         keys.add((one["type"], str(ident)))
+    # A launching call one read saw as a tool call is the hand-off another read saw with the same id.
+    launch = (
+        one.get("span_id")
+        if one["type"] == "tool_call"
+        else one.get("delegation_id") or one.get("span_id")
+    )
+    if launch and one["type"] in ("tool_call", "delegated", "transferred"):
+        keys.add(("launch", str(launch)))
     if one.get("row") is not None:
         keys.add((one["type"], "row", one["row"]))
     if not ident:
@@ -1111,25 +1196,38 @@ def _event_keys(one: Mapping[str, Any]) -> set[tuple[Any, ...]]:
     return keys
 
 
+def _has_roots(spans: list[Any]) -> bool:
+    """Whether every trace read has its top-level span: a trace whose spans all name a parent lacks its root."""
+    rooted: dict[str, bool] = {}
+    for one in spans:
+        trace = str(getattr(one, "trace_id", "") or "")
+        rooted[trace] = rooted.get(trace, False) or not getattr(
+            one, "parent_span_id", None
+        )
+    return all(rooted.values())
+
+
 def kept_record(stored: Any, read: WorkerTimeline) -> WorkerTimeline:
     """What a call keeps after another read: everything either read found.
 
     Events are joined by their recorded ids, so no event either read kept is lost, and a worker either read observed
-    stays observed. The record's other fields come from the read that found spans, then got further, then found more
-    events; on a tie, the later read. Its `collection` is the best of the reads that found spans, if any did.
+    stays observed. The record's other fields come from the read that found spans, then got further, then had every
+    trace's top-level span; on a tie, the later read. Its `collection` is the best of the reads that found spans, if any did.
     """
     if not isinstance(stored, Mapping) or not (
         stored.get("events") or stored.get("workers")
     ):
         return read
 
-    def weight(one: Mapping[str, Any]) -> tuple[bool, int, int]:
+    def weight(one: Mapping[str, Any]) -> tuple[bool, int, bool]:
+        # Not how many events a read found: an incomplete span tree finds more (a launcher read twice), not better.
         return (
             bool(one.get("spans_received")),
             _COLLECTION_RANK.get(one.get("collection"), 0),
-            len(one.get("events") or []),
+            bool(one.get("tree_complete", True)),
         )
 
+    # On a tie, the later read: it saw every span the earlier one did, and more.
     best, other = (read, stored) if weight(read) >= weight(stored) else (stored, read)
     events = [dict(one) for one in best.get("events") or []]
     # Each held event matches at most one, so two events alike in everything they recorded stay two.
@@ -1264,6 +1362,9 @@ def record_call_workers(call_execution_id: str) -> WorkerTimeline | None:
             past_deadline=deadline_refused(call),
         ),
         "collected_at": timezone.now().isoformat(),
+        # Spans arrive as each one ends, so an early read can lack the top-level span (it ends last) or stop at the row
+        # bound: such a read is ranked below a whole one and gets the later read.
+        "tree_complete": not partial and _has_roots(spans),
         # `unavailable` when the span read failed or ran out of time, `partial` when it hit its row bound,
         # `no_evidence` when neither the app's spans nor the sandbox's record had anything for this read.
         "collection": (

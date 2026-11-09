@@ -771,3 +771,55 @@ def test_a_step_whose_recorded_hand_off_never_appears_is_unknown():
     }
     (step,) = worker_steps([call])["steps"]
     assert (step["parent"], step["relationship"]) == (None, "unknown")
+
+
+def test_a_hand_off_recorded_inside_one_that_opens_later_sits_under_it():
+    from simulate.services.harness_worker_steps import worker_steps
+
+    events = [
+        {
+            "seq": 1,
+            "type": "delegated",
+            "worker_id": "R/researcher",
+            "by": "R/writer",
+            "delegation_id": "d2",
+            "parent_delegation_id": "d1",
+            "at": "2026-11-09T10:00:03",
+            "task": "find x",
+        },
+        {
+            "seq": 2,
+            "type": "tool_call",
+            "worker_id": "R/researcher",
+            "tool": "search",
+            "delegation_id": "d2",
+            "at": "2026-11-09T10:00:04",
+        },
+        {
+            "seq": 3,
+            "type": "returned",
+            "worker_id": "R/researcher",
+            "delegation_id": "d2",
+            "status": "ok",
+            "at": "2026-11-09T10:00:10",
+        },
+        {
+            "seq": 4,
+            "type": "delegated",
+            "worker_id": "R/writer",
+            "delegation_id": "d1",
+            "relationship": "observed",
+            "task": "draft",
+        },
+        {
+            "seq": 5,
+            "type": "returned",
+            "worker_id": "R/writer",
+            "delegation_id": "d1",
+            "status": "ok",
+            "at": "2026-11-09T10:00:20",
+        },
+    ]
+    steps = {s["key"]: s for s in worker_steps(events)["steps"]}
+    assert (steps[1]["parent"], steps[1]["relationship"]) == (4, "observed")
+    assert steps[2]["parent"] == 1
