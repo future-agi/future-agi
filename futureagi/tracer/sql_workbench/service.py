@@ -5,8 +5,10 @@ import hashlib
 import io
 import json
 import os
+import re
 import time
-from datetime import UTC, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from django.conf import settings
@@ -15,11 +17,12 @@ from django.db.models import BigIntegerField, Case, Count, F, Q, Sum, Value, Whe
 from django.utils import timezone
 
 from accounts.models.organization import Organization
+from tfc.temporal.queues import require_exact_aggregation_task_queue
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.sql_query import SavedSQLQuery, SQLExecution
 
-from .access import AccessDenied, authorization_fingerprint, authorize
+from .access import AccessDenied, Actor, authorization_fingerprint, authorize
 from .catalog import (
     CATALOG_VERSION,
     EVAL_CONFIG_LIMIT_MESSAGE,
@@ -29,6 +32,15 @@ from .catalog import (
 )
 from .compiler import MAX_RESULT_BYTES, MAX_RESULT_ROWS, compile_query, validate
 from .runner import QUERY_SETTINGS, QueryUnavailable, connection_config
+from .types import ExecutionSnapshot
+
+
+class ResultNotReady(Exception):
+    pass
+
+
+class ResultExpired(Exception):
+    pass
 
 
 class AdmissionFull(Exception):
@@ -224,11 +236,40 @@ def reusable_result(actor, project, key, now):
     )
 
 
-def submit(actor, *, project_id, sql, start, end, reuse=True):
+@dataclass(frozen=True)
+class SubmissionReceipt:
+    job: SQLExecution
+    reused: bool
+
+
+def submit(
+    actor: Actor,
+    *,
+    project_id: UUID,
+    sql: str,
+    start: datetime,
+    end: datetime,
+    reuse: bool = True,
+) -> SQLExecution:
+    return submit_receipt(
+        actor, project_id=project_id, sql=sql, start=start, end=end, reuse=reuse
+    ).job
+
+
+def submit_receipt(
+    actor: Actor,
+    *,
+    project_id: UUID,
+    sql: str,
+    start: datetime,
+    end: datetime,
+    reuse: bool = True,
+) -> SubmissionReceipt:
     project = authorize(actor, project_id)
     scope = query_scope(actor, project, start, end, sql)
     compile_query(sql, scope)
     connection_config()  # Fail before admitting jobs on unconfigured installations.
+    task_queue = require_exact_aggregation_task_queue()
     now = timezone.now()
     key = (
         result_cache_key(actor, project, scope, sql)
@@ -239,7 +280,7 @@ def submit(actor, *, project_id, sql, start, end, reuse=True):
     # and belongs to this person under the same access and catalog.
     reused = reusable_result(actor, project, key, now)
     if reused is not None:
-        return reused
+        return SubmissionReceipt(reused, reused=True)
     with transaction.atomic():
         if connection.vendor == "postgresql":
             with connection.cursor() as cursor:
@@ -310,6 +351,7 @@ def submit(actor, *, project_id, sql, start, end, reuse=True):
         try:
             execute_sql.apply_async(
                 args=[str(job.id)],
+                queue=task_queue,
                 task_id=f"sql-query-{job.id}",
                 dispatch_timeout_seconds=5,
             )
@@ -330,7 +372,7 @@ def submit(actor, *, project_id, sql, start, end, reuse=True):
     # Also safe inside a caller-owned transaction / ATOMIC_REQUESTS: a worker
     # must never consume an id whose INSERT is still invisible or may roll back.
     transaction.on_commit(dispatch)
-    return job
+    return SubmissionReceipt(job, reused=False)
 
 
 ESTIMATES_PER_MINUTE = 30
@@ -512,7 +554,7 @@ def execution(actor, project_id, job_id):
     return job
 
 
-def snapshot(job, *, include_result=True):
+def snapshot(job: SQLExecution, *, include_result: bool = True) -> ExecutionSnapshot:
     expired = job.expires_at <= timezone.now()
     stale = job.deadline <= timezone.now() and job.state in {"queued", "running"}
     return {
@@ -521,11 +563,58 @@ def snapshot(job, *, include_result=True):
         "sql": job.sql,
         "state": "failed" if stale else job.state,
         "created_at": job.created_at,
+        "finished_at": job.finished_at,
         "expires_at": job.expires_at,
         "error": "Query deadline expired." if stale else job.error,
         "result": job.result if include_result and not expired else {},
         "expired": expired,
     }
+
+
+def fail_execution(
+    job_id: UUID | str, *, now: datetime, expired_only: bool = False
+) -> int:
+    """Idempotent failure notification; never release a still-running scan early."""
+    eligible = Q(state="running", deadline__lte=now)
+    eligible |= Q(state="queued", **({"deadline__lte": now} if expired_only else {}))
+    return SQLExecution.objects.filter(eligible, id=job_id).update(
+        state="failed",
+        error="Query deadline expired. Run the query again.",
+        result={},
+        output_bytes=0,
+        cache_key="",
+        finished_at=now,
+    )
+
+
+def reconcile_expired_executions(*, now: datetime, batch_size: int) -> int:
+    if type(batch_size) is not int or not 1 <= batch_size <= 1000:
+        raise ValueError("Reconciliation batches must contain 1 to 1,000 records.")
+    active = Q(state__in=("queued", "running")) | Q(
+        state="cancelled", finished_at__isnull=True
+    )
+    ids = list(
+        SQLExecution.objects.filter(active, deadline__lte=now)
+        .order_by("deadline")
+        .values_list("id", flat=True)[:batch_size]
+    )
+    with transaction.atomic():
+        # Recheck eligibility after selection: a just-started job has a new
+        # execution deadline, and a late duplicate must not change a terminal job.
+        changed = SQLExecution.objects.filter(
+            id__in=ids, state__in=("queued", "running"), deadline__lte=now
+        ).update(
+            state="failed",
+            error="Query deadline expired. Run the query again.",
+            result={},
+            output_bytes=0,
+            cache_key="",
+            finished_at=now,
+        )
+        changed += SQLExecution.objects.filter(
+            id__in=ids, state="cancelled", finished_at__isnull=True, deadline__lte=now
+        ).update(finished_at=now)
+    return changed
 
 
 def purge_expired_results(*, batch_size=1000):
@@ -538,11 +627,12 @@ def purge_expired_results(*, batch_size=1000):
     ):
         raise QueryUnavailable("Audit retention must be unset or a positive day count.")
     now = timezone.now()
+    reconcile_expired_executions(now=now, batch_size=batch_size)
     terminal = SQLExecution.objects.filter(
         state__in=TERMINAL_STATES, expires_at__lte=now
     )
     ids = list(
-        terminal.exclude(result={})
+        terminal.filter(output_bytes__gt=0)
         .order_by("expires_at")
         .values_list("id", flat=True)[:batch_size]
     )
@@ -711,8 +801,10 @@ def add_widget(actor, project_id, saved_id, dashboard_id):
 
 def export_result(actor, project_id, job_id, format):
     job = execution(actor, project_id, job_id)
-    if job.state != "succeeded" or job.expires_at <= timezone.now():
-        raise QueryUnavailable("Only completed, unexpired results can be downloaded.")
+    if job.state != "succeeded":
+        raise ResultNotReady("Only successful results can be downloaded.")
+    if job.expires_at <= timezone.now():
+        raise ResultExpired("This result has expired. Run the query again.")
     columns, rows = job.result["columns"], job.result["rows"]
     names = [column["name"] for column in columns]
     if format == "csv":
@@ -729,7 +821,32 @@ def export_result(actor, project_id, job_id, format):
         buffer = io.StringIO(newline="")
         writer = csv.writer(buffer)
         writer.writerow([safe(name) for name in names])
-        writer.writerows([[safe(value) for value in row] for row in rows])
+
+        def numeric_type(kind):
+            while kind.startswith(("Nullable(", "LowCardinality(")) and kind.endswith(
+                ")"
+            ):
+                kind = kind[kind.index("(") + 1 : -1]
+            return bool(
+                re.fullmatch(
+                    r"(?:U?Int(?:8|16|32|64|128|256)|Float(?:32|64)|Decimal(?:32|64|128|256)?\([0-9, ]+\))",
+                    kind,
+                )
+            )
+
+        numeric = [numeric_type(column["type"]) for column in columns]
+        number = re.compile(
+            r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+        )
+        writer.writerows(
+            [
+                value
+                if numeric[i] and isinstance(value, str) and number.fullmatch(value)
+                else safe(value)
+                for i, value in enumerate(row)
+            ]
+            for row in rows
+        )
         return buffer.getvalue().encode("utf-8-sig"), "text/csv"
     import pyarrow as pa
     import pyarrow.parquet as pq

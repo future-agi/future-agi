@@ -649,7 +649,7 @@ psycopg-binary==3.3.2 ; implementation_name != 'pypy'
     # via psycopg
 psycopg-pool==3.3.0
     # via psycopg
-pyarrow==22.0.0
+pyarrow==23.0.1
     # via core-backend
 pyasn1==0.6.1
     # via

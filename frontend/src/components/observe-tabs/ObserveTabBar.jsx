@@ -48,6 +48,7 @@ const FIXED_TABS = [
     shortcut: "2",
   },
   { key: "users", label: "Users", icon: "solar:user-linear", shortcut: "3" },
+  { key: "query", label: "Query", icon: "mdi:database-search-outline" },
   // Letter shortcut so the digit shortcuts of saved views don't shift.
   // Insights is Enterprise: without it the tab is marked and opens its gate.
   {
@@ -57,7 +58,6 @@ const FIXED_TABS = [
     shortcut: "A",
     feature: CAPABILITY.INSIGHTS,
   },
-  { key: "query", label: "Query", icon: "mdi:database-search-outline" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -458,10 +458,10 @@ const ObserveTabBar = ({
           </DndContext>
         </Box>
 
-        {/* Create view button — pinned after scrollable area. Insights and
+        {/* Create view button — pinned after scrollable area. Insights, Query and
             pages without a list (canSaveView false) have no list config to
             save as a view. */}
-        {canSaveView && activeTab !== "insights" && activeTab !== "query" && (
+        {canSaveView && !["insights", "query"].includes(activeTab) && (
           <CustomTooltip
             show
             title="Create new view"

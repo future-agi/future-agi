@@ -8,9 +8,105 @@ vi.mock("./api", () => ({
   sqlApi: { run: vi.fn(), runSaved: vi.fn(), result: vi.fn(), cancel: vi.fn() },
 }));
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.useRealTimers();
+});
 
 describe("SQL execution lifecycle", () => {
+  it.each([403, 404, 503, undefined])(
+    "releases Run after persistent %s result errors",
+    async (statusCode) => {
+      vi.useFakeTimers();
+      sqlApi.run.mockResolvedValue({ id: "unreachable", state: "running" });
+      sqlApi.result.mockRejectedValue({
+        statusCode,
+        message: "Result unavailable",
+      });
+      const { result } = renderHook(() => useSQLExecution("project"));
+      await act(async () => result.current.run({ sql: "SELECT 1" }));
+      const inaccessible = [403, 404].includes(statusCode);
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(inaccessible ? 500 : 125_000),
+      );
+      expect(result.current.busy).toBe(false);
+      expect(result.current.job).toMatchObject({
+        id: "unreachable",
+        state: "unavailable",
+      });
+      expect(result.current.error).toContain(
+        inaccessible
+          ? "no longer accessible"
+          : "server query was not cancelled",
+      );
+      const polls = sqlApi.result.mock.calls.length;
+      if (inaccessible) expect(polls).toBe(1);
+      await act(async () => vi.advanceTimersByTimeAsync(120_000));
+      expect(sqlApi.result).toHaveBeenCalledTimes(polls);
+      expect(sqlApi.cancel).not.toHaveBeenCalled();
+      sqlApi.run.mockResolvedValue({ id: "retry", state: "succeeded" });
+      await act(async () => result.current.run({ sql: "SELECT 2" }));
+      expect(result.current.job.id).toBe("retry");
+      expect(result.current.error).toBe("");
+    },
+  );
+
+  it("recovers from a transient poll failure", async () => {
+    vi.useFakeTimers();
+    sqlApi.run.mockResolvedValue({ id: "job", state: "running" });
+    sqlApi.result
+      .mockRejectedValueOnce({
+        statusCode: 503,
+        message: "Temporarily unavailable",
+      })
+      .mockResolvedValue({
+        id: "job",
+        state: "succeeded",
+        finished_at: "2026-11-03T12:30:00.123456Z",
+      });
+    const { result } = renderHook(() => useSQLExecution("project"));
+    await act(async () => result.current.run({ sql: "SELECT 1" }));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(result.current.busy).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(result.current.busy).toBe(false);
+    expect(result.current.error).toBe("");
+    expect(result.current.job.finished_at).toBe("2026-11-03T12:30:00.123456Z");
+  });
+
+  it.each(["project", "run", "unmount"])(
+    "ignores late poll errors after %s changes",
+    async (change) => {
+      vi.useFakeTimers();
+      let rejectPoll;
+      sqlApi.run.mockResolvedValue({ id: "old", state: "running" });
+      sqlApi.cancel.mockResolvedValue({ id: "old", state: "cancelled" });
+      sqlApi.result.mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            rejectPoll = reject;
+          }),
+      );
+      const { result, rerender, unmount } = renderHook(
+        ({ project }) => useSQLExecution(project),
+        { initialProps: { project: "a" } },
+      );
+      await act(async () => result.current.run({ sql: "SELECT 1" }));
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+      if (change === "project") rerender({ project: "b" });
+      if (change === "unmount") unmount();
+      if (change === "run") {
+        sqlApi.run.mockResolvedValue({ id: "new", state: "succeeded" });
+        await act(async () => result.current.run({ sql: "SELECT 2" }));
+      }
+      await act(async () => rejectPoll({ statusCode: 404 }));
+      expect(result.current.error).toBe("");
+      if (change === "project") expect(result.current.job).toBeNull();
+      if (change === "run") expect(result.current.job.id).toBe("new");
+      await act(async () => vi.advanceTimersByTimeAsync(125_000));
+      expect(sqlApi.result).toHaveBeenCalledTimes(1);
+    },
+  );
   it("does not publish an old project's delayed response after navigation", async () => {
     let resolve;
     sqlApi.run.mockReturnValue(
@@ -69,7 +165,9 @@ describe("SQL execution lifecycle", () => {
           resolveResult = resolve;
         }),
     );
-    sqlApi.cancel.mockRejectedValue(new Error("temporary cancellation failure"));
+    sqlApi.cancel.mockRejectedValue(
+      new Error("temporary cancellation failure"),
+    );
     const { result } = renderHook(() => useSQLExecution("project"));
 
     await act(async () => {

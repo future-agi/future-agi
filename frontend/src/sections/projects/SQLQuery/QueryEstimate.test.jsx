@@ -147,7 +147,7 @@ describe("QueryEstimate", () => {
     ],
     [
       "a rate limit",
-      () => Promise.reject({ response: { status: 429, data: {} } }),
+      () => Promise.reject({ statusCode: 429 }),
       "Estimate paused: too many estimates. Run is not affected.",
       "info",
     ],
@@ -155,7 +155,8 @@ describe("QueryEstimate", () => {
       "a rejected query",
       () =>
         Promise.reject({
-          response: { status: 400, data: { detail: "Unknown dataset: x." } },
+          statusCode: 400,
+          detail: "Unknown dataset: x.",
         }),
       "This query will be rejected: Unknown dataset: x.",
       "warning",

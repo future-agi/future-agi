@@ -548,14 +548,21 @@ class _TraceRootReplayV2:
                     usage_cost_unknown, usage_source_summary_present, usage_request_count
                 ))
                 FROM (
+                    SELECT project_id, trace_id,
+                        usage_metrics.1 AS usage_cost_unknown,
+                        usage_metrics.2 AS rollup_cost,
+                        usage_metrics.3 AS rollup_total_tokens,
+                        usage_metrics.4 AS rollup_prompt_tokens,
+                        usage_metrics.5 AS rollup_completion_tokens,
+                        usage_metrics.6 AS usage_source_summary_present,
+                        usage_metrics.7 AS usage_request_count,
+                        rollup_first_llm_model, rollup_first_llm_provider,
+                        rollup_first_llm_key, rollup_root_has_content
+                    FROM (
                     SELECT
                         project_id,
                         trace_id,
-                        {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present")},
-                        usage_cost AS rollup_cost,
-                        usage_total_tokens AS rollup_total_tokens,
-                        usage_prompt_tokens AS rollup_prompt_tokens,
-                        usage_completion_tokens AS rollup_completion_tokens,
+                        {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present", materialized=True)},
                         argMinIf(latest_model,
                             tuple(latest_start_time, id, observation_type, service_name),
                             observation_type = 'llm' AND latest_model != '')
@@ -586,7 +593,7 @@ class _TraceRootReplayV2:
                             argMax(tuple(start_time, cost, total_tokens, prompt_tokens,
                                 completion_tokens, model, provider, input_length,
                                 output_length, parent_span_id, is_deleted, name,
-                                {usage_coverage_sql(attrs="attrs_string")},
+                                {usage_coverage_sql(attrs="attrs_string", include_summary=True)},
                                 {source_summary_sql(attrs="attrs_string")}), _version)
                                 AS latest_span,
                             id AS latest_id,
@@ -612,6 +619,8 @@ class _TraceRootReplayV2:
                     ) AS latest_trace_spans
                     WHERE latest_is_deleted = 0
                     GROUP BY project_id, trace_id
+                    ) AS trace_usage_state
+                    ARRAY JOIN trace_usage_metrics AS usage_metrics
                 )
             ) AS trace_rollup_rows,
             (

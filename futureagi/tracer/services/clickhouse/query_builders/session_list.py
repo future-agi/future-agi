@@ -3212,7 +3212,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                       SELECT project_id, session_id FROM member_session_scope
                   )"""
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
-        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP)
+        coverage = usage_coverage_sql(
+            attrs=self._COST_ATTRIBUTE_MAP, include_summary=True
+        )
         message_length = (
             f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
             if include_messages
@@ -3310,10 +3312,22 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         return f"""
         member_trace_usage AS (
             SELECT project_id, member_session_id, trace_id,
-                {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present")}
-                {message_aggregates}
-            FROM session_members
-            GROUP BY project_id, member_session_id, trace_id
+                usage_metrics.1 AS usage_cost_unknown,
+                usage_metrics.2 AS usage_cost,
+                usage_metrics.3 AS usage_total_tokens,
+                usage_metrics.4 AS usage_prompt_tokens,
+                usage_metrics.5 AS usage_completion_tokens,
+                usage_metrics.6 AS usage_source_summary_present,
+                usage_metrics.7 AS usage_request_count
+                {", trace_root_start, trace_has_root, trace_message_key" if include_messages else ""}
+            FROM (
+                SELECT project_id, member_session_id, trace_id,
+                    {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present", materialized=True)}
+                    {message_aggregates}
+                FROM session_members
+                GROUP BY project_id, member_session_id, trace_id
+            ) AS member_trace_usage_state
+            ARRAY JOIN trace_usage_metrics AS usage_metrics
         )
         """
 
@@ -3712,10 +3726,20 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             scope_usage_to_request_window=created_at_floor is None,
         )
 
+        # The sampling CTE keeps the original root-only snapshot semantics;
+        # ordinary lists use the newer child-aware physical member replay.
+        aggregates = (
+            "min(start_time) AS session_start, max(end_time) AS session_end, "
+            "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+            "sum(cost) AS total_cost, sum(total_tokens) AS total_tokens, "
+            "uniqExact(trace_id) AS traces_count"
+            if self._has_resolved_span_source()
+            else self._AGGREGATE_SELECT
+        )
         query = f"""
         SELECT
             trace_session_id AS session_id,
-            {self._AGGREGATE_SELECT}
+            {aggregates}
             {message_select}
         {from_where}
         GROUP BY trace_session_id
@@ -4204,6 +4228,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             c for c in (resolved_session_clause, user_membership_clause) if c
         ]
         where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        # Sampling supplies an already deduplicated CTE, not a MergeTree table.
+        # ClickHouse rejects FINAL on that CTE; ordinary session reads keep FINAL.
+        if self._has_resolved_span_source():
+            # The canonical sampling CTE already freezes one winner per span.
+            # The list's physical member replay recursively inlines that CTE
+            # through its scope/witness joins, exhausting bounded sampling reads.
+            # Preserve the pre-merge bounded root scan for cohort eligibility.
+            return f"""FROM (
+                SELECT {", ".join(outer_select)}
+                FROM (SELECT {", ".join(scan_cols)} FROM {self.TABLE} {base_predicates}) AS rs
+                {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
+            ) {where_clause}"""
         if not include_usage:
             return f"""FROM (
                 SELECT {", ".join(outer_select)}

@@ -34,7 +34,7 @@ def test_sql_worker_and_api_are_gated_on_readonly_fixture():
         == "service_completed_successfully"
     )
     assert provision["environment"]["FUTURE_AGI_E2E_FIXTURE"] == "sql-workbench"
-    for name in ["backend", "worker-exact-aggregation"]:
+    for name in ["backend", "worker-exact-aggregation", "worker-sql-workbench"]:
         service = services[name]
         assert (
             service["depends_on"]["sql-workbench-bootstrap"]["condition"]
@@ -122,3 +122,90 @@ def test_fixture_rejects_unexpected_roles_without_overwriting_the_account():
         call.args[0].startswith("SELECT") for call in client.execute.call_args_list
     )
     client.disconnect.assert_called_once()
+
+
+def test_sql_scan_worker_is_always_on_and_bounded():
+    services = yaml.safe_load((ROOT / "docker-compose.distributed.yml").read_text())[
+        "services"
+    ]
+    sql = services["worker-sql-workbench"]
+    assert sql["profiles"] == []
+    assert sql["environment"]["TEMPORAL_TASK_QUEUE"] == "sql_workbench"
+    assert sql["environment"]["TEMPORAL_MAX_CONCURRENT_ACTIVITIES"] == 2
+    assert sql["env_file"] == services["worker-exact-aggregation"]["env_file"]
+    assert (
+        services["worker-exact-aggregation"]["environment"][
+            "TEMPORAL_MAX_CONCURRENT_ACTIVITIES"
+        ]
+        == 1
+    )
+
+
+def test_all_runtime_sql_settings_are_in_inventory_and_examples():
+    import re
+    import tomllib
+
+    backend = ROOT / "futureagi"
+    names = set()
+    for path in (backend / "tracer/sql_workbench").glob("*.py"):
+        names.update(re.findall(r"SQL_WORKBENCH_[A-Z_0-9]+", path.read_text()))
+    data = tomllib.loads((ROOT / "deploy/env-reference.toml").read_text())
+    inventory = {
+        key
+        for part in data["part"]
+        for section in part.get("section", [])
+        for row in section.get("row", [])
+        for key in row.get("keys", [])
+    }
+    assert names <= inventory
+    for path in [ROOT / ".env.example", backend / ".env.example"]:
+        if not path.exists():
+            continue
+        values = dict(
+            re.findall(r"^(SQL_WORKBENCH_[A-Z_0-9]+)=(.*)$", path.read_text(), re.M)
+        )
+        assert names <= values.keys()
+        assert not values["SQL_WORKBENCH_CH_PASSWORD"]
+        assert not values["SQL_WORKBENCH_ESTIMATE_CH_PASSWORD"]
+
+
+@pytest.mark.parametrize("exact", ["true", "false"])
+def test_helm_sql_worker_is_independent_of_exact_refresh(exact):
+    import shutil
+    import subprocess
+
+    if not shutil.which("helm"):
+        pytest.skip("helm is required for chart rendering")
+    chart = ROOT / "deploy/helm/futureagi"
+    render = subprocess.run(
+        [
+            "helm",
+            "template",
+            "sql-test",
+            str(chart),
+            "-f",
+            str(chart / "examples/bundled.yaml"),
+            "--set",
+            f"worker.exactAggregation.enabled={exact}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    deployments = [
+        item
+        for item in yaml.safe_load_all(render.stdout)
+        if item and item.get("kind") == "Deployment"
+    ]
+    sql = next(
+        item
+        for item in deployments
+        if item["metadata"]["name"].endswith("worker-sql-workbench")
+    )
+    env = {
+        item["name"]: item.get("value")
+        for item in sql["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["TEMPORAL_TASK_QUEUE"] == "sql_workbench"
+    assert env["TEMPORAL_MAX_CONCURRENT_ACTIVITIES"] == "2"
+    assert sql["spec"]["replicas"] == 1

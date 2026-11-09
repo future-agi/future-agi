@@ -2308,6 +2308,7 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         _ACTIVITY_WRAPPERS,
     )
     from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
+    from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
     from tracer.services import exact_aggregation_cache as cache_module
     from tracer.sql_workbench.tasks import execute_sql, purge_expired_sql_results
     from tracer.tasks.derived_metric import compute_derived_metric
@@ -2336,21 +2337,26 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         metadata["schedule_to_start_timeout"] + metadata["time_limit"]
     )
     assert "tracer.tasks" in TEMPORAL_ACTIVITY_MODULES
-    assert get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE) == [TaskRunnerWorkflow]
-    # SQL workbench and derived metrics share the admitted worker; keep its
-    # allowlist exact rather than admitting every generic activity.
-    admitted_tasks = (
-        refresh_exact_aggregation_snapshot,
-        execute_sql,
-        purge_expired_sql_results,
-        compute_derived_metric,
-    )
+    assert set(get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE)) == {
+        TaskRunnerWorkflow,
+        SQLExecutionWorkflow,
+        SQLRetentionWorkflow,
+    }
+    # SQL workflows use this control queue but never its single scan slot.
+    # Derived metrics still run on the admitted exact-aggregation worker.
+    admitted_tasks = (refresh_exact_aggregation_snapshot, compute_derived_metric)
     registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
     admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
     assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
         EXACT_AGGREGATION_TASK_QUEUE
     }
     assert set(registered_activities) == admitted_activities
+    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue(
+        "sql_workbench"
+    )
+    assert _ACTIVITY_WRAPPERS[
+        purge_expired_sql_results.name
+    ] in get_activities_for_queue("tasks_s")
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.

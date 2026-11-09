@@ -36,6 +36,8 @@ class BootstrapLogCheckTests(unittest.TestCase):
             return subprocess.run(
                 [
                     "bash",
+                    "--noprofile",
+                    "--norc",
                     "-euo",
                     "pipefail",
                     "-c",
@@ -45,8 +47,10 @@ class BootstrapLogCheckTests(unittest.TestCase):
                     directory,
                 ],
                 env={
-                    **os.environ,
-                    "PATH": f"{directory}:{os.environ['PATH']}",
+                    # Do not inherit SSH startup state, BASH_ENV or credentials.
+                    "PATH": f"{directory}:{os.defpath}",
+                    "HOME": directory,
+                    "LC_ALL": "C",
                     "LOG_MODE": mode,
                 },
                 check=False,
@@ -63,7 +67,14 @@ class BootstrapLogCheckTests(unittest.TestCase):
         self.assertNotEqual(self.run_check("missing").returncode, 0)
 
     def test_log_producer_failure_fails(self):
-        self.assertEqual(self.run_check("producer_failure").returncode, 7)
+        result = self.run_check("producer_failure")
+        # The draining pipeline preserves pipefail, then the shared fail handler
+        # normalizes the exit status while keeping the operator-facing reason.
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr,
+            "the pre-upgrade bootstrap job did not leave the first admin as it was\n",
+        )
 
 
 if __name__ == "__main__":

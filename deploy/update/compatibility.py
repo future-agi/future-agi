@@ -264,7 +264,7 @@ def topology_profile(mode: str, profiles: Any) -> TopologyProfile:
     require(mode == "distributed" and selected <= {"workers", "observability", "peerdb", "all", "full"},
             ReasonCode.UNSUPPORTED_INSTALLATION)
     products = [("frontend", "frontend"), ("backend", "backend"), ("worker", "backend"),
-                ("worker-exact-aggregation", "backend"),
+                ("worker-exact-aggregation", "backend"), ("worker-sql-workbench", "backend"),
                 ("agentcc-gateway", "agentcc_gateway"), ("serving", "serving"),
                 ("code-executor", "code_executor"), ("fi-collector", "fi_collector"),
                 ("fi-property-catalog-consumer", "fi_collector"),
@@ -272,7 +272,8 @@ def topology_profile(mode: str, profiles: Any) -> TopologyProfile:
                 ("clickhouse-cdc-bootstrap", "backend"), ("peerdb-temporal-init", "backend"),
                 ("peerdb-init", "backend")]
     if selected & {"workers", "all", "full"}:
-        # Inherits queue-worker's profiles, unlike worker-exact-aggregation.
+        # Inherits queue-worker's profiles, unlike the always-on SQL and exact
+        # aggregation workers, which explicitly clear profiles in Compose.
         products.append(("worker-simulation-runner", "simulation_runner"))
         products.extend((service, "backend") for service in (
             "worker-default", "worker-tasks-s", "worker-tasks-l", "worker-tasks-xl",

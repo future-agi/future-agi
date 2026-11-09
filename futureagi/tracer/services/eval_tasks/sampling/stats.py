@@ -1,13 +1,11 @@
 """Pure design-based statistics for evaluation sampling.
 
 Every statistical formula the sampling feature reports or plans with lives in
-this module: no Django, no I/O, no third-party dependency. The task editor's
-precision planner mirrors the planning functions (margin of error, minimum n,
-stratified margin, allocation, Kish) in
-``frontend/src/sections/tasks/components/samplingStats.js``. Both
-implementations are checked against the same hand-derived vectors in
-``futureagi/tracer/tests/fixtures/sampling_stats_vectors.json``, so they
-cannot drift apart silently.
+this module: no Django, no I/O, no third-party dependency. The preview and
+audit APIs use these functions; the task editor does not expose a precision
+planner. Tests check the formulas against hand-derived vectors in
+``futureagi/tracer/tests/fixtures/sampling_stats_vectors.json`` and independent
+reference calculations.
 
 Conventions:
 
@@ -64,7 +62,7 @@ def _count(value: object, name: str) -> int:
 def _unit_interval(value: object, name: str) -> float:
     if (
         isinstance(value, bool)
-        or not isinstance(value, (int, float))
+        or not isinstance(value, int | float)
         or not math.isfinite(value)
         or not 0 <= value <= 1
     ):
@@ -111,7 +109,7 @@ def required_sample_size(
 
     if (
         isinstance(margin, bool)
-        or not isinstance(margin, (int, float))
+        or not isinstance(margin, int | float)
         or not math.isfinite(margin)
         or not 0 < margin < 1
     ):
@@ -330,7 +328,7 @@ def kish_effective_n(weighted_counts: Iterable[tuple[float, int]]) -> float | No
         count = _count(count, "count")
         if (
             isinstance(weight, bool)
-            or not isinstance(weight, (int, float))
+            or not isinstance(weight, int | float)
             or not math.isfinite(weight)
             or weight <= 0
         ):

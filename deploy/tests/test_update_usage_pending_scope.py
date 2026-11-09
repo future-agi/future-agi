@@ -1,9 +1,11 @@
-"""Complete 18/23-pending-migration A9 intersection regression, without Django.
+"""Complete 59/64-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
 This guards the prior incomplete hand inventory, not a substitute for the
 native B MigrationLoader scope probe or PostgreSQL constraint observation.
+The SQL/sampling scope regressions remain pinned. Metrics has undeclared opaque
+operations, which must fail closed rather than gain invented safety declarations.
 """
 import ast
 import copy
@@ -12,6 +14,7 @@ import re
 import subprocess
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 from scripts import rehearse_update_compatibility as p
 from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
@@ -34,8 +37,61 @@ LATEST = (
     ('tracer','0127_project_analysis_source_generation'),
     ('tracer','0128_instantevalrow_source_session_ids'),
     ('tracer','0129_project_analysis_source_generation_db_default'),
+    ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
 )
+# Eight SQL additions shared with the SQL-only candidate. These identities
+# account for the graph; they are not safety declarations for opaque operations.
+SQL_ADDITIONS = (
+    ('tracer','0117_sql_workbench'),
+    ('tracer','0118_merge_sql_workbench_and_simulation_project'),
+    ('tracer','0119_sql_execution_result_reuse'),
+    ('tracer','0120_merge_sql_execution_and_shared_issue'),
+    ('tracer','0121_merge_sql_execution_and_alert_high_water'),
+    ('tracer','0122_sql_payload_expiry_index'),
+    ('tracer','0130_merge_20261104_0940'),
+    ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
+)
+# Nine more identities on the sampling layer, including its graph joins.
+SAMPLING_ADDITIONS = (
+    ('tracer','0117_cohort_sampling'),
+    ('tracer','0117_sampling_project_db_default'),
+    ('tracer','0119_merge_sampling_default_and_simulation_project'),
+    ('tracer','0120_sampling_cohort_lease'),
+    ('tracer','0121_merge_sampling_and_sql_reuse'),
+    ('tracer','0122_merge_sampling_and_alert_issue_state'),
+    ('tracer','0123_merge_20261104_0743'),
+    ('tracer','0131_merge_20261104_1308'),
+    ('tracer','0132_merge_sampling_and_sql_workbench_dev_merge'),
+)
+BASELINE_ADDITIONS = LATEST + SQL_ADDITIONS + SAMPLING_ADDITIONS
+# Metrics identities and the new graph join; these are not UPDATE_SAFETY claims.
+METRICS_ADDITIONS = (
+    ('tracer','0117_derived_metrics'),
+    ('tracer','0118_derived_metric_delivery'),
+    ('tracer','0119_derived_metric_requester'),
+    ('tracer','0120_derived_metric_delivery_ledger'),
+    ('tracer','0121_merge_sampling_project_default'),
+    ('tracer','0122_merge_metrics_and_simulation_project'),
+    ('tracer','0123_derived_metric_confident_alert'),
+    ('tracer','0124_merge_metrics_and_sampling_sql'),
+    ('tracer','0125_merge_metrics_and_dev_tracer_leaf'),
+    ('tracer','0126_derived_metric_refresh'),
+    ('tracer','0127_metric_lifecycle_safety'),
+    ('tracer','0128_base_list_current_stores'),
+    ('tracer','0129_metric_compaction_range'),
+    ('tracer','0129_metric_pg_response_revisions'),
+    ('tracer','0129_metric_source_intent'),
+    ('tracer','0129_user_activity_store'),
+    ('tracer','0130_merge_session_components'),
+    ('tracer','0131_metric_range_user_activity_choice'),
+    ('tracer','0132_merge_metrics_b1_dev'),
+    ('tracer','0133_metric_compaction_user_activity_choice'),
+    ('tracer','0134_metric_compaction_user_activity_constraint'),
+    ('tracer','0135_merge_metrics_b1_assembly'),
+    ('tracer','0136_merge_metrics_and_current_sampling_sql'),
+)
+LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
@@ -83,11 +139,26 @@ class Operation:
     def __init__(self,node):
         self.node=node
         options=keywords(node)
+        kind=type(self).__name__
+        positional = {
+            'AddField': ('model_name', 'name', 'field'),
+            'AlterField': ('model_name', 'name', 'field'),
+            'RemoveField': ('model_name', 'name'),
+            'AddConstraint': ('model_name', 'constraint'),
+            'RemoveConstraint': ('model_name', 'name'),
+        }.get(kind, ())
+        for key, value in zip(positional, node.args):
+            assert key not in options
+            options[key] = value
         for key in ('name','model_name','old_name','new_name'):
             if key in options: setattr(self,key,ast.literal_eval(options[key]))
         if 'field' in options: self.field=field(options['field'])
-        if type(self).__name__=='RunPython': self.code=object()  # opaque; never called
-        if type(self).__name__=='RunSQL': self.sql='opaque'  # only declaration is read
+        if kind=='RunPython':
+            code = node.args[0] if node.args else options['code']
+            self.code = type(self).noop if ast.unparse(code)=='migrations.RunPython.noop' else object()
+        if kind=='RunSQL':
+            sql = node.args[0] if node.args else options['sql']
+            self.sql = type(self).noop if ast.unparse(sql)=='migrations.RunSQL.noop' else 'opaque'
     def state_forwards(self,app,state):
         kind=type(self).__name__
         if kind=='CreateModel': state.models[(app,self.name.lower())]=model(self.node)
@@ -99,13 +170,15 @@ class Operation:
         else:
             # All remaining operations in these COMPLETE plans affect catalog
             # indexes/constraints or carry declarations; no state table rename.
-            assert kind in ('RunPython','RunSQL','AddIndex','RemoveIndex','AddConstraint')
+            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint','RemoveConstraint')
 
 
 def operation_types():
     kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
-        'RemoveIndex','AddConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
+        'RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
+    result['AddIndexConcurrently']=type('AddIndexConcurrently',(result['AddIndex'],),
+        {'__module__':'django.contrib.postgres.operations'})
     result['RunPython'].noop=object(); result['RunSQL'].noop=''
     return SimpleNamespace(**result)
 
@@ -124,7 +197,10 @@ def scope_environment(state):
         isinstance(n,ast.FunctionDef) and n.name!='declared' or
         isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in ('IDENT','NO_TABLE','MODEL_OPS') for t in n.targets)]
     exec(compile(ast.Module(body=nodes,type_ignores=[]),'<shipping-table-scope>','exec'),env)
-    env['declared']=lambda migration:{env['resolved'](*v.split(':',1)) for v in migration.declaration['tables']}
+    def declared(migration):
+        assert migration.declaration is not None, 'opaque_operation_table_scope_unavailable'
+        return {env['resolved'](*v.split(':',1)) for v in migration.declaration['tables']}
+    env['declared']=declared
     return env
 
 
@@ -166,6 +242,44 @@ def baseline_state(revision):
     return state
 
 
+def operation_nodes(nodes):
+    """Expand literal operation comprehensions as AST data, never Python code."""
+    class Substitute(ast.NodeTransformer):
+        def __init__(self, bindings): self.bindings = bindings
+        def visit_Name(self, node):
+            return copy.deepcopy(self.bindings.get(node.id, node))
+
+    def bind(target, value, bindings):
+        if isinstance(target, ast.Name):
+            return dict(bindings, **{target.id: value})
+        assert isinstance(target, ast.Tuple) and isinstance(value, (ast.Tuple, ast.List))
+        assert len(target.elts) == len(value.elts)
+        for child, item in zip(target.elts, value.elts):
+            bindings = bind(child, item, bindings)
+        return bindings
+
+    for node in nodes:
+        if not isinstance(node, ast.Starred):
+            assert isinstance(node, ast.Call)
+            yield node
+            continue
+        assert isinstance(node.value, ast.ListComp)
+        comprehension = node.value
+        bindings = [{}]
+        for generator in comprehension.generators:
+            assert not generator.ifs and not generator.is_async
+            expanded = []
+            for binding in bindings:
+                iterable = Substitute(binding).visit(copy.deepcopy(generator.iter))
+                assert isinstance(iterable, (ast.Tuple, ast.List))
+                expanded.extend(bind(generator.target, item, binding) for item in iterable.elts)
+            bindings = expanded
+        for binding in bindings:
+            operation = Substitute(binding).visit(copy.deepcopy(comprehension.elt))
+            assert isinstance(operation, ast.Call)
+            yield operation
+
+
 def pending_plan(identities,env):
     migrations={}
     for app,name in identities:
@@ -173,7 +287,21 @@ def pending_plan(identities,env):
         cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='Migration')
         values={n.targets[0].id:n.value for n in cls.body if isinstance(n,ast.Assign)}
         dependencies=[ast.literal_eval(n) for n in values['dependencies'].elts if isinstance(n,ast.Tuple)]
-        operations=[getattr(env['migrations'],node.func.attr)(node) for node in values['operations'].elts]
+        operations=[]
+        for node in operation_nodes(values['operations'].elts):
+            if isinstance(node.func,ast.Name):
+                # The SQL migration imports this standard Django operation by
+                # name. Do not accept arbitrary custom operations as AddIndex.
+                assert node.func.id=='AddIndexConcurrently'
+                assert any(isinstance(item,ast.ImportFrom) and item.module=='django.contrib.postgres.operations'
+                    and any(alias.name=='AddIndexConcurrently' and alias.asname is None for alias in item.names)
+                    for item in tree.body)
+                kind=node.func.id
+            else:
+                assert isinstance(node.func,ast.Attribute) and isinstance(node.func.value,ast.Name)
+                assert node.func.value.id=='migrations'
+                kind=node.func.attr
+            operations.append(getattr(env['migrations'],kind)(node))
         declaration=next((ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and
             any(isinstance(t,ast.Name) and t.id=='UPDATE_SAFETY' for t in n.targets)),None)
         migrations[(app,name)]=SimpleNamespace(app_label=app,name=name,operations=operations,dependencies=dependencies,declaration=declaration)
@@ -186,17 +314,104 @@ def pending_plan(identities,env):
 
 
 class CompleteUsagePendingIntersectionTests(unittest.TestCase):
+    def assert_complete_inventory(self,revision,identities,count):
+        # Additions, not edited applied migrations. This deliberately breaks if
+        # the shipping plan changes without refreshing its complete inventory.
+        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
+            revision,'HEAD','--','futureagi/**/migrations/*.py'],text=True).splitlines()
+        actual={(Path(path).parent.parent.name,Path(path).stem) for path in paths}
+        self.assertEqual(actual,set(identities)); self.assertEqual(len(actual),count)
+        self.assertEqual(len(identities),count)  # duplicate fixture identities also fail
+
+    def test_complete_latest_and_floor_inventory(self):
+        self.assertEqual(len(SQL_ADDITIONS),8)
+        self.assertEqual(len(SAMPLING_ADDITIONS),9)
+        self.assertEqual(len(METRICS_ADDITIONS),23)
+        self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
+        self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
+        for revision,identities,count in ((REVISIONS[1],LATEST,59),(REVISIONS[0],LATEST+FLOOR_ONLY,64)):
+            with self.subTest(revision=revision):
+                self.assert_complete_inventory(revision,identities,count)
+
+    def test_pending_inventory_rejects_unknown_missing_and_substituted_migrations(self):
+        # Preserve the SQL-layer negative controls when adding sampling's graph.
+        # Same-count replacement must fail just as an extra or missing file does.
+        unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
+        for revision, identities, count in ((REVISIONS[1], LATEST, 59),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 64)):
+            paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
+                '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
+                'futureagi/**/migrations/*.py'], text=True).splitlines()
+            self.assert_complete_inventory(revision, identities, count)
+            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS:
+                missing = 'futureagi/' + app + '/migrations/' + name + '.py'
+                self.assertIn(missing, paths)
+                without = [path for path in paths if path != missing]
+                for mutation, changed in (('missing', without),
+                        ('unknown', paths + [unknown]),
+                        ('same_count_substitution', without + [unknown])):
+                    with self.subTest(revision=revision, missing=missing, mutation=mutation):
+                        with mock.patch.object(subprocess, 'check_output',
+                                return_value='\n'.join(changed) + '\n'):
+                            with self.assertRaises(AssertionError):
+                                self.assert_complete_inventory(revision, identities, count)
+
+    def test_sql_index_operations_have_explicit_state_table_scope(self):
+        # The sampling layer retains SQL's concurrent-index scope regression.
+        state = baseline_state(REVISIONS[1])
+        env = scope_environment(state)
+        migration = pending_plan([('tracer', '0122_sql_payload_expiry_index')], env)[0]
+        self.assertEqual([type(op).__name__ for op in migration.operations],
+                         ['AddIndexConcurrently', 'AddIndexConcurrently', 'RunPython'])
+        for op in migration.operations[:2]:
+            self.assertEqual(env['touched'](op, migration, state),
+                             {('postgres', 'public.tracer_sqlexecution')})
+        # This does not authorize the separate undeclared RunPython operation.
+
+    def test_unexpected_migration_still_fails_complete_inventory(self):
+        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
+            REVISIONS[1],'HEAD','--','futureagi/**/migrations/*.py'],text=True)
+        with mock.patch.object(subprocess,'check_output',return_value=paths+
+                'futureagi/tracer/migrations/9999_unexpected.py\n'):
+            with self.assertRaises(AssertionError):
+                self.assert_complete_inventory(REVISIONS[1],LATEST,59)
+
+    def test_sampling_layer_has_exact_table_scopes(self):
+        expected={
+            '0117_cohort_sampling': {'public.tracer_project','public.tracer_eval_task',
+                'public.tracer_eval_sampling_cohort','public.tracer_eval_sampling_member'},
+            '0117_sampling_project_db_default': {'public.tracer_project'},
+            '0119_merge_sampling_default_and_simulation_project': set(),
+            '0120_sampling_cohort_lease': {'public.tracer_eval_sampling_cohort'},
+            '0121_merge_sampling_and_sql_reuse': set(),
+            '0122_merge_sampling_and_alert_issue_state': set(),
+            '0123_merge_20261104_0743': set(),
+            '0131_merge_20261104_1308': set(),
+            '0132_merge_sampling_and_sql_workbench_dev_merge': set(),
+        }
+        for revision in REVISIONS:
+            state=baseline_state(revision); env=scope_environment(state)
+            actual={}
+            for migration in pending_plan(SAMPLING_ADDITIONS,env):
+                tables=set()
+                for op in migration.operations:
+                    tables |= env['touched'](op,migration,state)
+                    op.state_forwards(migration.app_label,state)
+                self.assertTrue(all(engine=='postgres' for engine,table in tables))
+                actual[migration.name]={table for engine,table in tables}
+            with self.subTest(revision=revision):
+                self.assertEqual(actual,expected)
+
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,18),(REVISIONS[0],LATEST+FLOOR_ONLY,23)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,59),(REVISIONS[0],LATEST+FLOOR_ONLY,64)):
             with self.subTest(revision=revision):
-                # Additions, not edited applied migrations. This deliberately
-                # breaks if the shipping plan changes without refreshing coverage.
-                paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
-                    revision,'HEAD','--','futureagi/**/migrations/*.py'],text=True).splitlines()
-                actual={(Path(path).parent.parent.name,Path(path).stem) for path in paths}
-                self.assertEqual(actual,set(identities)); self.assertEqual(len(actual),count)
+                self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)
+                # Do not omit Metrics or SQL from this full-plan scope gate.
+                # Undeclared opaque operations must block qualification until
+                # reviewed safety declarations exist; the negative test below
+                # documents the blocker without inventing those declarations.
                 plan=pending_plan(identities,env); scopes=[]
                 for migration in plan:
                     tables=set()
@@ -208,7 +423,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if count==23: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
@@ -220,10 +435,38 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     names={item['table'] for item in scoped}
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
-                    elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
+                    elif row['name'] in ('0118_instant_eval_answers','0117_cohort_sampling'): expected_row={'tracer_eval_task'}
+                    elif row['name']=='0130_observationspan_internal_type': expected_row={'tracer_observation_span'}
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
+
+    def test_undeclared_opaque_operations_remain_a_full_plan_scope_blocker(self):
+        expected = {
+            '0122_sql_payload_expiry_index': ('RunPython',),
+            '0126_derived_metric_refresh': ('RunPython',),
+            '0127_metric_lifecycle_safety': ('RunPython', 'RunSQL'),
+        }
+        for revision in REVISIONS:
+            state = baseline_state(revision)
+            env = scope_environment(state)
+            for name, kinds in expected.items():
+                tree = ast.parse(migration_path('tracer', name).read_text())
+                self.assertFalse(any(isinstance(node, ast.Assign) and
+                    any(isinstance(target, ast.Name) and target.id == 'UPDATE_SAFETY'
+                        for target in node.targets) for node in tree.body))
+                cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+                    and node.name == 'Migration')
+                operations = next(node.value for node in cls.body if isinstance(node, ast.Assign)
+                    and node.targets[0].id == 'operations')
+                for kind in kinds:
+                    node = next(node for node in operations.elts if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute) and node.func.attr == kind)
+                    operation = getattr(env['migrations'], kind)(node)
+                    migration = SimpleNamespace(app_label='tracer', name=name, declaration=None)
+                    with self.subTest(revision=revision, migration=name, operation=kind):
+                        with self.assertRaisesRegex(AssertionError, 'opaque_operation_table_scope_unavailable'):
+                            env['touched'](operation, migration, state)
 
     def test_unique_name_is_the_non_pk_reason_usage_is_selected(self):
         state=baseline_state(REVISIONS[1]); env=scope_environment(state)

@@ -1,7 +1,12 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { ThemeProvider, createTheme, hexToRgb } from "@mui/material/styles";
+import userEvent from "@testing-library/user-event";
+import { palette } from "src/theme/palette";
+import { typography } from "src/theme/typography";
+import { defaultProps } from "src/theme/overrides/default-props";
+import { tabs } from "src/theme/overrides/components/tabs";
 import QueryResults, { numericColumns } from "./QueryResults";
 
 const renderResult = (props) =>
@@ -31,7 +36,79 @@ describe("SQL query results", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("0.5")).toBeInTheDocument();
     expect(screen.getByText("NULL")).toBeInTheDocument();
+    expect(screen.getByText("2 rows · 2 columns · 15 ms")).toBeVisible();
   });
+  it("exposes full cell values regardless of length while distinguishing null and empty strings", () => {
+    const values = ["W".repeat(36), "x".repeat(80), "short", 0, 123.5, false];
+    renderResult({
+      result: {
+        ...result,
+        columns: [{ name: "value", type: "String" }],
+        rows: [...values, null, ""].map((value) => [value]),
+      },
+    });
+    for (const value of values) {
+      expect(
+        screen.getByRole("cell", { name: String(value), exact: true }),
+      ).toHaveAttribute("title", String(value));
+    }
+    expect(screen.getByRole("cell", { name: "NULL" })).not.toHaveAttribute(
+      "title",
+    );
+    expect(screen.getByLabelText("Empty string")).toHaveTextContent("''");
+    expect(screen.getByLabelText("Empty string")).toHaveAttribute(
+      "title",
+      "Empty string",
+    );
+    expect(
+      screen.getByLabelText("Empty string").closest("td"),
+    ).not.toHaveAttribute("title");
+  });
+  it.each(["light", "dark"])(
+    "shows keyboard focus on both result tabs with production %s defaults",
+    async (mode) => {
+      const theme = createTheme({ palette: palette(mode), typography });
+      const defaults = defaultProps(theme);
+      const overrides = tabs(theme);
+      theme.components = {
+        MuiTab: { ...defaults.MuiTab, ...overrides.MuiTab },
+        MuiTabs: { ...defaults.MuiTabs, ...overrides.MuiTabs },
+      };
+      expect(theme.components.MuiTab.defaultProps.disableRipple).toBe(true);
+      const user = userEvent.setup();
+      render(
+        <ThemeProvider theme={theme}>
+          <QueryResults result={result} />
+        </ThemeProvider>,
+      );
+      const table = screen.getByRole("tab", { name: "Table", exact: true });
+      const chart = screen.getByRole("tab", { name: "Chart", exact: true });
+      const assertFocus = (tab) => {
+        expect(tab).toHaveFocus();
+        expect(tab).toHaveClass("Mui-focusVisible");
+        expect(tab.querySelector(".MuiTouchRipple-root")).toBeNull();
+        const style = getComputedStyle(tab);
+        expect(style.outline).toBe("2px solid");
+        expect(style.outlineColor).toBe(hexToRgb(theme.palette.text.primary));
+        expect(style.outlineOffset).toBe("-3px");
+      };
+      await user.tab();
+      assertFocus(table);
+      await user.keyboard("{ArrowRight}");
+      assertFocus(chart);
+      expect(chart).toHaveAttribute("aria-selected", "false");
+      expect(table).toHaveAttribute("aria-selected", "true");
+      expect(table).not.toHaveClass("Mui-focusVisible");
+      expect(getComputedStyle(table).outline).not.toBe("2px solid");
+      await user.keyboard("{Enter}");
+      expect(chart).toHaveAttribute("aria-selected", "true");
+      await user.keyboard("{ArrowLeft}{Enter}");
+      assertFocus(table);
+      expect(
+        screen.getByRole("table", { name: "SQL query results" }),
+      ).toBeVisible();
+    },
+  );
   it("renders malicious labels as text, not markup", () => {
     renderResult({
       result: { ...result, rows: [["<img src=x onerror=alert(1)>", 2]] },
@@ -64,7 +141,7 @@ describe("SQL query results", () => {
   });
   it("can switch from chart configuration back to exact table data", () => {
     renderResult({ result, chart: { type: "bar", x: "locale", y: "score" } });
-    fireEvent.click(screen.getByRole("button", { name: "Table", exact: true }));
+    fireEvent.click(screen.getByRole("tab", { name: "Table", exact: true }));
     expect(
       screen.getByRole("table", { name: "SQL query results" }),
     ).toBeInTheDocument();

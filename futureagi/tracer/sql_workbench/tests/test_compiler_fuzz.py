@@ -153,7 +153,11 @@ def scope():
 
 def canonical_sources(scope):
     rendered = set()
-    for text in sources(scope).values():
+    templates = [
+        *sources(scope).values(),
+        sources(scope, session_locale=False)["sessions"],
+    ]
+    for text in templates:
         tree = sqlglot.parse_one(text, read="clickhouse")
         for table in tree.find_all(exp.Table):
             if table.name != "__sql_eval_candidates":
@@ -189,7 +193,7 @@ def assert_fully_scoped(compiled, scope, canonical):
             assert not node.args.get("is_global"), compiled
             for value in node.expressions:
                 assert not any(
-                    isinstance(child, (exp.Column, exp.Identifier, exp.Table))
+                    isinstance(child, exp.Column | exp.Identifier | exp.Table)
                     for child in value.walk()
                 ), compiled
         elif isinstance(node, exp.Column):

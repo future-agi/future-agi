@@ -6,7 +6,7 @@ import json
 import os
 import statistics
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
@@ -75,7 +75,7 @@ def main():
     durations, errors, count = [], 0, 0
     while time.monotonic() - started < profile["duration_seconds"]:
         sample = time.monotonic()
-        end = datetime.now(timezone.utc)
+        end = datetime.now(UTC)
         job_id = None
         record = {"sample": count, "started_at": end.isoformat()}
         try:

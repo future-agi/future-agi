@@ -93,7 +93,7 @@ export const sqlApi = {
 };
 
 export function errorMessage(error) {
-  const detail = error?.response?.data?.detail;
+  const detail = error?.detail;
   return typeof detail === "string"
     ? detail
     : error?.message || "Query request failed. Please try again.";

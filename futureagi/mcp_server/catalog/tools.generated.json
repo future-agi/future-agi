@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "e66bbe974a98b0f67afe9b7d96df452065f88f788954a171662196b6ee23470d",
+  "source_contract_sha256": "4b9f667b89e183f26c7c8e06e5396f6e81dfbac31dc6533e448819af2dfbb783",
   "tool_count": 111,
   "tools": [
     {
@@ -5849,9 +5849,35 @@
               "annotation_metric",
               "custom_attribute",
               "custom_column",
-              "derived_metric"
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
@@ -5917,6 +5943,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
@@ -11348,9 +11376,35 @@
               "annotation_metric",
               "custom_attribute",
               "custom_column",
-              "derived_metric"
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
@@ -11416,6 +11470,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
@@ -11624,6 +11680,11 @@
             "title": "End",
             "type": "string",
             "format": "date-time"
+          },
+          "reuse": {
+            "title": "Reuse",
+            "type": "boolean",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -11650,7 +11711,8 @@
             "project_id",
             "sql",
             "start",
-            "end"
+            "end",
+            "reuse"
           ]
         }
       },
@@ -11663,7 +11725,7 @@
     },
     {
       "name": "get_sql_result",
-      "description": "Poll a SQL job owned by the caller. Results expire after 24 hours; current project membership is required on every poll.",
+      "description": "Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.",
       "group": "observability",
       "inputSchema": {
         "type": "object",
@@ -11674,6 +11736,18 @@
           "project_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
           }
         },
         "additionalProperties": false,
@@ -11696,7 +11770,9 @@
             "id"
           ],
           "query": [
-            "project_id"
+            "project_id",
+            "offset",
+            "limit"
           ],
           "body": []
         }

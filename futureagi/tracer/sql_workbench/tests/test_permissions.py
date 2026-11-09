@@ -1,11 +1,11 @@
 """Real ORM isolation tests; run against the normal PostgreSQL test database."""
 
 from datetime import timedelta
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from django.utils import timezone
-from unittest.mock import patch
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
@@ -14,8 +14,8 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
 from tracer.models.sql_query import SQLExecution
-from tracer.sql_workbench.access import AccessDenied, Actor, authorize
 from tracer.sql_workbench import service
+from tracer.sql_workbench.access import AccessDenied, Actor, authorize
 
 pytestmark = pytest.mark.django_db
 
@@ -63,6 +63,9 @@ def tenants(monkeypatch):
 def create_job(actor, project, **kwargs):
     now = timezone.now()
     values = {
+        "output_bytes": len(str(kwargs["result"]).encode())
+        if kwargs.get("result")
+        else 0,
         "sql": "SELECT * FROM spans",
         "start": now - timedelta(hours=1),
         "end": now,
@@ -218,6 +221,7 @@ def test_project_share_does_not_share_result_or_private_queries(tenants):
 
 def test_export_escapes_spreadsheet_formula_and_parquet_roundtrips(tenants):
     import io
+
     import pyarrow.parquet as pq
 
     (actor, project, _), _ = tenants
@@ -248,7 +252,7 @@ def test_expired_results_not_served(tenants):
     job.save()
     assert service.snapshot(job)["result"] == {}
     assert service.snapshot(job)["expired"]
-    with pytest.raises(service.QueryUnavailable):
+    with pytest.raises(service.ResultExpired):
         service.export_result(actor, project.id, job.id, "csv")
 
 
@@ -304,8 +308,9 @@ def test_saved_query_cannot_be_attached_to_other_tenant_dashboard(tenants):
 
 
 def api_request(actor, user, method, path, data):
-    from rest_framework.test import APIRequestFactory, force_authenticate
     from types import SimpleNamespace
+
+    from rest_framework.test import APIRequestFactory, force_authenticate
 
     request = getattr(APIRequestFactory(), method)(path, data, format="json")
     request.organization = SimpleNamespace(id=actor.organization_id)
@@ -315,7 +320,7 @@ def api_request(actor, user, method, path, data):
 
 
 def test_catalog_api_and_saved_api_are_scoped_and_no_store(tenants):
-    from tracer.views.sql_query import SQLQueryViewSet, SavedSQLQueryViewSet
+    from tracer.views.sql_query import SavedSQLQueryViewSet, SQLQueryViewSet
 
     (actor, project, user), (_, foreign, _) = tenants
     view = SQLQueryViewSet.as_view({"get": "catalog"})
@@ -431,14 +436,14 @@ def test_saved_query_owner_updates_but_other_project_cannot(tenants):
         chart={},
         window_hours=24,
     )
-    update = dict(
-        project_id=project.id,
-        name="shared",
-        sql="SELECT count() FROM spans",
-        visibility="project",
-        chart={"type": "table"},
-        window_hours=1,
-    )
+    update = {
+        "project_id": project.id,
+        "name": "shared",
+        "sql": "SELECT count() FROM spans",
+        "visibility": "project",
+        "chart": {"type": "table"},
+        "window_hours": 1,
+    }
     assert service.update_saved(actor, saved.id, **update).visibility == "project"
     with pytest.raises(AccessDenied):
         service.update_saved(other, saved.id, **update)
@@ -461,6 +466,7 @@ def test_history_does_not_load_result_payloads(tenants, django_assert_num_querie
 def test_postgres_concurrent_admission_serializes_same_actor(tenants):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
+
     from django.db import connection, connections
 
     if connection.vendor != "postgresql":
@@ -555,7 +561,12 @@ def test_temporal_result_cleanup_is_registered_every_fifteen_minutes():
         for value in ALL_SCHEDULES
         if value.schedule_id == "sql-workbench-result-retention"
     )
-    assert schedule.interval_seconds == 900 and schedule.queue == "exact_aggregation"
+    from tfc.temporal.queues import require_exact_aggregation_task_queue
+
+    assert (
+        schedule.interval_seconds == 900
+        and schedule.queue == require_exact_aggregation_task_queue()
+    )
     assert schedule.activity_name == purge_expired_sql_results._activity_name
     assert purge_expired_sql_results._metadata["max_retries"] == 0
 
@@ -570,7 +581,7 @@ def test_organization_result_storage_budget_counts_other_members(tenants):
     workspace = owner.workspace_memberships.first().workspace
     now = timezone.now()
     members = []
-    for index in range(5):
+    for _index in range(5):
         user = User.objects.create_user(
             email=f"sql-quota-{uuid4()}@example.test",
             password="password",
@@ -1001,7 +1012,8 @@ def test_a_job_whose_queue_window_expired_never_starts(tenants):
         tasks.execute_sql._original_func(str(job.id))
     scan.assert_not_called()
     job.refresh_from_db()
-    assert job.state == "queued"
+    assert job.state == "failed" and job.finished_at is not None
+    assert "deadline" in job.error
     assert service.snapshot(job)["state"] == "failed"
 
 

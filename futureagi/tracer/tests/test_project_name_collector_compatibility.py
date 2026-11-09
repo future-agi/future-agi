@@ -59,15 +59,17 @@ def test_actual_project_create_and_rename_preserve_unicode(name):
 
     view = ProjectView()
     view.action_map = {"post": "create"}
-    request = view.initialize_request(APIRequestFactory().post(
-        "/projects/",
-        {
-            "name": name,
-            "model_type": Project._meta.get_field("model_type").choices[0][0],
-            "trace_type": "observe",
-        },
-        format="json",
-    ))
+    request = view.initialize_request(
+        APIRequestFactory().post(
+            "/projects/",
+            {
+                "name": name,
+                "model_type": Project._meta.get_field("model_type").choices[0][0],
+                "trace_type": "observe",
+            },
+            format="json",
+        )
+    )
     request.organization = SimpleNamespace()
     request.workspace = SimpleNamespace()
     view.request = request
@@ -85,11 +87,13 @@ def test_actual_project_create_and_rename_preserve_unicode(name):
     assert response.data["result"]["name"] == expected
 
     project = SimpleNamespace(name="old", save=Mock())
-    request = view.initialize_request(APIRequestFactory().post(
-        "/projects/update_project_name/",
-        {"project_id": str(uuid.uuid4()), "name": name},
-        format="json",
-    ))
+    request = view.initialize_request(
+        APIRequestFactory().post(
+            "/projects/update_project_name/",
+            {"project_id": str(uuid.uuid4()), "name": name},
+            format="json",
+        )
+    )
     request.organization = SimpleNamespace()
     request.workspace = SimpleNamespace()
     view.request = request

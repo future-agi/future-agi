@@ -254,6 +254,56 @@ class EvalTaskUsageResponseSerializer(serializers.Serializer):
     result = EvalTaskUsageResultSerializer()
 
 
+class EvalTaskDetailsQuerySerializer(StrictInputSerializer):
+    eval_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskDetailsEvalSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    template_id = serializers.UUIDField(allow_null=True)
+    templateId = serializers.UUIDField(allow_null=True)
+    mapping = serializers.DictField(child=JsonValueField())
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+    config = serializers.DictField(child=JsonValueField())
+    error_localizer = serializers.BooleanField()
+    evalType = serializers.CharField(allow_null=True, allow_blank=True)
+    templateType = serializers.CharField(allow_null=True, allow_blank=True)
+    outputType = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class EvalTaskDetailsSamplingPolicySerializer(SamplingPolicySerializer):
+    class Meta:
+        # A separate response definition keeps request policy schemas strict.
+        swagger_schema_fields = {"x-nullable": True}
+
+
+class EvalTaskDetailsResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    project_id = serializers.UUIDField()
+    project_name = serializers.CharField(allow_null=True, allow_blank=True)
+    status = serializers.ChoiceField(
+        choices=[*EvalTaskStatus.choices, ("", "")], allow_null=True, allow_blank=True
+    )
+    filters_applied = eval_task_filters_field(allow_null=True)
+    created_at = serializers.DateTimeField()
+    evals_applied = EvalTaskDetailsEvalSerializer(many=True)
+    spans_limit = serializers.IntegerField(allow_null=True)
+    sampling_rate = serializers.FloatField(allow_null=True)
+    sampling_policy = EvalTaskDetailsSamplingPolicySerializer(allow_null=True)
+    last_run = serializers.DateTimeField(allow_null=True)
+    run_type = serializers.ChoiceField(
+        choices=[*RunType.choices, ("", "")], allow_null=True, allow_blank=True
+    )
+    row_type = serializers.ChoiceField(choices=RowType.choices)
+
+
+class EvalTaskDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskDetailsResultSerializer()
+
+
 class PaginationQuerySerializer(PageSizeQuerySerializer):
     """Shared query-params validator for eval-log endpoints."""
 

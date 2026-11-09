@@ -40,6 +40,7 @@ export default function MetricResultActions({
       title={dashboard ? "Create dashboard from this run" : "Create monitor"}
       actionBtnTitle={dashboard ? "Create dashboard" : "Create monitor"}
       cancelBtnTitle="Close"
+      closeButtonLabel="Close dialog"
       actionBtnProps={{ color: "inherit" }}
       modalWidth="600px"
       isValid={

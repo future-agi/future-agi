@@ -11,10 +11,24 @@ class SQLListSerializer(SQLProjectSerializer):
     offset = serializers.IntegerField(min_value=0, max_value=10000, default=0)
 
 
-class SQLRunSerializer(SQLProjectSerializer):
+class SQLQueryInputSerializer(SQLProjectSerializer):
     sql = serializers.CharField(max_length=32768, trim_whitespace=False)
     start = serializers.DateTimeField()
     end = serializers.DateTimeField()
+
+
+class SQLRunSerializer(SQLQueryInputSerializer):
+    reuse = serializers.BooleanField(default=True)
+
+
+class SQLResultQuerySerializer(SQLProjectSerializer):
+    offset = serializers.IntegerField(min_value=0, max_value=10000, default=0)
+    limit = serializers.IntegerField(
+        min_value=1,
+        max_value=1000,
+        required=False,
+        help_text="Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.",
+    )
 
 
 class SQLRunSavedSerializer(SQLProjectSerializer):
@@ -105,6 +119,20 @@ class SQLResultSerializer(serializers.Serializer):
     row_count = serializers.IntegerField(required=False)
     result_bytes = serializers.IntegerField(required=False)
     elapsed_ms = serializers.IntegerField(required=False)
+    offset = serializers.IntegerField(required=False)
+    next_offset = serializers.IntegerField(required=False, allow_null=True)
+    has_more = serializers.BooleanField(required=False)
+    page_row_count = serializers.IntegerField(required=False)
+    previewed = serializers.BooleanField(required=False)
+    retrieval_note = serializers.CharField(required=False, allow_blank=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Optional nullable fields otherwise appear as null even for an empty
+        # result. Keep nonterminal/expired snapshots and unpaged REST compatible.
+        if "next_offset" not in instance:
+            data.pop("next_offset", None)
+        return data
 
 
 class SQLExecutionSerializer(serializers.Serializer):
@@ -116,6 +144,8 @@ class SQLExecutionSerializer(serializers.Serializer):
     )
     created_at = serializers.DateTimeField()
     expires_at = serializers.DateTimeField()
+    finished_at = serializers.DateTimeField(allow_null=True)
+    reused = serializers.BooleanField(required=False)
     error = serializers.CharField(allow_blank=True)
     result = SQLResultSerializer()
     expired = serializers.BooleanField()

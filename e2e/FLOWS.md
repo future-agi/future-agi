@@ -1083,10 +1083,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1099,7 +1099,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1260,19 +1260,20 @@
 **User steps:**
 
 1. seed two sessions with two traces and two spans per trace
-2. choose the project and configure an echo judge through the task editor
-3. preview a closed session quota of one and create a continuous span task
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
 4. verify the independently hash-ranked contact is the exact evaluated set
-5. ingest a late trace in each contact and verify only the sampled contact expands
-6. pause, edit the quota to two, preview and explicitly Delete & rerun
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
 7. verify one new cohort with probability one and the exact expanded span set
 
 **Backend state verified:**
 
 - all eight initial spans have two canonical session identities in ClickHouse
-- UI preview returns exactly two eligible contacts, one selected contact and four selected spans
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
 - created task evaluates exactly the independently hash-ranked contact with probability one half
-- late ingestion extends only the frozen sampled contact and does not rerank its membership
+- historical append rerun admits late rows only for the frozen contact without reranking
 - edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
 ## gateway
@@ -1329,7 +1330,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -2272,7 +2273,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 
@@ -2366,7 +2367,28 @@
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
 
-### OBS-E2E-059 — an analyst saves a scoped SQL result as a live dashboard query
+### OBS-E2E-059 — Copilot agent traces show request usage and optional timing detail
+
+**Goal:** A developer inspects a VS Code Copilot turn with accurate token usage, an Agent label and optional internal timing detail
+
+**Spec:** `flows/observe/copilot-agent-usage-timing.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. send the sanitized native VS Code capture plus Strands, Pydantic and parent-only controls
+2. open the captured trace from the real Observe grid
+3. read the agent label and observed token summary with timing activity hidden
+4. show timing spans and hide them again without losing their stored data
+
+**Backend state verified:**
+
+- all 91 captured spans retain their IDs; one agent, five model calls and 72 internal timing spans are stored
+- trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
+- all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
+
+### OBS-E2E-060 — an analyst saves a scoped SQL result as a live dashboard query
 
 **Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
 
@@ -2378,7 +2400,7 @@
 
 1. send a trace with two independently named spans to a new project
 2. open Observe Query and run a grouped span query using the SQL editor
-3. inspect the exact result table and save a project-shared query
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
 4. add the saved query to a dashboard using the Query page
 5. open the dashboard and verify it reruns the saved query
 

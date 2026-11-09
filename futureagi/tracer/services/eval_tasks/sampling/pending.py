@@ -12,6 +12,7 @@ from django.db import transaction
 
 from tracer.models.eval_sampling import EvalSamplingMember
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tasks.sampling.query import (
     BATCH_SIZE,
     SamplingQuery,

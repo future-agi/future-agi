@@ -181,7 +181,7 @@ export const samplingStratumLabel = (identity) => {
     const [name, groups] = JSON.parse(identity);
     if (typeof name !== "string" || !Array.isArray(groups)) return identity;
     return [
-      name === "default" ? "All remaining contacts" : name,
+      name === "default" ? "All other units" : name,
       ...groups.map((encoded) => {
         const [present, value] = JSON.parse(encoded);
         return present ? String(value) : "(missing)";

@@ -4,216 +4,70 @@ import {
   Alert,
   Box,
   Button,
-  FormControlLabel,
   MenuItem,
   Stack,
-  Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
   Typography,
 } from "@mui/material";
 import { useController, useWatch } from "react-hook-form";
 import axios, { endpoints } from "src/utils/axios";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { getNewTaskFilters } from "../schema";
-import SamplingPrecisionPlanner from "./SamplingPrecisionPlanner";
-
+import { samplingRequestError } from "./samplingRequestError";
 import {
-  defaultSamplingPolicy,
-  isNumericPredicate,
   samplingPolicyErrors,
   samplingPolicyForApi,
-  samplingPredicateError,
-  samplingStratumLabel,
-  selectionMode,
-  withCoordination,
 } from "./samplingPolicyForm";
+import {
+  SAMPLING_PREVIEW_SCOPE,
+  samplingPreviewSummary,
+  useSamplingPreview,
+} from "./samplingPreviewSummary";
+import {
+  SamplingFieldPicker,
+  SamplingValuePicker,
+} from "./sampling_field_picker";
+import { SamplingWindow } from "./sampling_selection_summary";
+import SamplingPickIllustration from "./sampling_pick_illustration";
+import {
+  advancedSamplingSummary,
+  compactSamplingPreview,
+  isSimpleSamplingPolicy,
+  pickLabel,
+  pickLevels,
+  pickNames,
+  samplingWindowInvalid,
+  simpleGroupsForValues,
+  simpleGroupSelectionText,
+  samplingGroupValueLabel,
+} from "./simpleSamplingPolicy";
 
-const SOURCES = ["span", "resource", "metadata"];
-// The active selection key (rate or target_n) is required: clearing it keeps
-// the key with an explicit empty value so the mode cannot change and the
-// policy cannot be previewed or saved until a value is entered. Optional
-// floors, caps and census thresholds are removed when cleared.
-const numberUpdate = (rule, key, text) => {
-  const next = { ...rule };
-  if (text !== "") next[key] = Number(text);
-  else if (key === selectionMode(rule)) next[key] = "";
-  else delete next[key];
-  return next;
-};
-
-function RuleControls({ rule, onChange, live, errors = {} }) {
-  const mode = selectionMode(rule);
-  const target = mode === "target_n";
+function AmountField({ label, rule, live, onChange, error }) {
+  const key = live ? "rate" : "target_n";
   return (
-    <Stack spacing={1}>
-      <Stack direction="row" spacing={1}>
-        <TextField
-          select
-          size="small"
-          label="Selection"
-          value={mode}
-          onChange={(event) => {
-            const next = { ...rule };
-            delete next.rate;
-            delete next.target_n;
-            next[event.target.value] = event.target.value === "rate" ? 10 : 100;
-            onChange(next);
-          }}
-          sx={{ minWidth: 150 }}
-        >
-          <MenuItem value="rate">Rate (%)</MenuItem>
-          <MenuItem value="target_n" disabled={live}>
-            Target units
-          </MenuItem>
-        </TextField>
-        <TextField
-          size="small"
-          type="number"
-          label={target ? "Target units" : "Rate (%)"}
-          value={rule[mode] ?? ""}
-          error={Boolean(errors[mode])}
-          helperText={errors[mode] || undefined}
-          inputProps={{ min: 0, max: target ? 1000000 : 100 }}
-          onChange={(event) =>
-            onChange(numberUpdate(rule, mode, event.target.value))
-          }
-        />
-      </Stack>
-      {!live && (
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-          {[
-            ["min_n", "Minimum units"],
-            ["max_n", "Maximum units"],
-            ["rare_below", "Census if cell size ≤"],
-          ].map(([key, label]) => (
-            <TextField
-              key={key}
-              size="small"
-              type="number"
-              label={label}
-              value={rule[key] ?? ""}
-              error={Boolean(errors[key])}
-              helperText={errors[key] || undefined}
-              inputProps={{ min: 0, max: 1000000 }}
-              onChange={(event) =>
-                onChange(numberUpdate(rule, key, event.target.value))
-              }
-            />
-          ))}
-        </Stack>
-      )}
-    </Stack>
+    <TextField
+      size="small"
+      fullWidth
+      type="number"
+      label={label}
+      value={rule[key] ?? ""}
+      error={Boolean(error)}
+      helperText={error}
+      inputProps={{ min: 0, max: live ? 100 : 1000000, step: live ? "any" : 1 }}
+      onChange={(event) =>
+        onChange({
+          ...rule,
+          [key]: event.target.value === "" ? "" : Number(event.target.value),
+        })
+      }
+    />
   );
 }
-RuleControls.propTypes = {
+AmountField.propTypes = {
+  label: PropTypes.string.isRequired,
   rule: PropTypes.object.isRequired,
-  onChange: PropTypes.func.isRequired,
   live: PropTypes.bool,
-  errors: PropTypes.object,
-};
-
-const ruleErrors = (errors, prefix) =>
-  Object.fromEntries(
-    Object.entries(errors)
-      .filter(([path]) => path.startsWith(`${prefix}.`))
-      .map(([path, message]) => [path.slice(prefix.length + 1), message]),
-  );
-
-function PredicateEditor({ predicate, onChange, onRemove }) {
-  return (
-    <Stack
-      spacing={1}
-      sx={{ pl: 1, borderLeft: "2px solid", borderColor: "divider" }}
-    >
-      <Stack direction="row" spacing={1}>
-        <TextField
-          select
-          label="Source"
-          size="small"
-          value={predicate.source}
-          onChange={(e) => onChange({ ...predicate, source: e.target.value })}
-          sx={{ minWidth: 105 }}
-        >
-          {SOURCES.map((s) => (
-            <MenuItem key={s} value={s}>
-              {s}
-            </MenuItem>
-          ))}
-        </TextField>
-        <TextField
-          label="Slice attribute"
-          size="small"
-          value={predicate.key}
-          onChange={(e) => onChange({ ...predicate, key: e.target.value })}
-          fullWidth
-        />
-        <Button aria-label="Remove slice predicate" onClick={onRemove}>
-          Remove
-        </Button>
-      </Stack>
-      <Stack direction="row" spacing={1}>
-        <TextField
-          select
-          size="small"
-          label="Operator"
-          value={predicate.op}
-          onChange={(e) =>
-            onChange({
-              ...predicate,
-              op: e.target.value,
-              values: ["gt", "gte", "lt", "lte"].includes(e.target.value)
-                ? [0]
-                : [],
-            })
-          }
-          sx={{ minWidth: 130 }}
-        >
-          {[
-            ["in", "is one of"],
-            ["not_in", "is not one of"],
-            ["exists", "exists"],
-            ["missing", "is missing"],
-            ["gt", ">"],
-            ["gte", "≥"],
-            ["lt", "<"],
-            ["lte", "≤"],
-          ].map(([v, l]) => (
-            <MenuItem key={v} value={v}>
-              {l}
-            </MenuItem>
-          ))}
-        </TextField>
-        {!["exists", "missing"].includes(predicate.op) && (
-          <TextField
-            label="Values (comma separated)"
-            size="small"
-            value={predicate.values.join(",")}
-            error={Boolean(samplingPredicateError(predicate))}
-            helperText={samplingPredicateError(predicate)}
-            onChange={(e) =>
-              onChange({
-                ...predicate,
-                values: isNumericPredicate(predicate)
-                  ? [e.target.value]
-                  : e.target.value.split(",").map((s) => s.trim()),
-              })
-            }
-            fullWidth
-          />
-        )}
-      </Stack>
-    </Stack>
-  );
-}
-PredicateEditor.propTypes = {
-  predicate: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
-  onRemove: PropTypes.func.isRequired,
+  error: PropTypes.string,
 };
 
 export default function SamplingPolicyEditor({ control, getValues }) {
@@ -222,64 +76,74 @@ export default function SamplingPolicyEditor({ control, getValues }) {
     name: "samplingPolicy",
     defaultValue: null,
   });
-  const { field: runTypeField } = useController({ control, name: "runType" });
-  const project = useWatch({ control, name: "project" });
-  const scope = useWatch({
+  const [project, rowType] = useWatch({
     control,
-    name: [
-      "project",
-      "rowType",
-      "filters",
-      "runType",
-      "startDate",
-      "endDate",
-      "datePreset",
-      "evalsDetails",
-    ],
+    name: ["project", "rowType"],
   });
+  const scope = useWatch({ control, name: SAMPLING_PREVIEW_SCOPE });
   const scopeKey = JSON.stringify(scope);
-  const requestRef = useRef(0);
-  const [preview, setPreview] = useState(null);
-  const [error, setError] = useState("");
+  const [, publishPreview] = useSamplingPreview(control);
+  const request = useRef(0);
+  const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    requestRef.current += 1;
-    setPreview(null);
-    setBusy(false);
-  }, [scopeKey]);
+  const [error, setError] = useState("");
+  const [groupDraft, setGroupDraft] = useState(null);
   const policy = field.value;
-  const policyErrors = samplingPolicyErrors(policy);
-  const invalid = Object.keys(policyErrors).length > 0;
-  const update = (next, keepCellQuotas = false) => {
-    requestRef.current += 1;
+  const simple = policy && isSimpleSamplingPolicy(policy);
+  const live = policy?.mode === "live";
+  const units = pickNames(policy?.sampling_unit);
+  const errors = samplingPolicyErrors(policy);
+  const unitInvalid =
+    policy && !pickLevels(rowType).includes(policy.sampling_unit);
+  const invalid =
+    unitInvalid ||
+    samplingWindowInvalid(policy) ||
+    Object.keys(errors).length > 0;
+  const preview = result?.scopeKey === scopeKey ? result.data : null;
+  const detailSummary = invalid
+    ? null
+    : samplingPreviewSummary(preview, policy, rowType);
+  const compact = invalid
+    ? null
+    : compactSamplingPreview(preview, policy, rowType);
+  useEffect(() => {
+    request.current += 1;
+    setResult(null);
     setBusy(false);
-    // Ordinary policy edits must not leave invisible planned targets overriding
-    // the visible rate/floor/census controls. Explicit Apply preserves them.
-    if (next && !keepCellQuotas) {
-      next = { ...next };
-      delete next.cell_quotas;
-    }
+    setError("");
+  }, [scopeKey]);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
+  useEffect(() => {
+    publishPreview(detailSummary ? { scopeKey, text: detailSummary } : null);
+    return () => publishPreview(null);
+  }, [detailSummary, publishPreview, scopeKey]);
+  const update = (next) => {
+    // This editor never drops opaque API fields. Its controls are unavailable
+    // unless the entire policy can be represented, including every group rule.
+    if (!simple) return;
+    request.current += 1;
     field.onChange(next);
-    setPreview(null);
+    setResult(null);
+    setBusy(false);
     setError("");
   };
-  const setRule = (index, rule) =>
-    update({
-      ...policy,
-      strata: policy.strata.map((r, i) => (i === index ? rule : r)),
-    });
-  const runPreview = async () => {
-    if (invalid) return;
-    const requestId = ++requestRef.current;
+  const previewSample = async () => {
+    if (!policy || invalid) return;
+    const id = ++request.current;
     setBusy(true);
     setError("");
-    setPreview(null);
+    setResult(null);
     try {
       const values = getValues();
       const { filters, attributeFilters } = getNewTaskFilters(values, project);
       const response = await axios.post(endpoints.project.samplingPreview(), {
         project,
-        row_type: values.rowType,
+        row_type: rowType,
         sampling_policy: samplingPolicyForApi(policy),
         evals: (values.evalsDetails || []).map((item) =>
           typeof item === "string" ? item : item.id,
@@ -289,446 +153,306 @@ export default function SamplingPolicyEditor({ control, getValues }) {
           ...(attributeFilters.length ? { filters: attributeFilters } : {}),
         },
       });
-      if (requestId === requestRef.current) setPreview(response.data.result);
+      if (id === request.current)
+        setResult({ scopeKey, data: response.data.result });
     } catch (err) {
-      if (requestId !== requestRef.current) return;
-      setError(
-        getSafeActionErrorMessage(
-          err,
-          "Preview failed. Check the policy, close quota windows and retry.",
-        ),
-      );
+      if (id === request.current)
+        setError(
+          samplingRequestError(
+            err,
+            "preview",
+            "Sampling preview could not be loaded. Please try again.",
+          ),
+        );
     } finally {
-      if (requestId === requestRef.current) setBusy(false);
+      if (id === request.current) setBusy(false);
     }
   };
+  if (!policy) return null;
+  const groupField = policy.strata?.[0]?.filters?.[0] || groupDraft;
+  const groupValues = simple
+    ? policy.strata.map((rule) => rule.filters[0].values[0])
+    : [];
+  const key = live ? "rate" : "target_n";
+  const groupSummary = simpleGroupSelectionText(policy);
+  const excludedValues = groupValues.length
+    ? ` (not ${new Intl.ListFormat("en", { type: "disjunction" }).format(groupValues.map(samplingGroupValueLabel))})`
+    : "";
   return (
-    <Stack
-      spacing={1.5}
-      sx={{ borderTop: "1px solid", borderColor: "divider", pt: 2 }}
-    >
-      <FormControlLabel
-        control={
-          <Switch
-            checked={Boolean(policy)}
-            onChange={(_, checked) =>
-              update(checked ? defaultSamplingPolicy() : null)
-            }
-          />
-        }
-        label="Contact-aware sampling policy"
-      />
-      {policy && (
+    <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+      {!simple ? (
+        <Typography
+          role="status"
+          variant="body2"
+          aria-label="Advanced sampling settings"
+        >
+          {advancedSamplingSummary(policy)}
+        </Typography>
+      ) : (
         <>
-          <Typography variant="caption" color="text.secondary">
-            Select contacts once, then evaluate every matching row in each
-            selected contact. Task filters choose evaluation rows; the first
-            matching slice assigns each contact exactly once.
-          </Typography>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <TextField
-              select
-              size="small"
-              label="Sampling unit"
-              value={policy.sampling_unit}
-              onChange={(e) => {
-                const next = { ...policy, sampling_unit: e.target.value };
-                if (e.target.value !== "attribute") delete next.unit_attribute;
-                update(next);
-              }}
-              fullWidth
-            >
-              {["span", "trace", "session", "user", "attribute"].map((u) => (
-                <MenuItem key={u} value={u}>
-                  {u === "attribute" ? "Custom contact attribute" : u}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              size="small"
-              label="Missing contact ID"
-              value={policy.missing_id}
-              onChange={(e) =>
-                update({ ...policy, missing_id: e.target.value })
-              }
-              fullWidth
-            >
-              <MenuItem value="exclude">Exclude row</MenuItem>
-              <MenuItem value="row">Sample row independently</MenuItem>
-            </TextField>
-          </Stack>
-          {policy.sampling_unit === "attribute" && (
-            <TextField
-              label="Contact attribute"
-              helperText="Span attribute. Leave empty to use the project’s configured contact attribute."
-              size="small"
-              value={policy.unit_attribute?.key || ""}
-              onChange={(e) => {
-                const next = { ...policy };
-                if (e.target.value)
-                  next.unit_attribute = { source: "span", key: e.target.value };
-                else delete next.unit_attribute;
-                update(next);
-              }}
-            />
-          )}
           <TextField
             select
             size="small"
-            label="Population mode"
-            value={policy.mode}
-            onChange={(e) => {
-              const live = e.target.value === "live";
-              const clean = (rule) => {
-                if (!live) return rule;
-                const { target_n, min_n, max_n, rare_below, ...rest } = rule;
-                return { ...rest, rate: rule.rate ?? 10 };
-              };
-              if (live) runTypeField.onChange("continuous");
-              update({
-                ...policy,
-                mode: e.target.value,
-                window: {
-                  ...policy.window,
-                  end: live ? null : new Date(Date.now() - 1000).toISOString(),
-                },
-                strata: policy.strata.map(clean),
-                default: clean(policy.default),
-              });
+            label="Pick:"
+            value={policy.sampling_unit}
+            onChange={(event) => {
+              const next = { ...policy, sampling_unit: event.target.value };
+              if (next.sampling_unit !== "attribute")
+                delete next.unit_attribute;
+              update(next);
             }}
+            fullWidth
           >
-            <MenuItem value="closed">Closed window · exact quotas</MenuItem>
-            <MenuItem value="live">Live window · percentage only</MenuItem>
+            {pickLevels(rowType).map((unit) => (
+              <MenuItem key={unit} value={unit}>
+                {pickLabel(unit, rowType)}
+              </MenuItem>
+            ))}
           </TextField>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            {(policy.mode === "live" ? ["start"] : ["start", "end"]).map(
-              (key) => (
-                <TextField
-                  key={key}
-                  type="datetime-local"
-                  label={`UTC window ${key}`}
-                  size="small"
-                  InputLabelProps={{ shrink: true }}
-                  value={policy.window[key].slice(0, 16)}
-                  onChange={(e) => {
-                    if (e.target.value)
-                      update({
-                        ...policy,
-                        window: {
-                          ...policy.window,
-                          [key]: new Date(`${e.target.value}Z`).toISOString(),
-                        },
-                      });
-                  }}
-                  fullWidth
-                />
-              ),
-            )}
-          </Stack>
-          <Typography variant="caption" color="text.secondary">
-            {policy.mode === "live"
-              ? "No end date: new contacts continue to be admitted. Preview covers the last 24 hours; first-admission decisions persist across future windows."
-              : "Maximum 31 days. Closed cohorts freeze at first execution; new contacts arriving afterward are excluded, but late rows of selected contacts remain selected."}
-            Neither mode truncates a contact to the legacy row limit. Trace rows
-            use root-span attributes; session rows use the earliest eligible
-            root for contact identity.
-          </Typography>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <TextField
-              select
-              size="small"
-              label="Coordination"
-              value={policy.coordination || "independent"}
-              onChange={(e) => update(withCoordination(policy, e.target.value))}
-              fullWidth
-            >
-              <MenuItem value="independent">
-                Independent · this policy draws its own sample
-              </MenuItem>
-              <MenuItem value="project">
-                Coordinated · nested across this project
-              </MenuItem>
-            </TextField>
-            {policy.coordination === "project" && (
-              <>
-                <TextField
-                  size="small"
-                  label="PRN panel"
-                  value={policy.panel ?? ""}
-                  error={Boolean(policyErrors.panel)}
-                  helperText={
-                    policyErrors.panel ||
-                    "Optional. Different panels draw independent numbers."
-                  }
-                  onChange={(e) => {
-                    const next = { ...policy };
-                    if (e.target.value) next.panel = e.target.value;
-                    else delete next.panel;
-                    update(next);
-                  }}
-                  fullWidth
-                />
-                <TextField
-                  size="small"
-                  type="number"
-                  label="PRN start (%)"
-                  value={policy.prn_start ?? ""}
-                  error={Boolean(policyErrors.prn_start)}
-                  helperText={
-                    policyErrors.prn_start ||
-                    "Where the selection interval begins on the hash circle."
-                  }
-                  inputProps={{ min: 0, max: 100 }}
-                  onChange={(e) => {
-                    const next = { ...policy };
-                    if (e.target.value !== "")
-                      next.prn_start = Number(e.target.value);
-                    else delete next.prn_start;
-                    update(next);
-                  }}
-                  fullWidth
-                />
-              </>
-            )}
-          </Stack>
-          <Typography variant="caption" color="text.secondary">
-            {policy.coordination === "project"
-              ? "Coordinated policies in this project and panel share each contact’s random number. With the same start point, eligible population and cell assignments, raising a rate or quota keeps the smaller sample; equal quotas select the same contacts. Disjoint start intervals give disjoint live samples."
-              : "This policy draws its own sample: editing a rate or quota re-draws every contact."}
-          </Typography>
-          <TextField
-            label="Group by attributes (comma separated)"
-            size="small"
-            helperText="Example: locale, category. Each combination becomes its own cell."
-            value={policy.group_by
-              .map(
-                (a) => `${a.source === "span" ? "" : `${a.source}:`}${a.key}`,
-              )
-              .join(",")}
-            onChange={(e) =>
-              update({
-                ...policy,
-                group_by: (e.target.value.trim()
-                  ? e.target.value.split(",")
-                  : []
-                )
-                  .map((s) => s.trim())
-                  .map((key) => {
-                    const match = key.match(/^(metadata|resource):(.*)$/);
-                    return match
-                      ? { source: match[1], key: match[2] }
-                      : { source: "span", key };
-                  }),
-              })
-            }
-          />
-          {policy.strata.map((rule, index) => (
-            <Stack
-              key={index}
-              spacing={1.5}
+          {policy.sampling_unit === "attribute" && (
+            <Box
+              component="details"
               sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 1,
-                p: 1.5,
+                "& > summary": {
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "text.secondary",
+                },
               }}
             >
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="caption">Priority {index + 1}</Typography>
-                <TextField
-                  label="Slice name"
-                  size="small"
-                  value={rule.name}
-                  onChange={(e) =>
-                    setRule(index, { ...rule, name: e.target.value })
-                  }
-                  fullWidth
-                />
-                <Button
-                  aria-label={`Move slice ${index + 1} up`}
-                  disabled={index === 0}
-                  onClick={() => {
-                    const strata = [...policy.strata];
-                    [strata[index - 1], strata[index]] = [
-                      strata[index],
-                      strata[index - 1],
-                    ];
-                    update({ ...policy, strata });
+              <summary>
+                {policy.unit_attribute?.key
+                  ? `Custom ID: ${policy.unit_attribute.key}`
+                  : "Use the project’s configured contact attribute · change attribute"}
+              </summary>
+              <Box sx={{ mt: 1 }}>
+                <SamplingFieldPicker
+                  project={project}
+                  label="Custom ID attribute"
+                  value={policy.unit_attribute}
+                  helperText="Leave empty to use the project’s configured contact attribute."
+                  onChange={(attribute) => {
+                    const next = { ...policy };
+                    if (attribute.key) next.unit_attribute = attribute;
+                    else delete next.unit_attribute;
+                    update(next);
                   }}
-                >
-                  Up
-                </Button>
-                <Button
-                  aria-label={`Remove slice ${index + 1}`}
-                  onClick={() =>
+                />
+              </Box>
+            </Box>
+          )}
+          {!unitInvalid && (
+            <SamplingPickIllustration
+              unit={policy.sampling_unit}
+              rowType={rowType}
+            />
+          )}
+          {groupSummary && (
+            <Typography
+              variant="body2"
+              aria-label="Requested group selection"
+              sx={{ fontWeight: 500, overflowWrap: "anywhere" }}
+            >
+              {groupSummary}
+            </Typography>
+          )}
+          <AmountField
+            label={
+              groupValues.length
+                ? `All other ${units}${excludedValues}${live ? " (%)" : ""}`
+                : live
+                  ? `What share of new ${units}? (%)`
+                  : `How many ${units}?`
+            }
+            rule={policy.default}
+            live={live}
+            error={errors[`default.${key}`]}
+            onChange={(rule) => update({ ...policy, default: rule })}
+          />
+          {!groupField ? (
+            <Button
+              size="small"
+              variant="outlined"
+              sx={{ alignSelf: "flex-start" }}
+              onClick={() => setGroupDraft({ source: "span", key: "" })}
+            >
+              {live ? "Set a share per group" : "Set a count per group"}
+            </Button>
+          ) : (
+            <Stack
+              spacing={1.5}
+              sx={{ borderLeft: "1px solid", borderColor: "divider", pl: 1.5 }}
+            >
+              <SamplingFieldPicker
+                project={project}
+                label="Group field"
+                value={groupField}
+                onChange={(next) => {
+                  setGroupDraft(next);
+                  update({ ...policy, strata: [] });
+                }}
+              />
+              <SamplingValuePicker
+                project={project}
+                distinctGroups
+                predicate={{ ...groupField, op: "in", values: groupValues }}
+                onChange={(values) =>
+                  update({
+                    ...policy,
+                    strata: simpleGroupsForValues(
+                      policy,
+                      {
+                        source: groupField.source || "span",
+                        key: groupField.key,
+                      },
+                      values,
+                    ),
+                  })
+                }
+              />
+              {policy.strata.map((rule, index) => (
+                <AmountField
+                  key={rule.name}
+                  label={`${String(rule.filters[0].values[0])}${live ? " (%)" : ""}`}
+                  rule={rule}
+                  live={live}
+                  error={errors[`strata.${index}.${key}`]}
+                  onChange={(next) =>
                     update({
                       ...policy,
-                      strata: policy.strata.filter((_, i) => i !== index),
-                    })
-                  }
-                >
-                  Remove
-                </Button>
-              </Stack>
-              {rule.filters.map((predicate, pi) => (
-                <PredicateEditor
-                  key={pi}
-                  predicate={predicate}
-                  onChange={(next) =>
-                    setRule(index, {
-                      ...rule,
-                      filters: rule.filters.map((p, i) =>
-                        i === pi ? next : p,
+                      strata: policy.strata.map((item, i) =>
+                        i === index ? next : item,
                       ),
-                    })
-                  }
-                  onRemove={() =>
-                    setRule(index, {
-                      ...rule,
-                      filters: rule.filters.filter((_, i) => i !== pi),
                     })
                   }
                 />
               ))}
               <Button
                 size="small"
-                onClick={() =>
-                  setRule(index, {
-                    ...rule,
-                    filters: [
-                      ...rule.filters,
-                      { source: "span", key: "", op: "in", values: [] },
-                    ],
-                  })
-                }
+                sx={{ alignSelf: "flex-start" }}
+                onClick={() => {
+                  setGroupDraft(null);
+                  update({ ...policy, strata: [] });
+                }}
               >
-                Add slice predicate
+                Remove per-group {live ? "shares" : "counts"}
               </Button>
-              <RuleControls
-                rule={rule}
-                onChange={(next) => setRule(index, next)}
-                live={policy.mode === "live"}
-                errors={ruleErrors(policyErrors, `strata.${index}`)}
-              />
             </Stack>
-          ))}
-          <Button
-            variant="outlined"
-            onClick={() =>
-              update({
-                ...policy,
-                strata: [
-                  ...policy.strata,
-                  {
-                    name: `Slice ${policy.strata.length + 1}`,
-                    filters: [],
-                    rate: 100,
-                  },
-                ],
-              })
-            }
-          >
-            Add priority slice
-          </Button>
-          <Typography variant="subtitle2">All remaining contacts</Typography>
-          <RuleControls
-            rule={policy.default}
-            onChange={(rule) => update({ ...policy, default: rule })}
-            live={policy.mode === "live"}
-            errors={ruleErrors(policyErrors, "default")}
-          />
-          <Typography variant="caption" color="text.secondary">
-            Rare-cell census includes every eligible unit below the threshold,
-            subject to the maximum. A minimum cannot create units that are not
-            present. Inclusion probabilities are saved with results for weighted
-            metrics.
-          </Typography>
-          {policy.cell_quotas && (
-            <Alert severity="info">
-              {Object.keys(policy.cell_quotas).length} explicit cell quota(s)
-              override the rules below for those cells. Any policy-control edit
-              clears the planned quotas; preview to inspect them.
-              <Button onClick={() => update(policy)}>
-                Clear planned quotas
-              </Button>
-            </Alert>
-          )}
-          <Button
-            variant="outlined"
-            onClick={runPreview}
-            disabled={busy || !project || invalid}
-          >
-            {busy ? "Previewing population…" : "Preview sampling policy"}
-          </Button>
-          {invalid && (
-            <Typography variant="caption" color="error" role="status">
-              Fix the highlighted sampling values before previewing or saving.
-            </Typography>
-          )}
-          {error && <Alert severity="error">{error}</Alert>}
-          {preview && (
-            <Box aria-label="Sampling population preview">
-              <Typography variant="caption">
-                {preview.population_note}
-              </Typography>
-              <Box sx={{ overflowX: "auto" }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      {[
-                        "Stratum",
-                        "Eligible units",
-                        "Expected units",
-                        "Selected rows",
-                      ].map((label) => (
-                        <TableCell key={label}>{label}</TableCell>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {preview.strata.map((cell) => (
-                      <TableRow key={samplingStratumLabel(cell.stratum)}>
-                        <TableCell sx={{ wordBreak: "break-word" }}>
-                          {samplingStratumLabel(cell.stratum)}
-                        </TableCell>
-                        <TableCell>{cell.eligible_units}</TableCell>
-                        <TableCell>
-                          {Number(cell.expected_units.toFixed(2))}
-                        </TableCell>
-                        <TableCell>{cell.selected_rows}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Box>
-              {!preview.strata.length && (
-                <Typography variant="body2">
-                  No eligible contacts in this window.
-                </Typography>
-              )}
-              <Typography variant="caption" display="block">
-                {preview.expected_evaluations == null
-                  ? "Select evaluators to estimate the number of evaluation runs."
-                  : `Expected evaluation runs: ${Number(preview.expected_evaluations.toFixed(2)).toLocaleString()} across ${preview.evaluator_count} evaluator(s).`}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {preview.cost_note}
-              </Typography>
-              {preview.strata.every(
-                (cell) =>
-                  Number.isSafeInteger(cell.eligible_units) &&
-                  Number.isSafeInteger(cell.selected_units),
-              ) && (
-                <SamplingPrecisionPlanner
-                  policy={policy}
-                  preview={preview}
-                  onApply={(next) => update(next, true)}
-                />
-              )}
-            </Box>
           )}
         </>
+      )}
+      <SamplingWindow
+        start={policy.window?.start}
+        end={policy.window?.end}
+        ongoing={live}
+      />
+      {simple && (
+        <Box
+          component="details"
+          sx={{ "& > summary": { cursor: "pointer", fontSize: 12 } }}
+        >
+          <summary>Change time window</summary>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ mt: 1 }}
+          >
+            {(live ? ["start"] : ["start", "end"]).map((bound) => (
+              <TextField
+                key={bound}
+                fullWidth
+                size="small"
+                type="datetime-local"
+                label={`UTC window ${bound}`}
+                InputLabelProps={{ shrink: true }}
+                value={(policy.window?.[bound] || "").slice(0, 16)}
+                onChange={(event) => {
+                  const date = new Date(`${event.target.value}Z`);
+                  update({
+                    ...policy,
+                    window: {
+                      ...policy.window,
+                      [bound]: Number.isFinite(+date) ? date.toISOString() : "",
+                    },
+                  });
+                }}
+              />
+            ))}
+          </Stack>
+          <Typography variant="caption" color="text.secondary">
+            {live
+              ? "New groups are admitted from this start time."
+              : "Choose a past window of at most 31 days. Counts are bounded by what exists."}
+          </Typography>
+        </Box>
+      )}
+      {unitInvalid && (
+        <Alert severity="warning">
+          This pick level is finer than the rows being evaluated. Replace the
+          advanced settings or restore the original row type before saving.
+        </Alert>
+      )}
+      {samplingWindowInvalid(policy) && (
+        <Alert severity="warning">
+          Choose a valid past UTC window
+          {live ? "." : " of no more than 31 days."}
+        </Alert>
+      )}
+      <Button
+        size="small"
+        variant="outlined"
+        sx={{ alignSelf: "flex-start" }}
+        onClick={previewSample}
+        disabled={busy || !project || invalid}
+      >
+        {busy ? "Previewing sample…" : "Preview sample"}
+      </Button>
+      {Object.keys(errors).length > 0 && (
+        <Typography role="status" variant="caption" color="error.main">
+          Fix the highlighted sampling values before previewing or saving.
+        </Typography>
+      )}
+      {error && <Alert severity="error">{error}</Alert>}
+      {preview && (
+        <Box aria-label="Sampling population preview">
+          <Typography
+            role="status"
+            aria-label="Sampling preview summary"
+            variant="body2"
+          >
+            {compact || "Selected groups and evaluated rows: Unavailable."}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Preview only, not a reservation or executed results.{" "}
+            {live
+              ? "New groups continue to arrive; these counts cover the preview window only."
+              : "Membership freezes at first execution, not when previewed or saved."}
+          </Typography>
+          <Box
+            component="details"
+            sx={{ mt: 1, "& > summary": { cursor: "pointer", fontSize: 12 } }}
+          >
+            <summary>Evaluation work</summary>
+            <Typography variant="caption" component="div">
+              {detailSummary || "Evaluation work is unavailable."}
+            </Typography>
+            <Typography variant="caption" component="div">
+              {preview.expected_evaluations == null
+                ? "Select evaluators to estimate evaluation runs."
+                : `Expected evaluation runs: ${Number(preview.expected_evaluations.toFixed(2)).toLocaleString()} across ${preview.evaluator_count} evaluator(s).`}
+            </Typography>
+            {preview.population_note && (
+              <Typography variant="caption" component="div">
+                {preview.population_note}
+              </Typography>
+            )}
+            {preview.cost_note && (
+              <Typography variant="caption" component="div">
+                {preview.cost_note}
+              </Typography>
+            )}
+          </Box>
+        </Box>
       )}
     </Stack>
   );

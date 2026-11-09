@@ -78,4 +78,17 @@ class SQLExecution(models.Model):
                 fields=["project", "created_by", "-created_at"], name="sql_history_idx"
             ),
             models.Index(fields=["expires_at"], name="sql_expiry_idx"),
+            models.Index(
+                fields=["deadline"],
+                name="sql_active_deadline_idx",
+                condition=models.Q(state__in=("queued", "running"))
+                | models.Q(state="cancelled", finished_at__isnull=True),
+            ),
+            models.Index(
+                fields=["expires_at"],
+                name="sql_payload_expiry_idx",
+                condition=models.Q(
+                    output_bytes__gt=0, state__in=("succeeded", "failed", "cancelled")
+                ),
+            ),
         ]

@@ -20,7 +20,7 @@ class Actor:
     workspace_id: UUID
 
 
-def authorize(actor: Actor, project_id, *, write=False):
+def authorize(actor: Actor, project_id: UUID | None, *, write: bool = False) -> Project:
     if not all((actor.user_id, actor.organization_id, actor.workspace_id, project_id)):
         raise AccessDenied("An active organization and workspace are required.")
     org = OrganizationMembership.no_workspace_objects.filter(
@@ -29,24 +29,30 @@ def authorize(actor: Actor, project_id, *, write=False):
         organization_id=actor.organization_id,
         is_active=True,
     ).first()
-    membership = WorkspaceMembership.no_workspace_objects.filter(
-        user_id=actor.user_id,
-        workspace_id=actor.workspace_id,
-        workspace__organization_id=actor.organization_id,
-        workspace__is_active=True,
-        workspace__deleted=False,
-        is_active=True,
-    ).first()
-    if org is None or membership is None:
+    if org is None:
         raise AccessDenied("Project not available.")
+    # Match User.has_global_workspace_access/get_workspace_role: organization
+    # admins outrank missing or stale workspace rows; reads never create a row.
+    if org.level_or_legacy >= Level.ADMIN:
+        workspace_level = Level.get_default_ws_level(org.level_or_legacy)
+    else:
+        membership = WorkspaceMembership.no_workspace_objects.filter(
+            user_id=actor.user_id, workspace_id=actor.workspace_id, is_active=True
+        ).first()
+        if membership is None:
+            raise AccessDenied("Project not available.")
+        workspace_level = membership.level_or_legacy
     required = Level.MEMBER if write else Level.VIEWER
     # An organization viewer cannot gain write access from a stale workspace role.
-    if min(org.level_or_legacy, membership.level_or_legacy) < required:
+    if min(org.level_or_legacy, workspace_level) < required:
         raise AccessDenied("Your role does not allow this action.")
     project = Project.no_workspace_objects.filter(
         id=project_id,
         organization_id=actor.organization_id,
         workspace_id=actor.workspace_id,
+        workspace__organization_id=actor.organization_id,
+        workspace__is_active=True,
+        workspace__deleted=False,
         trace_type="observe",
     ).first()
     if project is None:

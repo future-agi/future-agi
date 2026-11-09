@@ -35,6 +35,10 @@ async function openSave() {
   trigger.focus(); fireEvent.click(trigger);
   return trigger;
 }
+async function openSaved() {
+  fireEvent.click(screen.getByRole("tab", { name: "Saved", exact: true }));
+  fireEvent.click(await screen.findByText(saved.name));
+}
 beforeEach(() => {
   vi.clearAllMocks();
   sqlApi.catalog.mockResolvedValue({ version: 1, datasets: [], can_save: true });
@@ -47,7 +51,7 @@ describe("SQL shared dialog interactions", () => {
   it.each(["light", "dark"])("autofocuses, traps focus, closes with Escape and returns focus in %s", async (mode) => {
     mount(mode);
     const trigger = await openSave();
-    const dialog = screen.getByRole("dialog", { name: "Save query" });
+    const dialog = screen.getByRole("dialog", { name: /^Save query/ });
     await waitFor(() => expect(screen.getByLabelText("Query name")).toHaveFocus());
     trigger.focus();
     // MUI redirects forced outside focus to its container before Tab enters the paper.
@@ -59,9 +63,9 @@ describe("SQL shared dialog interactions", () => {
     expect(trigger).toHaveFocus();
   });
   it.each([
-    { kind: "save", title: "Save query" },
-    { kind: "dashboard", title: "Add query to dashboard" },
-    { kind: "delete", title: "Delete saved query?" },
+    { kind: "save", title: /^Save query/ },
+    { kind: "dashboard", title: /^Add to dashboard/ },
+    { kind: "delete", title: /^Delete saved query\?/ },
   ])("names the $kind close control without submitting", async ({ kind, title }) => {
     const user = userEvent.setup();
     mount();
@@ -69,7 +73,7 @@ describe("SQL shared dialog interactions", () => {
     if (kind === "save") {
       trigger = await openSave();
     } else {
-      fireEvent.click(await screen.findByText(saved.name));
+      await openSaved();
       trigger = screen.getByRole("button", {
         name: kind === "dashboard" ? "Add to dashboard" : "Delete saved query",
         exact: true,
@@ -78,8 +82,8 @@ describe("SQL shared dialog interactions", () => {
       await user.click(trigger);
     }
     const dialog = await screen.findByRole("dialog", { name: title });
-    const closeButton = within(dialog).getByRole("button", { name: "Close dialog", exact: true });
-    expect(closeButton).toHaveAccessibleName("Close dialog");
+    const closeButton = within(dialog).getByRole("button", { name: "Close", exact: true });
+    expect(closeButton).toHaveAccessibleName("Close");
     await user.click(closeButton);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
@@ -104,9 +108,9 @@ describe("SQL shared dialog interactions", () => {
     expect(save).toBeDisabled();
     fireEvent.keyDown(screen.getByLabelText("Query name"), { key: "Escape" });
     await userEvent.click(document.querySelector(".MuiDialog-container"));
-    expect(screen.getByRole("dialog", { name: "Save query" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
-    const closeButton = screen.getByRole("button", { name: "Close dialog", exact: true });
+    expect(screen.getByRole("dialog", { name: /^Save query/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    const closeButton = screen.getByRole("button", { name: "Close", exact: true });
     expect(closeButton).toBeDisabled();
     // A disabled MUI control rejects user-event pointer targeting; native click is a no-op.
     closeButton.click();
@@ -116,17 +120,17 @@ describe("SQL shared dialog interactions", () => {
   });
   it("selects a dashboard and submits once while preventing pending dismissal", async () => {
     const pending = deferred(); sqlApi.addWidget.mockReturnValue(pending.promise);
-    mount(); fireEvent.click(await screen.findByText(saved.name));
+    mount(); await openSaved();
     fireEvent.click(screen.getByRole("button", { name: "Add to dashboard" }));
-    const dialog = screen.getByRole("dialog", { name: "Add query to dashboard" });
+    const dialog = screen.getByRole("dialog", { name: /^Add to dashboard/ });
     expect(within(dialog).getByRole("button", { name: "Add query" })).toBeDisabled();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Dashboard" }));
     fireEvent.click(await screen.findByRole("option", { name: "Fixture dashboard" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Add query" }));
     await waitFor(() => expect(sqlApi.addWidget).toHaveBeenCalledWith("project", "saved", "board"));
     fireEvent.keyDown(dialog, { key: "Escape" });
-    expect(within(dialog).getByRole("button", { name: "Back" })).toBeDisabled();
-    const closeButton = within(dialog).getByRole("button", { name: "Close dialog", exact: true });
+    expect(within(dialog).getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+    const closeButton = within(dialog).getByRole("button", { name: "Close", exact: true });
     expect(closeButton).toBeDisabled();
     // A disabled MUI control rejects user-event pointer targeting; native click is a no-op.
     closeButton.click();
@@ -136,18 +140,18 @@ describe("SQL shared dialog interactions", () => {
   });
   it("uses confirmation cancel without deleting and keeps deletion guarded while pending", async () => {
     const pending = deferred(); sqlApi.remove.mockReturnValue(pending.promise);
-    mount(); fireEvent.click(await screen.findByText(saved.name));
+    mount(); await openSaved();
     const trigger = screen.getByRole("button", { name: "Delete saved query" });
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep query", exact: true }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(sqlApi.remove).not.toHaveBeenCalled();
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog", { name: "Delete saved query?" });
+    const dialog = screen.getByRole("dialog", { name: /^Delete saved query\?/ });
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete query" }));
     await waitFor(() => expect(sqlApi.remove).toHaveBeenCalledWith("project", "saved"));
-    expect(within(dialog).getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
-    const closeButton = within(dialog).getByRole("button", { name: "Close dialog", exact: true });
+    expect(within(dialog).getByRole("button", { name: "Keep query", exact: true })).toBeDisabled();
+    const closeButton = within(dialog).getByRole("button", { name: "Close", exact: true });
     expect(closeButton).toBeDisabled();
     // A disabled MUI control rejects user-event pointer targeting; native click is a no-op.
     closeButton.click();
@@ -161,12 +165,12 @@ describe("SQL shared dialog interactions", () => {
     mount();
     const trigger = screen.getByRole("button", { name: "History" });
     trigger.focus(); fireEvent.click(trigger);
-    let dialog = await screen.findByRole("dialog", { name: "Your recent queries" });
+    let dialog = await screen.findByRole("dialog", { name: "Recent queries", exact: true });
     fireEvent.click(within(dialog).getByRole("button", { name: "Close", exact: true }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
-    dialog = await screen.findByRole("dialog", { name: "Your recent queries" });
+    dialog = await screen.findByRole("dialog", { name: "Recent queries", exact: true });
     fireEvent.click(within(dialog).getByText("SELECT 42"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.getByLabelText("SQL query editor")).toHaveValue("SELECT 42");

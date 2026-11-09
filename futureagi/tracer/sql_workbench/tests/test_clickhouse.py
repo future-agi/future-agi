@@ -2,7 +2,7 @@
 
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -88,7 +88,7 @@ def scoped_clickhouse():
                     f"CREATE TABLE {database}.{table} ({columns}) ENGINE=ReplacingMergeTree(_version) ORDER BY {key}"
                 )
                 created.append(table)
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             org, workspace, project, config = uuid4(), uuid4(), uuid4(), uuid4()
             scope = Scope(
                 org,
@@ -115,14 +115,14 @@ def scoped_clickhouse():
                     uuid4(),
                 )
                 ids.append(
-                    dict(
-                        trace=trace,
-                        session=session,
-                        user=user,
-                        span=span,
-                        eval=evaluation,
-                        annotation=annotation,
-                    )
+                    {
+                        "trace": trace,
+                        "session": session,
+                        "user": user,
+                        "span": span,
+                        "eval": evaluation,
+                        "annotation": annotation,
+                    }
                 )
                 client.execute(
                     f"INSERT INTO {database}.spans (project_id,org_id,id,trace_id,trace_session_id,end_user_id,name,start_time,attrs_string) VALUES",
@@ -288,7 +288,9 @@ def test_real_locked_service_profile_executes_with_only_the_scope_filter(
 ):
     import ipaddress
     import secrets
+
     from django.test import override_settings
+
     from tracer.sql_workbench.catalog import additional_table_filters
     from tracer.sql_workbench.provision import service_access_ddl
     from tracer.sql_workbench.runner import run
@@ -420,6 +422,7 @@ def test_real_sampling_metadata_preserves_unknowns_and_task_run_distinction(
 def test_e2e_only_bootstrap_is_idempotent_on_real_clickhouse(scoped_clickhouse):
     import importlib.util
     from pathlib import Path
+
     from clickhouse_driver import Client
     from clickhouse_driver.errors import ServerException
 
@@ -484,8 +487,10 @@ def test_direct_bi_views_and_row_policies_are_tenant_safe(
 ):
     import ipaddress
     import secrets
+
     from clickhouse_driver import Client
     from clickhouse_driver.errors import ServerException
+
     from tracer.sql_workbench.provision import direct_access_ddl
 
     if (
@@ -797,7 +802,7 @@ def _service_settings(client, database):
 def _string_values(rows):
     for row in rows:
         for value in row:
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, list | tuple):
                 yield from _string_values([value])
             elif isinstance(value, dict):
                 yield from (str(item) for pair in value.items() for item in pair)

@@ -12,17 +12,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "ba052ed0-921f-4aa9-972d-7bbbc79e5d30"
-NOW = datetime(2026, 10, 21, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 21, tzinfo=UTC)
 DDL = """
 CREATE TABLE spans (
  project_id UUID, project_version_id Nullable(UUID), id String, trace_id String, trace_session_id Nullable(UUID), end_user_id Nullable(UUID),
@@ -49,10 +49,11 @@ def generate(directory: Path) -> None:
 
     django.setup()
     from clickhouse_driver.util.escape import escape_param, escape_params
+
     from tracer.services.eval_tasks.sampling.policy import (
-        validate_policy,
-        unit_hash,
         rate_selects,
+        unit_hash,
+        validate_policy,
     )
     from tracer.services.eval_tasks.sampling.query import (
         SamplingQuery,
@@ -363,11 +364,22 @@ def generate(directory: Path) -> None:
         },
     )
     rate_rows = [contact(f"exact-rate-{index}")[0] for index in range(100)]
-    ranked_units = sorted([f"session:{row['session']}" for row in rate_rows], key=lambda unit: unit_hash("native-proof", unit))
+    ranked_units = sorted(
+        [f"session:{row['session']}" for row in rate_rows],
+        key=lambda unit: unit_hash("native-proof", unit),
+    )
     for rate in (7, 14, 28):
-        case(f"exact-closed-percent-{rate}", rate_rows, {**base, "default": {"rate": rate}}, "members", {
-            "units": sorted(ranked_units[:rate]), "probabilities": [rate / 100], "populations": [100],
-        })
+        case(
+            f"exact-closed-percent-{rate}",
+            rate_rows,
+            {**base, "default": {"rate": rate}},
+            "members",
+            {
+                "units": sorted(ranked_units[:rate]),
+                "probabilities": [rate / 100],
+                "populations": [100],
+            },
+        )
     (directory / "cases.json").write_text(json.dumps(cases))
 
 
@@ -415,11 +427,11 @@ def verify(args) -> None:
                     expected["units"]
                 ), (case["name"], rows)
                 assert (
-                    sorted(set(row["inclusion_probability"] for row in rows))
+                    sorted({row["inclusion_probability"] for row in rows})
                     == expected["probabilities"]
                 ), (case["name"], rows)
                 assert (
-                    sorted(set(int(row["population_size"]) for row in rows))
+                    sorted({int(row["population_size"]) for row in rows})
                     == expected["populations"]
                 ), (case["name"], rows)
             elif "row_ids" in expected:

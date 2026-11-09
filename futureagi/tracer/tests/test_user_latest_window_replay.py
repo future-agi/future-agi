@@ -91,7 +91,10 @@ def assert_window_replay(
                 "is_deleted",
             )
         ]
-        assert values[8].startswith("tuple(")
+        assert values[8].startswith("tupleConcat(tuple(")
+        assert values[8].endswith(
+            "tuple(spans.attrs_string['gen_ai.operation.name'] = 'invoke_agent'))"
+        )
         assert "spans.attrs_string['fi.usage.contribution']" in values[8]
         assert "spans.attrs_string['fi.cost.kind'] = 'unknown'" in values[8]
         assert "spans.cost != 0" in values[9]
