@@ -7,14 +7,14 @@ import type { StateProbe } from './state-probe';
 export const SETTINGS_PATH = '/tracer/feed/escalation-settings/';
 export const UI_READY = 60_000;
 export const LABELS = {
-  min_findings: 'Minimum findings in an hour',
-  entry_multiplier: 'Increase compared with baseline (×)',
-  entry_delta: 'Minimum additional findings',
-  entry_confirmation_minutes: 'Escalation confirmation (minutes)',
-  recovery_min: 'Recovery minimum-count component',
-  recovery_multiplier: 'Recovery baseline multiplier (×)',
-  recovery_delta: 'Recovery additional findings',
-  recovery_confirmation_minutes: 'Recovery confirmation (minutes)',
+  min_findings: 'Escalate findings',
+  entry_multiplier: 'Escalate times usual',
+  entry_delta: 'Escalate above usual',
+  entry_confirmation_minutes: 'Escalate hold for',
+  recovery_min: 'Recover findings',
+  recovery_multiplier: 'Recover times usual',
+  recovery_delta: 'Recover above usual',
+  recovery_confirmation_minutes: 'Recover hold for',
 } as const;
 export type Values = Record<keyof typeof LABELS, number>;
 export interface Settings {
@@ -45,24 +45,22 @@ export async function openSettings(browser: Browser, scopes: ScopeActors, actor:
 export async function reopenSettings(page: Page): Promise<Locator> {
   await page.getByRole('button', { name: 'Escalation settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Escalation settings', exact: true });
+  // All eight values live under the collapsed Fine-tune section.
+  const fineTune = dialog.getByRole('button', { name: /^Fine-tune/ });
+  await expect(fineTune).toBeVisible({ timeout: UI_READY });
+  if ((await fineTune.getAttribute('aria-expanded')) !== 'true') await fineTune.click();
   await expect(dialog.getByRole('spinbutton', { name: LABELS.min_findings, exact: true }))
     .toBeVisible({ timeout: UI_READY });
   return dialog;
 }
 
 export async function fillValues(dialog: Locator, values: Values) {
-  if (!(await dialog.getByRole('spinbutton', { name: LABELS.recovery_min, exact: true }).isVisible())) {
-    await dialog.getByRole('button', { name: 'Recovery', exact: true }).click();
-  }
   for (const [key, label] of Object.entries(LABELS)) {
     await dialog.getByRole('spinbutton', { name: label, exact: true }).fill(String(values[key as keyof Values]));
   }
 }
 
 export async function expectValues(dialog: Locator, values: Values) {
-  if (!(await dialog.getByRole('spinbutton', { name: LABELS.recovery_min, exact: true }).isVisible())) {
-    await dialog.getByRole('button', { name: 'Recovery', exact: true }).click();
-  }
   for (const [key, label] of Object.entries(LABELS)) {
     await expect(dialog.getByRole('spinbutton', { name: label, exact: true }))
       .toHaveValue(String(values[key as keyof Values]));

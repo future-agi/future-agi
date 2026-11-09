@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useForm } from "react-hook-form";
 import { LoadingButton } from "@mui/lab";
@@ -9,75 +9,71 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   IconButton,
+  InputAdornment,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useErrorFeedEscalationSettings,
   useUpdateErrorFeedEscalationSettings,
 } from "src/api/errorFeed/error-feed";
+import EscalationSummary from "./EscalationSummary";
+import EscalationPreviewChart from "./EscalationPreviewChart";
+import {
+  ENTRY,
+  accentSx,
+  FIELD_NAMES,
+  PRESETS,
+  RECOVERY,
+  deciding,
+  escalateAt,
+  matchPreset,
+  numericValues,
+  presetValues,
+  recoverAt,
+  toPayload,
+  validate,
+} from "./escalationSettings";
 
-const ENTRY = [
-  ["min_findings", "Minimum findings in an hour"],
-  ["entry_multiplier", "Increase compared with baseline (×)"],
-  ["entry_delta", "Minimum additional findings"],
-  ["entry_confirmation_minutes", "Escalation confirmation (minutes)"],
-];
-const RECOVERY = [
-  ["recovery_min", "Recovery minimum-count component"],
-  ["recovery_multiplier", "Recovery baseline multiplier (×)"],
-  ["recovery_delta", "Recovery additional findings"],
-  ["recovery_confirmation_minutes", "Recovery confirmation (minutes)"],
-];
-const numericValues = (values) =>
-  Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, Number(value)]),
-  );
-
-function validate(values, ranges) {
-  const errors = {};
-  for (const [name, range] of Object.entries(ranges)) {
-    const value = values[name];
-    if (
-      typeof value !== "number" ||
-      !Number.isFinite(value) ||
-      value < range.min ||
-      value > range.max
-    ) {
-      errors[name] = `Enter a number from ${range.min} to ${range.max}.`;
-    } else if (
-      Math.abs(value / range.step - Math.round(value / range.step)) > 1e-8
-    ) {
-      errors[name] = `Use increments of ${range.step}.`;
-    }
-  }
-  for (const [recovery, entry, message] of [
-    ["recovery_min", "min_findings", "Must be lower than the entry minimum."],
-    [
-      "recovery_multiplier",
-      "entry_multiplier",
-      "Must be lower than the entry multiplier.",
-    ],
-    [
-      "recovery_delta",
-      "entry_delta",
-      "Must be lower than the entry additional findings.",
-    ],
-  ]) {
-    if (values[recovery] >= values[entry]) errors[recovery] = message;
-  }
-  return errors;
-}
+const disclosureSx = {
+  bgcolor: "transparent",
+  backgroundImage: "none",
+  boxShadow: "none",
+  // The theme paints expanded accordions with background.paper, which shows
+  // as a band on the dialog surface in dark mode.
+  "&.Mui-expanded": { bgcolor: "transparent" },
+  "&:before": { display: "none" },
+  "& .MuiAccordionSummary-root": {
+    minHeight: 36,
+    px: 0,
+    flexDirection: "row-reverse",
+    gap: 0.75,
+  },
+  "& .MuiAccordionSummary-content": { my: 0.75, alignItems: "center" },
+  "& .MuiAccordionSummary-expandIconWrapper.Mui-expanded": {
+    transform: "rotate(90deg)",
+  },
+  "& .MuiAccordionDetails-root": {
+    border: "1px solid",
+    borderColor: "divider",
+    borderRadius: 1,
+    p: 2,
+  },
+};
 
 export default function EscalationSettingsDialog({
   open,
@@ -95,15 +91,19 @@ export default function EscalationSettingsDialog({
     control,
     reset,
     watch,
-    setError,
-    clearErrors,
+    setFocus,
     handleSubmit,
     formState: { isDirty },
   } = useForm({ defaultValues: {} });
   const [loaded, setLoaded] = useState(null);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [tuneOpen, setTuneOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [reloaded, setReloaded] = useState(false);
+  const [usual, setUsual] = useState(10);
+  const lastValid = useRef(null);
+  const idPrefix = useId();
   const scope = `${organizationId}:${workspaceId}`;
   const loadedScope = loaded?.scope;
   const currentScope = useRef(scope);
@@ -118,7 +118,9 @@ export default function EscalationSettingsDialog({
     if (!open || loadedScope !== scope) {
       setLoaded(null);
       setSaveError(null);
+      setReloaded(false);
       setDiscardOpen(false);
+      lastValid.current = null;
       reset({});
     }
   }, [open, scope, reset, loadedScope]);
@@ -134,21 +136,51 @@ export default function EscalationSettingsDialog({
     }
   }, [open, scopedData, loaded, scope, reset]);
 
+  const values = ready ? numericValues(draft) : null;
+  const defaults = ready ? numericValues(scopedData.defaults) : null;
+  const errors = ready ? validate(values, scopedData.ranges) : {};
+  const errorNames = FIELD_NAMES.filter((name) => errors[name]);
+  const valid = ready && errorNames.length === 0;
+  if (valid) lastValid.current = values;
+  // While a value is invalid the previews keep showing the last valid setup.
+  const shown = valid ? values : lastValid.current ?? defaults;
+  const active = valid
+    ? matchPreset(values, scopedData.defaults) ?? "custom"
+    : "custom";
+  const atDefaults =
+    ready && FIELD_NAMES.every((name) => values[name] === defaults[name]);
+
+  const edited = () => {
+    setSaveError((current) => (current === "conflict" ? current : null));
+    setReloaded(false);
+  };
+
   const requestClose = () => {
     if (mutation.isPending) return;
     if (isDirty) setDiscardOpen(true);
     else onClose();
   };
 
-  const submit = handleSubmit(async (values) => {
+  const applyValues = (next) => {
+    reset(next, { keepDefaultValues: true });
+    edited();
+  };
+
+  const choosePreset = (_event, key) => {
     if (!editable) return;
-    clearErrors();
-    const errors = validate(values, scopedData.ranges);
-    if (Object.keys(errors).length) {
-      for (const [name, message] of Object.entries(errors))
-        setError(name, { type: "validate", message });
-      if (Object.keys(errors).some((name) => name.startsWith("recovery_")))
-        setRecoveryOpen(true);
+    if (key === null || key === "custom") {
+      if (active === "custom" || key === "custom") setTuneOpen(true);
+      return;
+    }
+    const preset = PRESETS.find((item) => item.key === key);
+    applyValues(presetValues(preset, scopedData.defaults));
+  };
+
+  const submit = handleSubmit(async () => {
+    if (!editable) return;
+    if (errorNames.length) {
+      setTuneOpen(true);
+      requestAnimationFrame(() => setFocus(errorNames[0]));
       return;
     }
     setSaveError(null);
@@ -158,7 +190,7 @@ export default function EscalationSettingsDialog({
         organizationId,
         workspaceId,
         revision: loaded.revision,
-        values,
+        values: toPayload(values),
       });
       if (currentScope.current === capturedScope) {
         enqueueSnackbar("Escalation settings saved", { variant: "success" });
@@ -188,34 +220,105 @@ export default function EscalationSettingsDialog({
         values: result.data.values,
       });
       setSaveError(null);
+      setReloaded(true);
     }
   };
 
-  const fields = (definitions) =>
-    definitions.map(([name, label]) => (
-      <FormTextFieldV2
-        key={name}
-        control={control}
-        fieldName={name}
-        label={label}
-        fieldType="number"
-        size="small"
-        fullWidth
-        disabled={!editable}
-        onChange={() => clearErrors(name)}
-        inputProps={{
-          min: scopedData.ranges[name].min,
-          max: scopedData.ranges[name].max,
-          step: scopedData.ranges[name].step,
-        }}
-      />
-    ));
-  const customized =
-    ready &&
-    Object.keys(loaded.values).some(
-      (name) =>
-        Number(loaded.values[name]) !== Number(scopedData.defaults[name]),
+  const fieldGroup = (title, note, definitions, decides, outcome, dot) => {
+    const headingId = `${idPrefix}-${title}`;
+    return (
+      <Stack gap={1.5} role="group" aria-labelledby={headingId}>
+        <Box>
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={1}
+            sx={{ pb: 1, borderBottom: "1px solid", borderColor: "divider" }}
+          >
+            <Box
+              sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dot }}
+            />
+            <Typography
+              id={headingId}
+              typography="s1"
+              fontWeight="fontWeightSemiBold"
+            >
+              {title}
+            </Typography>
+          </Stack>
+          <Typography typography="s2" color="text.secondary" sx={{ mt: 0.75 }}>
+            {note}
+          </Typography>
+        </Box>
+        {definitions.map(([name, label, unit]) => (
+          <FormTextFieldV2
+            key={name}
+            control={control}
+            fieldName={name}
+            label={label}
+            fieldType="number"
+            size="small"
+            fullWidth
+            disabled={!editable}
+            onChange={edited}
+            error={!!errors[name]}
+            helperText={errors[name]}
+            inputProps={{
+              min: scopedData.ranges[name].min,
+              max: scopedData.ranges[name].max,
+              step: scopedData.ranges[name].step,
+              style: { textAlign: "left" },
+              "aria-label": `${title} ${label.toLowerCase()}`,
+            }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  {name === decides && (
+                    <CustomTooltip
+                      show
+                      size="small"
+                      arrow
+                      title="This limit is the highest for the example above, so it decides when the status changes."
+                    >
+                      <Chip
+                        size="small"
+                        label="decides"
+                        sx={{
+                          mr: 1,
+                          height: 18,
+                          fontSize: 11,
+                          color: "text.secondary",
+                          bgcolor: "action.hover",
+                        }}
+                      />
+                    </CustomTooltip>
+                  )}
+                  {unit}
+                </InputAdornment>
+              ),
+            }}
+          />
+        ))}
+        <Typography
+          typography="s2"
+          color="text.secondary"
+          sx={{ pt: 1, borderTop: "1px solid", borderColor: "divider" }}
+        >
+          For an issue that usually gets {usual.toLocaleString("en-US")}:
+          <Box
+            component="b"
+            sx={{ display: "block", color: "text.primary", fontWeight: 600 }}
+          >
+            {outcome}
+          </Box>
+        </Typography>
+      </Stack>
     );
+  };
+
+  const [entryDecides, recoveryDecides] = shown
+    ? deciding(shown, usual)
+    : [null, null];
 
   return (
     <>
@@ -226,8 +329,8 @@ export default function EscalationSettingsDialog({
         aria-labelledby="escalation-settings-title"
         PaperProps={{
           sx: {
-            width: 550,
-            maxWidth: 590,
+            width: 600,
+            maxWidth: 600,
             maxHeight: "90vh",
             display: "flex",
             flexDirection: "column",
@@ -236,32 +339,66 @@ export default function EscalationSettingsDialog({
       >
         <DialogTitle
           id="escalation-settings-heading"
-          sx={{ px: 1.5, pt: 1.5, pb: 0.5 }}
+          sx={{ px: 3, pt: 2.5, pb: 1.5 }}
         >
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Typography
-              id="escalation-settings-title"
-              component="span"
-              typography="m2"
-              fontWeight="fontWeightSemiBold"
-            >
-              Escalation settings
-            </Typography>
+          <Stack direction="row" alignItems="flex-start" gap={1.5}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" alignItems="center" gap={0.75}>
+                <Typography
+                  id="escalation-settings-title"
+                  component="span"
+                  typography="m2"
+                  fontWeight="fontWeightSemiBold"
+                >
+                  Escalation settings
+                </Typography>
+                {ready && (
+                  <CustomTooltip
+                    show
+                    size="small"
+                    arrow
+                    placement="bottom-start"
+                    title={`Findings are counted over the last ${
+                      scopedData.window_minutes ?? 60
+                    } minutes, leaving out the latest ${
+                      scopedData.processing_allowance_minutes ?? 10
+                    } so processing can finish, and checked every ${
+                      scopedData.cadence_minutes ?? 5
+                    } minutes. For evaluation issues, each failed evaluation counts as one finding. Statuses you set by hand are never changed automatically.`}
+                  >
+                    <IconButton
+                      size="small"
+                      aria-label="How escalation works"
+                      sx={{ p: 0.25, color: "text.secondary" }}
+                    >
+                      <Iconify icon="eva:info-outline" width={16} />
+                    </IconButton>
+                  </CustomTooltip>
+                )}
+              </Stack>
+              {ready && (
+                <Typography typography="s2" color="text.secondary">
+                  Applies to all projects in{" "}
+                  <Box
+                    component="b"
+                    sx={{ color: "text.primary", fontWeight: 500 }}
+                  >
+                    {scopedData.workspace_name}
+                  </Box>
+                </Typography>
+              )}
+            </Box>
             <IconButton
               aria-label="Close escalation settings"
               onClick={requestClose}
               disabled={mutation.isPending}
-              sx={{ p: 0 }}
+              sx={{ p: 0.5 }}
             >
               <Iconify icon="line-md:close" width={20} />
             </IconButton>
           </Stack>
         </DialogTitle>
-        <DialogContent sx={{ px: 1.5, py: 1.5 }}>
+        <DialogContent sx={{ px: 3, pt: 0.5, pb: 2.5 }}>
           {!ready && !query.isError && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
               <CircularProgress
@@ -280,34 +417,29 @@ export default function EscalationSettingsDialog({
           )}
           {ready && (
             <Stack
-              gap={1.5}
               component="form"
               id="escalation-settings-form"
               onSubmit={submit}
               noValidate
             >
-              <Box>
-                <Typography typography="s1" fontWeight="fontWeightSemiBold">
-                  {scopedData.workspace_name}
-                </Typography>
-                <Typography typography="s2" color="text.secondary">
-                  Applies to all projects in this workspace.
-                </Typography>
-                <Typography typography="s2" color="text.secondary">
-                  {customized ? "Customized thresholds" : "Default thresholds"}
-                </Typography>
-              </Box>
               {!scopedData.can_edit && (
-                <Alert severity="info">
+                <Alert severity="info" sx={{ mb: 1.75 }}>
                   Only workspace administrators can change these settings.
                 </Alert>
               )}
               {saveError && (
                 <Alert
-                  severity="error"
+                  severity={saveError === "conflict" ? "warning" : "error"}
+                  sx={{ mb: 1.75 }}
                   action={
                     saveError === "conflict" ? (
-                      <Button onClick={reload}>Reload settings</Button>
+                      <Button
+                        size="small"
+                        onClick={reload}
+                        sx={{ whiteSpace: "nowrap" }}
+                      >
+                        Reload settings
+                      </Button>
                     ) : undefined
                   }
                 >
@@ -316,108 +448,201 @@ export default function EscalationSettingsDialog({
                     : "Could not save escalation settings. Your changes are retained."}
                 </Alert>
               )}
-              <Stack
-                gap={1.5}
+              {reloaded && (
+                <Alert severity="success" sx={{ mb: 1.75 }}>
+                  Loaded the latest settings.
+                </Alert>
+              )}
+
+              <ToggleButtonGroup
+                exclusive
+                value={active}
+                onChange={choosePreset}
+                disabled={!editable}
+                aria-label="Sensitivity"
                 sx={{
+                  display: "grid",
+                  gridTemplateColumns: {
+                    xs: "1fr 1fr",
+                    sm: "repeat(3, 1fr) 0.85fr",
+                  },
+                  gap: 0.5,
+                  p: "3px",
+                  bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: 1,
-                  p: 1.5,
+                  "& .MuiToggleButtonGroup-grouped": {
+                    m: 0,
+                    py: 0.875,
+                    px: 1,
+                    border: "1px solid transparent !important",
+                    borderRadius: "6px !important",
+                    flexDirection: "column",
+                    textTransform: "none",
+                    color: "text.primary",
+                    "&.Mui-selected, &.Mui-selected:hover": {
+                      ...accentSx,
+                      borderColor: (t) =>
+                        `${t.palette.primary.main} !important`,
+                    },
+                    "&.Mui-disabled": { color: "text.primary", opacity: 0.6 },
+                    "&.Mui-disabled.Mui-selected": { opacity: 1, ...accentSx },
+                  },
                 }}
               >
-                <Typography typography="s1" fontWeight="fontWeightSemiBold">
-                  When to mark an issue as Escalating
-                </Typography>
-                <Typography typography="s2" color="text.secondary">
-                  Escalating means an issue is getting worse. “Usual” means its
-                  average hourly findings over the preceding 24 hours.
-                </Typography>
-                <Typography typography="s2" color="text.secondary">
-                  We count findings in a rolling one-hour window, leaving out
-                  the latest 10 minutes so processing can finish. For evaluation
-                  issues, each failed evaluation counts as one finding.
-                </Typography>
-                {fields(ENTRY)}
-                <Typography typography="s2" color="text.secondary">
-                  All three checks must pass: at least {draft.min_findings}{" "}
-                  findings in the latest hour, at least {draft.entry_multiplier}
-                  × the usual hourly count, and at least {draft.entry_delta}{" "}
-                  more findings than usual.
-                </Typography>
-                <Typography typography="s2" color="text.secondary">
-                  For example, an issue that usually gets 10 findings an hour
-                  needs at least{" "}
-                  {Math.ceil(
-                    Math.max(
-                      draft.min_findings,
-                      draft.entry_multiplier * 10,
-                      10 + Number(draft.entry_delta),
-                    ),
-                  )}{" "}
-                  findings in the latest hour. The hourly count must keep
-                  meeting all three checks for{" "}
-                  {draft.entry_confirmation_minutes} minutes, checked every five
-                  minutes. This does not mean that many new findings are needed
-                  every five minutes.
-                </Typography>
-              </Stack>
-              <Typography typography="s2" color="text.secondary">
-                Recovery means the issue is no longer getting worse. It moves
-                from Escalating to For review when findings stay low; it is not
-                resolved.
-              </Typography>
+                {PRESETS.map((preset) => (
+                  <ToggleButton
+                    key={preset.key}
+                    value={preset.key}
+                    aria-label={`${preset.label}: ${preset.description}`}
+                  >
+                    <Typography typography="s1" fontWeight="fontWeightSemiBold">
+                      {preset.label}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        fontSize: 11,
+                        lineHeight: "16px",
+                        color:
+                          active === preset.key ? "inherit" : "text.secondary",
+                      }}
+                    >
+                      {preset.hint}
+                    </Typography>
+                  </ToggleButton>
+                ))}
+                <ToggleButton
+                  value="custom"
+                  aria-label="Custom: set each value under Fine-tune"
+                  sx={{
+                    ...(active !== "custom" && {
+                      borderStyle: "dashed !important",
+                      borderColor: (t) => `${t.palette.divider} !important`,
+                    }),
+                  }}
+                >
+                  <Typography typography="s1" fontWeight="fontWeightSemiBold">
+                    Custom
+                  </Typography>
+                  <Typography
+                    sx={{
+                      fontSize: 11,
+                      lineHeight: "16px",
+                      color: active === "custom" ? "inherit" : "text.secondary",
+                    }}
+                  >
+                    {active === "custom" ? "Your values" : "Set each value"}
+                  </Typography>
+                </ToggleButton>
+              </ToggleButtonGroup>
+
+              <Box sx={{ mt: 1.75 }}>
+                <EscalationSummary
+                  values={shown}
+                  usual={usual}
+                  onUsualChange={setUsual}
+                  stale={!valid}
+                  baselineHours={scopedData.baseline_hours ?? 24}
+                />
+              </Box>
+
               <Accordion
-                expanded={recoveryOpen}
-                onChange={(_event, expanded) => setRecoveryOpen(expanded)}
+                expanded={tuneOpen}
+                onChange={(_event, expanded) => setTuneOpen(expanded)}
                 disableGutters
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "6px !important",
-                  "&:before": { display: "none" },
-                }}
+                sx={{ ...disclosureSx, mt: 1.25 }}
               >
                 <AccordionSummary
                   expandIcon={
-                    <Iconify icon="eva:chevron-down-fill" width={18} />
+                    <Iconify icon="eva:chevron-right-fill" width={20} />
                   }
                 >
                   <Typography typography="s1" fontWeight="fontWeightSemiBold">
-                    Recovery
+                    Fine-tune
+                  </Typography>
+                  {errorNames.length > 0 && !tuneOpen && (
+                    <Chip
+                      size="small"
+                      color="error"
+                      variant="soft"
+                      label={`${errorNames.length} to fix`}
+                      sx={{ ml: 1, height: 20 }}
+                    />
+                  )}
+                  {active === "custom" && (
+                    <Chip
+                      size="small"
+                      label="Edited"
+                      sx={{
+                        ml: "auto",
+                        mr: 1,
+                        height: 20,
+                        color: "text.secondary",
+                        bgcolor: "action.hover",
+                      }}
+                    />
+                  )}
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                      columnGap: 4,
+                      rowGap: 3,
+                    }}
+                  >
+                    {fieldGroup(
+                      "Escalate",
+                      "Count must clear all three limits for the hold time.",
+                      ENTRY,
+                      entryDecides,
+                      `${escalateAt(shown, usual).toLocaleString("en-US")}+/hr`,
+                      "error.main",
+                    )}
+                    {fieldGroup(
+                      "Recover",
+                      "Count must drop to the highest limit for the hold time.",
+                      RECOVERY,
+                      recoveryDecides,
+                      `${recoverAt(shown, usual).toLocaleString("en-US")} or fewer`,
+                      "#F5A623",
+                    )}
+                  </Box>
+                </AccordionDetails>
+              </Accordion>
+
+              <Accordion
+                expanded={previewOpen}
+                onChange={(_event, expanded) => setPreviewOpen(expanded)}
+                disableGutters
+                TransitionProps={{ unmountOnExit: true }}
+                sx={disclosureSx}
+              >
+                <AccordionSummary
+                  expandIcon={
+                    <Iconify icon="eva:chevron-right-fill" width={20} />
+                  }
+                >
+                  <Typography typography="s1" fontWeight="fontWeightSemiBold">
+                    Preview on a sample issue
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails>
-                  <Stack gap={1.5}>
-                    {fields(RECOVERY)}
-                    <Typography typography="s2" color="text.secondary">
-                      These three values set the hourly count considered low
-                      enough to stop escalating. We use the largest of the three
-                      limits. For an issue that usually gets 10 findings an
-                      hour, return to For review at{" "}
-                      {Math.max(
-                        draft.recovery_min,
-                        draft.recovery_multiplier * 10,
-                        10 + Number(draft.recovery_delta),
-                      )}{" "}
-                      or fewer findings in the latest hour, at every five-minute
-                      check for {draft.recovery_confirmation_minutes} minutes.
-                    </Typography>
-                    <Typography typography="s2" color="text.secondary">
-                      We keep the usual hourly count fixed from when escalation
-                      began, so the spike does not redefine what is normal.
-                    </Typography>
-                  </Stack>
+                  <EscalationPreviewChart
+                    values={shown}
+                    usual={usual}
+                    stale={!valid}
+                  />
                 </AccordionDetails>
               </Accordion>
-              <Typography typography="s2" color="text.secondary">
-                Statuses you choose manually won’t be changed automatically.
-              </Typography>
             </Stack>
           )}
         </DialogContent>
         <DialogActions
           sx={{
-            px: 1.5,
+            px: 3,
             py: 1.5,
             borderTop: "1px solid",
             borderColor: "divider",
@@ -428,15 +653,11 @@ export default function EscalationSettingsDialog({
           {ready && scopedData.can_edit && (
             <Button
               size="small"
-              disabled={!editable}
-              sx={{ mr: "auto" }}
-              onClick={() => {
-                clearErrors();
-                reset(numericValues(scopedData.defaults), {
-                  keepDefaultValues: true,
-                });
-                setSaveError(null);
-              }}
+              color="inherit"
+              disabled={!editable || atDefaults}
+              startIcon={<Iconify icon="eva:refresh-outline" width={16} />}
+              sx={{ mr: "auto", color: "text.secondary" }}
+              onClick={() => applyValues(defaults)}
             >
               Reset to defaults
             </Button>
@@ -448,16 +669,17 @@ export default function EscalationSettingsDialog({
             onClick={requestClose}
             disabled={mutation.isPending}
           >
-            Cancel
+            {ready && !scopedData.can_edit ? "Close" : "Cancel"}
           </Button>
           {ready && scopedData.can_edit && (
             <LoadingButton
               variant="contained"
+              color="primary"
               size="small"
               type="submit"
               form="escalation-settings-form"
               loading={mutation.isPending}
-              disabled={!editable || saveError === "conflict"}
+              disabled={!editable || !isDirty || saveError === "conflict"}
             >
               Save
             </LoadingButton>
