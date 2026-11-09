@@ -42,18 +42,26 @@ def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
     return {"tool": tools, "sub_goal": sub_goals, "actor": actors}
 
 
-def affects(change: Mapping[str, Any], scenarios: Mapping[str, Mapping[str, Any]]) -> list[str] | str:
+def affects(
+    change: Mapping[str, Any], scenarios: Mapping[str, Mapping[str, Any]]
+) -> list[str] | str:
     """The scenario keys a change touches, or `all` when nothing says which ones."""
     kind, key = change["kind"], change["key"]
     if kind == "scenario":
         return [key]
     if kind in ("tool", "sub_goal", "actor"):
-        return sorted(name for name, scenario in scenarios.items() if key in scenario_uses(scenario)[kind])
+        return sorted(
+            name
+            for name, scenario in scenarios.items()
+            if key in scenario_uses(scenario)[kind]
+        )
     return ALL
 
 
 def depends_on(
-    change: Mapping[str, Any], changes: list[Mapping[str, Any]], scenarios: Mapping[str, Mapping[str, Any]]
+    change: Mapping[str, Any],
+    changes: list[Mapping[str, Any]],
+    scenarios: Mapping[str, Mapping[str, Any]],
 ) -> list[str]:
     """The other changes an added or changed scenario needs: the tools, sub-goals and actors it names that only the
     draft adds."""
@@ -63,5 +71,7 @@ def depends_on(
     return sorted(
         other["id"]
         for other in changes
-        if other["action"] == "added" and other["kind"] in uses and other["key"] in uses[other["kind"]]
+        if other["action"] == "added"
+        and other["kind"] in uses
+        and other["key"] in uses[other["kind"]]
     )
