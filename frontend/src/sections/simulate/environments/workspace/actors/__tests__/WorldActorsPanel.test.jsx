@@ -527,6 +527,69 @@ describe("WorldActorsPanel", () => {
     expect(change.shareActions).toEqual(["crm.approve_discount"]);
   });
 
+  it("needs the confirmation again when another reserved action is added after ticking", () => {
+    actorsData = cast([
+      MANAGER,
+      {
+        id: "ops",
+        name: "Ops Lead",
+        role: "operations",
+        permitted_actions: ["crm.request_approval"],
+      },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Lena" },
+    });
+    const field = screen.getByLabelText(
+      "World actions they may take (optional)",
+    );
+    fireEvent.mouseDown(field);
+    fireEvent.click(
+      screen.getByRole("option", { name: /crm.approve_discount/ }),
+    );
+    fireEvent.click(
+      within(screen.getByTestId("actor-permission-conflict")).getByLabelText(
+        "Both should have it",
+      ),
+    );
+    const save = screen.getByText("Save to draft").closest("button");
+    expect(save).not.toBeDisabled();
+    fireEvent.mouseDown(field);
+    fireEvent.click(
+      screen.getByRole("option", { name: /crm.request_approval/ }),
+    );
+    // The new reserved action was never confirmed: Save waits for the box again.
+    expect(save).toBeDisabled();
+    expect(
+      within(screen.getByTestId("actor-permission-conflict")).getByLabelText(
+        "Both should have it",
+      ),
+    ).not.toBeChecked();
+  });
+
+  it("never makes or accepts an id the environment keeps for itself", () => {
+    actorsData = cast([MANAGER], { reserved_ids: ["agent", "caller"] });
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Agent" },
+    });
+    // The id made from the name steps past the reserved one.
+    expect(screen.getByLabelText("Id")).toHaveAttribute(
+      "placeholder",
+      "agent_2",
+    );
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "caller" },
+    });
+    expect(
+      screen.getByText(/Already used by the environment itself/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Save to draft").closest("button")).toBeDisabled();
+  });
+
   it("shows no conflict for an action nobody else holds", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Add an actor"));

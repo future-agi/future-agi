@@ -307,11 +307,18 @@ export const hasEdits = (actor, fields) => {
   return Object.keys(fields).some((name) => differs(fields[name], start[name]));
 };
 
+// Ids a new actor can't take: every other actor's, and those the environment keeps for itself.
+export const takenIds = (context) =>
+  new Set([
+    ...(context.others || []).map((one) => one.id),
+    ...(context.reservedIds || []),
+  ]);
+
 // A typed id, else the one made from the name; a saved id never changes.
 export const actorId = (actor, fields, context) =>
   actor?.id ||
   (fields.id || "").trim() ||
-  idFrom(fields.name, new Set((context.others || []).map((one) => one.id)));
+  idFrom(fields.name, takenIds(context));
 
 // The typed lines as fact entries, in the typed order. A fact whose text is still there stays the same entry, so it
 // keeps its other keys; its text may span lines, so the longest are tried first.

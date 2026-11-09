@@ -119,6 +119,25 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("says an actor whose trigger never came in plainly, never as a raw code", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [],
+          decisions: [
+            {
+              actor: "dana",
+              play: "not_triggered",
+              why: "its trigger never came in this trial",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText(/Never came in/)).toBeInTheDocument();
+    expect(screen.queryByText(/not_triggered/)).not.toBeInTheDocument();
+  });
+
   it("says nothing changed when the trial recorded nothing", () => {
     render(
       <TrialChangesPanel trialState={{ state_changes: [], decisions: [] }} />,

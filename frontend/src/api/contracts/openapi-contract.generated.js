@@ -118250,7 +118250,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         play: {
           title: "Play",
           type: "string",
-          enum: ["mocked", "live", "history", "waiting", "timeout", "problem"],
+          enum: [
+            "mocked",
+            "live",
+            "history",
+            "waiting",
+            "timeout",
+            "problem",
+            "not_triggered",
+          ],
         },
         action: {
           title: "Action",
@@ -118277,7 +118285,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         problem: {
           title: "Problem",
           description:
-            "For `problem`: not_activated, no_world_door or not_listed: the scenario's problem, never the agent's.",
+            "For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
           type: "string",
           minLength: 1,
         },

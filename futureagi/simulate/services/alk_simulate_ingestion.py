@@ -1923,7 +1923,10 @@ def _apply_harness_evaluation_outputs(
             result = evaluation.get("result") or (
                 "pass" if evaluation.get("passed") else "fail"
             )
-            output = _HARNESS_OUTPUTS.get(str(result), "Failed")
+            output = _HARNESS_OUTPUTS.get(str(result))
+            if output is None:
+                # A verdict this platform does not know is not a failure: it is left out, as an unmeasured one is.
+                continue
             output_type = "Pass/Fail"
 
         subject = str(evaluation.get("subject") or "")

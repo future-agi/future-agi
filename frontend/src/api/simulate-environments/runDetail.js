@@ -614,20 +614,72 @@ function messageText(content) {
  * @param {?Object} raw
  * @returns {?CallDetail}
  */
+// An actor's chat line reaches the agent inside the customer's channel, labelled the way the harness labels it.
+const ACTOR_LINE = /^(.+?) \(not the person being served\): ([\s\S]*)$/;
+
+// Everyone the call knows as an actor, by name: its actor list, then the actors behind its world actions.
+function callActorsByName(raw) {
+  const byName = new Map();
+  for (const one of Array.isArray(raw?.call_actors) ? raw.call_actors : []) {
+    if (one?.name)
+      byName.set(one.name, {
+        id: one.id || "",
+        role: one.role || "",
+        channel: one.channel || "",
+      });
+  }
+  for (const call of Array.isArray(raw?.function_calls)
+    ? raw.function_calls
+    : []) {
+    if (call?.actor_name && !byName.has(call.actor_name)) {
+      byName.set(call.actor_name, {
+        id: call.actor_id || "",
+        role: call.actor_role || "",
+        channel: "",
+      });
+    }
+  }
+  return byName;
+}
+
+// A customer turn that is an actor's labelled line is shown as that actor's own turn; anyone the call never had
+// stays the customer's, so a customer quoting the label is never taken for someone else.
+function asActorLine(turn, actorsByName) {
+  if (turn.role !== "customer") return turn;
+  const match = ACTOR_LINE.exec(turn.text || "");
+  const actor = match && actorsByName.get(match[1]);
+  if (!actor) return turn;
+  return {
+    ...turn,
+    role: "actor",
+    speakerName: match[1],
+    actorId: actor.id,
+    actorRole: actor.role,
+    channel: actor.channel,
+    text: match[2],
+  };
+}
+
 export function mapCallDetail(raw) {
   if (!raw) return null;
 
   const isChat = raw.simulation_call_type === "text";
-  const turns = callTranscript(raw).map((t) => ({
-    role: normalizeRole(t.speaker_role ?? t.role),
-    speakerName: t.speaker_name || "",
-    actorId: t.actor_id || "",
-    actorRole: t.actor_role || "",
-    channel: t.channel || "",
-    text: messageText(t.content),
-    at: t.start_time_seconds ?? null,
-    toolCalls: t.tool_calls ?? null,
-  }));
+  const actorsByName = callActorsByName(raw);
+  const turns = callTranscript(raw).map((t) =>
+    asActorLine(
+      {
+        role: normalizeRole(t.speaker_role ?? t.role),
+        speakerName: t.speaker_name || "",
+        actorId: t.actor_id || "",
+        actorRole: t.actor_role || "",
+        channel: t.channel || "",
+        text: messageText(t.content),
+        at: t.start_time_seconds ?? null,
+        toolCalls: t.tool_calls ?? null,
+      },
+      actorsByName,
+    ),
+  );
 
   const words = turns.reduce(
     (a, s) =>

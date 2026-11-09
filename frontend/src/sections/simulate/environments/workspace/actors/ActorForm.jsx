@@ -25,6 +25,7 @@ import {
   capProblem,
   hasEdits,
   idFrom,
+  takenIds,
   idRule,
   idRuleText,
   initialFields,
@@ -134,16 +135,17 @@ export default function ActorForm({
     context.others.find((one) => one.id === id)?.name || id;
 
   // A new actor's id follows its name until someone types an id of their own; a saved id never changes.
-  const madeId = existing
-    ? actor.id
-    : idFrom(value("name"), new Set(context.others.map((one) => one.id)));
+  const madeId = existing ? actor.id : idFrom(value("name"), takenIds(context));
   // An emptied id falls back to the one made from the name.
   const typedId = actorId(actor, fields, context);
   // Before a name is typed the fallback id isn't anyone's id yet, so nothing shows.
   const suggestedId = value("name").trim() ? madeId : "";
   const takenBy = existing
     ? null
-    : context.others.find((one) => one.id === typedId);
+    : context.others.find((one) => one.id === typedId) ||
+      ((context.reservedIds || []).includes(typedId)
+        ? { name: F.idReservedBy }
+        : null);
   const rule = idRule(context.records);
   const ruleText = idRuleText(context.records);
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
@@ -213,7 +215,13 @@ export default function ActorForm({
       ),
     }))
     .filter((one) => one.holders.length === 1);
-  const [shareConfirmed, setShareConfirmed] = useState(false);
+  // The confirmation covers exactly the actions it was given for: an action added after ticking needs it again.
+  const reservedKey = reserved
+    .map((one) => one.action)
+    .sort()
+    .join("|");
+  const [confirmedFor, setConfirmedFor] = useState("");
+  const shareConfirmed = reserved.length > 0 && confirmedFor === reservedKey;
   const shareUnconfirmed = reserved.length > 0 && !shareConfirmed;
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
@@ -483,7 +491,10 @@ export default function ActorForm({
                 )}
               />
               {reserved.length > 0 && (
-                <Alert severity="warning" data-testid="actor-permission-conflict">
+                <Alert
+                  severity="warning"
+                  data-testid="actor-permission-conflict"
+                >
                   {reserved.map((one) => (
                     <Typography key={one.action} sx={{ typography: "s2" }}>
                       {F.permittedConflict(
@@ -498,7 +509,9 @@ export default function ActorForm({
                         size="small"
                         checked={shareConfirmed}
                         onChange={(event) =>
-                          setShareConfirmed(event.target.checked)
+                          setConfirmedFor(
+                            event.target.checked ? reservedKey : "",
+                          )
                         }
                       />
                     }
@@ -741,6 +754,7 @@ ActorForm.propTypes = {
       ),
     }),
     others: PropTypes.array,
+    reservedIds: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,
   busy: PropTypes.bool,
   error: PropTypes.string,
