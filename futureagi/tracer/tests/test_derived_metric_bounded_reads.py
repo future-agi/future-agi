@@ -410,46 +410,41 @@ def test_nomination_cannot_increase_publication_row_limit(rows):
         )
 
 
-def test_retiring_bucket_lower_bound_pushes_only_immutable_definition_keys(
-    monkeypatch,
-):
-    from tracer.services.derived_metrics import unit_reads
-    from tracer.services.derived_metrics.retention import _expiring_span_fields
+@pytest.mark.parametrize("counts", [(1, 1, 0), (1, 0, 0)])
+def test_retirement_coverage_pushes_only_immutable_definition_keys(counts):
+    from tracer.services.derived_metrics.span_evidence import (
+        require_retirement_evidence,
+    )
 
-    at = datetime(2026, 1, 1, tzinfo=UTC)
     head = manifest()
-    head.published_by = SimpleNamespace(source_ceilings={})
-    definition = SimpleNamespace(metric_id=uuid4(), version=2)
+    definition = SimpleNamespace(metric_id=uuid4(), version=2, level="span")
     calls = []
 
     def execute(sql, params):
         calls.append((sql, params))
-        if "minOrNull(bucket_start)" in sql:
-            return [(at,)]
-        return [(0,)]
+        return [counts]
 
-    monkeypatch.setattr(
-        unit_reads,
-        "span_values_select",
-        lambda *_args, **kwargs: (
-            "SELECT span_fields",
-            {"source_lower": kwargs["start"]},
-        ),
-    )
     writer = SimpleNamespace(
         org_id=uuid4(),
         workspace_id=uuid4(),
         lease=SimpleNamespace(project_id=head.project_id),
         store=SimpleNamespace(execute=execute),
     )
-    _, params = _expiring_span_fields(
-        writer, head, definition, at + timedelta(days=1), at + timedelta(days=2)
-    )
-    assert "metric_id IN %(retiring_buckets_kin_0)s" in calls[0][0]
-    assert "metric_version IN %(retiring_buckets_kin_1)s" in calls[0][0]
-    assert params["source_lower"] == at
-    assert calls[0][1]["retiring_buckets_kin_0"] == (definition.metric_id,)
-    assert calls[0][1]["retiring_buckets_kin_1"] == (definition.version,)
+    require_retirement_evidence(writer, head, [definition])
+    assert len(calls) == 1
+    sql, params = calls[0]
+    for table, prefix in (
+        ("metric_field_values", "field"),
+        ("metric_bucket_totals", "metric"),
+        ("metric_bucket_retired_parts", "metric"),
+    ):
+        namespace = "retirement_proof_" + table
+        assert f"{prefix}_id IN %({namespace}_kin_0)s" in sql
+        assert f"{prefix}_version IN %({namespace}_kin_1)s" in sql
+        assert params[f"{namespace}_kin_0"] == (definition.metric_id,)
+        assert params[f"{namespace}_kin_1"] == (definition.version,)
+    # Coverage is proved from the pinned fields/buckets, not mutable telemetry.
+    assert "FROM spans" not in sql
 
 
 def test_takeover_byte_partition_does_not_partition_live_source_capture(monkeypatch):
@@ -509,14 +504,22 @@ def test_takeover_byte_partition_does_not_partition_live_source_capture(monkeypa
 
 
 def test_span_dirty_byte_partition_keeps_original_raw_source_pages():
+    import json
+
     from tracer.services.derived_metrics.refresh import RefreshWriter
 
     at = datetime(2026, 1, 1, tzinfo=UTC)
     head = manifest()
-    lookups, captures, ledger = [], [], []
+    lookups, field_lookups, captures, ledger = [], [], [], []
     source_ids = [(f"trace-{i:04}" + "x" * 200, "span" + "y" * 200) for i in range(500)]
 
     def execute(sql, params):
+        if "span_dirty_fields_kin_1" in params:
+            assert params["span_dirty_fields_kin_0"] == ("span",)
+            page = params["span_dirty_fields_kin_1"]
+            normalize_key_in(FIELD_VALUES, {"level": ("span",), "unit_id": page})
+            field_lookups.append(page)
+            return [(at - timedelta(days=1),)]
         if "span_dirty_dependencies_kin_0" in params:
             lookups.append(params["span_dirty_dependencies_kin_0"])
             return [(at,)]
@@ -535,7 +538,12 @@ def test_span_dirty_byte_partition_keeps_original_raw_source_pages():
     assert len(lookups) > 1
     assert [key for page in lookups for key in page] == source_ids
     assert captures == [tuple(source_ids)]
+    assert len(field_lookups) > 1
+    assert [
+        tuple(json.loads(unit)) for page in field_lookups for unit in page
+    ] == source_ids
     assert [entry["bucket_start"] for entry in ledger[-1][1]] == [
+        at - timedelta(days=1),
         at,
         at + timedelta(days=1),
     ]
@@ -544,6 +552,7 @@ def test_span_dirty_byte_partition_keeps_original_raw_source_pages():
 def test_current_fact_long_keys_split_source_and_prior_together(monkeypatch):
     from tracer.services.derived_metrics import base_list_current_clickhouse as current
     from tracer.services.derived_metrics import refresh
+    from tracer.services.derived_metrics.storage import LIST_USER_ACTIVITY
 
     at = datetime(2026, 1, 2, tzinfo=UTC)
     head = manifest()
@@ -567,11 +576,20 @@ def test_current_fact_long_keys_split_source_and_prior_together(monkeypatch):
     )
 
     def freeze(_attempt, table, sql, params, **_kwargs):
-        assert "current_previous_kin_0" in params
-        assert params["current_previous_kin_0"] == params["current_keys"]
-        assert "current_keys" in sql
-        normalize_key_in(table, {("trace_id", "span_id"): params["current_keys"]})
-        frozen.append((table.name, params["current_keys"]))
+        if table == LIST_USER_ACTIVITY:
+            # Activity inherits the same bounded frozen member page. It must
+            # not re-read source spans or use the other tables' namespace.
+            page = params["user_activity_previous_kin_0"]
+            assert page in captures
+            assert "user_activity_previous_kin_0" in sql
+            assert "FROM spans" not in sql
+        else:
+            assert "current_previous_kin_0" in params
+            assert params["current_previous_kin_0"] == params["current_keys"]
+            assert "current_keys" in sql
+            page = params["current_keys"]
+        normalize_key_in(table, {("trace_id", "span_id"): page})
+        frozen.append((table.name, page))
         return []
 
     writer.freeze = freeze
@@ -588,6 +606,15 @@ def test_current_fact_long_keys_split_source_and_prior_together(monkeypatch):
         key
         for table, page in frozen
         if table == current.LIST_CURRENT_ROOTS.name
+        for key in page
+    ] == keys
+    assert [
+        page for table, page in frozen if table == LIST_USER_ACTIVITY.name
+    ] == captures
+    assert [
+        key
+        for table, page in frozen
+        if table == LIST_USER_ACTIVITY.name
         for key in page
     ] == keys
     assert len(ledger) == 1 and len(ledger[0][1]) == 500

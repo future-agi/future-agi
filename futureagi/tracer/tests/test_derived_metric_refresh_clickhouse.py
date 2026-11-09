@@ -584,14 +584,29 @@ def test_direct_span_totals_dedup_moves_deletes_and_atomic_retry(
     )
     live = metric_bucket_rows(writer, head, span)
     assert len(live) == 1 and live[0][2:] == (1, 6.0, 1.0)
-    for name in (
-        "metric_field_values",
-        "metric_field_values_checkpoint",
-        "metric_unit_state",
-    ):
-        assert writer.store.execute(
-            f"SELECT count() FROM {name} WHERE level = 'span'"
-        ) == [(0,)]
+    evidence, params = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=writer.org_id,
+        project_id=observe_project.id,
+        key_in={
+            "field_id": (span.metric_id,),
+            "field_version": (span.version,),
+            "level": ("span",),
+        },
+    )
+    assert writer.store.execute(
+        f"SELECT countIf(is_deleted = 0), sumIf(value_number, is_deleted = 0) FROM ({evidence})",
+        params,
+    ) == [(1, 6.0)]
+    assert writer.store.execute(
+        f"SELECT countIf(is_deleted = 1 AND value_number IS NULL) FROM ({evidence})",
+        params,
+    ) == [(1,)]
+    # Span readiness depends on end_time, not the conversation settle timer.
+    assert writer.store.execute(
+        "SELECT count() FROM metric_unit_state WHERE level = 'span'"
+    ) == [(0,)]
 
 
 @pytest.mark.django_db(transaction=True)

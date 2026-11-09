@@ -649,14 +649,6 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 "metric_drivers_unavailable",
                 "Exact leave-one-out drivers cannot be recovered from distinct or percentile sketches.",
             )
-        if definition.level == "span":
-            # Acceptance blocker: the writer publishes only span buckets, not
-            # bounded generation-pinned evidence. Keep this fail-closed until
-            # that writer-owned seam exists; mutable raw spans cannot replace it.
-            raise MetricUnavailableError(
-                "span_evidence_unavailable",
-                "Committed span evidence is unavailable; KPI and trend remain readable.",
-            )
         if (
             not drivers
             and data["context"] == "users"
@@ -685,6 +677,19 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
         if drivers:
             require_calculated_window(definition, window)
             total = _aggregate(store, metric, definition, manifest, window)
+            if definition.level == "span":
+                # Older manifests may contain span totals without evidence. A
+                # partial backfill must not masquerade as a complete driver list.
+                evidence_count = _rows(
+                    store,
+                    f"SELECT count() AS count FROM ({sql}) WHERE status != 'open'",
+                    params,
+                )[0]["count"]
+                if evidence_count != total["unit_count"]:
+                    raise MetricUnavailableError(
+                        "span_evidence_unavailable",
+                        "Committed span evidence is incomplete; refresh this window before reading drivers.",
+                    )
             recipe = field_recipe(definition)
             sql = _driver_influence_select(sql, recipe, total, params)
             sql = f"SELECT * FROM ({sql}) WHERE {_failing_unit_predicate(definition)}"
