@@ -593,6 +593,46 @@ def _cursor_context(metric, definition, manifest, window):
     ).hexdigest()
 
 
+def _driver_influence_select(sql, recipe, total, params):
+    """Use the estimator's complete cases, not the displayed per-unit value.
+
+    A Boolean OR can have finite parts despite a missing required input. Conversely,
+    a complete ratio with d=0 has no per-unit value but still contributes to the
+    pooled numerator. Neither status='ok' nor status!='open' proves eligibility.
+    """
+    formula = recipe.formula
+    unpack = ", ".join(f"inputs['{name}'] AS v_{name}" for name in formula.required)
+    complete = (
+        f"({formula.complete_sql}) AND isNotNull(part_n) AND isFinite(part_n) "
+        "AND isNotNull(part_d) AND isFinite(part_d)"
+    )
+    params.update(
+        driver_value=total["value"],
+        driver_n=total["numerator"],
+        driver_d=total["denominator"],
+    )
+    contribution = "part_n / nullIf(sample_probability, 0)"
+    influence = contribution
+    if formula.kind not in {"sum", "count_if"}:
+        influence = f"%(driver_value)s - (%(driver_n)s - {contribution}) / nullIf(%(driver_d)s - part_d / nullIf(sample_probability, 0), 0)"
+    return f"""SELECT *, if(ifNull({complete}, 0) AND invalid_probability = 0
+        AND isFinite(sample_probability) AND sample_probability > 0 AND sample_probability <= 1
+        AND isNotNull(%(driver_value)s) AND isFinite(raw_influence), raw_influence, NULL) AS influence,
+        ifNull(abs(influence), -1.) AS rank_score FROM
+        (SELECT *, {influence} AS raw_influence FROM
+            (SELECT *, {unpack} FROM ({sql}) WHERE status != 'open'))"""
+
+
+def _failing_unit_predicate(definition):
+    # No-value/open rows are not Boolean failures. Count failures have a truthful
+    # zero effect, so filtering only by negative influence would lose them all.
+    if definition.kind in {"share", "count"}:
+        return "status = 'ok' AND value_bool = 0"
+    # Numeric drivers are the units pulling the value down, not the largest
+    # absolute contributors (which can instead be pulling it up).
+    return "influence < 0"
+
+
 def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
     window = effective_window(data["window_start"], data["window_end"])
     ids = None if drivers else tuple(dict.fromkeys(data["unit_ids"]))
@@ -608,9 +648,9 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 "Exact leave-one-out drivers cannot be recovered from distinct or percentile sketches.",
             )
         if definition.level == "span":
-            # B07 publishes span buckets directly and deliberately stores no
-            # span field rows. B15 owns the distinct query-extraction reader;
-            # mutable raw spans are not evidence for this committed generation.
+            # Acceptance blocker: the writer publishes only span buckets, not
+            # bounded generation-pinned evidence. Keep this fail-closed until
+            # that writer-owned seam exists; mutable raw spans cannot replace it.
             raise MetricUnavailableError(
                 "span_evidence_unavailable",
                 "Committed span evidence is unavailable; KPI and trend remain readable.",
@@ -644,21 +684,8 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
             require_calculated_window(definition, window)
             total = _aggregate(store, metric, definition, manifest, window)
             recipe = field_recipe(definition)
-            params.update(
-                driver_value=total["value"],
-                driver_n=total["numerator"],
-                driver_d=total["denominator"],
-            )
-            contribution = "part_n / nullIf(sample_probability, 0)"
-            if recipe.formula.kind in {"sum", "count_if"}:
-                influence = contribution
-            else:
-                influence = f"%(driver_value)s - (%(driver_n)s - {contribution}) / nullIf(%(driver_d)s - part_d / nullIf(sample_probability, 0), 0)"
-            sql = f"""SELECT *, if(invalid_probability = 0 AND sample_probability > 0
-                AND sample_probability <= 1 AND isNotNull(%(driver_value)s)
-                AND isFinite(raw_influence), raw_influence, NULL) AS influence,
-                ifNull(abs(influence), -1.) AS rank_score FROM
-                (SELECT *, {influence} AS raw_influence FROM ({sql}) WHERE status != 'open')"""
+            sql = _driver_influence_select(sql, recipe, total, params)
+            sql = f"SELECT * FROM ({sql}) WHERE {_failing_unit_predicate(definition)}"
             condition = "1"
             if after:
                 try:

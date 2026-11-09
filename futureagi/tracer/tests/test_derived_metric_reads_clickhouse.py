@@ -375,8 +375,8 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
         retention_days=lambda: 0,
     )
     assert len(first["results"]) == 1
-    assert first["results"][0]["value_number"] == 12.0
-    assert first["results"][0]["influence"] == 3.0
+    assert first["results"][0]["value_number"] == 2.0
+    assert first["results"][0]["influence"] == -2.0
     second = reads.read_units(
         metric,
         {**WINDOW, "limit": 2, "after": first["next_cursor"]},
@@ -384,11 +384,15 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
         store=writer.store,
         retention_days=lambda: 0,
     )
-    assert [r["value_number"] for r in second["results"]] == [2.0, 4.0]
+    assert [r["value_number"] for r in second["results"]] == [4.0]
+    assert second["results"][0]["influence"] == -1.0
     assert second["next_cursor"] is None
     contract = MetricDriversSerializer(data=first)
     assert contract.is_valid(), contract.errors
-    ids = [r["unit_id"] for r in first["results"] + second["results"]] + ["absent"]
+    ids = [r["unit_id"] for r in first["results"] + second["results"]] + [
+        str(sessions[2]),
+        "absent",
+    ]
     values = reads.read_units(
         metric,
         {
@@ -399,7 +403,7 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
         store=writer.store,
         retention_days=lambda: 0,
     )
-    assert [r["value_number"] for r in values["results"]] == [12.0, 2.0, 4.0, None]
+    assert [r["value_number"] for r in values["results"]] == [2.0, 4.0, 12.0, None]
     assert values["results"][-1]["status"] == "not_calculated"
     assert not MetricGenerationPin.objects.filter(
         project_id=observe_project.id
@@ -466,7 +470,7 @@ def test_real_refresh_pin_kpi_previous_trend_drivers_and_unit_values(
             store=writer.store,
             retention_days=lambda: 0,
         )
-        assert still_old["results"][0]["value_number"] == 12.0
+        assert still_old["results"][0]["value_number"] == 2.0
 
 
 @pytest.mark.parametrize("kind", ["unique_count", "percentile"])
@@ -514,74 +518,145 @@ def test_sketch_buckets_merge_real_states_and_empty_is_not_zero(
     assert row["value"] is None and row["status"] == "no_data"
 
 
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("days", [1, 7, 30, 90])
-def test_m10_checkpoint_sql_budget_with_bounded_deltas(publication_store, days):
-    """Query-level M10 fixture, not a claim about 10M source/bootstrap gates."""
-    store = publication_store
-    scope, metric, definition, base, manifest = case("sum(y)")
-    stage_parts(store, scope, metric, definition, base, [unit(4.0, 1.0, design="live")])
-    size = days * 96
+def test_m10_complete_service_budget_with_retired_parts(
+    live_writer, workspace, observe_project, days
+):
+    """Real PG pins, current PLUS previous, and genuinely dimension-grouped trend.
+
+    This is a compacted read-path gate, not the separate 10M source/refresh gate.
+    The repeated fixture buckets contain real live+retired sufficient statistics.
+    """
+    from tracer.services.derived_metrics.publication import committed_rows_select
+    from tracer.services.derived_metrics.retention import expire_project
+    from tracer.services.derived_metrics.storage import RETIRED_PARTS
+    from tracer.tests.test_derived_metric_retention_clickhouse import (
+        numeric_definition,
+        seed_fields_and_buckets,
+    )
+
+    writer, size = live_writer, days * 96
+    template = numeric_definition(uuid4())
+    metric = DerivedMetric.objects.create(
+        organization=workspace.organization, workspace=workspace,
+        project=observe_project, name="M10 complete reads",
+    )
+    definition = DerivedMetricVersion.objects.create(
+        metric=metric, version=1, kind="custom", level="conversation",
+        formula="sum(y)", inputs=template.inputs, selection_unit="session",
+        weighting="none", cohort_key="region", group_dims=["region"],
+        backfill_status="complete",
+    )
+    old_id, live_id = str(uuid4()), str(uuid4())
+    seed_fields_and_buckets(writer, definition, [
+        (old_id, AT + timedelta(minutes=2), 4, ""),
+        (live_id, AT + timedelta(minutes=10), 6, ""),
+    ])
+    expired = expire_project(
+        writer, [definition], retention_days=lambda: 1,
+        now=AT + timedelta(days=1, minutes=7),
+    )
+    assert expired["purged"]
+    # A changed survivor forces a rebuild that must preserve anonymous parts.
+    head = seed_fields_and_buckets(writer, definition, [
+        (live_id, AT + timedelta(minutes=10), 8, ""),
+    ])
+    retired, params = committed_rows_select(
+        RETIRED_PARTS, head, org_id=metric.organization_id, project_id=metric.project_id,
+    )
+    assert writer.store.execute(
+        f"SELECT unit_count, weighted_n FROM ({retired}) WHERE is_deleted = 0", params,
+    ) == [(1, 4.0)]
+    head = writer.compact()
+    source, params = committed_rows_select(
+        BUCKET_TOTALS, head, org_id=metric.organization_id, project_id=metric.project_id,
+    )
+    assert writer.store.execute(
+        f"SELECT unit_count, weighted_n FROM ({source}) WHERE is_deleted = 0", params,
+    ) == [(2, 12.0)]
+    # Publish a full previous/current fixture through the writer before timing.
+    # Two actual dimension values per bucket, not time-only pseudo-grouping.
     projection = ", ".join(
-        "toDateTime(%(start)s, 'UTC') + toIntervalSecond(n.number * 900) AS bucket_start"
-        if name == "bucket_start"
-        else f"b.{name}"
+        "toDateTime(%(fixture_start)s, 'UTC') + toIntervalSecond(intDiv(n.number, 2) * 900) AS bucket_start"
+        if name == "bucket_start" else
+        "toJSONString([toJSONString(tuple('value', if(n.number % 2 = 0, 'east', 'west')))]) AS group_key"
+        if name == "group_key" else f"b.{name}"
         for name in BUCKET_TOTALS.columns
     )
-    store.execute(
-        "INSERT INTO metric_bucket_totals_checkpoint SELECT "
-        + projection
-        + " FROM metric_bucket_totals_checkpoint AS b CROSS JOIN numbers(%(size)s) AS n WHERE n.number > 0",
-        {"start": AT, "size": size},
+    attempt = writer.begin(versions=[{"id": definition.id, "metric_id": metric.id}])
+    writer.freeze(
+        attempt, BUCKET_TOTALS,
+        "SELECT " + projection
+        + f" FROM ({source}) AS b CROSS JOIN numbers(%(fixture_size)s) AS n",
+        {**params, "fixture_start": AT - timedelta(days=days), "fixture_size": size * 4},
+        collect_payloads=False,
     )
-    pairs = [(1, base)]
-    for generation in range(2, 6):
-        attempt = uuid4()
-        # Whole replacements of a small delta tail, not additive duplicate totals.
-        stage_parts(
-            store,
-            scope,
-            metric,
-            definition,
-            attempt,
-            [unit(4.0, 1.0, design="live")],
-            generation=generation,
-            table="metric_bucket_totals",
-            start=AT + (generation - 2) * timedelta(minutes=15),
+    writer.seal(attempt)
+    writer.stage_and_publish(attempt)
+    head = writer.compact()
+    source, params = committed_rows_select(
+        BUCKET_TOTALS, head, org_id=metric.organization_id, project_id=metric.project_id,
+    )
+    source = f"SELECT * FROM ({source}) WHERE group_key = 'region-a'"
+    # The original, unencoded fixture group is outside this dimension grid.
+    # Tombstone it in the first bounded delta (after collapse it must not count).
+    for index in range(4):
+        attempt = writer.begin(versions=[{"id": definition.id, "metric_id": metric.id}])
+        replacement = f"SELECT * REPLACE(toUInt8(1) AS is_deleted) FROM ({source})" if index == 0 else (
+            "SELECT * FROM metric_bucket_totals_checkpoint WHERE "
+            "attempt_id = toUUID(%(fixture_checkpoint)s) AND bucket_start = %(fixture_bucket)s "
+            "AND group_key != 'region-a'"
         )
-        pairs.append((generation, attempt))
-    manifest.allowed_attempts = lambda: pairs
+        bindings = params if index == 0 else {
+            "fixture_checkpoint": str(head.checkpoint_attempt_id),
+            "fixture_bucket": AT + timedelta(minutes=15 * index),
+        }
+        writer.freeze(attempt, BUCKET_TOTALS, replacement, bindings)
+        writer.seal(attempt)
+        current_head = writer.stage_and_publish(attempt)
+    DerivedMetric.activate_version(metric.id, definition.id, expected_active_id=None)
+    metric = DerivedMetric.objects.select_related("project", "active_version").get(pk=metric.id)
     window = {**WINDOW, "window_end": AT + timedelta(days=days)}
     measurements = {}
-    for mode in ["kpi", "trend"]:
+    for mode in ["kpi", "trend", "dimension_trend"]:
         samples = []
         for index in range(12):
             if index < 2:
-                store.execute("SYSTEM DROP MARK CACHE")
-                store.execute("SYSTEM DROP UNCOMPRESSED CACHE")
+                writer.store.execute("SYSTEM DROP MARK CACHE")
+                writer.store.execute("SYSTEM DROP UNCOMPRESSED CACHE")
             began = perf_counter()
-            sql, params = reads.bucket_select(metric, definition, manifest, window)
-            if mode == "trend":
-                sql = f"SELECT * REPLACE(toString(toDate(bucket_start)) AS group_key) FROM ({sql})"
-            result = reads._rows(
-                store,
-                reads._aggregate_select(
-                    sql, definition, params, grouped=mode == "trend"
-                ),
-                params,
-            )
+            if mode == "kpi":
+                result = reads.read_kpi(metric, window, store=writer.store)
+            else:
+                result = reads.read_trend(metric, {
+                    **window, "points": min(days, 90),
+                    "group_by": "region" if mode == "dimension_trend" else "",
+                }, store=writer.store)
             samples.append(perf_counter() - began)
-            assert sum(row["unit_count"] for row in result) == size
-            assert sum(row["value"] for row in result) == size * 4.0
-        cold = max(samples[:2])
-        warm = sorted(samples[2:])[9]
+            assert result["provenance"]["manifest_id"] == current_head.id
+            if mode == "kpi":
+                for period in ("current", "previous"):
+                    assert result[period]["eligible_count"] == size * 4
+                    assert result[period]["value"] == size * 24.0
+                assert result["delta"] == 0.0
+            else:
+                assert sum(r["eligible_count"] for r in result["results"]) == size * 4
+                assert sum(r["value"] for r in result["results"]) == size * 24.0
+                if mode == "dimension_trend":
+                    assert {r["group_key"] for r in result["results"]} == {
+                        '["value","east"]', '["value","west"]',
+                    }
+                    assert len(result["results"]) == days * 2
         measurements[mode] = {
-            "cold_max_s": cold,
-            "warm_p95_s": warm,
-            "samples": len(samples),
+            "cold_max_s": max(samples[:2]), "warm_p95_s": sorted(samples[2:])[9],
+            "samples_s": samples, "budget_s": 0.8 if mode == "dimension_trend" else 0.3,
         }
-        assert cold < (0.3 if mode == "kpi" else 0.8), measurements
-        assert warm < (0.3 if mode == "kpi" else 0.8), measurements
-    print(
-        "M10_CHECKPOINT_SQL "
-        + json.dumps({"days": days, "buckets": size, "deltas": 4, **measurements})
-    )
+    # Print ALL measurements even when a strict gate fails.
+    print("M10_SERVICE " + json.dumps({
+        "days": days, "buckets": size, "dimension_values": 2, "deltas": 4,
+        "retired_parts_verified": True, **measurements,
+    }))
+    for measurement in measurements.values():
+        assert measurement["cold_max_s"] <= measurement["budget_s"], measurements
+        assert measurement["warm_p95_s"] <= measurement["budget_s"], measurements
