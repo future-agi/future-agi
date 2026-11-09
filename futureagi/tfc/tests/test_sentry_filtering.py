@@ -60,7 +60,11 @@ def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
 def test_keeps_disconnects_and_security_failures():
     from django.core.exceptions import SuspiciousOperation
 
-    for error in (ConnectionResetError(104, "reset"), BrokenPipeError(), SuspiciousOperation()):
+    for error in (
+        ConnectionResetError(104, "reset"),
+        BrokenPipeError(),
+        SuspiciousOperation(),
+    ):
         assert before_send({}, _hint(error)) is not None
 
 
@@ -70,7 +74,10 @@ def test_keeps_http_errors_without_explicit_outcome_classification():
 
 
 def test_keeps_messages_that_only_resemble_expected_outcomes():
-    for message in ("trace_payload_not_found_in_redis", "Failed to load vertex credentials"):
+    for message in (
+        "trace_payload_not_found_in_redis",
+        "Failed to load vertex credentials",
+    ):
         assert before_send({"message": message}, {}) is not None
 
 

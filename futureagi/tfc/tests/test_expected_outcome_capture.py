@@ -42,9 +42,17 @@ def test_expected_log_shapes_are_dropped(shape):
 
 
 @pytest.mark.parametrize(
-    "payload", ["not json", "[]", "{'event': 'explanation_summary_skipped'}", [], None,
-                {**EXPECTED, "outcome": "unhandled"}, {**EXPECTED, "reason": "missing_reasons"},
-                {**EXPECTED, "event": []}]
+    "payload",
+    [
+        "not json",
+        "[]",
+        "{'event': 'explanation_summary_skipped'}",
+        [],
+        None,
+        {**EXPECTED, "outcome": "unhandled"},
+        {**EXPECTED, "reason": "missing_reasons"},
+        {**EXPECTED, "event": []},
+    ],
 )
 def test_unknown_payloads_are_kept(payload):
     event = {"logger": LOGGER, "logentry": {"formatted": payload}, "request": "invalid"}
@@ -87,7 +95,10 @@ def transport():
         dsn="https://public@example.test/1",
         transport=transport,
         default_integrations=False,
-        integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR), DedupeIntegration()],
+        integrations=[
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            DedupeIntegration(),
+        ],
         before_send=_get_before_send(),
     ):
         yield transport
@@ -98,17 +109,24 @@ def test_sdk_envelopes_keep_genuine_faults_and_scrub_secrets(transport):
     logger.error(EXPECTED)
     logger.error(json.dumps(EXPECTED))
     assert transport.events == []
-    for exc in (ValueError("bad value"), ObjectDoesNotExist("missing internal row"),
-                ConnectionResetError("database connection lost")):
+    for exc in (
+        ValueError("bad value"),
+        ObjectDoesNotExist("missing internal row"),
+        ConnectionResetError("database connection lost"),
+    ):
         sentry_sdk.capture_exception(exc)
-    logger.error("request_finished", extra={"status_code": 500, "api_key": "synthetic-secret"})
+    logger.error(
+        "request_finished", extra={"status_code": 500, "api_key": "synthetic-secret"}
+    )
     assert len(transport.events) == 4
     assert "synthetic-secret" not in json.dumps(transport.events)
     assert transport.events[-1]["level"] == "error"
 
 
 @pytest.mark.asyncio
-async def test_logged_and_rethrown_activity_has_one_envelope_per_attempt(transport, monkeypatch):
+async def test_logged_and_rethrown_activity_has_one_envelope_per_attempt(
+    transport, monkeypatch
+):
     from tfc.temporal.common import sentry_interceptor
 
     monkeypatch.setattr(sentry_interceptor, "_get_sentry_sdk", lambda: sentry_sdk)
@@ -120,10 +138,14 @@ async def test_logged_and_rethrown_activity_has_one_envelope_per_attempt(transpo
             logging.getLogger("test.activity").exception("activity_failure")
             raise
 
-    next_interceptor = SimpleNamespace(execute_activity=AsyncMock(side_effect=lambda _: failing_activity()))
+    next_interceptor = SimpleNamespace(
+        execute_activity=AsyncMock(side_effect=lambda _: failing_activity())
+    )
+
     # AsyncMock does not await a coroutine returned by a synchronous side effect.
     async def execute(_):
         return await failing_activity()
+
     next_interceptor.execute_activity.side_effect = execute
     interceptor = sentry_interceptor.SentryActivityInboundInterceptor(next_interceptor)
     activity_input = SimpleNamespace(fn=failing_activity, args=[])
