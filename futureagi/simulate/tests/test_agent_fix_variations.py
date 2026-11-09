@@ -370,6 +370,24 @@ class TestThePrivateSuite:
         assert {key: private[key] for key in source} == source
         assert "fresh-idea" not in private
 
+    def test_finds_a_variation_whose_key_the_builder_had_to_suffix(
+        self, environment, fix_run, storage
+    ):
+        # A key the environment retired comes back as "<key>-2"; its name stays.
+        files = archives.read_archive(_builder_save(environment))
+        documents = json.loads(files["scenarios.json"])
+        for one in documents:
+            if one["scenario_key"].startswith(f"{PARENT}-var"):
+                one["name"] = one["scenario_key"].replace("-", "_")
+                one["scenario_key"] = f"{one['scenario_key']}-2"
+        files["scenarios.json"] = json.dumps(documents).encode()
+
+        _land(fix_run, storage, archives.pack_archive(files))
+
+        assert set(_private(fix_run).documents["variations"]) == {
+            _named(fix_run, n) for n in (1, 2, 3)
+        }
+
     def test_is_listed_nowhere_picked_by_no_other_run_and_never_the_default(
         self, environment, fix_run, storage
     ):

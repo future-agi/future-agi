@@ -63,8 +63,9 @@ logger = structlog.get_logger(__name__)
 
 # What the builder message is from, in the platform's part of its payload.
 FIX_ORIGIN = "fix"
-# A variation's key as the builder is asked to write it, compared as a token.
-_VARIATION_TOKEN = re.compile(r"(?P<parent>.+)_var(?P<number>[0-9]+)")
+# A variation's key as the builder is asked to write it, compared as a token. A builder
+# that finds the key taken writes it with a suffix ("-var1-2").
+_VARIATION_TOKEN = re.compile(r"(?P<parent>.+)_var(?P<number>[0-9]+)(?:_[0-9]+)?")
 _CLAIMED = {
     Observation.WAITING: VariationsStep.WAITING,
     Observation.ENDED: VariationsStep.ENDED,
@@ -421,8 +422,21 @@ def _private_suite(
     variations: dict[str, str] = {}
     for document in suite_documents(suite):
         written_key = str(document.get("scenario_key") or document.get("name") or "")
-        match = _VARIATION_TOKEN.fullmatch(_scenario_token(written_key))
-        if match is None or match["parent"] not in parents:
+        # The first of its key, name or folder that names a variation of a failing case.
+        match = next(
+            (
+                found
+                for spelling in (
+                    written_key,
+                    document.get("name"),
+                    document.get("folder"),
+                )
+                if (found := _VARIATION_TOKEN.fullmatch(_scenario_token(spelling)))
+                and found["parent"] in parents
+            ),
+            None,
+        )
+        if match is None:
             continue
         number = int(match["number"])
         parent = parents[match["parent"]]
