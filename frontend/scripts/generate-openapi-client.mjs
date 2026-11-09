@@ -122,12 +122,26 @@ function normalizeHostStatusSpec(spec) {
     components: {
       ...spec.components,
       schemas: Object.fromEntries(
-        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
-          name,
-          name.startsWith("HostUpdateStatusResponse")
-            ? normalizeHostStatusSchema(schema)
-            : schema,
-        ]),
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => {
+          if (name.startsWith("HostUpdateStatusResponse")) {
+            return [name, normalizeHostStatusSchema(schema)];
+          }
+          if (name === "ObservabilityProvider" && schema.properties?.configuration_health) {
+            // Preserve the nullable read-only health field without changing the
+            // legacy generation of the provider's other properties.
+            return [name, {
+              ...schema,
+              properties: {
+                ...schema.properties,
+                configuration_health: {
+                  ...normalizeHostStatusSchema(schema.properties.configuration_health),
+                  readOnly: true,
+                },
+              },
+            }];
+          }
+          return [name, schema];
+        }),
       ),
     },
   };

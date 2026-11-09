@@ -96,7 +96,29 @@ class RetellPage:
 
 
 class RetellConfigurationError(Exception):
-    """Agent/credential setup prevents a Retell fetch; message never carries key material or provider values."""
+    """A safe, classified setup failure; unclassified errors remain engineering errors."""
+
+    SETUP_REASONS = frozenset(
+        {
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+        }
+    )
+
+    def __init__(self, message: str, *, reason_code: str = "invalid_poll_arguments"):
+        super().__init__(message)
+        self.reason_code = (
+            reason_code
+            if reason_code in self.SETUP_REASONS
+            else "invalid_poll_arguments"
+        )
+
+    @property
+    def is_setup_error(self) -> bool:
+        return self.reason_code in self.SETUP_REASONS
 
 
 class RetellCursorRejected(Exception):
@@ -253,12 +275,16 @@ class ObservabilityService:
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        *,
+        api_key: str | None = None,
     ):
         """
         Fetches call logs from the specified provider.
         """
         if provider.provider == ProviderChoices.VAPI:
-            return ObservabilityService._fetch_vapi_logs(provider, start_time, end_time)
+            return ObservabilityService._fetch_vapi_logs(
+                provider, start_time, end_time, api_key=api_key
+            )
         elif provider.provider == ProviderChoices.ELEVEN_LABS:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
@@ -281,10 +307,22 @@ class ObservabilityService:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
     @staticmethod
+    def resolve_vapi_key(provider: ObservabilityProvider) -> str | None:
+        """Resolve only this provider's linked agent, never another agent on its project."""
+        from tracer.utils.vapi_recording import VapiRecordingService
+
+        agent = ObservabilityService._get_agent_definition(provider)
+        if agent is None or agent.deleted:
+            return None
+        return VapiRecordingService._api_key_from_agent_definition(agent)
+
+    @staticmethod
     def _fetch_vapi_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        *,
+        api_key: str | None = None,
     ):
         """
         Fetches call logs from Vapi using time-based pagination.
@@ -297,7 +335,8 @@ class ObservabilityService:
             List of logs, or empty list if API key is missing.
         """
         agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "VAPI")
+        if api_key is None:
+            api_key = ObservabilityService.resolve_vapi_key(provider)
         if not api_key:
             return []
 
@@ -554,8 +593,13 @@ class ObservabilityService:
             agent = provider.agent_definition
         except AgentDefinition.DoesNotExist as exc:
             raise RetellConfigurationError(
-                "Retell observability needs a linked agent"
+                "Retell observability needs a linked agent", reason_code="missing_agent"
             ) from exc
+
+        if agent.deleted:
+            raise RetellConfigurationError(
+                "Retell linked agent is deleted", reason_code="deleted_agent"
+            )
 
         rows = (
             ProviderCredentials.objects.filter(
@@ -578,15 +622,18 @@ class ObservabilityService:
             key = chosen.get_api_key() if chosen else (agent.api_key or None)
         except ValueError as exc:
             raise RetellConfigurationError(
-                "Retell credential could not be decrypted"
+                "Retell credential could not be decrypted",
+                reason_code="credential_unreadable",
             ) from exc
         if not key:
             raise RetellConfigurationError(
-                "Retell API key is not configured for this agent"
+                "Retell API key is not configured for this agent",
+                reason_code="missing_key",
             )
         if not agent.assistant_id:
             raise RetellConfigurationError(
-                "Retell agent id is not configured for this agent"
+                "Retell agent id is not configured for this agent",
+                reason_code="missing_assistant_id",
             )
         return key, agent.assistant_id
 

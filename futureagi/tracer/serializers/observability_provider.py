@@ -10,7 +10,36 @@ VERIFIABLE_PROVIDERS = [
 ]
 
 
+class ProviderConfigurationHealthSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["misconfigured"])
+    reason_code = serializers.ChoiceField(
+        choices=[
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+        ]
+    )
+    first_failed_at = serializers.DateTimeField()
+    last_failed_at = serializers.DateTimeField()
+    failure_count = serializers.IntegerField(min_value=1)
+    next_retry_at = serializers.DateTimeField()
+
+    class Meta:
+        # Inline the nullable, read-only field: Swagger 2 refs lose these flags.
+        ref_name = None
+
+
 class ObservabilityProviderSerializer(serializers.ModelSerializer):
+    configuration_health = ProviderConfigurationHealthSerializer(
+        source="poll_state.configuration_health",
+        read_only=True,
+        allow_null=True,
+        default=None,
+        help_text="Last detected setup problem and next probe; null when no setup problem is recorded.",
+    )
+
     project_name = serializers.CharField(
         write_only=True,
         required=False,
@@ -28,6 +57,7 @@ class ObservabilityProviderSerializer(serializers.ModelSerializer):
             "organization",
             "workspace",
             "metadata",
+            "configuration_health",
             "created_at",
             "updated_at",
         ]

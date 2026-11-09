@@ -75353,6 +75353,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        configuration_health: {
+          description:
+            "Last detected setup problem and next probe; null when no setup problem is recorded.",
+          required: [
+            "status",
+            "reason_code",
+            "first_failed_at",
+            "last_failed_at",
+            "failure_count",
+            "next_retry_at",
+          ],
+          type: "object",
+          properties: {
+            status: {
+              title: "Status",
+              type: "string",
+              enum: ["misconfigured"],
+            },
+            reason_code: {
+              title: "Reason code",
+              type: "string",
+              enum: [
+                "missing_agent",
+                "deleted_agent",
+                "missing_key",
+                "missing_assistant_id",
+                "credential_unreadable",
+              ],
+            },
+            first_failed_at: {
+              title: "First failed at",
+              type: "string",
+              format: "date-time",
+            },
+            last_failed_at: {
+              title: "Last failed at",
+              type: "string",
+              format: "date-time",
+            },
+            failure_count: {
+              title: "Failure count",
+              type: "integer",
+              minimum: 1,
+            },
+            next_retry_at: {
+              title: "Next retry at",
+              type: "string",
+              format: "date-time",
+            },
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
         created_at: {
           title: "Created at",
           type: "string",

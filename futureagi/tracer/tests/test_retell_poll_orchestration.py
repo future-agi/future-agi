@@ -231,6 +231,7 @@ def _retell_provider(row: _FakeRow):
         provider=ProviderChoices.RETELL,
         poll_state=row.poll_state,
         last_fetched_at=row.last_fetched_at,
+        enabled=row.enabled,
         project=SimpleNamespace(id="project-1", organization_id="org-1"),
     )
 
@@ -3401,6 +3402,7 @@ def test_provider_poll_state_write_skipped_when_zero_rows_updated_via_poll(
         provider=ProviderChoices.RETELL,
         poll_state={},
         last_fetched_at=None,
+        enabled=True,
         project=SimpleNamespace(id="project-1", organization_id="org-1"),
     )
     monkeypatch.setattr(
@@ -4014,15 +4016,13 @@ def test_http_error_without_response_logs_status_code_none(fake_table, monkeypat
     ]
 
 
-def test_retell_configuration_error_logged(fake_table, monkeypatch):
+def test_unclassified_retell_configuration_error_remains_error(fake_table, monkeypatch):
     pid = uuid.uuid4()
     row = _FakeRow(id=pid, poll_state={})
     fake_table[pid] = row
 
     def boom(provider, **kwargs):
-        raise RetellConfigurationError(
-            "Retell API key is not configured for this agent"
-        )
+        raise RetellConfigurationError("Retell fetch window is empty")
 
     monkeypatch.setattr(op, "_poll_retell_provider", boom)
 
@@ -4125,6 +4125,9 @@ def test_other_provider_advances_after_store_unconditionally(fake_table, monkeyp
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
     )
     monkeypatch.setattr(
+        op.ObservabilityService, "resolve_vapi_key", lambda provider: "synthetic-key"
+    )
+    monkeypatch.setattr(
         op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(1, 0, 0)
     )
 
@@ -4147,6 +4150,9 @@ def test_other_provider_store_exception_does_not_advance_and_propagates(
     monkeypatch.setattr(op.timezone, "now", lambda: now)
     monkeypatch.setattr(
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
+    )
+    monkeypatch.setattr(
+        op.ObservabilityService, "resolve_vapi_key", lambda provider: "synthetic-key"
     )
 
     def boom(*a, **k):

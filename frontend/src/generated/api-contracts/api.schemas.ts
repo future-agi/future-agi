@@ -31121,6 +31121,21 @@ export const ObservabilityProviderApiProvider = {
 
 export type ObservabilityProviderApiMetadata = { [key: string]: unknown };
 
+export type ObservabilityProviderApiConfigurationHealth = {
+  readonly status: "misconfigured";
+  readonly reason_code:
+    | "missing_agent"
+    | "deleted_agent"
+    | "missing_key"
+    | "missing_assistant_id"
+    | "credential_unreadable";
+  readonly first_failed_at: string;
+  readonly last_failed_at: string;
+  /** @minimum 1 */
+  readonly failure_count: number;
+  readonly next_retry_at: string;
+} | null;
+
 export interface ObservabilityProviderApi {
   readonly id?: string;
   readonly project?: string;
@@ -31134,6 +31149,7 @@ export interface ObservabilityProviderApi {
   readonly organization?: string;
   readonly workspace?: string;
   metadata?: ObservabilityProviderApiMetadata;
+  readonly configuration_health?: ObservabilityProviderApiConfigurationHealth;
   readonly created_at?: string;
   readonly updated_at?: string;
 }

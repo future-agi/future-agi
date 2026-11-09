@@ -65471,6 +65471,29 @@ export const TracerObservabilityProviderListResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       metadata: zod.object({}).passthrough().optional(),
+      configuration_health: zod
+        .union([
+          zod
+            .object({
+              status: zod.enum(["misconfigured"]),
+              reason_code: zod.enum([
+                "missing_agent",
+                "deleted_agent",
+                "missing_key",
+                "missing_assistant_id",
+                "credential_unreadable",
+              ]),
+              first_failed_at: zod.string().datetime({ offset: true }),
+              last_failed_at: zod.string().datetime({ offset: true }),
+              failure_count: zod.number().min(1),
+              next_retry_at: zod.string().datetime({ offset: true }),
+            })
+            .describe(
+              "Last detected setup problem and next probe; null when no setup problem is recorded.",
+            ),
+          zod.null(),
+        ])
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -65567,6 +65590,29 @@ export const TracerObservabilityProviderReadResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -65618,6 +65664,29 @@ export const TracerObservabilityProviderUpdateResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -65669,6 +65738,29 @@ export const TracerObservabilityProviderPartialUpdateResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   metadata: zod.object({}).passthrough().optional(),
+  configuration_health: zod
+    .union([
+      zod
+        .object({
+          status: zod.enum(["misconfigured"]),
+          reason_code: zod.enum([
+            "missing_agent",
+            "deleted_agent",
+            "missing_key",
+            "missing_assistant_id",
+            "credential_unreadable",
+          ]),
+          first_failed_at: zod.string().datetime({ offset: true }),
+          last_failed_at: zod.string().datetime({ offset: true }),
+          failure_count: zod.number().min(1),
+          next_retry_at: zod.string().datetime({ offset: true }),
+        })
+        .describe(
+          "Last detected setup problem and next probe; null when no setup problem is recorded.",
+        ),
+      zod.null(),
+    ])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });

@@ -1,13 +1,12 @@
 """
 Tests for ObservabilityService in tracer/services/observability_providers.py.
 
-Fixes CORE-BACKEND-WCN (VAPI 401) and CORE-BACKEND-WTW (Retell 401).
-
 Run with: pytest tracer/tests/test_observability_providers.py -v
 """
 
 import threading
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -15,6 +14,7 @@ import requests
 from requests.exceptions import HTTPError
 from structlog.testing import capture_logs
 
+from simulate.models.agent_definition import ProviderCredentials
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.observability_providers import (
     RETELL_HYDRATION_WORKERS,
@@ -215,6 +215,12 @@ class TestVerifyApiKey:
         )
 
 
+class _LegacyVapiAgent(SimpleNamespace):
+    @property
+    def credentials_legacy(self):
+        raise ProviderCredentials.DoesNotExist
+
+
 class TestFetchVapiLogs:
     """Tests for _fetch_vapi_logs method."""
 
@@ -252,8 +258,12 @@ class TestFetchVapiLogs:
         """Makes HTTP request when API key is valid."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent = _LegacyVapiAgent(
+            deleted=False,
+            active_version=None,
+            latest_version=None,
+            api_key="valid-vapi-key",
+        )
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -286,8 +296,12 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent = _LegacyVapiAgent(
+            deleted=False,
+            active_version=None,
+            latest_version=None,
+            api_key="valid-vapi-key",
+        )
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -339,8 +353,12 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent = _LegacyVapiAgent(
+            deleted=False,
+            active_version=None,
+            latest_version=None,
+            api_key="valid-vapi-key",
+        )
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -379,8 +397,12 @@ class TestFetchVapiLogs:
         """Makes only one request when results are under VAPI_PAGE_LIMIT."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
+        mock_agent = _LegacyVapiAgent(
+            deleted=False,
+            active_version=None,
+            latest_version=None,
+            api_key="valid-vapi-key",
+        )
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -415,7 +437,7 @@ def _provider_with_agent(assistant_id=None, api_key="legacy-retell-key"):
 
     provider = Mock()
     provider.id = "retell-provider-1"
-    agent = Mock()
+    agent = Mock(deleted=False)
     agent.assistant_id = assistant_id or FAKE_AGENT_ID
     agent.api_key = api_key
     provider.agent_definition = agent
@@ -2568,7 +2590,7 @@ class TestGetCallLogsForRowsWithoutHostedHistory:
             result = ObservabilityService.get_call_logs(provider)
 
         assert result == [{"id": "call-1"}]
-        fetch.assert_called_once_with(provider, None, None)
+        fetch.assert_called_once_with(provider, None, None, api_key=None)
 
     def test_an_unlisted_provider_still_raises(self):
         provider = Mock()
