@@ -14,6 +14,7 @@ from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
+from tfc.temporal.eval_tasks.db_errors import database_control_activity
 from tfc.temporal.eval_tasks.types import (
     ClaimBatchInput,
     ClaimBatchOutput,
@@ -537,6 +538,7 @@ def _prewarm_instant_summary(task_id: str) -> None:
 
 
 @activity.defn
+@database_control_activity()
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
 ) -> ReconcileActivityOutput:
@@ -584,6 +586,7 @@ async def reconcile_eval_task_activity(
 
 
 @activity.defn
+@database_control_activity(claim=True)
 async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
@@ -631,6 +634,7 @@ async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutp
 
 
 @activity.defn
+@database_control_activity()
 async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
@@ -650,6 +654,7 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
 
 
 @activity.defn
+@database_control_activity()
 async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_get_task_state_sync, thread_sensitive=False)(
@@ -664,6 +669,7 @@ async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput
 
 
 @activity.defn
+@database_control_activity()
 async def get_workflow_labels_activity(
     input: WorkflowLabelsInput,
 ) -> WorkflowLabelsOutput:
@@ -675,6 +681,7 @@ async def get_workflow_labels_activity(
 
 
 @activity.defn
+@database_control_activity()
 async def requeue_eval_entries_activity(
     input: RequeueEntriesInput,
 ) -> RequeueEntriesOutput:
@@ -686,6 +693,7 @@ async def requeue_eval_entries_activity(
 
 
 @activity.defn
+@database_control_activity()
 async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(

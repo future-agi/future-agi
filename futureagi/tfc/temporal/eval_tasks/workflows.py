@@ -136,6 +136,23 @@ _HISTORICAL_FINALIZE_WAIT_PATCH = "historical-eval-finalize-wait-v1"
 # a live workflow, left it alone. An idle poll that still finds undrained work
 # now reaps again before its next claim.
 _CONTINUOUS_IDLE_REAP_PATCH = "continuous-eval-idle-reap-v1"
+_CONTINUOUS_DATABASE_BACKOFF_PATCH = "continuous-eval-database-backoff-v1"
+# Explicit bound even when no batch can finish and the server has not suggested
+# CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
+_MAX_CONTINUOUS_POLLS = 100
+
+
+def _is_database_deferred_error(exc: Exception) -> bool:
+    if not isinstance(exc, ActivityError) or not isinstance(exc.cause, ApplicationError):
+        return False
+    cause = exc.cause
+    return (
+        cause.type == "EvalTaskDatabaseUnavailable" and not cause.non_retryable
+    ) or (
+        # This attempt must NOT be retried: its transaction may have committed.
+        # Park the workflow, leaving unknown IDs to the stale-claim reaper.
+        cause.type == "EvalTaskClaimOutcomeUnknown" and cause.non_retryable
+    )
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -603,11 +620,104 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
     @workflow.run
     async def run(self, state: ContinuousDrainState) -> None:
         try:
-            await self._run(state)
+            if workflow.patched(_CONTINUOUS_DATABASE_BACKOFF_PATCH):
+                await self._run_with_database_backoff(state)
+            else:
+                # Keep the original command order for pre-patch histories.
+                await self._run(state)
         except Exception:
             # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
             await _fail_task(state.task_id)
             raise
+
+    async def _run_with_database_backoff(self, state: ContinuousDrainState) -> None:
+        """Retry control outages, never restart a provider call or an old claim.
+
+        Cursor/config/results remain in the DB. A failed control pass invalidates
+        the in-memory reconcile proof before any further claims. Known skipped
+        entries are checkpointed separately, so even a pause cleanup outage can
+        roll history over without dropping work or forgetting the pause.
+        """
+        self._lost.update(state.lost_entry_ids or ())
+        self._paused = state.pause_requested
+        labelled = marked_running = reconciled = reaped = False
+        polls = 0
+        while True:
+            wait = False
+            try:
+                if state.pending_requeue_ids:
+                    await _requeue(state.task_id, state.pending_requeue_ids)
+                    state.pending_requeue_ids = []
+                tstate = await _task_state(state.task_id)
+                if not tstate["active"]:
+                    _set_status(tstate["status"])
+                    self._phase = PHASE_DONE
+                    return
+                if not labelled:
+                    await _apply_labels(state.task_id)
+                    labelled = True
+                if not marked_running:
+                    await _mark_running(state.task_id)
+                    _set_status(STATUS_RUNNING)
+                    marked_running = True
+                if self._paused:
+                    # Signal can precede visibility of the durable pause. Never
+                    # claim while waiting for the DB to confirm it.
+                    wait = True
+                else:
+                    if not reconciled:
+                        self._phase = PHASE_MATERIALIZING
+                        reconciled = await _reconcile_continuous(state.task_id)
+                    if not reconciled:
+                        wait = True
+                    else:
+                        if not reaped:
+                            await _reap(
+                                state.task_id,
+                                workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                            )
+                            reaped = True
+                        batch = await _claim(state.task_id, state.batch_size)
+                        entry_ids = batch["entry_ids"]
+                        if entry_ids:
+                            self._phase = PHASE_DRAINING
+                            skipped = await _drain_batch(
+                                entry_ids,
+                                state.max_concurrent,
+                                lambda: self._paused,
+                                lost=self._lost,
+                            )
+                            state.processed += len(entry_ids) - len(skipped)
+                            state.batches += 1
+                            state.pending_requeue_ids = skipped
+                        else:
+                            wait = True
+                            reconciled = False
+                            if tstate["has_undrained_work"]:
+                                reaped = False
+                if wait:
+                    self._phase = PHASE_SLEEPING
+            except Exception as exc:
+                if not _is_database_deferred_error(exc):
+                    raise
+                # No _fail_task here (it needs the same unavailable DB).
+                # Activity warnings identify the failing step without exposing
+                # connection strings; phase exposes the durable wait to ops.
+                self._phase = "waiting_for_database"
+                reconciled = reaped = False
+                wait = True
+            if wait:
+                # A zero/short poll override must not create a hot outage loop.
+                await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
+            polls += 1
+            if polls >= _MAX_CONTINUOUS_POLLS or _should_continue_as_new(
+                state.batches, state.continue_as_new_after_batches
+            ):
+                state.batches = 0
+                state.workflow_confirmed_stopped = False
+                state.lost_entry_ids = _carried_lost(self._lost)
+                state.pause_requested = self._paused
+                workflow.continue_as_new(state)
 
     async def _run(self, state: ContinuousDrainState) -> None:
         self._lost.update(state.lost_entry_ids or ())
