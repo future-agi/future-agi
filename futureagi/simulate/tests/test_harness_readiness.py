@@ -1648,6 +1648,26 @@ class TestAgentGap:
         )
         assert report["answer"]["kind"] == "blocked"
 
+    def test_an_extra_optional_argument_is_no_signature_change(
+        self, user, workspace, storage
+    ):
+        refund = _tool("issue_refund", "order_id", "amount", "note")
+        refund["parameters"]["required"] = ["order_id", "amount"]
+        environment, a2 = _with_a2(
+            user,
+            workspace,
+            storage,
+            "rd-gap-optional",
+            tools=(_tool("lookup_order", "order_id"), refund),
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+
+        routing = _rows(_report(environment, a2))["tool_routing"]
+
+        assert routing["reason_code"] != "tool_signature_changed"
+        assert routing["status"] != "blocked"
+
     def test_a_world_tool_the_agent_lacks_blocks_the_cases_that_use_it(
         self, user, workspace, storage
     ):

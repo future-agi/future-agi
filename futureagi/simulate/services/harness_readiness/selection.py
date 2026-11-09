@@ -34,6 +34,7 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.evidence import certified, pair_bundle
 from simulate.services.harness_readiness.report import readiness_report
+from simulate.services.harness_readiness.rules import answer
 from simulate.services.harness_scenario_needs import TOOL_ROWS, CaseNeeds, case_needs
 from simulate.services.harness_versioning import validation
 from simulate.services.hosted_harness import HostedHarnessError
@@ -198,6 +199,7 @@ def selection_report(
         )
     return {
         **report,
+        "answer": _selected_answer(report["answer"], rows, placed),
         "rows": rows,
         "selection": {
             **_scope(pairing, placement, keys),
@@ -213,6 +215,35 @@ def selection_report(
             "requirements_recorded": placement.recorded,
         },
     }
+
+
+def _selected_answer(
+    found: AnswerView, rows: list[SelectionRowView], placed: list[Placed]
+) -> AnswerView:
+    """The answer for the selected cases: a world tool the agent version lacks can only
+    be missed by the cases that use it, so when no selected case does, it does not
+    block the answer. Only when every selected case's needs were read: an unread need
+    may be that very tool. A tool reaching production still blocks: the agent can call
+    it in any case."""
+    if not placed or any(not one.case.recorded or one.case.unknown for one in placed):
+        return found
+    unused = {
+        row["id"]
+        for row in rows
+        if row["status"] == "blocked"
+        and row["reason_code"] == "tool_not_in_agent"
+        and row["targets"]
+        and all(target["kind"] == "tool" for target in row["targets"])
+        and row["affected"]["count"] == 0
+    }
+    if not unused or found["kind"] != "blocked" or found["reason_code"] is not None:
+        return found
+    return answer(
+        [{**row, "status": "supported"} if row["id"] in unused else row for row in rows],
+        validating=False,
+        failed=False,
+        named=False,
+    )
 
 
 class HeldBack(TypedDict):
@@ -547,9 +578,8 @@ def _place(
         if one in needed and one in rows
     }
     held = frozenset(one for one, status in statuses.items() if status in _HOLDING)
-    blocked = [
-        one for one, status in statuses.items() if status in ("blocked", "unavailable")
-    ]
+    # Unavailable means this connection kind does not have it: the case still runs.
+    blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
     stale = [one for one, status in statuses.items() if status == "stale"]
