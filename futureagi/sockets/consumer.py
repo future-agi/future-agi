@@ -203,7 +203,8 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         auth_scope = self.scope.get("auth_scope")
         if auth_scope is not None:
             return f"uuid_org_{auth_scope.org_id}_{uuid}"
-        return f"uuid_{uuid}"
+        # Non-SAML sessions use the same resolved tenant as their broadcast room.
+        return f"uuid_{self.room_group_name}_{uuid}"
 
     async def get_room_group_name(self):
         org_id = await resolve_socket_organization(self.scope, self.user)

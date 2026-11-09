@@ -269,9 +269,21 @@ class LangfuseTracesResponseSerializer(serializers.Serializer):
 
 
 class CallWebsocketRequestSerializer(serializers.Serializer):
-    message = serializers.CharField()
+    # Notification and streaming producers have different, open message shapes.
+    message = serializers.DictField(child=JsonValueField(allow_null=True))
     send_to_uuid = serializers.BooleanField(required=False, default=False)
-    uuid = serializers.CharField(required=False, allow_blank=True)
+    uuid = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Required for targeted delivery; omit or use null for broadcasts.",
+    )
+
+    def validate(self, attrs):
+        if attrs.get("send_to_uuid") and attrs.get("uuid") is None:
+            raise serializers.ValidationError(
+                {"uuid": "A UUID is required for targeted delivery."}
+            )
+        return attrs
 
 
 class CallWebsocketResponseSerializer(serializers.Serializer):
