@@ -33,6 +33,11 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
+from simulate.analytics_types import (
+    RunTestAnalytics,
+    ScenarioPerformance,
+    ScenarioPerformanceSummary,
+)
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -3182,7 +3187,7 @@ class PerformanceSummaryView(APIView):
             )
 
             # Calculate scenario performance scores
-            scenario_performance = {}
+            scenario_performance: dict[str, ScenarioPerformance] = {}
 
             for call_execution in call_executions:
                 scenario_id = str(call_execution.scenario.id)
@@ -3208,7 +3213,7 @@ class PerformanceSummaryView(APIView):
                     )
 
             # Calculate average scores for each scenario
-            top_performing_scenarios = []
+            top_performing_scenarios: list[ScenarioPerformanceSummary] = []
             for _scenario_id, data in scenario_performance.items():
                 if data["scores"]:
                     avg_score = data["total_score"] / len(data["scores"])
@@ -3608,7 +3613,7 @@ class RunTestAnalyticsView(APIView):
             )
 
             # Calculate aggregated analytics data
-            analytics_data = {
+            analytics_data: RunTestAnalytics = {
                 "run_test_info": {
                     "id": str(run_test.id),
                     "name": run_test.name,
@@ -3873,7 +3878,7 @@ class CallExecutionDetailView(APIView):
                     ((k, v) for k, v in pcd.items() if isinstance(v, dict)),
                     (None, None),
                 )
-                if provider_data:
+                if provider_key is not None and provider_data:
                     attrs = flatten_provider_call_attributes(
                         provider_key, provider_data
                     )
