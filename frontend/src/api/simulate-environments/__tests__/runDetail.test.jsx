@@ -535,6 +535,98 @@ describe("mapCallDetail", () => {
       },
     );
   });
+
+  it("shows an actor's chat line as theirs, not the customer's, and leaves anyone it can't name as the customer", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: "Please apply 25% to deal 8.",
+          start_time_seconds: 1,
+        },
+        {
+          role: "user",
+          content:
+            "Alex Vance (not the person being served): I approved it in the CRM.",
+          start_time_seconds: 2,
+        },
+        {
+          role: "user",
+          content:
+            "Bob (not the person being served): someone the call never had.",
+          start_time_seconds: 3,
+        },
+      ],
+      call_actors: [
+        {
+          id: "alex_vance",
+          name: "Alex Vance",
+          role: "Sales Manager",
+          channel: "chat_message",
+        },
+      ],
+      recordings: {},
+    });
+    expect(
+      d.turns.map((t) => [
+        t.role,
+        t.speakerName,
+        t.actorId,
+        t.actorRole,
+        t.text,
+      ]),
+    ).toEqual([
+      ["customer", "", "", "", "Please apply 25% to deal 8."],
+      [
+        "actor",
+        "Alex Vance",
+        "alex_vance",
+        "Sales Manager",
+        "I approved it in the CRM.",
+      ],
+      [
+        "customer",
+        "",
+        "",
+        "",
+        "Bob (not the person being served): someone the call never had.",
+      ],
+    ]);
+  });
+
+  it("names an actor's chat line from its world actions when the call keeps no actor list", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat-2",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: "Jordan Taylor (not the person being served): Thanks!",
+          start_time_seconds: 5,
+        },
+      ],
+      function_calls: [
+        {
+          name: "apply_discount",
+          actor_id: "jordan_taylor",
+          actor_name: "Jordan Taylor",
+          actor_role: "Sales Coworker",
+          outcome: "refused",
+          start_time_seconds: 1,
+        },
+      ],
+      recordings: {},
+    });
+    const line = d.turns.find((t) => t.text === "Thanks!");
+    expect(line).toMatchObject({
+      role: "actor",
+      speakerName: "Jordan Taylor",
+      actorId: "jordan_taylor",
+      actorRole: "Sales Coworker",
+    });
+  });
 });
 
 describe("callTranscript", () => {
