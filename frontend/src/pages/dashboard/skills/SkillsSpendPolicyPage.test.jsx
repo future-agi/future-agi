@@ -8,6 +8,7 @@ import SkillsSpendPolicyPage from './SkillsSpendPolicyPage';
 
 const api = vi.hoisted(() => ({ scope: {}, org: {}, workspace: {}, query: {}, save: vi.fn(), ready: true }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => api.scope }));
+vi.mock('src/api/skills/context-campaigns', () => ({ campaignsContractReady: () => false, useContextCampaignAvailability: () => ({}) }));
 vi.mock('src/api/skills/r3-spend', () => ({ spendPolicyReady: () => api.ready, useSkillsSpendPolicy: () => api.query, useUpdateSkillsSpendPolicy: () => ({ mutateAsync: api.save }) }));
 vi.mock('src/contexts/OrganizationContext', () => ({ useOrganization: () => api.org }));
 vi.mock('src/contexts/WorkspaceContext', () => ({ useWorkspace: () => api.workspace }));

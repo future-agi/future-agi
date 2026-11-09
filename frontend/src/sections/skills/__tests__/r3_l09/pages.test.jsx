@@ -45,7 +45,7 @@ function mount(Page, url, props = {}) {
 
 describe("route wrappers and unavailable integration boundary", () => {
   it("fails closed without the API-owning controller rather than inventing a client or success state", () => {
-    mount(SkillsReviewsPage, "/dashboard/skills/reviews");
+    mount(SkillsReviewsPage, "/dashboard/skills/reviews", { Controller: null });
     expect(screen.getByText(/capability is not available/)).toBeVisible();
     expect(screen.queryByText(/unread assigned/)).not.toBeInTheDocument();
   });

@@ -3,10 +3,11 @@ import { Helmet } from "react-helmet-async";
 import { useSearchParams } from "react-router-dom";
 import { useSkillV11Scope } from "src/api/skills/testing";
 import ReleaseInbox from "src/sections/skills/review/ReleaseInbox";
+import { ReviewInboxController } from 'src/sections/skills/review/SkillsReviewControllers';
 
-// Integration supplies an API-owning controller. Do not invent URLs or a second
-// HTTP/query client while the review endpoints are unavailable in F12.
-export default function SkillsReviewsPage({ Controller }) {
+// Production defaults to the scope-fenced API controller. Explicitly passing
+// null keeps the unavailable boundary inspectable without manufacturing data.
+export default function SkillsReviewsPage({ Controller = ReviewInboxController }) {
   const access = useSkillV11Scope();
   const [params] = useSearchParams();
   const requested = params.get("state");

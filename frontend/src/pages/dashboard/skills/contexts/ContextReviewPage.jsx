@@ -3,8 +3,9 @@ import { Helmet } from "react-helmet-async";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useSkillV11Scope } from "src/api/skills/testing";
 import ContextReleaseReview from "src/sections/skills/contexts/ContextReleaseReview";
+import { ContextReviewController } from 'src/sections/skills/review/SkillsReviewControllers';
 
-export default function ContextReviewPage({ Controller }) {
+export default function ContextReviewPage({ Controller = ContextReviewController }) {
   const access = useSkillV11Scope();
   const { contextId } = useParams();
   const [params] = useSearchParams();

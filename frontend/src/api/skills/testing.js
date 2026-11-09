@@ -54,15 +54,16 @@ export function useSkillV11Scope() {
   return { scope, identity, current, queryIdentity, enabled, headers: { 'X-Organization-Id': scope.organizationId, 'X-Workspace-Id': scope.workspaceId } };
 }
 
-export function useSkillV11Query({ parts, url, mapper, params, enabled = true, poll = false, terminalParts = [] }) {
+export function useSkillV11Query({ parts, url, mapper, params, load, enabled = true, poll = false, terminalParts = [] }) {
   const access = useSkillV11Scope();
   const client = useQueryClient();
   const query = useQuery({
     queryKey: skillsKeys.v11(access.scope, ...parts),
     queryFn: async ({ signal }) => {
-      const response = await axios.get(url(), { params, signal, headers: access.headers });
+      const config = { params, signal, headers: access.headers };
+      const value = load ? await load(config) : mapper(skillV11Result(await axios.get(url(), config)));
       if (signal.aborted || access.queryIdentity.current !== access.identity) throw new Error('The Skills scope changed.');
-      return mapper(skillV11Result(response));
+      return value;
     },
     enabled: access.enabled && enabled, retry: false,
     refetchInterval: poll ? skillJobPollInterval : false,

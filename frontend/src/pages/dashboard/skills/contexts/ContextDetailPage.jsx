@@ -7,5 +7,5 @@ import ContextDetailView from "src/sections/skills/contexts/ContextDetailView";
 export default function ContextDetailPage() {
   const composition = useContextAuthoring();
   const [params] = useSearchParams();
-  return <><Helmet><title>Agent context</title></Helmet>{composition?.bindings.detail ? <ContextDetailView {...composition.bindings.detail} scopeKey={composition.scopeKey} state={params.get("state")} /> : <ErrorState title="Context unavailable" detail="Select an authorized context through the enabled authoring service." />}</>;
+  return <><Helmet><title>Agent context</title></Helmet>{composition?.bindings.detail?.element || (composition?.bindings.detail ? <ContextDetailView {...composition.bindings.detail} scopeKey={composition.scopeKey} state={params.get("state")} /> : <ErrorState title="Context unavailable" detail="Select an authorized context through the enabled authoring service." />)}</>;
 }

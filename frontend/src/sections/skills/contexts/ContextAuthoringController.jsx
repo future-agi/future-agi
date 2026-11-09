@@ -3,9 +3,11 @@ import PropTypes from 'prop-types';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Stack } from '@mui/material';
 import { useSkillV11Scope } from 'src/api/skills/testing';
-import { contextAuthoringReady, useContexts, useCreateContext, useContextDetail, useContextDraft, useStartContextDraft, useSaveContextDraft, useDiscardContextDraft } from 'src/api/skills/context-authoring';
+import { contextAuthoringReady, useContexts, useCreateContext, useContextDetail, useContextDraft, useStartContextDraft, useSaveContextDraft, useDiscardContextDraft, usePreviewContextDependencies, useApplyContextDependencies } from 'src/api/skills/context-authoring';
 import { useCheckpointDraft, checkpointsReady } from 'src/api/skills/r3-intake';
 import { paths } from 'src/routes/paths';
+import { useSkillsList } from 'src/api/skills';
+import { usePreviewContextRelease, useAcknowledgeContextHead, contextReviewReady } from 'src/api/skills/context-production';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import ContextLibraryView from './ContextLibraryView';
@@ -26,6 +28,12 @@ Library.propTypes = { scopeKey: PropTypes.string.isRequired, state: PropTypes.st
 function Editor({ scopeKey, contextId }) {
   const detail = useContextDetail(contextId);
   const draft = useContextDraft(contextId);
+  const skills = useSkillsList({ pageSize: 100 });
+  const previewDependencies = usePreviewContextDependencies(contextId);
+  const applyDependencies = useApplyContextDependencies(contextId);
+  const previewHead = usePreviewContextRelease(contextId);
+  const acknowledgeHead = useAcknowledgeContextHead(contextId);
+  const navigate = useNavigate();
   const start = useStartContextDraft(contextId);
   const save = useSaveContextDraft(contextId);
   const discard = useDiscardContextDraft(contextId);
@@ -42,6 +50,14 @@ function Editor({ scopeKey, contextId }) {
   if (!detail.data || (!initial && (draft.isPending || draft.isFetching))) return detail.isError ? <ErrorState title="Context unavailable" onRetry={detail.refetch} /> : <ContentSkeleton label="Loading your context draft" />;
   if (!initial && differentOrigin) return <Stack spacing={1.5}><Alert severity="warning">Your existing draft has a different content origin. It was not replaced. Resume and preserve it before starting another version.</Alert><Button variant="contained" onClick={() => setInitial(draft.data)}>Resume existing draft</Button></Stack>;
   if (initial) return <SkillEditorSession kind="agent_context" scopeKey={scopeKey} skill={{ ...detail.data.context, permissions: detail.data.releaseState.permissions }} initialDraft={initial} refetchDraft={draft.refetch}
+    onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
+    contextControls={{
+      availableSkills: (skills.data?.results || []).map((skill) => ({ ...skill, kind: 'skill' })),
+      previewDependencies: previewDependencies.mutateAsync,
+      applyDependencies: (input, options) => applyDependencies.mutateAsync({ ...input, ...options }),
+      previewHead: contextReviewReady() ? previewHead.mutateAsync : undefined,
+      acknowledgeHead: (input, options) => acknowledgeHead.mutateAsync({ ...input, ...options }),
+    }}
     resourceApi={{
       saveDraft: save.mutateAsync,
       saveInput: (value, revision) => ({ revision, baseVersion: value.baseVersion, files: value.files, description: value.description ?? value.contextSpec.description, note: value.note }),
@@ -50,7 +66,7 @@ function Editor({ scopeKey, contextId }) {
     }} />;
   // Only the specific missing-draft code permits starting. A scope/permission
   // failure must never be converted into an empty draft or a latest-version edit.
-  const absent = draft.error?.response?.data?.code === 'draft_not_found';
+  const absent = (draft.error?.code || draft.error?.response?.data?.code) === 'draft_not_found';
   if (!absent) return <ErrorState title="Draft unavailable" detail="No empty-draft assumption was made. Retry the authorized read." onRetry={draft.refetch} />;
   const canStart = origin !== undefined && (origin !== null || detail.data.context.latestVersion === null);
   return <Stack spacing={1.5}>
