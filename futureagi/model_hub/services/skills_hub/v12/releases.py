@@ -369,7 +369,9 @@ def _file_url(context_id: UUID, candidate: dict, path: str) -> str:
             + urlencode({"revision": candidate["revision"], "path": path})
         )
     return (
-        prefix + f"versions/{candidate['version']}/files/?" + urlencode({"path": path})
+        prefix
+        + f"versions/{candidate['version']}/inspection/files/?"
+        + urlencode({"path": path})
     )
 
 

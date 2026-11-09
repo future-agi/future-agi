@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from model_hub.models.skills_hub import HubSkill
 from model_hub.models.skills_hub_v12 import HubSkillContextDependency
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 from model_hub.services.skills_hub.v12.consumers import create_binding
 from model_hub.services.skills_hub.v12.credentials import (
@@ -49,7 +50,7 @@ def context(organization, workspace, user):
 def context_version(hub_actor):
     def publish(context, *, body="Follow the reviewed synthetic policy.", child=None):
         links = []
-        files = [{"path": "AGENTS.md", "content": body}]
+        files: list[FileInput] = [{"path": "AGENTS.md", "content": body}]
         if child:
             mount = f"skills/{child.skill.name}"
             links = [

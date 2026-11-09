@@ -73,6 +73,7 @@ def test_historical_reference_is_retained_not_relabelled_as_production(
             },
         },
     )
+    assert run.reference is not None
     assert run.reference["version_id"] == str(historical.pk)
     assert run.production is None
     jobs.finish_job(scope=principal.scope, job_id=run.pk)

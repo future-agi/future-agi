@@ -265,6 +265,7 @@ def _bundles(
     rejected: list[dict],
     *,
     filename: str | None = None,
+    omissions: list[dict] | None = None,
 ) -> list[dict]:
     roots: list[str] = []
     for path in sorted(files, key=lambda name: (name.count("/"), name)):
@@ -284,6 +285,22 @@ def _bundles(
             if path.startswith(prefix)
         ]
         checks = run_checks(bundle_files)
+        omitted = [
+            dict(item)
+            for item in omissions or []
+            if item["path"].casefold().startswith(prefix.casefold())
+            and item["reason"] != "ignored_nested"
+        ]
+        for item in omitted:
+            checks["items"].append(
+                {
+                    "code": "import_incomplete",
+                    "severity": "error",
+                    "path": item["path"],
+                    "message": f"Omitted input: {item['reason']}. Review a supported subset explicitly.",
+                }
+            )
+        checks["summary"]["errors"] += len(omitted)
         frontmatter, _, _ = parse_frontmatter(files[prefix + "SKILL.md"])
         name = (frontmatter or {}).get("name")
         if (
@@ -303,6 +320,7 @@ def _bundles(
                 "name": name,
                 "files": bundle_files,
                 "checks": checks,
+                "omissions": omitted,
             }
         )
     if not roots and files:
@@ -329,6 +347,7 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
             skipped.append(filename)
             continue
         if filename.lower().endswith(".zip") or raw.startswith(_ZIP_MAGIC):
+            rejection_start = len(rejected)
             files = _zip_files(filename, raw, rejected, skipped, budget)
             bundles.extend(
                 _bundles(
@@ -337,6 +356,7 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
                     posixpath.splitext(posixpath.basename(filename))[0],
                     rejected,
                     filename=filename,
+                    omissions=rejected[rejection_start:],
                 )
             )
         else:
@@ -348,6 +368,7 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
         raise _too_large("Keep the uncompressed import within 20 MiB.")
     counts = Counter(path.casefold() for path, _ in loose)
     loose_files = {}
+    rejection_start = len(rejected)
     for path, raw in loose:
         if counts[path.casefold()] > 1:
             _reject(rejected, path, "path_duplicate")
@@ -355,7 +376,15 @@ def parse_upload(uploads: list[tuple[str, bytes]]) -> dict:
         content = decode_text_file(path, raw, rejected)
         if content is not None:
             loose_files[path] = content
-    bundles.extend(_bundles(loose_files, "loose", "skill", rejected))
+    bundles.extend(
+        _bundles(
+            loose_files,
+            "loose",
+            "skill",
+            rejected,
+            omissions=rejected[rejection_start:],
+        )
+    )
     if len(bundles) > limits.MAX_IMPORT_SKILLS:
         raise _too_large("Import at most 50 skills at a time.")
     return {"bundles": bundles, "rejected": rejected, "skipped": skipped}

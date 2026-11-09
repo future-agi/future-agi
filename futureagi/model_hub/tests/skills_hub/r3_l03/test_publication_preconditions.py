@@ -1,5 +1,6 @@
 """Failed exact-content preconditions never allocate or discard the live draft."""
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -37,15 +38,16 @@ def test_rejected_publish_retains_draft_and_allocates_nothing(
     original = get_compiled_draft(
         principal=principal, context_id=context.pk, revision=draft.revision
     ).digest
-    overrides, code = (
-        ({"expected_digest": "sha256:" + "0" * 64}, "candidate_changed")
-        if failure == "digest"
-        else (
-            ({"evidence_run_id": uuid4()}, "evidence_mismatch")
-            if failure == "evidence"
-            else ({"acknowledge_warnings": False}, "warnings_unacknowledged")
-        )
-    )
+    overrides: dict[str, Any]
+    if failure == "digest":
+        overrides = {"expected_digest": "sha256:" + "0" * 64}
+        code = "candidate_changed"
+    elif failure == "evidence":
+        overrides = {"evidence_run_id": uuid4()}
+        code = "evidence_mismatch"
+    else:
+        overrides = {"acknowledge_warnings": False}
+        code = "warnings_unacknowledged"
     with pytest.raises(SkillsHubError) as error:
         publish_context(context, **overrides)
     assert error.value.code == code

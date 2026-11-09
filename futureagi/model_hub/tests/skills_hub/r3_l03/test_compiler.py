@@ -3,16 +3,34 @@
 import hashlib
 import json
 from copy import deepcopy
+from typing import TypedDict
 from uuid import UUID
 
 import pytest
 
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import manifest_digest
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v12.compiler import (
     check_context_files,
     compile_context,
 )
+from model_hub.services.skills_hub.v12.types import (
+    ContextSpec,
+    LinkInput,
+    LockedLink,
+    ResolvedLock,
+    VersionSelector,
+)
+
+
+class CompileArgs(TypedDict):
+    name: str
+    files: list[FileInput]
+    spec: ContextSpec
+    lock: ResolvedLock
+    child_snapshots: dict[UUID, list[FileInput]]
+
 
 CHILD = UUID("00000000-0000-0000-0000-000000000001")
 VERSION = UUID("00000000-0000-0000-0000-000000000002")
@@ -162,7 +180,7 @@ def test_mount_prefix_depth_and_descriptor_bytes_count(definition):
 
 
 def test_whole_tree_byte_limit_includes_descriptor():
-    files = [
+    files: list[FileInput] = [
         {
             "path": "AGENTS.md" if index == 0 else f"ref{index}.txt",
             "content": "x" * (512 * 1024),
@@ -229,7 +247,9 @@ def test_secret_diagnostics_do_not_echo_source(definition):
 
 
 def test_twenty_leaf_closure_is_complete_and_order_independent(make_skill_files):
-    links, accepted, snapshots = [], [], {}
+    links: list[LinkInput] = []
+    accepted: list[LockedLink] = []
+    snapshots: dict[UUID, list[FileInput]] = {}
     for index in range(1, 21):
         identity, version_id = UUID(int=index), UUID(int=100 + index)
         name = f"policy-{index}"
@@ -237,7 +257,7 @@ def test_twenty_leaf_closure_is_complete_and_order_independent(make_skill_files)
             name=name,
             extra=[{"path": "references/rule.md", "content": "Reviewed policy"}],
         )
-        selector = {"version": 8}
+        selector: VersionSelector = {"version": 8}
         links.append({"skill_id": str(identity), "selector": selector})
         accepted.append(
             {
@@ -250,7 +270,7 @@ def test_twenty_leaf_closure_is_complete_and_order_independent(make_skill_files)
             }
         )
         snapshots[version_id] = files
-    args = {
+    args: CompileArgs = {
         "name": "catalog",
         "files": [{"path": "AGENTS.md", "content": "Choose the relevant policy."}],
         "spec": {"schema": 1, "description": "Complete catalog", "links": links},

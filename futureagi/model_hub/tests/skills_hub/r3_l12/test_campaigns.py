@@ -7,8 +7,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from django.apps import apps
-from django.db import close_old_connections, connection, transaction
+from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from accounts.models.organization_membership import OrganizationMembership
@@ -16,54 +15,19 @@ from accounts.models.workspace import WorkspaceMembership
 from model_hub.models.skills_hub import HubSkill
 from model_hub.models.skills_hub_v12 import (
     HubSkillContextBinding,
+    HubSkillContextCampaign,
+    HubSkillContextCampaignTarget,
     HubSkillContextQuarantine,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.types import Actor
+from model_hub.services.skills_hub.types import Actor, FileInput
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 from model_hub.services.skills_hub.v12 import campaigns as service
 from model_hub.services.skills_hub.versions import persist_immutable_version_locked
-from model_hub.tests.skills_hub.r3_l12.model_contract import register_contract_models
 from tfc.constants.levels import Level
 
 pytestmark = pytest.mark.django_db(transaction=True)
 DIGEST = "sha256:" + "a" * 64
-
-
-HubSkillContextCampaign = None
-HubSkillContextCampaignTarget = None
-
-
-@pytest.fixture(scope="module", autouse=True)
-def campaign_tables(django_db_setup, django_db_blocker):
-    # Test-only contract tables: existing migrations are not changed or bypassed.
-    global HubSkillContextCampaign, HubSkillContextCampaignTarget
-    records, registered = register_contract_models()
-    HubSkillContextCampaign, HubSkillContextCampaignTarget = records
-    with django_db_blocker.unblock():
-        existing = connection.introspection.table_names()
-        created = []
-        with connection.schema_editor() as schema:
-            for model in (HubSkillContextCampaign, HubSkillContextCampaignTarget):
-                if model._meta.db_table not in existing:
-                    schema.create_model(model)
-                    created.append(model)
-    yield
-    with django_db_blocker.unblock(), connection.schema_editor() as schema:
-        for model in reversed(created):
-            schema.delete_model(model)
-    if registered:
-        for model in reversed(records):
-            for field in model._meta.local_fields:
-                if field.is_relation:
-                    related = field.remote_field
-                    accessor = related.get_accessor_name()
-                    if hasattr(related.model, accessor):
-                        delattr(related.model, accessor)
-            apps.all_models["model_hub"].pop(model._meta.model_name)
-        apps.clear_cache()
-        for model in apps.get_models():
-            model._meta._expire_cache()
 
 
 @pytest.fixture
@@ -82,7 +46,7 @@ def release(actor, user):
         description="Synthetic repository policy",
         created_by=user,
     )
-    files = [
+    files: list[FileInput] = [
         {"path": "AGENTS.md", "content": "Preserve local policy.\n"},
         {
             "path": ".futureagi/context.json",

@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pytest
+from rest_framework.serializers import ChoiceField
 
 from model_hub.serializers import skills_hub_r3 as r3
 from model_hub.serializers import skills_hub_v12 as v12
@@ -260,12 +261,18 @@ def test_lifecycle_outputs_have_explicit_identities_and_no_credentials():
 def test_reference_arm_outputs_are_distinct_from_legacy_root_routing():
     from model_hub.serializers import skills_hub_v11 as legacy
 
-    assert "reference" not in legacy.VariantResult().fields["variant"].choices
-    assert "reference" in v12.ContextVariantResult().fields["variant"].choices
-    assert "reference" in v12.ContextSnapshotFileQuery().fields["variant"].choices
-    assert set(v12.ContextAttemptDetail().fields["routing_verdict"].choices) == {
-        "not_applicable"
-    }
+    leaf_variant = legacy.VariantResult().fields["variant"]
+    context_variant = v12.ContextVariantResult().fields["variant"]
+    snapshot_variant = v12.ContextSnapshotFileQuery().fields["variant"]
+    routing = v12.ContextAttemptDetail().fields["routing_verdict"]
+    assert isinstance(leaf_variant, ChoiceField)
+    assert isinstance(context_variant, ChoiceField)
+    assert isinstance(snapshot_variant, ChoiceField)
+    assert isinstance(routing, ChoiceField)
+    assert "reference" not in leaf_variant.choices
+    assert "reference" in context_variant.choices
+    assert "reference" in snapshot_variant.choices
+    assert set(routing.choices) == {"not_applicable"}
     for schema in (
         v12.ContextRunSummary,
         v12.ContextCaseResult,

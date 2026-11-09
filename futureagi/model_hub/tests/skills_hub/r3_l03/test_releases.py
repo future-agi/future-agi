@@ -16,6 +16,7 @@ from model_hub.models.skills_hub_v12 import (
     HubSkillContextQuarantine,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v12.authoring import (
     save_context_draft,
     start_context_draft,
@@ -430,10 +431,11 @@ def test_review_is_bounded_root_first_and_has_separate_origin_head_diffs(
         revision=0,
         from_version=first.number,
     )
-    files = [{"path": "AGENTS.md", "content": "Historical repair"}] + [
+    files: list[FileInput] = [{"path": "AGENTS.md", "content": "Historical repair"}]
+    files.extend(
         {"path": f"ref{index:02}.md", "content": "Supporting text"}
         for index in range(30)
-    ]
+    )
     draft = save_context_draft(
         principal=principal,
         context_id=context.pk,

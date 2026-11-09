@@ -260,6 +260,37 @@ class ImportRequest(ImportPreviewRequest):
         help_text="JSON object mapping preview bundle keys to reviewed release revisions.",
     )
 
+    acknowledged_omissions = s.CharField(
+        default="{}",
+        max_length=100000,
+        help_text="JSON object mapping bundle keys to the exact reviewed omitted path/reason pairs. Required to import a supported subset.",
+    )
+
+    def validate_acknowledged_omissions(self, value):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError) as exc:
+            raise s.ValidationError("Use a JSON object of omission lists.") from exc
+        if not isinstance(parsed, dict) or len(parsed) > limits.MAX_IMPORT_SKILLS:
+            raise s.ValidationError("Use a bounded object of omission lists.")
+        for key, rows in parsed.items():
+            if (
+                not isinstance(key, str)
+                or not isinstance(rows, list)
+                or len(rows) > limits.MAX_ZIP_ENTRIES
+            ):
+                raise s.ValidationError("Use a bounded list for each bundle key.")
+            if any(
+                not isinstance(row, dict)
+                or set(row) != {"path", "reason"}
+                or not all(isinstance(item, str) for item in row.values())
+                for row in rows
+            ):
+                raise s.ValidationError(
+                    "Each omission needs its exact path and reason."
+                )
+        return parsed
+
     def validate(self, attrs):
         try:
             revisions = json.loads(attrs["expected_release_revisions"])
@@ -774,6 +805,11 @@ class Template(HubSerializer):
     files = TemplateFile(many=True)
 
 
+class ImportOmission(HubSerializer):
+    path = s.CharField()
+    reason = s.CharField()
+
+
 class ImportBundle(HubSerializer):
     key = s.CharField()
     root = s.CharField(allow_blank=True)  # type: ignore[assignment]
@@ -781,6 +817,7 @@ class ImportBundle(HubSerializer):
     file_count = s.IntegerField()
     total_bytes = s.IntegerField()
     status = s.ChoiceField(choices=["new", "changed", "unchanged", "invalid"])
+    omissions = ImportOmission(many=True)
     skill_id = s.UUIDField(required=False)
     latest_version = s.IntegerField(required=False, allow_null=True)
     checks = ChecksResult()

@@ -24,6 +24,8 @@ from model_hub.services.skills_hub.r3.draft_recovery import (
     purge_expired_checkpoints,
     restore_checkpoint,
 )
+from model_hub.services.skills_hub.v11.types import SkillPrincipal
+from model_hub.services.skills_hub.v12.types import ResourceKind
 
 pytestmark = pytest.mark.django_db
 
@@ -87,6 +89,7 @@ def test_suspend_historical_switch_restore_preserves_alternate(
         kind="skill",
         checkpoint_id=UUID(restored["preserved_checkpoint_id"]),
     )
+    assert alternate.payload is not None
     assert alternate.payload["base_version"] == first.number
     edited = save_owned_draft(
         principal=principal,
@@ -147,7 +150,7 @@ def test_owner_kind_scope_and_system_isolation(
         )["count"]
         == 0
     )
-    for actor, kind in [
+    denied_scopes: list[tuple[SkillPrincipal, ResourceKind]] = [
         (second_principal, "skill"),
         (principal, "agent_context"),
         (
@@ -157,7 +160,8 @@ def test_owner_kind_scope_and_system_isolation(
             ),
             "skill",
         ),
-    ]:
+    ]
+    for actor, kind in denied_scopes:
         with pytest.raises(SkillsHubError) as error:
             get_checkpoint(
                 principal=actor,

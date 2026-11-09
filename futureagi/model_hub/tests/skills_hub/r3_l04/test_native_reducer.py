@@ -1,6 +1,7 @@
 """Planned denominators and independent evidence families, including 15 children."""
 
 from dataclasses import replace
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -295,7 +296,7 @@ def test_fifteen_child_refund_chargeback_near_miss(catalog):
 def test_forced_and_missing_observation_never_prove_nonselection(
     catalog, forced, instrumented, complete, missing
 ):
-    selection = {
+    selection: dict[str, Any] = {
         "catalog_digest": catalog_identity(catalog),
         "invocation_mode": "forced" if forced else "natural",
         "child_selection": [
@@ -318,7 +319,7 @@ def test_forced_and_missing_observation_never_prove_nonselection(
 
 
 def test_uninstrumented_positive_selection_is_not_certified(catalog):
-    selection = {
+    selection: dict[str, Any] = {
         "catalog_digest": catalog_identity(catalog),
         "invocation_mode": "natural",
         "child_selection": [
@@ -341,7 +342,7 @@ def test_uninstrumented_positive_selection_is_not_certified(catalog):
 
 
 def test_catalog_and_child_identity_are_bound(catalog):
-    selection = {
+    selection: dict[str, Any] = {
         "catalog_digest": catalog_identity(catalog),
         "invocation_mode": "natural",
         "child_selection": [{"skill_id": str(uuid4()), "expectation": "required"}],

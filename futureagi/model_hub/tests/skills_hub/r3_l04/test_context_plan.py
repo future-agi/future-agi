@@ -1,6 +1,7 @@
 """Local context preflight uses real scope, catalog and immutable historical data."""
 
 import json
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -42,7 +43,7 @@ def context(user, organization, workspace, settings):
         name="synthetic-context",
         kind="agent_context",
     )
-    descriptor = {
+    descriptor: dict[str, Any] = {
         "schema": 1,
         "kind": "agent_context",
         "name": skill.name,

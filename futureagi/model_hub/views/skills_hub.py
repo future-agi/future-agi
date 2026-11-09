@@ -110,7 +110,15 @@ def contract(output=None, *, body=None, query=None, status=200, many=False, **kw
     def decorate(handler):
         parameters = list(kwargs.pop("manual_parameters", []))
         for name in signature(handler).parameters:
-            if name in {"skill_id", "resource_id", "credential_id"}:
+            if name in {
+                "skill_id",
+                "resource_id",
+                "credential_id",
+                "context_id",
+                "campaign_id",
+                "binding_id",
+                "request_id",
+            }:
                 parameters.append(
                     openapi.Parameter(
                         name,
@@ -756,6 +764,7 @@ class SkillImportPreviewView(SkillsView):
                     ),
                     "status": state,
                     "checks": item["checks"],
+                    "omissions": item.get("omissions", []),
                     **(
                         {
                             "skill_id": skill.pk,
@@ -798,6 +807,14 @@ class SkillImportView(SkillsView):
             item = bundles[key]
             existing = scope.filter(name=item["name"]).first()
             try:
+                omissions = item.get("omissions", [])
+                acknowledged = data["acknowledged_omissions"].get(key, [])
+                if omissions != acknowledged:
+                    raise SkillsHubError(
+                        "import_incomplete",
+                        "Review and acknowledge the exact omitted paths before importing a supported subset.",
+                        status=422,
+                    )
                 published = versions.publish_by_name(
                     organization=request.organization,
                     workspace=request.workspace,
@@ -814,6 +831,8 @@ class SkillImportView(SkillsView):
                         "type": "import",
                         "filename": item["filename"],
                         "root": item["root"],
+                        "omissions": omissions,
+                        "supported_subset": bool(omissions),
                     },
                 )
             except SkillsHubError as exc:

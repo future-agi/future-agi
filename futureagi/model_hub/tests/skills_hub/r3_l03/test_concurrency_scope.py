@@ -25,6 +25,7 @@ from model_hub.services.skills_hub.v12.releases import (
     context_dependents,
     context_release_state,
 )
+from model_hub.services.skills_hub.v12.types import LinkInput
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -85,7 +86,9 @@ def test_same_dependency_operation_concurrently_mutates_once(
     principal, context, hub_skill, publish_skill
 ):
     leaf = publish_skill(hub_skill).version
-    links = [{"skill_id": str(hub_skill.pk), "selector": {"version": leaf.number}}]
+    links: list[LinkInput] = [
+        {"skill_id": str(hub_skill.pk), "selector": {"version": leaf.number}}
+    ]
     preview = preview_dependencies(
         principal=principal,
         context_id=context.pk,

@@ -6,6 +6,7 @@ This does not query storage, mint credentials, call providers or execute a job.
 
 import json
 from pathlib import Path
+from typing import Any
 
 from model_hub.serializers import skills_hub_r3 as r3
 from model_hub.serializers import skills_hub_v12 as context
@@ -150,7 +151,7 @@ def samples() -> dict:
         },
         "expected_report_interval_seconds": 3600,
     }
-    receipt = {
+    receipt: dict[str, Any] = {
         "event_id": RESOURCE,
         "session_id": None,
         "instance_id": VERSION,

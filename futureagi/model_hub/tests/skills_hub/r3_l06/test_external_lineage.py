@@ -36,9 +36,11 @@ def test_external_mapping_matches_all_immutable_source_fields(
         relation="identical",
         mapping={},
     )
-    assert mapped_external_version(
+    mapped = mapped_external_version(
         principal=principal, source=source, resource_id=context.pk
-    )["version_id"] == str(version.pk)
+    )
+    assert mapped is not None
+    assert mapped["version_id"] == str(version.pk)
     for field in source:
         assert (
             mapped_external_version(

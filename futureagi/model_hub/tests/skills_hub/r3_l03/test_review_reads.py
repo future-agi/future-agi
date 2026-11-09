@@ -11,6 +11,7 @@ from model_hub.models.skills_hub_v12 import (
     HubSkillContextReceipt,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v12.authoring import (
     save_context_draft,
     start_context_draft,
@@ -36,13 +37,16 @@ def test_compare_pages_cover_the_complete_tree_with_revision_bound_text_links(
         revision=0,
         from_version=first.number,
     )
+    files: list[FileInput] = [{"path": "AGENTS.md", "content": "Repair"}]
+    files.extend(
+        {"path": f"reference/{index}.md", "content": "Text"} for index in range(30)
+    )
     draft = save_context_draft(
         principal=principal,
         context_id=context.pk,
         revision=draft.revision,
         base_version=1,
-        files=[{"path": "AGENTS.md", "content": "Repair"}]
-        + [{"path": f"reference/{index}.md", "content": "Text"} for index in range(30)],
+        files=files,
         description="Repair",
         note="",
     )

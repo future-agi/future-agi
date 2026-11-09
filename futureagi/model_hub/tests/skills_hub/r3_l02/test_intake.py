@@ -219,10 +219,12 @@ def test_second_import_three_columns_preserves_draft_then_stages(
     skill.refresh_from_db()
     assert skill.tags == ["retained"] and skill.latest_version_number == 2
     assert updated["published"] is False
-    assert lookup_migration(
+    mapped = lookup_migration(
         principal=principal,
         **{f"source_{key}": value for key, value in identity.items()},
-    )["version_id"] == str(version.pk)
+    )
+    assert mapped is not None
+    assert mapped["version_id"] == str(version.pk)
 
 
 def test_keep_source_update_does_not_replace_draft(
@@ -292,6 +294,7 @@ def test_export_round_trip_and_derived_receipt(
         principal=principal,
         **{f"source_{key}": value for key, value in identity.items()},
     )
+    assert mapped is not None
     assert (
         mapped["version_id"] == str(version.pk) and mapped["digest"] != changed.digest
     )

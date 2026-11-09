@@ -1,6 +1,7 @@
 """Whole-context roots, historical arms and progressive child delivery."""
 
 import json
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -122,7 +123,7 @@ def test_root_and_catalog_are_exact_but_expectations_are_not_task_messages(
 
 def test_linked_files_keep_parent_paths_and_source_identity(snapshot):
     handle = next(iter(context_catalog(snapshot=snapshot, variant="candidate")))
-    active = set()
+    active: set[str] = set()
     root, receipt, requested = process_context_tool(
         snapshot=snapshot,
         variant="candidate",
@@ -189,6 +190,7 @@ def test_root_delivery_is_not_activation_or_answer_uplift(snapshot, case):
     receipt = root_delivery_receipt(
         snapshot=snapshot, variant="candidate", call_id=str(uuid4())
     )
+    assert receipt is not None
     assert receipt["path"] == "AGENTS.md"
     assert receipt["source_version_id"] is None
     assert receipt["eof"] is True
@@ -238,7 +240,7 @@ def test_native_worker_capability_cannot_be_enabled_by_testing_flag(
 
 
 def test_historical_baseline_is_not_rewritten_to_production():
-    config = {
+    config: dict[str, Any] = {
         "harness": "contexts-text-v1.2",
         "candidate": {"kind": "version", "version": 6, "digest": "sha256:" + "a" * 64},
         "cases": {"kind": "ad_hoc", "cases": []},

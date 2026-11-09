@@ -49,6 +49,7 @@ def test_retained_payload_cannot_change_under_a_reviewed_fingerprint(
         principal=principal, uploads=uploads(make_skill_files(body="Reviewed"))
     )
     payload = plan.payload
+    assert payload is not None
     payload["items"][0]["files"][0]["content"] += "Altered after preview"
     HubSkillIntakePlan.objects.filter(pk=plan.pk).update(payload=payload)
     with pytest.raises(SkillsHubError) as error:

@@ -85,7 +85,9 @@ def test_legacy_destructive_save_checkpoints_original_bytes(
         revision=draft.revision,
     )
     checkpoint = HubSkillDraftCheckpoint.objects.get(skill=hub_skill)
+    assert checkpoint.payload is not None
     assert checkpoint.payload["files"] == original
+    assert checkpoint.payload is not None
     assert checkpoint.payload["note"] == "before"
     assert checkpoint.owner_id == user.pk and checkpoint.reason == "deletion"
 
@@ -106,7 +108,9 @@ def test_safe_save_checkpoints_old_purpose_not_replacement(principal, context):
         description="New purpose",
     )
     checkpoint = HubSkillDraftCheckpoint.objects.get(skill=context)
+    assert checkpoint.payload is not None
     assert checkpoint.payload["context_spec"]["description"] == old_purpose
+    assert checkpoint.payload is not None
     assert checkpoint.payload["files"][1]["content"] == "Retain me."
 
 
@@ -236,6 +240,7 @@ def test_legacy_move_records_pre_move_baseline(execution, publish_skill, hub_act
     )
     evidence = HubSkillTestEvidence.objects.get(run=run)
     assert evidence.currentness_at_action["baseline"] is True
+    assert evidence.label_event is not None
     assert evidence.label_event.to_version == candidate.number
 
 

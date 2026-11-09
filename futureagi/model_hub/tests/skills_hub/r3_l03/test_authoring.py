@@ -1,7 +1,7 @@
 """Durable accepted locks, publication origin/head and non-destructive retries."""
 
 from copy import deepcopy
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -24,6 +24,7 @@ from model_hub.services.skills_hub.v12.authoring import (
     save_context_draft,
     start_context_draft,
 )
+from model_hub.services.skills_hub.v12.types import LinkInput, Selector
 
 pytestmark = pytest.mark.django_db
 
@@ -44,7 +45,9 @@ def test_accepted_v8_survives_upstream_v9_edits_and_publication(
             files=make_skill_files(body=f"Policy {number}"),
             labels=["production"],
         )
-    links = [{"skill_id": str(hub_skill.pk), "selector": {"label": "production"}}]
+    links: list[LinkInput] = [
+        {"skill_id": str(hub_skill.pk), "selector": {"label": "production"}}
+    ]
     draft = accept_links(context, links)
     original_lock = deepcopy(draft.resolved_lock)
     publish_skill(
@@ -97,7 +100,9 @@ def test_refresh_detects_label_aba_but_retained_links_ignore_upstream(
     second = publish_skill(
         hub_skill, files=make_skill_files(body="Second policy")
     ).version
-    links = [{"skill_id": str(hub_skill.pk), "selector": {"label": "production"}}]
+    links: list[LinkInput] = [
+        {"skill_id": str(hub_skill.pk), "selector": {"label": "production"}}
+    ]
     draft = accept_links(context, links)
     keep = preview_dependencies(
         principal=principal,
@@ -149,7 +154,9 @@ def test_dependency_replay_returns_original_receipt_without_overwriting_later_ed
     principal, context, hub_skill, publish_skill
 ):
     version = publish_skill(hub_skill).version
-    links = [{"skill_id": str(hub_skill.pk), "selector": {"version": version.number}}]
+    links: list[LinkInput] = [
+        {"skill_id": str(hub_skill.pk), "selector": {"version": version.number}}
+    ]
     draft = context.drafts.get()
     preview = preview_dependencies(
         principal=principal,
@@ -391,7 +398,7 @@ def test_wrong_kind_foreign_leaf_pin_refresh_and_missing_label_are_not_accepted(
     principal, context, context_factory, hub_skill, publish_skill
 ):
     publish_skill(hub_skill)
-    cases = [
+    cases: list[tuple[UUID, Selector, list[UUID], str]] = [
         (
             context_factory("another-context").pk,
             {"label": "production"},

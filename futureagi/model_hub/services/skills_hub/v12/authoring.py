@@ -1041,3 +1041,48 @@ def restore_context(
             response=_publication_receipt(result),
         )
         return result
+
+
+def read_context_draft_file(
+    *,
+    principal: SkillPrincipal,
+    context_id: UUID,
+    revision: int,
+    path: str,
+    offset: int = 0,
+    max_bytes: int = 32768,
+) -> dict:
+    """Read only the exact authorized compiled revision, including accepted leaves."""
+    from model_hub.services.skills_hub.packages import file_sha256
+    from model_hub.services.skills_hub.v11.runner import read_snapshot_chunk
+
+    compiled = get_compiled_draft(
+        principal=principal, context_id=context_id, revision=revision
+    )
+    identity = str(context_id)
+    snapshot = {
+        identity: {
+            "skill_id": identity,
+            "version_id": None,
+            "digest": compiled.digest,
+            "files": [
+                {
+                    **file,
+                    "sha256": file_sha256(file["content"]),
+                    "size_bytes": len(file["content"].encode("utf-8")),
+                }
+                for file in compiled.files
+            ],
+        }
+    }
+    return {
+        **read_snapshot_chunk(
+            snapshot=snapshot,
+            skill_handle=identity,
+            path=path,
+            offset=offset,
+            max_bytes=max_bytes,
+        ),
+        "context_id": identity,
+        "revision": revision,
+    }

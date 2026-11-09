@@ -23,6 +23,7 @@ from model_hub.services.skills_hub.r3.spend_policy import (
     text_call_reservation_id,
     update_spend_policy,
 )
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.tests.skills_hub.r3_l05 import test_release_requests as reviews
 
 actors = reviews.actors
@@ -167,7 +168,7 @@ def test_same_origin_endpoint_change_is_detected_without_secret_echo():
 def test_mixed_scalar_metadata_keys_do_not_crash_static_review():
     from model_hub.services.skills_hub.r3.capability_changes import capability_changes
 
-    files = [
+    files: list[FileInput] = [
         {
             "path": "SKILL.md",
             "content": "---\nname: fixture\ndescription: Use for testing.\nhooks: {1: first, event: second}\n---\nBody",

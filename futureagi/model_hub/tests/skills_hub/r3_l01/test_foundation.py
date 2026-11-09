@@ -2,6 +2,7 @@
 
 import json
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -28,6 +29,7 @@ from model_hub.services.skills_hub.drafts import _tombstone
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.packages import manifest_digest
 from model_hub.services.skills_hub.snapshots import snapshot_version
+from model_hub.services.skills_hub.types import FileInput
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 from model_hub.services.skills_hub.v12.credentials import (
     authenticate_credential,
@@ -147,7 +149,7 @@ def _manifest_url(result):
 
 def test_issuance_replay_never_returns_or_stores_secret(human, published):
     operation = str(uuid4())
-    body = {
+    body: dict[str, Any] = {
         "purpose": "consume",
         "grants": [
             {
@@ -412,7 +414,7 @@ def test_common_persistence_context_description_and_quarantine_closure(
         "owned_paths": ["AGENTS.md"],
         "links": [],
     }
-    files = [
+    files: list[FileInput] = [
         {"path": "AGENTS.md", "content": "Use reviewed support policy."},
         {
             "path": ".futureagi/context.json",
@@ -452,7 +454,7 @@ def test_common_persistence_context_description_and_quarantine_closure(
     published.skill.deleted = True
     published.skill.save(update_fields=["deleted"])
     response = client.get(
-        BASE + "contexts/resolve/", {"name": context.name, "version": 1}
+        BASE + "contexts/resolve/", {"name": str(context.name), "version": "1"}
     )
     assert response.status_code == 200, response.data
     HubSkillContextQuarantine.objects.create(
@@ -464,7 +466,7 @@ def test_common_persistence_context_description_and_quarantine_closure(
         reason="Synthetic child block",
     )
     response = client.get(
-        BASE + "contexts/resolve/", {"name": context.name, "version": 1}
+        BASE + "contexts/resolve/", {"name": str(context.name), "version": "1"}
     )
     assert response.status_code == 422
 
@@ -558,12 +560,12 @@ def test_successful_use_is_observable_and_monotonic(consumer, human, published):
     credential = HubSkillContextCredential.objects.get(pk=issued["id"])
     assert credential.last_used_at is None
     result = _resolved(client)
-    credential.refresh_from_db()
+    credential = HubSkillContextCredential.objects.get(pk=credential.pk)
     first = credential.last_used_at
     assert first is not None
     principal = authenticate_credential(token=issued["secret"])
     record_credential_use(principal=principal, observed_at=first - timedelta(seconds=1))
-    credential.refresh_from_db()
+    credential = HubSkillContextCredential.objects.get(pk=credential.pk)
     assert credential.last_used_at == first
     response = client.get(
         BASE + f"consumption/{published.skill_id}/versions/1/files/",
@@ -571,7 +573,8 @@ def test_successful_use_is_observable_and_monotonic(consumer, human, published):
         HTTP_X_CONTEXT_RESOLUTION=result["resolution_id"],
     )
     assert response.status_code == 200
-    credential.refresh_from_db()
+    credential = HubSkillContextCredential.objects.get(pk=credential.pk)
+    assert credential.last_used_at is not None
     assert credential.last_used_at >= first
     listing = human.get(BASE + "contexts/credentials/").data["result"]["results"]
     assert listing[0]["last_used_at"] is not None
@@ -582,14 +585,14 @@ def test_successful_use_is_observable_and_monotonic(consumer, human, published):
         HTTP_X_CONTEXT_RESOLUTION=result["resolution_id"],
     )
     assert response.status_code == 404
-    credential.refresh_from_db()
+    credential = HubSkillContextCredential.objects.get(pk=credential.pk)
     assert credential.last_used_at == last
     client.credentials(HTTP_AUTHORIZATION=f"Context {issued['id']}.{'z' * 43}")
     assert (
         client.get(BASE + "consumption/resolve/", {"name": "help-desk"}).status_code
         == 401
     )
-    credential.refresh_from_db()
+    credential = HubSkillContextCredential.objects.get(pk=credential.pk)
     assert credential.last_used_at == last
 
 

@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -32,7 +33,7 @@ def test_hosted_callback_rolls_back_without_shared_reservation(
         SkillScope(organization.id, workspace.id), user.id, None, "human"
     )
     files = make_skill_files()
-    snapshots = {
+    snapshots: dict[str, dict | None] = {
         arm: {
             "skill_id": str(hub_skill.id),
             "digest": manifest_digest(files),
@@ -40,7 +41,11 @@ def test_hosted_callback_rolls_back_without_shared_reservation(
         }
         for arm in ("candidate", "reference")
     }
-    case = {"id": str(uuid4()), "prompt": "Synthetic request", "fixtures": []}
+    case: dict[str, Any] = {
+        "id": str(uuid4()),
+        "prompt": "Synthetic request",
+        "fixtures": [],
+    }
     spec = build_execution_spec(
         configuration=native_configuration,
         snapshots=snapshots,

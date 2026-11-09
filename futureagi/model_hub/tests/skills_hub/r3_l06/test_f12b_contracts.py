@@ -48,11 +48,12 @@ def test_session_response_matches_foundation_and_accounts_success(
     )
     schema = SessionOut(data=output)
     assert schema.is_valid(), schema.errors
-    row.refresh_from_db()
+    row = HubSkillContextCredential.objects.get(pk=row.pk)
     assert row.last_used_at is not None
     opened_at = row.last_used_at
     check_session_access(principal=consume, session_id=output["session_id"])
-    row.refresh_from_db()
+    row = HubSkillContextCredential.objects.get(pk=row.pk)
+    assert row.last_used_at is not None
     assert row.last_used_at >= opened_at
 
 
@@ -88,12 +89,12 @@ def test_reporting_updates_last_use_only_after_acceptance(
             binding_id=binding["id"],
             receipt={**receipt, "digest": "sha256:" + "0" * 64},
         )
-    row.refresh_from_db()
+    row = HubSkillContextCredential.objects.get(pk=row.pk)
     assert row.last_used_at is None
     result = append_receipt(
         principal=reporter, binding_id=binding["id"], receipt=receipt
     )
-    row.refresh_from_db()
+    row = HubSkillContextCredential.objects.get(pk=row.pk)
     assert row.last_used_at is not None
     assert (
         append_receipt(principal=reporter, binding_id=binding["id"], receipt=receipt)
