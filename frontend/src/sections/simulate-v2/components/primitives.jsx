@@ -276,8 +276,10 @@ export function StatusDot({ status, size = 8, live, hollow = false }) {
   const meta = STATUS_META[status] || STATUS_META.queued;
   const color = statusColors(theme, meta.role).solid;
   const animate = live ?? ["running", "booting", "grading"].includes(status);
+  /* Spans, so a dot can sit inside a line of text (a <div> in a <p> is invalid). */
   return (
     <Box
+      component="span"
       sx={{
         position: "relative",
         display: "grid",
@@ -289,7 +291,9 @@ export function StatusDot({ status, size = 8, live, hollow = false }) {
     >
       {animate && (
         <Box
+          component="span"
           sx={{
+            display: "block",
             position: "absolute",
             width: size,
             height: size,
@@ -300,7 +304,9 @@ export function StatusDot({ status, size = 8, live, hollow = false }) {
         />
       )}
       <Box
+        component="span"
         sx={{
+          display: "block",
           width: size,
           height: size,
           borderRadius: "50%",
