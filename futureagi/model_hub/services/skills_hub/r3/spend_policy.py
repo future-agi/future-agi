@@ -3,6 +3,9 @@
 Lock order: organization execution quota -> workspace -> policy -> reservations.
 Call admission before acquiring resource/job locks. Calls consume their admission
 ceiling, not a second balance. Calendar periods are UTC months; no amount defaults.
+Before an administrator sets a workspace cap, legacy text/assist work retains its
+explicit per-job ceilings. Its revision-zero ledger has no period cap, not a
+fabricated dollar allowance. Native execution still requires an explicit policy.
 """
 
 from __future__ import annotations
@@ -149,8 +152,14 @@ def _committed(period: HubSkillSpendPeriod) -> Decimal:
     return Decimal(open_total) + closed + excess
 
 
-def _require_policy(policy: HubSkillSpendPolicy | None) -> HubSkillSpendPolicy:
-    if policy is None or not policy.enabled:
+def _require_policy(
+    policy: HubSkillSpendPolicy | None, *, source: str
+) -> HubSkillSpendPolicy:
+    if (
+        policy is None
+        or not policy.enabled
+        or (source == "simulation_native" and policy.period_limit_usd is None)
+    ):
         raise _error(
             "spend_policy_required",
             "An administrator must explicitly enable a workspace allowance.",
@@ -210,7 +219,11 @@ def update_spend_policy(
         else {
             "revision": policy.revision,
             "enabled": policy.enabled,
-            "period_limit_usd": str(policy.period_limit_usd),
+            "period_limit_usd": (
+                str(policy.period_limit_usd)
+                if policy.period_limit_usd is not None
+                else None
+            ),
         }
     )
     if policy is None:
@@ -264,15 +277,16 @@ def spend_summary(*, principal: SkillPrincipal) -> dict:
     rows = HubSkillSpendReservation.objects.filter(
         **_scope(principal.scope), parent__isnull=False
     )
+    limit = policy.period_limit_usd if policy else None
     return {
         "revision": policy.revision if policy else 0,
-        "enabled": bool(policy and policy.enabled),
-        "period_limit_usd": str(policy.period_limit_usd) if policy else None,
+        "enabled": policy.enabled if policy else True,
+        "period_limit_usd": str(limit) if limit is not None else None,
         "starts_at": start.isoformat(),
         "ends_at": end.isoformat(),
         "committed_usd": str(committed),
         "remaining_usd": (
-            str(max(ZERO, policy.period_limit_usd - committed)) if policy else None
+            str(max(ZERO, limit - committed)) if limit is not None else None
         ),
         "known_estimate_usd": str(
             rows.filter(period=period).aggregate(
@@ -323,14 +337,29 @@ def reserve_admission(
                 "idempotency_conflict", "The admission operation has another identity."
             )
         return old
-    policy = _require_policy(policy)
+    if policy is None and source in {"skills_text", "skills_assist"}:
+        # Workspace/quota locks serialize this with the first administrative
+        # update. The same row/period is retained when a real cap is introduced,
+        # so existing reservations and unknown costs cannot escape that cap.
+        assert principal.user_id is not None  # Required by _authorize above.
+        policy = HubSkillSpendPolicy.objects.create(
+            **_scope(principal.scope),
+            revision=0,
+            enabled=True,
+            period_limit_usd=None,
+            updated_by_id=principal.user_id,
+        )
+    policy = _require_policy(policy, source=source)
     start, end = _bounds(timezone.now())
     period, _ = HubSkillSpendPeriod.objects.get_or_create(
         policy=policy,
         starts_at=start,
         defaults={**_scope(principal.scope), "ends_at": end},
     )
-    if _committed(period) + amount > policy.period_limit_usd:
+    if (
+        policy.period_limit_usd is not None
+        and _committed(period) + amount > policy.period_limit_usd
+    ):
         raise _error(
             "budget_exhausted", "The workspace period allowance is exhausted.", 429
         )
@@ -391,13 +420,13 @@ def reserve_paid_call(
                 "idempotency_conflict", "The paid operation has another identity."
             )
         return old  # This is a receipt, never permission to resend.
-    policy = _require_policy(policy)
+    policy = _require_policy(policy, source=root.source)
     if root.parent_id or root.kind != "admission" or root.state == "closed":
         raise _error("reservation_closed", "This admission is not open.")
     if (
-        _committed(root.period) > policy.period_limit_usd
-        or _charges(root.hub_skill_calls.all()) + amount > root.reserved_usd
-    ):
+        policy.period_limit_usd is not None
+        and _committed(root.period) > policy.period_limit_usd
+    ) or _charges(root.hub_skill_calls.all()) + amount > root.reserved_usd:
         raise _error(
             "budget_exhausted",
             "The reviewed admission or workspace allowance is exhausted.",
@@ -421,8 +450,9 @@ def mark_paid_call_sent(
     *, principal: SkillPrincipal, reservation_id: UUID, generation: int
 ) -> None:
     _authorize(principal)
-    policy = _require_policy(_lock(principal.scope))
+    policy = _lock(principal.scope)
     row = _reservation(principal.scope, reservation_id)
+    policy = _require_policy(policy, source=row.source)
     if (
         row.claim_generation != generation
         or row.state != "prepared"
@@ -430,7 +460,10 @@ def mark_paid_call_sent(
         or row.parent.state == "closed"
     ):
         raise _error("execution_unknown", "This call is not eligible for transmission.")
-    if _committed(row.period) > policy.period_limit_usd:
+    if (
+        policy.period_limit_usd is not None
+        and _committed(row.period) > policy.period_limit_usd
+    ):
         raise _error("budget_exhausted", "The workspace allowance was reduced.", 429)
     quota = HubSkillExecutionQuota.objects.get(
         organization_id=principal.scope.organization_id

@@ -1,14 +1,20 @@
 """Public authoring journey, immutable locks and fail-closed campaign admission."""
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
+from rest_framework.test import APIClient
 
+from accounts.models import OrgApiKey
 from model_hub.models.skills_hub import HubSkill
 from model_hub.models.skills_hub_v12 import HubSkillContextDependency
 from model_hub.tests.skills_hub import test_i2_integration as fixtures
+from model_hub.tests.skills_hub.r3_l05 import test_release_requests as review_fixtures
 
 admin = fixtures.admin
+actors = review_fixtures.actors
 
 pytestmark = pytest.mark.django_db(transaction=True)
 BASE = "/model-hub/skills/contexts/"
@@ -25,8 +31,97 @@ def post(client, url, data, status=200):
     )
 
 
-def test_three_contexts_accept_v8_then_publish_without_following_v9(
-    admin, hub_skill, publish_skill, make_skill_files
+@pytest.fixture
+def reviewer(actors, organization, workspace):
+    key = OrgApiKey.objects.create(
+        name="Context HTTP reviewer",
+        type="user",
+        user_id=actors[1].user_id,
+        api_key=f"test-{uuid4()}",
+        secret_key=f"test-{uuid4()}",
+        organization=organization,
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+    return client
+
+
+def release_and_resolve(admin, reviewer, reviewer_id, identity, name, version):
+    requests = "/model-hub/skills/release-requests/"
+    preview = post(
+        admin,
+        requests + "preview/",
+        {
+            "resource_id": identity,
+            "kind": "agent_context",
+            "candidate_version_id": version["id"],
+            "label": "production",
+            "evidence": [],
+        },
+    )
+    submitted = post(
+        admin,
+        requests,
+        {
+            "packet": preview["packet"],
+            "expected_fingerprint": preview["fingerprint"],
+            "recipient_ids": [str(reviewer_id)],
+        },
+        201,
+    )
+    request_url = requests + submitted["id"] + "/"
+    action = {
+        "revision": submitted["revision"],
+        "expected_fingerprint": preview["fingerprint"],
+    }
+    post(
+        reviewer,
+        request_url + "decisions/",
+        {
+            **action,
+            "decision": "approve",
+            "comment": "Reviewed exact locked context",
+        },
+    )
+    released = post(admin, request_url + "execute/", action)
+    assert released["post_move_state"]["version"] == 1
+    credential = post(
+        admin,
+        BASE + "credentials/",
+        {
+            "purpose": "consume",
+            "grants": [
+                {
+                    "kind": "agent_context",
+                    "resource_id": identity,
+                    "labels": ["production"],
+                    "version_ids": [],
+                }
+            ],
+            "binding_ids": [],
+            "expires_at": (timezone.now() + timedelta(days=1)).isoformat(),
+        },
+        201,
+    )
+    consumer = APIClient()
+    consumer.credentials(HTTP_AUTHORIZATION="Context " + credential["secret"])
+    manifest = result(
+        consumer.get(
+            BASE + "resolve/",
+            {
+                "name": name,
+                "label": "production",
+            },
+        )
+    )
+    assert manifest["version_id"] == version["id"]
+    assert manifest["digest"] == version["digest"]
+    return consumer, manifest
+
+
+def test_three_contexts_accept_v8_then_publish_release_and_resolve_without_following_v9(
+    admin, hub_skill, publish_skill, make_skill_files, reviewer, actors
 ):
     for number in range(1, 9):
         publish_skill(
@@ -119,7 +214,32 @@ def test_three_contexts_accept_v8_then_publish_without_following_v9(
         assert detail["context"]["kind"] == "agent_context"
         assert detail["own_draft"] is None
         assert result(admin.get(root + "versions/"))["count"] == 1
-        assert result(admin.get(root + "versions/1/"))["number"] == 1
+        version = result(admin.get(root + "versions/1/"))
+        assert version["number"] == 1
+        consumer, manifest = release_and_resolve(
+            admin,
+            reviewer,
+            actors[1].user_id,
+            identity,
+            context.name,
+            version,
+        )
+        headers = {"HTTP_X_CONTEXT_RESOLUTION": manifest["resolution_id"]}
+        linked = next(
+            row for row in manifest["files"] if row["path"].endswith("/SKILL.md")
+        )
+        chunk = result(
+            consumer.get(
+                root + "versions/1/files/", {"path": linked["path"]}, **headers
+            )
+        )
+        assert "Policy 8" in chunk["text"] and "Policy 9" not in chunk["text"]
+        access = result(
+            consumer.post(
+                root + "versions/1/access-check/", {}, format="json", **headers
+            )
+        )
+        assert access["allowed"] is True
     assert result(admin.get(BASE))["count"] == 3
 
 

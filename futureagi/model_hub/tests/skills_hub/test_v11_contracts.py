@@ -231,6 +231,9 @@ def test_run_config_round_trip_preserves_typed_json(configuration):
         ("organization_id", str(uuid4())),
         ("api_key", "not-a-credential"),
     ],
+    # Values include UUIDs generated independently by each xdist worker. Stable
+    # case identities keep parallel collection identical without changing data.
+    ids=["expected-draft-revision", "organization-id", "api-key"],
 )
 def test_unknown_request_fields_rejected(configuration, field, value):
     configuration[field] = value

@@ -254,8 +254,9 @@ class HubSkillNativeEvidence(ContextRecord):
 
 class HubSkillSpendPolicy(ContextRecord):
     revision = models.PositiveBigIntegerField(default=1)
-    # No invented paid allowance: an administrator must supply an explicit policy.
-    period_limit_usd = models.DecimalField(max_digits=18, decimal_places=8)
+    # Revision zero preserves legacy per-job ceilings without inventing a paid
+    # workspace allowance. Only an administrator can introduce a period cap.
+    period_limit_usd = models.DecimalField(max_digits=18, decimal_places=8, null=True)
     enabled = models.BooleanField(default=False)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -267,7 +268,14 @@ class HubSkillSpendPolicy(ContextRecord):
         constraints = [
             models.UniqueConstraint(
                 fields=["organization", "workspace"], name="hub_skill_spend_workspace"
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(revision=0, enabled=True, period_limit_usd__isnull=True)
+                    | models.Q(revision__gt=0, period_limit_usd__isnull=False)
+                ),
+                name="hub_skill_spend_policy_mode",
+            ),
         ]
 
 

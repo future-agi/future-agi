@@ -66,11 +66,72 @@ def call(principal, root, amount="3", **kwargs):
     )
 
 
-def test_no_policy_and_no_default_amount(principal):
+def test_native_requires_explicit_policy_without_inventing_default_amount(principal):
     assert spend_summary(principal=principal)["period_limit_usd"] is None
     with pytest.raises(SkillsHubError, match="explicitly enable"):
-        admit(principal)
+        admit(principal, source="simulation_native")
     assert HubSkillSpendReservation.objects.count() == 0
+
+
+@pytest.mark.parametrize("source", ["skills_text", "skills_assist"])
+def test_implicit_ledger_preserves_job_ceiling_and_discloses_no_period_cap(
+    principal, source
+):
+    root = admit(principal, source=source)
+    assert root.period.policy.revision == 0
+    summary = spend_summary(principal=principal)
+    assert summary["enabled"] is True
+    assert summary["period_limit_usd"] is summary["remaining_usd"] is None
+    assert Decimal(summary["committed_usd"]) == 8
+    reserved = call(principal, root, "8")
+    with pytest.raises(SkillsHubError) as error:
+        call(principal, root, "0.01")
+    assert error.value.code == "budget_exhausted"
+    mark_paid_call_sent(principal=principal, reservation_id=reserved.pk, generation=0)
+    settle_paid_call(
+        scope=principal.scope,
+        reservation_id=reserved.pk,
+        generation=0,
+        actual_usd=None,
+        sender_stopped=True,
+    )
+    close_admission(scope=principal.scope, admission_id=root.pk)
+    assert Decimal(spend_summary(principal=principal)["unknown_reserved_usd"]) == 8
+    with pytest.raises(SkillsHubError, match="explicitly enable"):
+        admit(principal, source="simulation_native")
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_policy_takes_over_implicit_ledger_without_resetting_usage(
+    principal, enabled
+):
+    root = admit(principal)
+    reserved = call(principal, root)
+    policy = update_spend_policy(
+        principal=principal,
+        revision=0,
+        enabled=enabled,
+        period_limit_usd="1",
+        idempotency_key=uuid4(),
+    )
+    assert policy.pk == root.period.policy_id
+    assert policy.revision == 1
+    assert Decimal(spend_summary(principal=principal)["committed_usd"]) == 8
+    code = "budget_exhausted" if enabled else "spend_policy_required"
+    for operation in (
+        lambda: admit(principal, "0.01"),
+        lambda: call(principal, root, "0.01"),
+        lambda: mark_paid_call_sent(
+            principal=principal,
+            reservation_id=reserved.pk,
+            generation=0,
+        ),
+    ):
+        with pytest.raises(SkillsHubError) as error:
+            operation()
+        assert error.value.code == code
+    reserved.refresh_from_db()
+    assert reserved.state == "prepared" and not reserved.sender_active
 
 
 @pytest.mark.parametrize(

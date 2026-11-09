@@ -161,18 +161,29 @@ def test_release_state_serializes_real_label_actor(principal, context, publish_c
     assert result["labels"][0]["version_id"] == str(version.pk)
 
 
-def test_new_job_requires_explicit_policy_and_rolls_back(
-    execution, workspace_spend_policy
+@pytest.mark.parametrize(
+    ("enabled", "limit", "code"),
+    [(False, "100", "spend_policy_required"), (True, "1", "budget_exhausted")],
+)
+def test_new_job_enforces_explicit_policy_and_rolls_back(
+    execution, workspace_spend_policy, enabled, limit, code
 ):
-    workspace_spend_policy.delete()
+    workspace_spend_policy.enabled = enabled
+    workspace_spend_policy.period_limit_usd = Decimal(limit)
+    workspace_spend_policy.save(update_fields=["enabled", "period_limit_usd"])
     with pytest.raises(SkillsHubError) as error:
         execution_fixtures.accepted(execution)
-    assert error.value.code == "spend_policy_required"
+    assert error.value.code == code
     assert not HubSkillJob.objects.exists()
     assert not execution[3].called
 
 
-def test_actual_worker_calls_share_one_admission_and_release_unused(execution):
+@pytest.mark.parametrize("explicit_policy", [False, True])
+def test_actual_worker_calls_share_one_admission_and_release_unused(
+    execution, workspace_spend_policy, explicit_policy
+):
+    if not explicit_policy:
+        workspace_spend_policy.delete()
     run, _, _ = execution_fixtures.accepted(execution)
     scope = execution[0].scope
     root = HubSkillSpendReservation.objects.get(operation_id=run.pk)
