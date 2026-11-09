@@ -218,7 +218,10 @@ class TestCandidate:
             {"expected_default_id": str(a1.id)},
             format="json",
         )
-        assert shipped.status_code == 200, shipped.content
+        # Shipping by hand checks the pairing first; the default moves when it passes.
+        assert shipped.status_code == 202, shipped.content
+        assert _defaults(environment) == [a1.id]
+        settle_validations(environment)
         assert _defaults(environment) == [version.id]
 
     def test_a_repeated_candidate_checks_its_pending_twin(
@@ -277,6 +280,7 @@ class TestCandidate:
         assert _side(change).parent.agent_version_id == a1.id
         assert _preflight(change).status == "passed"
         assert _preflight(candidate).status == "passed"
+        settle_validations(environment)
 
         assert _defaults(environment) == [change.id]
         assert _outcomes(change) == {str(environment.id): "activated"}
