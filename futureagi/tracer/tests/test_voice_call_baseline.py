@@ -343,7 +343,6 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
     from opentelemetry.sdk.trace.export import SpanExportResult
 
     import simulate.services.sim_collector_emit as sim_emit
-    import tracer.selectors
     import tracer.services.collector_ingest as collector_ingest
     import tracer.services.observability_providers as providers
     import tracer.utils.vapi as vapi
@@ -358,9 +357,9 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
         "usage": [],
     }
 
-    def _no_key(project_id, provider):
-        seen["key_lookups"].append((str(project_id), str(provider)))
-        return None
+    def _provider_key(provider):
+        seen["key_lookups"].append((str(provider.id), str(provider.provider)))
+        return "synthetic-provider-key"
 
     def _leave_url(*, audio_url, **_kwargs):
         return audio_url, 0
@@ -390,7 +389,7 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
             # Called whatever the export did; nothing stored depends on it.
             pass
 
-    patch.setattr(tracer.selectors, "get_agent_api_key", _no_key)
+    patch.setattr(providers.ObservabilityService, "resolve_vapi_key", _provider_key)
     patch.setattr(vapi, "convert_audio_url_to_s3_sync", _leave_url)
     patch.setattr(
         VapiRecordingService,
@@ -408,13 +407,12 @@ def _run_top_span(patch: pytest.MonkeyPatch, call: dict) -> tuple[dict, Any]:
 
     project = _baseline_project()
     provider = SimpleNamespace(provider="vapi", id=PROVIDER_ROW_ID, project=project)
-    # The real poll resolves the agent's key; the baseline has none, so the
-    # normaliser takes its unauthenticated branch, which the stubs above
-    # make harmless.
+    # Stub the provider-scoped credential boundary, not the retired project
+    # lookup. Recording I/O stays stubbed; the stored baseline is unchanged.
     outcome = op.process_and_store_logs([call], provider, api_key=None)
 
     assert outcome == op.StoreOutcome(stored=1, malformed=0, export_failed=0), outcome
-    assert seen["key_lookups"] == [(str(PROJECT_ID), "vapi")]
+    assert seen["key_lookups"] == [(str(PROVIDER_ROW_ID), "vapi")]
     assert seen["usage"] == []
     assert seen["credentials"] == [(str(ORGANIZATION_ID), str(WORKSPACE_ID))]
     [export] = seen["exports"]

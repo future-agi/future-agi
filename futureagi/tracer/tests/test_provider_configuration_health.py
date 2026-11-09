@@ -348,6 +348,62 @@ def test_preversioned_encrypted_credential_is_authoritative(provider, monkeypatc
     assert VapiRecordingService._api_key_from_agent_definition(agent) is None
 
 
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+def test_direct_vapi_rehost_preserves_preversioned_plaintext_key(provider, monkeypatch):
+    agent = attach_agent(provider, api_key="legacy-plaintext-key")
+    assert agent.latest_version is None
+    assert not ProviderCredentials.objects.filter(agent_definition=agent).exists()
+    normalizer = Mock(return_value={})
+    monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
+
+    op.process_and_store_logs([{"id": "synthetic-call"}], provider)
+
+    assert normalizer.call_args.kwargs["api_key"] == "legacy-plaintext-key"
+    assert ObservabilityService.resolve_vapi_configuration(provider).api_key == (
+        "legacy-plaintext-key"
+    )
+
+
+@pytest.mark.parametrize("provider", ["vapi"], indirect=True)
+@pytest.mark.parametrize("state", ["absent", "empty", "wrong_provider", "unreadable"])
+def test_versioned_vapi_credential_authority_with_legacy_key(provider, monkeypatch, state):
+    agent = attach_agent(provider, api_key="obsolete-plaintext")
+    version = AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=provider.organization,
+        workspace=provider.workspace,
+        version_number=1,
+        status="active",
+        commit_message="Synthetic version",
+    )
+    ProviderCredentials.objects.create(
+        agent_definition=agent, provider_type="vapi", api_key="legacy-encrypted-key"
+    )
+    if state != "absent":
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type="retell" if state == "wrong_provider" else "vapi",
+            api_key="" if state == "empty" else (
+                "enc::invalid" if state == "unreadable" else "other-provider-key"
+            ),
+        )
+    normalizer = Mock(return_value={})
+    monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
+
+    if state == "absent":
+        # Versions predating the credential migration may use the encrypted row.
+        op.process_and_store_logs([{"id": "synthetic-call"}], provider)
+        assert normalizer.call_args.kwargs["api_key"] == "legacy-encrypted-key"
+        assert ObservabilityService.resolve_vapi_configuration(provider).api_key == (
+            "legacy-encrypted-key"
+        )
+    else:
+        # An existing version row must not resurrect either kind of stale key.
+        with pytest.raises(ValueError):
+            op.process_and_store_logs([{"id": "synthetic-call"}], provider)
+        normalizer.assert_not_called()
+
+
 @pytest.mark.parametrize("explicit_key", [None, ""])
 def test_missing_vapi_key_does_not_fall_back_to_public_download(
     provider, monkeypatch, explicit_key
