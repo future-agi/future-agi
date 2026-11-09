@@ -2,13 +2,26 @@
 
 import pytest
 
-from simulate.tests.test_harness_actors import BASE, MANAGER, _add
+from simulate.tests.test_harness_actors import BASE, MANAGER
 from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
 
 pytestmark = pytest.mark.django_db
+
+
+def _add(auth_client, environment, actor, revision=None):
+    """Add an actor, confirming any action it shares: these tests are about the review, not permission conflicts."""
+    return auth_client.post(
+        f"{BASE}/{environment.id}/actors/",
+        {
+            "actor": actor,
+            "share_actions": list(actor.get("permitted_actions") or []),
+            **({"expected_revision": revision} if revision is not None else {}),
+        },
+        format="json",
+    )
 
 
 @pytest.fixture(autouse=True)
