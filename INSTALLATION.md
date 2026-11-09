@@ -979,6 +979,8 @@ from the environment. On Helm the same settings are `secrets.mailgunApiKey`,
 
 ## Upgrading
 
+For installs **not enrolled in automatic updates**, the manual installer path is:
+
 ```bash
 git pull
 ./bin/install            # add --from-source if you run a branch from source
@@ -1001,6 +1003,8 @@ the bootstrap Job migrates before any Deployment is rolled. See the
 updates that run by themselves, migrations included, with a cold backup and an
 automatic restore if the new version fails. An install that opted in should not
 be upgraded with `git pull` and `./bin/install`: that stops its automatic updates.
+If you need manual changes, first complete the
+[safe handoff to manual operations](deploy/update/README.md#safe-handoff-to-manual-operations).
 See [Automatic updates](#automatic-updates-opt-in) below.
 
 **Signed updates with rollback.** `./bin/update` applies a signed release to
@@ -1155,12 +1159,13 @@ restore is retried from retained evidence. If the updater cannot prove which
 state is safe, it stops for operator review rather than guessing. A remains
 stopped until B boots or the verified previous version is restored.
 
-**Today every release stays notify-only.** A release applies automatically only
-when it carries a signed proof that the upgrade from your exact version was
-rehearsed together with a restore, and no published release carries one yet.
-Releases without that proof, and releases whose estimated backup, migration and
-restore would not fit the remaining window or the free disk space, are reported
-and left for you to apply by hand.
+**Automatic apply requires published, signed exact-transition proof.** The
+release's signed manifest must carry proof that the upgrade from your exact
+installed version, layout and platform was rehearsed together with a restore.
+Merging the implementation or opting in does not qualify a release. Releases
+without usable proof, or whose estimated backup, migration and restore would not
+fit the remaining window or free disk space, stay notify-only for you to review
+and apply by hand. See [release eligibility](deploy/update/README.md#release-eligibility).
 
 Requirements: the shipped Standalone layout with published images, no optional
 profile and no extra service, volume or mount (the optional host-status overlay
@@ -1184,8 +1189,13 @@ changes the Compose or bootstrap files, or a manual `./bin/update apply` makes l
 checks refuse with `configuration_changed`, and there is no command yet that
 records the installation again.
 
+For diagnostics, set `ENROLLED_CONTEXT` to the exact context name in setup's
+`Verified Docker target` line; do not switch the global Docker context. Controls
+use private host state, while `run` already pins the enrolled context.
+
 ```bash
-./bin/update status                    # installed versions, unfinished run, last update
+: "${ENROLLED_CONTEXT:?Set this to the verified context name printed by setup}"
+DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status
 ./bin/update disable                   # stop new work; enable --yes turns it back on
 ./bin/update pause --indefinite        # resume clears the pause
 ./bin/update setup --deactivate --yes  # remove the scheduler for good; keeps backups
@@ -1194,7 +1204,10 @@ records the installation again.
 Disable and pause never interrupt a restore that has already started. Backups
 and the evidence of failed attempts are never deleted automatically. The app's
 **Settings > Updates** page needs the optional host-status mount, which an install
-set up this way cannot use yet; use `./bin/update status` on the host.
+set up this way cannot use yet; use the context-targeted host status above.
+A recorded disable or a clear status is not a recovery-completion check: follow
+[the safe handoff](deploy/update/README.md#safe-handoff-to-manual-operations)
+before manual changes, stops or uninstalling.
 See [automatic updates](deploy/update/README.md#automatic-updates-standalone) for
 every reason a release stays notify-only, the time and disk estimates, what to do
 when status says `recovery_required`, the budgets and the full command reference.

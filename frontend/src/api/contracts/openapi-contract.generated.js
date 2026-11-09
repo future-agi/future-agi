@@ -51102,6 +51102,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        lost_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 50,
+        },
+        last_error: {
+          title: "Last error",
+          type: "string",
+          "x-nullable": true,
+        },
       },
     },
     AgentFixEngineState: {
@@ -55137,6 +55152,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "decimal",
         },
+        autoreload_maxcharge: {
+          title: "Autoreload maxcharge",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        autoreload_consent: {
+          title: "Autoreload consent",
+          type: "boolean",
+          default: false,
+        },
+        autoreload_charge_now: {
+          title: "Autoreload charge now",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     AutoReloadSettingsResponse: {
@@ -56421,6 +56452,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Select all",
           description:
             "Whether to rerun all call executions in the test execution",
+          type: "boolean",
+          default: false,
+        },
+        unfinished_only: {
+          title: "Unfinished only",
+          description:
+            "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
           type: "boolean",
           default: false,
         },
@@ -75631,6 +75669,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "guardrail",
             "evaluator",
             "conversation",
+            "internal",
           ],
         },
         start_time: {
@@ -96018,6 +96057,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         score: {
           title: "Score",
@@ -112171,13 +112212,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         ended_reason: {
           title: "Ended reason",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         error_message: {
           title: "Error message",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         evaluations: {
@@ -112228,6 +112267,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ordinal",
         "agent_version",
         "agent_type",
+        "resume",
         "summary",
       ],
       type: "object",
@@ -112308,8 +112348,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        resume: {
+          $ref: "#/definitions/RunResume",
+        },
         summary: {
           $ref: "#/definitions/RunSummary",
+        },
+        fix_run: {
+          $ref: "#/definitions/RunFixRun",
         },
       },
     },
@@ -127765,6 +127811,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunFixRun: {
+      required: ["id", "label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    RunResume: {
+      required: ["resumable", "finished", "unfinished", "history"],
+      type: "object",
+      properties: {
+        resumable: {
+          title: "Resumable",
+          type: "boolean",
+        },
+        finished: {
+          title: "Finished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        unfinished: {
+          title: "Unfinished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        history: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunResumeEntry",
+          },
+        },
+      },
+    },
     RunSummary: {
       required: [
         "total",
@@ -132786,6 +132874,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    RunResumeEntry: {
+      required: ["at", "by", "calls"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+        },
+        by: {
+          title: "By",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        calls: {
+          title: "Calls",
+          type: "integer",
         },
       },
     },
