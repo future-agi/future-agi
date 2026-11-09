@@ -7,10 +7,19 @@ import random
 import httpx
 import structlog
 
+from ee.licensing.activation_client import ManagedServiceError
+
 logger = structlog.get_logger(__name__)
 
 # Status codes that are safe to retry (transient errors)
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+# Managed transport wraps rate limits, server errors and connection failures.
+RETRYABLE_MANAGED_CODES = {
+    "RATE_LIMITED",
+    "SERVICE_ERROR",
+    "GATEWAY_TIMEOUT",
+    "GATEWAY_UNREACHABLE",
+}
 
 
 def _inline_refs(schema, _defs=None, _depth=0):
@@ -747,6 +756,28 @@ class FalconLLMClient:
                 logger.warning(
                     "llm_retry_empty_stream",
                     error=str(e),
+                    attempt=attempt + 1,
+                    delay=round(delay, 2),
+                )
+                await asyncio.sleep(delay)
+                continue
+            except ManagedServiceError as e:
+                # Evaluation-only recovery: preserve chat's error propagation,
+                # never restart partial streams or retry entitlement errors.
+                if (
+                    self.retry_budget is None
+                    or e.code not in RETRYABLE_MANAGED_CODES
+                    or attempt >= max_retries - 1
+                    or yielded_any_chunk
+                    or not self.take_retry()
+                ):
+                    raise
+
+                base_delay = min(2**attempt, 30)
+                delay = base_delay + base_delay * 0.25 * random.random()
+                logger.warning(
+                    "llm_retry_managed",
+                    error_code=e.code,
                     attempt=attempt + 1,
                     delay=round(delay, 2),
                 )

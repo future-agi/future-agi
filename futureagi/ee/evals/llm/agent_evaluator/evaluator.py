@@ -2408,7 +2408,12 @@ class AgentEvaluator:
             close_old_connections()
             return asyncio.run(run_async())
 
-        from ee.falcon_ai.llm_client import RETRYABLE_STATUS_CODES, EmptyStreamError
+        from ee.falcon_ai.llm_client import (
+            RETRYABLE_MANAGED_CODES,
+            RETRYABLE_STATUS_CODES,
+            EmptyStreamError,
+        )
+        from ee.licensing.activation_client import ManagedServiceError
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -2417,6 +2422,13 @@ class AgentEvaluator:
             raise
         except EmptyStreamError as exc:
             raise GradingError("empty_output") from exc
+        except ManagedServiceError as exc:
+            code = (
+                "upstream_unavailable"
+                if exc.code in RETRYABLE_MANAGED_CODES
+                else "upstream_rejected"
+            )
+            raise GradingError(code, managed_error_code=exc.code) from exc
         except httpx.HTTPStatusError as exc:
             code = (
                 "upstream_unavailable"
