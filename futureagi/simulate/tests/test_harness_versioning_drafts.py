@@ -1503,7 +1503,7 @@ class TestRetiredKeys:
         self, user, workspace, storage
     ):
         environment = self._dropped(user, workspace, storage, "d-retired-save")
-        with patch.object(drafts, "_refuse"):
+        with patch.object(drafts, "refuse_scenario_keys"):
             _publish(environment, storage, NAMES[:2], sequence=10)
 
         with pytest.raises(HostedHarnessError) as refused:
@@ -1570,8 +1570,16 @@ class TestApi:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"environment", "suite", "set_aside"}
+        assert set(body) == {
+            "environment",
+            "suite",
+            "set_aside",
+            "validation",
+            "candidates",
+        }
         assert body["environment"] is None and body["set_aside"] == []
+        # Nothing validated yet.
+        assert (body["validation"], body["candidates"]) == (None, None)
         suite = body["suite"]
         assert suite["status"] == "draft" and suite["label"] is None
         assert suite["stale"] is False and suite["revision"] == 1
@@ -2315,7 +2323,7 @@ class TestStepFourteenInterface:
         )
 
         with (
-            patch.object(drafts, "_default_pair", return_value=pair) as ladder,
+            patch.object(drafts, "pair_archive", return_value=pair) as ladder,
             transaction.atomic(),
         ):
             locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(

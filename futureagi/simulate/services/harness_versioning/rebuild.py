@@ -285,7 +285,9 @@ def _check_answerable(environment: HostedHarnessJob, nudge_id: Any) -> HarnessNu
     if nudge.state not in (State.PENDING, State.FAILED):
         raise nudges._closed(nudge)
     if not nudges.nudges_enabled():
-        raise drafts._error("nudges_disabled", "Rebuilds aren't switched on", 409)
+        raise drafts.version_error(
+            "nudges_disabled", "Rebuilds aren't switched on", 409
+        )
     return nudge
 
 
@@ -315,7 +317,7 @@ def answer_rebuild(
         if locked is None:
             raise nudges.nudge_not_found()
         if _busy(locked):
-            raise drafts._error(
+            raise drafts.version_error(
                 "environment_building", "The environment is still being built", 409
             )
         nudge = _lock_nudge(locked, nudge_id)
@@ -560,7 +562,7 @@ def restore_draft_snapshot(nudge: HarnessNudge, *, locked: HostedHarnessJob) -> 
     from simulate.services.harness_versioning import drafts
 
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
-    model = drafts._model(nudge.target)
+    model = drafts.piece_model(nudge.target)
     draft_id = snapshot.get("draft_version_id")
     others = model.no_workspace_objects.filter(job=locked, status=VersionStatus.DRAFT)
     if draft_id:
@@ -1326,13 +1328,15 @@ def _snapshot_documents(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
     files = archives.read_archive(archives.get_archive(snapshot["archive_object_key"]))
     other = Target.SUITE if target == Target.ENVIRONMENT else Target.ENVIRONMENT
     sides = {
-        target: drafts._side(files, target),
-        other: drafts._piece_files(locked, other, getattr(locked, f"{other}_version")),
+        target: drafts.piece_side(files, target),
+        other: drafts.piece_files(locked, other, getattr(locked, f"{other}_version")),
     }
-    _split, prepared = drafts._prepared(
+    _split, prepared = drafts.prepare_tree(
         locked, archives.compose(sides["environment"], sides["suite"])
     )
-    values = drafts._content(locked, target, prepared, origin="nudge", default=default)
+    values = drafts.draft_content(
+        locked, target, prepared, origin="nudge", default=default
+    )
     return SimpleNamespace(documents=values["documents"])
 
 
@@ -1482,7 +1486,7 @@ def _saved_over(
     # A save equal to the default leaves no draft, only the one it discarded.
     ids = [snapshot["draft_version_id"]] if snapshot.get("draft_version_id") else []
     discarded = (
-        drafts._model(nudge.target)
+        drafts.piece_model(nudge.target)
         ._base_manager.filter(
             Q(nudge=nudge) | Q(id__in=ids),
             job=locked,
@@ -1518,7 +1522,7 @@ def _unhandled_tools(
     tools = diffs._tools((result.documents or {}).get("contract") or {})
     if not tools:
         return []
-    files = drafts._piece_files(locked, "environment", result)
+    files = drafts.piece_files(locked, "environment", result)
     try:
         manifest = json.loads(files["manifest.json"])
     except (KeyError, ValueError):
@@ -1710,15 +1714,15 @@ def _validate(
 ) -> None:
     from simulate.services.harness_versioning.versions import (
         PROOF_CLOCK_SKEW,
-        _member_rows,
         _validation,
+        member_rows,
     )
 
     environment_version = nudge.base_environment_version or locked.environment_version
     taken = _taken_at(nudge)
     if suite is None or environment_version is None or taken is None:
         return
-    paired = _member_rows(locked, (suite.documents or {}).get("scenarios") or [])
+    paired = member_rows(locked, (suite.documents or {}).get("scenarios") or [])
     # Only proofs made after the turn started count: no clock-skew allowance (Q1).
     _validation(
         suite, environment_version, proofs, paired, locked, taken + PROOF_CLOCK_SKEW
