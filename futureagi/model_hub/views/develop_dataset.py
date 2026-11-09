@@ -6479,10 +6479,6 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
                     # The https:// transport refusal is meant for the user
                     # (ruling #8); every other failure stays generic.
                     return self._gm.bad_request(
@@ -6525,10 +6521,6 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
                     return self._gm.bad_request(str(e))
 
             elif column_data_type == DataTypeChoices.DOCUMENT.value:
@@ -6565,10 +6557,6 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
                     return self._gm.bad_request(str(e))
 
             elif column_data_type == DataTypeChoices.IMAGES.value:
@@ -6612,10 +6600,6 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR uploading images: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
                     # Same as the single-image branch above.
                     return self._gm.bad_request(
                         https_refusal_message(e) or "Invalid images value"
