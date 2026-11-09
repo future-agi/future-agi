@@ -212,7 +212,12 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
+        # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+        if not (
+            isinstance(data, dict)
+            and str(data.get("subject") or "").startswith("worker:")
+        )
+        and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
