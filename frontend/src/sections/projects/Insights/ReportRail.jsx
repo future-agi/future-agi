@@ -46,6 +46,7 @@ import {
   runReadAny,
 } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
+import { summaryIncomplete } from "./insightsReport";
 import {
   STAGES,
   TEMPLATES,
@@ -407,6 +408,11 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         </Stack>
       ) : null}
 
+      {summaryIncomplete(run) && (
+        <Typography variant="caption" color="text.secondary">
+          Partial report · summary incomplete
+        </Typography>
+      )}
       {run?.status === "completed" && (
         <Typography
           variant="caption"

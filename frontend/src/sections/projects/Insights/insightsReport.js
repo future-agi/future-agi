@@ -162,29 +162,59 @@ export function settleAskTurn(runId, turnId, patch) {
   );
 }
 
-/**
- * An Ask response as {answer: [{text, unit_ids, category_ids, evidence}],
- * followUps, dropped} where dropped counts statements that did not check out.
- */
-export function normalizeAnswer(result) {
-  const paragraphs = Array.isArray(result?.answer)
-    ? result.answer
-    : typeof result?.answer === "string"
-      ? [{ text: result.answer }]
+/** A completed analysis may still have a failed or unverified summary. */
+export function summaryIncomplete(run) {
+  if (run?.status !== "completed") return false;
+  const summary = run.result?.summary;
+  return Boolean(
+    ["summary_unavailable", "summary_unverified"].includes(run.error_code) ||
+      run.result?.report_status === "partial" ||
+      summary?.error ||
+      ["failed", "unverified"].includes(summary?.status) ||
+      ["failed", "incomplete"].includes(summary?.verification?.status),
+  );
+}
+
+const answerParagraphs = (value) => {
+  const paragraphs = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? [{ text: value }]
       : [];
+  return paragraphs
+    .filter((p) => p && String(p.text || "").trim())
+    .map((p) => ({
+      text: String(p.text).trim(),
+      unit_ids: Array.isArray(p.unit_ids) ? p.unit_ids.filter(Boolean) : [],
+      category_ids: Array.isArray(p.category_ids)
+        ? p.category_ids.filter(Boolean)
+        : [],
+      evidence: Array.isArray(p.evidence)
+        ? p.evidence.filter((e) => e && e.quote)
+        : [],
+    }));
+};
+
+/** Preserve verification state; an empty or unverified answer is not success. */
+export function normalizeAnswer(result) {
+  const verification = result?.verification || null;
+  const unverified = Boolean(
+    verification && verification.status !== "verified",
+  );
+  const paragraphs = answerParagraphs(result?.answer);
+  const answer = unverified ? [] : paragraphs;
   return {
-    answer: paragraphs
-      .filter((p) => p && String(p.text || "").trim())
-      .map((p) => ({
-        text: String(p.text).trim(),
-        unit_ids: Array.isArray(p.unit_ids) ? p.unit_ids.filter(Boolean) : [],
-        category_ids: Array.isArray(p.category_ids)
-          ? p.category_ids.filter(Boolean)
-          : [],
-        evidence: Array.isArray(p.evidence)
-          ? p.evidence.filter((e) => e && e.quote)
-          : [],
-      })),
+    answer,
+    unverifiedAnswer: [
+      ...(unverified ? paragraphs : []),
+      ...answerParagraphs(result?.unverified_answer),
+    ],
+    verification,
+    error: unverified
+      ? "The answer could not be verified against this report. No unverified statements are shown. Try again."
+      : answer.length
+        ? null
+        : "The analysis service returned no usable answer. Try again.",
     followUps: (Array.isArray(result?.follow_ups) ? result.follow_ups : [])
       .filter((q) => typeof q === "string" && q.trim())
       .slice(0, 3),

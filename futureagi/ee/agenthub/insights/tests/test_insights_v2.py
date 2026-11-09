@@ -918,6 +918,72 @@ class TestReportV2:
         out = report._answer_payload(verified, RESULT, v2_units(), {}, v2=True)
         assert len(out["answer"]) == 1 and out["unverified_answer"] == []
 
+    @pytest.mark.parametrize(
+        ("answer", "reason", "rejected"),
+        [
+            ([], "answer_empty", {}),
+            ([{"text": ""}], "answer_validation_failed", {"empty_paragraph": 1}),
+            (["not an object"], "answer_validation_failed", {"invalid_paragraph": 1}),
+            (
+                [{"text": "There were 979797 failed requests."}],
+                "answer_validation_failed",
+                {"unsupported_number": 1},
+            ),
+        ],
+    )
+    def test_empty_or_rejected_answer_cannot_keep_an_upstream_verified_label(
+        self, answer, reason, rejected
+    ):
+        out = report._answer_payload(
+            {"answer": answer, "verification": {"status": "verified"}},
+            RESULT,
+            v2_units(),
+            {},
+            v2=True,
+        )
+        assert out["answer"] == []
+        assert out["unverified_answer"] == []
+        assert out["verification"]["status"] == "failed"
+        assert out["verification"]["reason"] == reason
+        if rejected:
+            assert out["verification"]["validation"] == {
+                "stage": "backend",
+                "rejected_paragraphs": rejected,
+            }
+        else:
+            assert "validation" not in out["verification"]
+
+    def test_agent_rejection_diagnostics_are_whitelisted_and_separate(self):
+        out = report._answer_payload(
+            {
+                "answer": [{"text": "There were 979797 failed requests."}],
+                "verification": {"status": "verified"},
+                "diagnostics": {
+                    "rejections": {
+                        "invalid_quote": 2,
+                        "verifier_rejected": 0,
+                        "verifier_unjudged": -1,
+                        "empty_text": True,
+                        "verifier_unavailable": 2**53,
+                        "ungrounded_number": "source text must not reach diagnostics",
+                        "unknown": 3,
+                        "secret": "not a reason code",
+                    }
+                },
+            },
+            RESULT,
+            v2_units(),
+            {},
+            v2=True,
+        )
+        assert out["verification"]["validation"] == {
+            "stage": "backend",
+            "rejected_paragraphs": {"unsupported_number": 1},
+            "agent_rejections": {"invalid_quote": 2, "verifier_rejected": 0},
+        }
+        assert report._agent_rejections(None) == {}
+        assert report._agent_rejections({"rejections": "not an object"}) == {}
+
     def test_the_namers_audit_fails_closed_on_v2(self):
         assert agent.naming_audit({"subs": []}, V2) == {
             "status": "incomplete",
@@ -1109,6 +1175,77 @@ class TestAskOnARefundReport:
         )
         assert out["answer"] == []
         assert out["dropped"] == 4
+
+    def test_known_category_ids_are_references_not_numerical_claims(self):
+        out = self.ask(
+            [
+                {
+                    "text": f"Category {MISREPORTS} contains 5 failed sessions.",
+                    "category_ids": [MISREPORTS],
+                },
+                {
+                    "text": f"Category {MISREPORTS} contains 979797 failed sessions.",
+                    "category_ids": [MISREPORTS],
+                },
+                {
+                    "text": "Category dead979797beef contains 5 failed sessions.",
+                    "category_ids": [MISREPORTS],
+                },
+                {
+                    "text": f"Category prefix{MISREPORTS}suffix has failed sessions.",
+                    "category_ids": [MISREPORTS],
+                },
+            ]
+        )
+        assert [p["text"] for p in out["answer"]] == [
+            f"Category {MISREPORTS} contains 5 failed sessions."
+        ]
+        assert out["dropped"] == 3
+        assert out["verification"]["validation"]["rejected_paragraphs"] == {
+            "unsupported_number": 3
+        }
+
+    def test_numeric_only_category_id_cannot_hide_an_unsupported_quantity(self):
+        result, units = refund_report()
+        result["categories"].append({"id": "979797", "stats": {"count": 1}})
+        out = report._answer_payload(
+            {
+                "answer": [
+                    {"text": "979797 requests failed.", "category_ids": ["979797"]}
+                ],
+                "verification": {"status": "verified"},
+            },
+            result,
+            units,
+            {},
+            v2=True,
+        )
+        assert out["answer"] == []
+        assert out["verification"]["reason"] == "answer_validation_failed"
+
+    def test_fourth_verified_citation_can_support_a_number_in_ask(self):
+        result, units = refund_report()
+        assert "61.2" not in report.checked_numbers(result, units)
+        quotes = [
+            cites("111", units),
+            cites("106", units),
+            cites("109", units, 1),
+            cites("109", units, 0),  # This fourth source contains $61.20.
+        ]
+        out = self.ask(
+            [{"text": "The agent promised $61.20 back.", "evidence": quotes}]
+        )
+        assert out["dropped"] == 0
+        [paragraph] = out["answer"]
+        assert len(paragraph["evidence"]) == 4
+        assert paragraph["evidence"][3]["quote"] == "Done. I've refunded $61.20"
+
+        # Reusing the fourth id with an edited quote cannot vouch for $75.
+        changed = self.ask(
+            [{"text": "The agent promised $75 back.", "evidence": quotes}]
+        )
+        assert changed["answer"] == []
+        assert changed["verification"]["reason"] == "answer_validation_failed"
 
     def test_how_many_units_a_paragraph_cites_is_a_number_it_may_write(self):
         result, units = refund_report()

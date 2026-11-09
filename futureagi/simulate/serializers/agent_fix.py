@@ -427,6 +427,15 @@ class AgentFixEngineReportSerializer(serializers.Serializer):
     summary = serializers.CharField(required=False, allow_blank=True, default="")
     failure = AgentFixEngineFailureSerializer(required=False, allow_null=True)
     winner_candidate_id = serializers.UUIDField(required=False, allow_null=True)
+    lost_models = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        max_length=50,
+        required=False,
+        default=list,
+    )
+    last_error = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
 
 
 class AgentFixEngineStateSerializer(serializers.Serializer):

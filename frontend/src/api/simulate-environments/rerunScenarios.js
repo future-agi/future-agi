@@ -91,3 +91,35 @@ export function useRerunCallsInRun(executionId) {
     },
   });
 }
+
+/**
+ * Resumes an interrupted run: only the calls it did not finish run again, inside
+ * that same run. Finished calls keep their results and are not charged again.
+ */
+export function useResumeRun(executionId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      axios.post(endpoints.testExecutions.rerunExecution(executionId), {
+        rerun_type: "call_and_eval",
+        unfinished_only: true,
+      }),
+    // A refusal arrives as `{ error, message }`, which the global handler skips.
+    onError: (error) => {
+      if (error?.result) return;
+      enqueueSnackbar(error?.message || "Couldn't resume this run", {
+        variant: "error",
+      });
+    },
+    // Returned, so the mutation stays pending until the run's read has refetched:
+    // the button can't be clicked again while the run still reads as interrupted.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) }),
+        queryClient.invalidateQueries({
+          queryKey: runAnalyticsKey(executionId),
+        }),
+        queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix }),
+      ]),
+  });
+}

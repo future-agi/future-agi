@@ -59,7 +59,7 @@ import { buildSegments, resultTops } from "./insightsDistribution";
 import { formatCount, runOutcome, runReadAny } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
-import { reportMetaParts } from "./insightsReport";
+import { reportMetaParts, summaryIncomplete } from "./insightsReport";
 import { shownScopeLabel } from "./insightsScope";
 import { ReportProvider, useReportModel } from "./reportContext";
 import { ErrorState } from "./parts";
@@ -223,6 +223,23 @@ function ReportHeader({
                 {" · "}
                 <Tooltip describeChild arrow title="What this run read">
                   <span>{scope}</span>
+                </Tooltip>
+              </>
+            )}
+            {summaryIncomplete(run) && (
+              <>
+                {" · "}
+                <Tooltip
+                  describeChild
+                  arrow
+                  title="Analysis is complete, but the summary did not finish or pass verification."
+                >
+                  <Box
+                    component="span"
+                    sx={{ color: (theme) => theme.palette.status.warning.fg }}
+                  >
+                    Partial report
+                  </Box>
                 </Tooltip>
               </>
             )}
