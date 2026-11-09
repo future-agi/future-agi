@@ -415,7 +415,9 @@ def _sqlite_metric_sql(sql):
     # proof runs through real CH25 coverage suites; here the fixture supplies
     # its already-qualified compact flags, just as this module's docstring says.
     monetary, after_monetary = _cte(sql, "graph_monetary_spans")
-    assert "groupArrayIf(tuple(" in monetary
+    assert "AS graph_usage_states" in monetary
+    assert "ARRAY JOIN graph_usage_state.1 AS graph_own_span" in monetary
+    assert monetary.count("FROM latest_spans") == 1
     assert "AS graph_cost_flags" in monetary
     match_marker = "toUInt8(ifNull(("
     assert match_marker in monetary
