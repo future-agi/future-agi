@@ -169,7 +169,7 @@ class AgentLoop:
         skill=None,
         system_prompt_override=None,
         tools_override=None,
-        raise_on_stream_error=False,
+        raise_on_stream_error: bool = False,
     ):
         """Execute the agent loop with mode detection, parallel tool execution, and retry.
 

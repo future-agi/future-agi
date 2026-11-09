@@ -1,17 +1,6 @@
-"""Black-box tests for AgentEvaluator's failure surface.
+"""Failure messages, output validation, diagnostic context and media anchors.
 
-Focused tests:
-  - USER_FACING_EVAL_FAILED is the single user-visible message
-  - Distinct structlog event names per failure cause (Sentry fingerprint)
-  - ``_failure_context()`` payload completeness + None-stripping
-  - ``_capture_target_info`` covers span / trace / session / call / row / custom
-  - Oversized + content_str → "recovered_oversized_attempt" info (no raise)
-  - Oversized + empty → "input_too_large" + raise
-  - Force-finalize fires only when content empty + tool_log non-empty
-  - Force-finalize preserves multimodal in user anchor
-
-The retry-loop tests are kept lean (assert ValueError propagates;
-non-ValueError retries) — we don't reconstruct the full agent loop.
+The real agent/retry integration is covered by test_grading_errors.py.
 """
 
 import asyncio

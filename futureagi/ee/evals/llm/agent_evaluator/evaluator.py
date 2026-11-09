@@ -80,15 +80,9 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 
 # ── User-facing error message ────────────────────────────────────────────
 #
-# Every failure path inside the agent eval loop surfaces this same
-# neutral message to the end user. The cause (oversized input, model
-# flake, agent loop crash, JSON parse failure, output-type mismatch)
-# is logged separately via distinct structlog event names so Sentry
-# fingerprints each cause as its own issue. That keeps:
-#   - users out of internal jargon (no "context window", "compaction",
-#     "retries exhausted", model aliases, token counts)
-#   - engineers able to triage by cause via the Sentry dashboard
-#     (one error type per failure mode, not all merged together)
+# Grading failures keep a neutral public message. The evaluation boundary logs
+# one event with a typed error code and safe diagnostics; parsers and the agent
+# loop propagate the cause instead of logging it again or inventing a verdict.
 USER_FACING_EVAL_FAILED = (
     "Evaluation failed. Please try again. If the problem persists, " "contact support."
 )
@@ -2414,7 +2408,7 @@ class AgentEvaluator:
             close_old_connections()
             return asyncio.run(run_async())
 
-        from ee.falcon_ai.llm_client import EmptyStreamError, RETRYABLE_STATUS_CODES
+        from ee.falcon_ai.llm_client import RETRYABLE_STATUS_CODES, EmptyStreamError
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
