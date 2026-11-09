@@ -8,10 +8,20 @@ import pytest
 from django.db import OperationalError, connection, transaction
 from psycopg.errors import ConnectionTimeout, QueryCanceled
 
-from model_hub.models.choices import CellStatus, DataTypeChoices, SourceChoices
+from model_hub.models.choices import (
+    CellStatus,
+    DataTypeChoices,
+    SourceChoices,
+    StatusType,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.views.eval_runner import EvaluationRunner
+from model_hub.views.experiment_runner import (
+    ExperimentRunner,
+    check_and_update_experiment_status,
+)
 from model_hub.views.utils.evals import process_eval_for_single_row
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -236,8 +246,161 @@ def test_exhausted_metadata_is_infrastructure_not_evaluator_failure(
     case.runner._run_evaluation.assert_not_called()
     case.evaluator.run.assert_not_called()
     case.runner._emit_cell_usage.assert_not_called()
-    case.runner._create_reason_cell.assert_not_called()
+    if path == "preview":
+        case.runner._create_reason_cell.assert_not_called()
+    else:
+        case.runner._create_reason_cell.assert_called_once()
+        assert case.runner._create_reason_cell.call_args.args[3:] == (
+            result,
+            result["reason"],
+            CellStatus.ERROR.value,
+        )
     case.runner._handle_api_call_status.assert_not_called()
+
+
+def existing_reason_cell(case):
+    # Use the real column/cell writers: a mock misses stale or RUNNING siblings.
+    del case.runner._create_reason_column
+    del case.runner._create_reason_cell
+    column = case.runner._create_reason_column(
+        case.dataset, f"{case.runner.user_eval_metric.name}-reason"
+    )
+    return Cell.objects.create(
+        dataset=case.dataset,
+        row_id=case.row_id,
+        column=column,
+        value="previous successful reasoning",
+        value_infos=json.dumps({"reason": "previous successful reasoning"}),
+        status=CellStatus.PASS.value,
+    )
+
+
+def assert_infrastructure_reason(case, reason_cell):
+    case.output_cell.refresh_from_db()
+    reason_cell.refresh_from_db()
+    result = json.loads(case.output_cell.value_infos)
+    assert case.output_cell.status == CellStatus.ERROR.value
+    assert reason_cell.status == CellStatus.ERROR.value
+    assert result["error_code"] == "EVALUATION_METADATA_UNAVAILABLE"
+    assert json.loads(reason_cell.value_infos) == result
+    assert reason_cell.value == result["reason"]
+    assert (
+        Cell.objects.filter(
+            column=reason_cell.column, row_id=case.row_id, deleted=False
+        ).count()
+        == 1
+    )
+    case.logger.assert_not_called()
+    case.runner._run_evaluation.assert_not_called()
+    case.runner._emit_cell_usage.assert_not_called()
+    case.runner._handle_api_call_status.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["threaded", "direct"])
+@pytest.mark.parametrize("table", ["model_hub_column", "accounts_workspace"])
+def test_exhaustion_replaces_existing_dataset_reason(evaluation_case, path, table):
+    case = evaluation_case
+    case.runner.user_eval_metric.config["reason_column"] = True
+    reason_cell = existing_reason_cell(case)
+    fault = ReadFault(table, failures=10)
+    with connection.execute_wrapper(fault):
+        run_case(case, path)
+    assert fault.calls == 3
+    assert_infrastructure_reason(case, reason_cell)
+
+
+@pytest.mark.parametrize("table", ["model_hub_column", "accounts_workspace"])
+def test_exhaustion_terminalizes_experiment_rerun_reason(evaluation_case, table):
+    case = evaluation_case
+    runner = case.runner
+    # Experiments require reasons even when the dataset's legacy flag is false.
+    runner.user_eval_metric.config["reason_column"] = False
+    runner.user_eval_metric.save(update_fields=["config"])
+    case.template.config["eval_type_id"] = "CustomCodeEval"
+    case.template.save(update_fields=["config"])
+    experiment = ExperimentsTable.objects.create(
+        name="metadata-rerun", dataset=case.dataset, status=StatusType.RUNNING.value
+    )
+    experiment.user_eval_template_ids.add(runner.user_eval_metric)
+    edt = ExperimentDatasetTable.objects.create(
+        name="metadata-rerun-output",
+        experiment=experiment,
+        status=StatusType.RUNNING.value,
+    )
+    # The runner's source column is a completed prompt output; the persisted
+    # evaluation and reason columns are paired by the real experiment source IDs.
+    runner.column.source = SourceChoices.EXPERIMENT.value
+    runner.column.source_id = str(edt.id)
+    runner.column.save(update_fields=["source", "source_id"])
+    case.output_cell.status = CellStatus.PASS.value
+    case.output_cell.save(update_fields=["status"])
+    edt.columns.add(runner.column)
+    runner.experiment_dataset = edt
+    runner.is_only_eval = False
+    eval_column = runner._create_or_update_column(
+        case.dataset, runner._get_column_config(case.dataset)
+    )
+    case.output_cell = Cell.objects.create(
+        dataset=case.dataset,
+        row_id=case.row_id,
+        column=eval_column,
+        value="1.0",
+        status=CellStatus.PASS.value,
+    )
+    reason_cell = existing_reason_cell(case)
+    assert edt.columns.filter(id=reason_cell.column_id).exists()
+
+    # Execute the real rerun initializer, not a hand-written status reset.
+    experiment_runner = ExperimentRunner(experiment.id)
+    experiment_runner.load_experiment()
+    experiment_runner.empty_or_create_evals_column()
+    reason_cell.refresh_from_db()
+    case.output_cell.refresh_from_db()
+    assert reason_cell.status == case.output_cell.status == CellStatus.RUNNING.value
+    assert not check_and_update_experiment_status(experiment.id)
+
+    fault = ReadFault(table, failures=10)
+    with connection.execute_wrapper(fault):
+        runner._process_and_create_cell(
+            Row.objects.get(id=case.row_id), case.mappings, case.dataset, eval_column
+        )
+    assert fault.calls == 3
+    assert check_and_update_experiment_status(experiment.id)
+    assert_infrastructure_reason(case, reason_cell)
+    experiment.refresh_from_db()
+    reason_cell.column.refresh_from_db()
+    assert experiment.status == StatusType.COMPLETED.value
+    assert reason_cell.column.status == StatusType.COMPLETED.value
+    assert not Cell.objects.filter(
+        column__experiments_dataset_column=edt, status=CellStatus.RUNNING.value
+    ).exists()
+
+
+@pytest.mark.parametrize("reason_enabled,optimize", [(False, None), (True, object())])
+def test_exhaustion_preserves_reason_opt_out(evaluation_case, reason_enabled, optimize):
+    case = evaluation_case
+    case.runner.user_eval_metric.config["reason_column"] = reason_enabled
+    case.runner.optimize = optimize
+    with connection.execute_wrapper(ReadFault("model_hub_column", failures=10)):
+        run_case(case, "threaded")
+    case.runner._create_reason_column.assert_not_called()
+    case.runner._create_reason_cell.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["threaded", "direct"])
+def test_reason_persistence_failure_never_replays_evaluation(evaluation_case, path):
+    case = evaluation_case
+    case.runner.user_eval_metric.config["reason_column"] = True
+    case.runner._create_reason_cell.side_effect = connection_timeout()
+    fault = ReadFault("model_hub_column", failures=10)
+    with connection.execute_wrapper(fault):
+        with pytest.raises(OperationalError, match="connection timeout expired"):
+            run_case(case, path)
+    assert fault.calls == 3
+    case.runner._create_reason_cell.assert_called_once()
+    case.logger.assert_not_called()
+    case.runner._run_evaluation.assert_not_called()
+    case.runner._emit_cell_usage.assert_not_called()
 
 
 def test_invalid_mapping_stays_terminal(evaluation_case):

@@ -1417,15 +1417,28 @@ class EvaluationRunner:
                 )
 
         except EvaluationMetadataUnavailable as error:
-            # Keep the existing terminal cell status, but distinguish an outage
-            # from a failed evaluator. No provider, usage or reason-cell writes
-            # have happened, and callers must not replay the whole evaluation.
+            # No provider or usage call started. Terminalize the paired reason
+            # cell too, so reruns cannot retain stale reasoning or stay RUNNING.
+            # These writes are outside the metadata retry boundary.
             logger.warning("evaluation_metadata_unavailable", error_code=error.code)
-            return (
-                {"reason": str(error), "error_code": error.code},
-                CellStatus.ERROR.value,
-                CellStatus.ERROR.value,
-            )
+            response = {"reason": str(error), "error_code": error.code}
+            status = value = CellStatus.ERROR.value
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
+            if wants_reason and not self.optimize:
+                reason_column = self._create_reason_column(
+                    self.dataset, f"{self.user_eval_metric.name}-reason"
+                )
+                if reason_column is not None:
+                    self._create_reason_cell(
+                        self.dataset,
+                        reason_column,
+                        row,
+                        response,
+                        response["reason"],
+                        status,
+                    )
         except Exception as e:
             # Expected, handled validation failures (a required input was not
             # mapped/provided, or the eval targets a cell that already errored)
