@@ -26,17 +26,19 @@ defaults:
 cases:
   - case_key: ride_booking__primary
     enabled: false
+    tiers: [quick, full]
     pending: [source_commit_unverified, authorization_unverified]
     agent:
       name: Ride Booking
       source: { repository: https://github.com/future-agi/ride-voice-agent }
     target: { kind: hosted_service }
     interactions:
-      - { interaction: 1 }
-      - { interaction: 2 }
+      - { interaction: 1, config_ref: futureagi/simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
+      - { interaction: 2, config_ref: futureagi/simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
 
   - case_key: front_desk__primary
     enabled: false
+    tiers: [quick, full]
     pending: [source_commit_unverified, authorization_unverified]
     agent:
       name: Front Desk
@@ -79,19 +81,9 @@ cases:
       - { interaction: 1 }
       - { interaction: 2 }
 
-  - case_key: alderway__primary
-    enabled: false
-    pending: [source_commit_unverified, authorization_unverified]
-    agent:
-      name: Alderway
-      source: { repository: https://github.com/KarthikAvinashFI/alderway-voice-agent }
-    target: { kind: hosted_service }
-    interactions:
-      - { interaction: 1 }
-      - { interaction: 2 }
-
   - case_key: packaged_python_chat__primary
     enabled: false
+    tiers: [quick, full]
     pending: [source_unrecorded, authorization_unverified]
     agent:
       name: Packaged Python Chat
@@ -102,6 +94,7 @@ cases:
 
   - case_key: unpackaged_python_chat__primary
     enabled: false
+    tiers: [quick, full]
     pending: [source_unrecorded, authorization_unverified]
     agent:
       name: Unpackaged Python Chat
@@ -234,26 +227,6 @@ cases:
       name: LangChain SQL
       source: { repository: https://github.com/langchain-ai/langchain }
     target: { kind: local_test }
-    interactions:
-      - { interaction: 1 }
-      - { interaction: 2 }
-
-  - case_key: uber_admin_phone__primary
-    enabled: false
-    pending: [target_endpoint_unrecorded, authorization_unverified]
-    agent:
-      name: Uber Admin Phone
-    target: { kind: hosted_service }
-    interactions:
-      - { interaction: 1 }
-      - { interaction: 2 }
-
-  - case_key: uber_guest_phone__primary
-    enabled: false
-    pending: [target_endpoint_unrecorded, authorization_unverified]
-    agent:
-      name: Uber Guest Phone
-    target: { kind: hosted_service }
     interactions:
       - { interaction: 1 }
       - { interaction: 2 }
