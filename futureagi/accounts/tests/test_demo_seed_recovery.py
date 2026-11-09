@@ -304,11 +304,10 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             )
         assert DemoTracePublication.objects.count() == 2
     finally:
-        # Back to the latest state, not just `new`: later accounts migrations
-        # were unapplied with the rollback to `old`, and the tests after this
-        # one need their tables.
+        # Back to the latest accounts migration, not to 0030: a later one must not
+        # stay unapplied for the rest of the test session.
         executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
+        executor.migrate(executor.loader.graph.leaf_nodes("accounts"))
 
 
 @pytest.mark.django_db(transaction=True)

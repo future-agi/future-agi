@@ -9,7 +9,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("accounts", "0030_queue_existing_demo_trace_publications"),
+        ("accounts", "0031_orgapikey_coding_agent"),
     ]
 
     operations = [
