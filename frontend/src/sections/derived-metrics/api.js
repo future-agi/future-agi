@@ -284,6 +284,17 @@ export const useMetricSnapshots = (args) => useMetricRead("snapshots", args);
 // changing scope, or unmounting aborts and cancels the previous server request.
 export const useMetricPreview = (args) => useMetricRead("preview", args);
 
+const savedMetricReads = new Set([
+  "detail",
+  "kpi",
+  "trend",
+  "drivers",
+  "history",
+  "fields",
+  "unitValues",
+  "snapshots",
+]);
+
 function useMetricMutation(operation, args = {}) {
   const client = useQueryClient();
   const { enabled } = useMetricsEnabled();
@@ -302,18 +313,32 @@ function useMetricMutation(operation, args = {}) {
       if (!enabled) throw new Error("Metrics are not enabled.");
       return metricsApi[operation]({ ...args, data });
     },
-    onSuccess: (_data, _variables, context) => {
-      // Invalidate only the scope captured by this mutation, including the
-      // workspace-wide list and catalog. Queued refresh is not a completed KPI.
-      // React Query may update callbacks while a mutation is in flight, so use
-      // the immutable scope returned from onMutate, not a current selection.
+    onSuccess: (data, _variables, context) => {
+      // React Query may update callbacks while a mutation is in flight. Use the
+      // captured workspace/metric, or the returned definition ID on creation.
+      // Queued refresh is not a completed KPI; refetch the affected saved reads.
+      // Previews belong to the explicit builder lifecycle, never invalidation.
       if (operation !== "validate") {
+        const affectedMetricId = context.metricId ?? data?.id;
         return client.invalidateQueries({
           queryKey: context.workspaceKey,
+          predicate: ({ queryKey }) => {
+            const [, , , , resource, metricId] = queryKey;
+            return (
+              resource === "list" ||
+              resource === "catalog" ||
+              (affectedMetricId != null &&
+                metricId === affectedMetricId &&
+                savedMetricReads.has(resource))
+            );
+          },
         });
       }
     },
-    onMutate: () => ({ workspaceKey: metricKeys.workspace(args.scope) }),
+    onMutate: () => ({
+      workspaceKey: metricKeys.workspace(args.scope),
+      metricId: args.metricId,
+    }),
   });
 }
 

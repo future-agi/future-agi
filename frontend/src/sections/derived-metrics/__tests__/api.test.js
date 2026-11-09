@@ -12,12 +12,16 @@ import {
   metricErrorState,
   metricKeys,
   metricsApi,
+  useActivateMetric,
   useCreateMetric,
+  useCreateMetricSnapshot,
+  useDeleteMetricSnapshot,
   useMetricDetail,
   useMetricKpi,
   useMetricPreview,
   useMetricsList,
   useRefreshMetric,
+  useUpdateMetric,
   useValidateMetric,
 } from "../api";
 
@@ -747,31 +751,242 @@ describe("scoped hooks", () => {
     },
   );
 
-  it("invalidates the original workspace after a late mutation, never inventing refresh data", async () => {
+  it.each([
+    ["create", useCreateMetric, { scope }, write, definition, 201],
+    ["update", useUpdateMetric, args, write, definition, 200],
+    [
+      "activate",
+      useActivateMetric,
+      args,
+      { version: 1, expected_active_id: null },
+      definition,
+      200,
+    ],
+    [
+      "refresh",
+      useRefreshMetric,
+      args,
+      { confirm: true },
+      { status: "queued" },
+      202,
+    ],
+    [
+      "create snapshot",
+      useCreateMetricSnapshot,
+      args,
+      { ...range, idempotency_key: "test-snapshot" },
+      {
+        id: otherId,
+        metric_id: id,
+        metric_version: 1,
+        ...range,
+        as_of: range.window_end,
+        filters: [],
+        status: "queued",
+        kind: "snapshot",
+      },
+      202,
+    ],
+    [
+      "delete snapshot",
+      useDeleteMetricSnapshot,
+      { ...args, snapshotId: otherId },
+      undefined,
+      { status: "cleanup_pending" },
+      202,
+    ],
+  ])(
+    "%s neither reissues nor waits for settled draft and saved previews",
+    async (_operation, useWrite, options, data, result, status) => {
+      const repeatedPreview = deferred();
+      const previewRequests = [];
+      adapter.mockImplementation((config) => {
+        if ([paths.draftPreview, paths.preview(id)].includes(config.url)) {
+          previewRequests.push(config);
+          // An accidental invalidation would hold mutateAsync/isPending open.
+          if (previewRequests.length > 2)
+            return repeatedPreview.promise.then(() =>
+              response(config, preview),
+            );
+          return Promise.resolve(response(config, preview));
+        }
+        return Promise.resolve(response(config, result, status));
+      });
+      const hook = mount(() => ({
+        draft: useMetricPreview({ scope, data: draft }),
+        saved: useMetricPreview({ ...args, data: { ...range, version: 1 } }),
+        write: useWrite(options),
+      }));
+      await waitFor(() => {
+        expect(hook.result.current.draft.readState).toBe("ready");
+        expect(hook.result.current.saved.readState).toBe("ready");
+      });
+      expect(previewRequests.map(({ url }) => url)).toEqual([
+        paths.draftPreview,
+        paths.preview(id),
+      ]);
+      let mutation;
+      let completed = false;
+      act(() => {
+        mutation = hook.result.current.write.mutateAsync(data).then((value) => {
+          completed = true;
+          return value;
+        });
+      });
+      try {
+        await waitFor(() => {
+          expect(completed).toBe(true);
+          expect(hook.result.current.write.isPending).toBe(false);
+        });
+        expect(await mutation).toEqual(result);
+        expect(previewRequests).toHaveLength(2);
+        expect(adapter).toHaveBeenCalledTimes(3);
+        for (const read of [
+          hook.result.current.draft,
+          hook.result.current.saved,
+        ]) {
+          expect(read.readState).toBe("ready");
+          expect(read.isFetching).toBe(false);
+          expect(read.data).toEqual(preview);
+        }
+      } finally {
+        // Release a regressed preview too, so failure cannot leak pending work.
+        await act(async () => {
+          repeatedPreview.resolve();
+          await mutation;
+        });
+      }
+    },
+  );
+
+  it("invalidates list/catalog and only the created metric's saved reads", async () => {
+    serve(definition, 201);
+    const hook = mount(() => useCreateMetric({ scope }));
+    const savedReads = {
+      detail: definition,
+      kpi,
+      trend: { ...pinned, results: [] },
+      drivers,
+      history: page,
+      fields: { results: [] },
+      unitValues: drivers,
+      snapshots: page,
+    };
+    const cached = [];
+    const seed = (resource, options, data, invalidated) => {
+      const key = [...metricKeys.read(resource, options), true];
+      // These cache-only queries must survive the asynchronous mutation.
+      hook.client.setQueryDefaults(key, { gcTime: Infinity });
+      hook.client.setQueryData(key, data);
+      cached.push({ key, invalidated });
+    };
+    for (const [resource, data] of Object.entries(savedReads)) {
+      seed(resource, args, data, true);
+      seed(resource, { ...args, version: 2 }, data, true);
+      seed(resource, { ...args, metricId: otherId }, data, false);
+      seed(
+        resource,
+        { ...args, scope: { ...scope, workspaceId: otherId } },
+        data,
+        false,
+      );
+      seed(
+        resource,
+        { ...args, scope: { ...scope, organizationId: otherId } },
+        data,
+        false,
+      );
+    }
+    const catalog = {
+      status: true,
+      result: {
+        metrics: [],
+        next_cursor: null,
+        total: null,
+        total_is_exact: false,
+      },
+    };
+    for (const selected of [scope, { ...scope, projectId: undefined }]) {
+      seed("list", { scope: selected }, page, true);
+      seed(
+        "list",
+        { scope: selected, params: { before: otherId } },
+        page,
+        true,
+      );
+      seed("catalog", { scope: selected }, catalog, true);
+    }
+    seed("evaluators", { scope }, { results: [], truncated: false }, false);
+    seed(
+      "capabilities",
+      { scope },
+      {
+        sources: [],
+        levels: ["conversation"],
+        kinds: ["count"],
+        user_rules: {},
+        max_group_dims: 2,
+        preview_max_days: 7,
+        preview_budget_seconds: 15,
+      },
+      false,
+    );
+    seed("preview", { scope, data: draft }, preview, false);
+    seed(
+      "preview",
+      { ...args, data: { ...range, version: 1 } },
+      preview,
+      false,
+    );
+    await act(async () => {
+      await hook.result.current.mutateAsync(write);
+    });
+    for (const { key, invalidated } of cached) {
+      expect(
+        hook.client.getQueryState(key).isInvalidated,
+        JSON.stringify(key),
+      ).toBe(invalidated);
+    }
+    expect(adapter).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates the original workspace and metric after a late mutation, never inventing refresh data", async () => {
     const pending = deferred();
     let config;
     adapter.mockImplementation((request) => {
       config = request;
       return pending.promise;
     });
-    const hook = mount(
-      (selected) => useRefreshMetric({ scope: selected, metricId: id }),
-      scope,
+    const hook = mount((options) => useRefreshMetric(options), args);
+    const changed = {
+      scope: { ...scope, workspaceId: otherId, projectId: otherId },
+      metricId: otherId,
+    };
+    const detailKeys = [args, { ...args, metricId: otherId }, changed].map(
+      (options) => [...metricKeys.read("detail", options), true],
     );
+    detailKeys.forEach((key) => {
+      hook.client.setQueryDefaults(key, { gcTime: Infinity });
+      hook.client.setQueryData(key, definition);
+    });
     const invalidate = vi.spyOn(hook.client, "invalidateQueries");
     let promise;
     act(() => {
       promise = hook.result.current.mutateAsync({ confirm: true });
     });
     await waitFor(() => expect(config).toBeDefined());
-    hook.rerender({ ...scope, workspaceId: otherId });
+    hook.rerender(changed);
     await act(async () => {
       pending.resolve(response(config, { status: "already_queued" }, 202));
       await promise;
     });
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: metricKeys.workspace(scope),
+      predicate: expect.any(Function),
     });
+    expect(
+      detailKeys.map((key) => hook.client.getQueryState(key).isInvalidated),
+    ).toEqual([true, false, false]);
     expect(
       hook.client.getQueryData([
         ...metricKeys.read("kpi", { ...args, params: range }),
