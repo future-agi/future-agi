@@ -735,7 +735,9 @@ def test_integrated_migration_has_real_parent_and_only_additive_v1_fields():
 
 def test_migration_state_matches_registered_new_models():
     executor = MigrationExecutor(connection)
-    state = executor.loader.project_state([("model_hub", "0124_skills_hub_v11")])
+    targets = executor.loader.graph.leaf_nodes("model_hub")
+    assert len(targets) == 1, "Skills migrations must retain one integrated tail."
+    state = executor.loader.project_state(targets)
     for model in (
         HubSkillJob,
         HubSkillTestRun,

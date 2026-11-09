@@ -369,7 +369,8 @@ def save_suite(
         if len(serialized) > limits.MAX_SUITE_BYTES:
             raise SkillsHubError(
                 "payload_too_large",
-                "The saved suite exceeds 1 MiB including review metadata.",
+                "The saved suite exceeds 1 MiB including review metadata. "
+                "Retained source lineage counts toward this limit.",
                 status=413,
             )
         if suite is None:
