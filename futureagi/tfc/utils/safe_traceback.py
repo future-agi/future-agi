@@ -45,7 +45,11 @@ def sanitized_exception_traceback(exc: BaseException | None) -> list[ExceptionTr
             {
                 "error_type": type(exc).__name__,
                 "frames": list(frames),
-                "chained_by": "cause" if cause is not None else "context" if context is not None else None,
+                "chained_by": "cause"
+                if cause is not None
+                else "context"
+                if context is not None
+                else None,
             }
         )
         exc = cause if cause is not None else context

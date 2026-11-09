@@ -254,8 +254,9 @@ def test_enqueue_failure_is_not_reported_as_success(targeted):
         response = post_relay({"message": {}, "send_to_uuid": targeted, "uuid": TARGET})
     assert response.status_code == 400
     logger.error.assert_called_once_with(
-        "websocket_relay_delivery_failed", error_type="ConnectionError",
-        exception_traceback=ANY
+        "websocket_relay_delivery_failed",
+        error_type="ConnectionError",
+        exception_traceback=ANY,
     )
     assert "private delivery detail" not in str(response.data)
 
@@ -338,18 +339,33 @@ def test_http_validation_log_contains_only_status_and_known_field_names():
 @pytest.mark.parametrize(
     "action,id_field,prefix,data",
     [
-        ("generate_prompt", "generation_id", "generate_", {"statement": "Synthetic task"}),
-        ("improve_prompt", "improve_id", "improve_", {
-            "existing_prompt": "Synthetic prompt", "improvement_requirements": "Be concise"
-        }),
+        (
+            "generate_prompt",
+            "generation_id",
+            "generate_",
+            {"statement": "Synthetic task"},
+        ),
+        (
+            "improve_prompt",
+            "improve_id",
+            "improve_",
+            {
+                "existing_prompt": "Synthetic prompt",
+                "improvement_requirements": "Be concise",
+            },
+        ),
     ],
 )
 @pytest.mark.parametrize("streaming", [False, True])
-def test_prompt_endpoint_identifiers_reach_subscribed_consumer(action, id_field, prefix, data, streaming):
+def test_prompt_endpoint_identifiers_reach_subscribed_consumer(
+    action, id_field, prefix, data, streaming
+):
     from model_hub.views import prompt_template
 
     request = SimpleNamespace(
-        data=data, headers={}, workspace=None,
+        data=data,
+        headers={},
+        workspace=None,
         user=SimpleNamespace(id=TARGET, organization=SimpleNamespace(id=ORG)),
     )
     # Exercise the real producer, replacing only billing/model work. The ID must
@@ -367,26 +383,50 @@ def test_prompt_endpoint_identifiers_reach_subscribed_consumer(action, id_field,
     assert target.startswith(prefix)
     assert submit.call_args.args[2][id_field] == target
     message = (
-        {"type": "run_prompt", "uuid": target, "chunk": "Synthetic chunk", "streaming_status": "running"}
-        if streaming else
-        {"type": action, id_field: target, "current_activity": "generate_initial_prompt", "status": "completed"}
+        {
+            "type": id_field,
+            "uuid": target,
+            "chunk": "Synthetic chunk",
+            "streaming_status": "running",
+        }
+        if streaming
+        else {
+            "type": action,
+            id_field: target,
+            "current_activity": "generate_initial_prompt",
+            "status": "completed",
+        }
     )
     assert_helper_delivery(message, True, target)
 
 
-@pytest.mark.parametrize("target", [
-    f"generate_{TARGET}", f"improve_{TARGET}",
-    "generate_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
-    "improve_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
-])
+@pytest.mark.parametrize(
+    "target",
+    [
+        f"generate_{TARGET}",
+        f"improve_{TARGET}",
+        "generate_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "improve_AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    ],
+)
 def test_prefixed_target_normalization_matches_subscriber(target):
-    assert_helper_delivery({"type": "run_prompt", "uuid": target, "chunk": "hello"}, True, target)
+    assert_helper_delivery(
+        {"type": "run_prompt", "uuid": target, "chunk": "hello"}, True, target
+    )
 
 
-@pytest.mark.parametrize("target", [
-    "generate_", "improve_not-a-uuid", f"unknown_{TARGET}",
-    f"generate_improve_{TARGET}", f"generate_{TARGET}extra", [TARGET], 42,
-])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "generate_",
+        "improve_not-a-uuid",
+        f"unknown_{TARGET}",
+        f"generate_improve_{TARGET}",
+        f"generate_{TARGET}extra",
+        [TARGET],
+        42,
+    ],
+)
 def test_invalid_prefixed_targets_are_rejected(target):
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = post_relay({"message": {}, "send_to_uuid": True, "uuid": target})
@@ -415,7 +455,9 @@ def test_failure_logs_retain_origin_and_cause_without_sensitive_values(boundary)
         patch("model_hub.utils.requests.post") as post,
         patch("tfc.views.socket.get_channel_layer") as layer,
     ):
-        keys.get.return_value = SimpleNamespace(api_key="synthetic-key", secret_key="synthetic-secret")
+        keys.get.return_value = SimpleNamespace(
+            api_key="synthetic-key", secret_key="synthetic-secret"
+        )
         if boundary == "lookup":
             keys.get.side_effect = diagnostic_origin
         elif boundary == "create":
@@ -428,14 +470,23 @@ def test_failure_logs_retain_origin_and_cause_without_sensitive_values(boundary)
         if boundary == "delivery":
             assert post_relay({"message": {}}).status_code == 400
         else:
-            assert call_websocket(ORG, {"sensitive": "synthetic-private-message"})["status"] == "error"
-    event = next(event for event in events if event["event"].startswith("websocket_relay_"))
+            assert (
+                call_websocket(ORG, {"sensitive": "synthetic-private-message"})[
+                    "status"
+                ]
+                == "error"
+            )
+    event = next(
+        event for event in events if event["event"].startswith("websocket_relay_")
+    )
     assert event["log_level"] == "error"
     trace = event["exception_traceback"]
     assert trace[0]["error_type"] == "ConnectionError"
     assert trace[0]["chained_by"] == "cause"
     assert trace[1]["error_type"] == "ValueError"
-    for entry, function in zip(trace, ["diagnostic_origin", "diagnostic_cause"]):
+    for entry, function in zip(
+        trace[:2], ["diagnostic_origin", "diagnostic_cause"], strict=True
+    ):
         origin = entry["frames"][-1]
         assert origin["function"] == function
         assert origin["file"] == "test_websocket_message_contract.py"

@@ -1,7 +1,6 @@
 from rest_framework import serializers
 
 from sockets.targets import TARGET_PATTERN, normalize_socket_target
-
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES, ApiErrorCode
 from tfc.utils.serializer_fields import JsonValueField
 

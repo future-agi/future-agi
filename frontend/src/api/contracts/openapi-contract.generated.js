@@ -56805,9 +56805,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         uuid: {
           title: "Uuid",
           description:
-            "Required for targeted delivery; omit or use null for broadcasts.",
+            "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
           type: "string",
-          format: "uuid",
+          pattern:
+            "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+          minLength: 1,
           "x-nullable": true,
         },
       },

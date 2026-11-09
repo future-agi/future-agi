@@ -15,7 +15,10 @@ def test_suppressed_context_and_exception_notes_are_not_exposed():
         trace = sanitized_exception_traceback(exc)
     assert len(trace) == 1
     assert trace[0]["chained_by"] is None
-    assert trace[0]["frames"][-1]["function"] == "test_suppressed_context_and_exception_notes_are_not_exposed"
+    assert (
+        trace[0]["frames"][-1]["function"]
+        == "test_suppressed_context_and_exception_notes_are_not_exposed"
+    )
     assert "synthetic-private" not in json.dumps(trace)
 
 
@@ -24,7 +27,8 @@ def test_implicit_context_is_retained():
         try:
             raise ValueError("synthetic-private-inner")
         except ValueError:
-            raise RuntimeError("synthetic-private-outer")
+            # Reproduce implicit chaining in a third-party dependency.
+            raise RuntimeError("synthetic-private-outer")  # noqa: B904
     except RuntimeError as exc:
         trace = sanitized_exception_traceback(exc)
     assert [entry["error_type"] for entry in trace] == ["RuntimeError", "ValueError"]
