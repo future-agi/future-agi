@@ -503,6 +503,8 @@ class AgentFixLaunchLimitsSerializer(serializers.Serializer):
     # The failing cases a fix needs; with fewer it first writes variations of each.
     cases_min = serializers.IntegerField()
     variations_per_case = serializers.IntegerField()
+    # Fewer failing cases than this can only end with limited validation.
+    verified_cases_min = serializers.IntegerField()
     scenarios_max = serializers.IntegerField()
 
 

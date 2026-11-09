@@ -45,6 +45,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
+    HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
@@ -885,6 +886,16 @@ def fewest_failing_cases() -> int:
     return -(-floor // (1 + VARIATIONS_PER_CASE))
 
 
+def verified_cases_min() -> int:
+    """The fewest failing cases a fix that writes variations can end verified from. Its
+    held-back cases must come from HELD_BACK_VERIFIED_MIN cases, held back each with its
+    variations, within one in HELD_BACK_SHARE of all its cases; every case brings at most
+    VARIATIONS_PER_CASE variations, so the cases kept to search on hold at least
+    (HELD_BACK_SHARE - 1) times what is held back."""
+    held = HELD_BACK_VERIFIED_MIN
+    return held + -(-(HELD_BACK_SHARE - 1) * held // (1 + VARIATIONS_PER_CASE))
+
+
 def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | None:
     """What would refuse a fix that first writes variations of its failing cases, on top of
     launch_blocker; None when nothing would. The environment's builder writes them, on top
@@ -1011,6 +1022,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             scenarios_min=fewest_failing_cases(),
             cases_min=settings.AGENT_FIX_MIN_FAILING_CASES,
             variations_per_case=VARIATIONS_PER_CASE,
+            verified_cases_min=verified_cases_min(),
             scenarios_max=SCENARIOS_MAX,
         ),
         blocked=LaunchBlocked(code=blocked.code, message=blocked.message)

@@ -23,9 +23,14 @@ export function countsLine(picked, protectedCount, limits) {
   return `${failing} · ${protectedCount} must keep passing`;
 }
 
-export function variationsNote(picked, limits) {
+// With so few, too few cases can be held back to verify the fix, however well it
+// does: it ends with Limited validation, and a GitHub agent's pull request is a draft.
+export function variationsNote(picked, limits, agentKind) {
   if (!needsVariations(picked, limits)) return null;
-  return `A fix needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each (about 50 min), then fixes the ones the current version also fails.`;
+  const note = `A fix needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each (about 50 min), then fixes the ones the current version also fails.`;
+  if (picked >= limits.verified_cases_min) return note;
+  const draft = agentKind === "github" ? " and opens a draft pull request" : "";
+  return `${note} With fewer than ${limits.verified_cases_min} failing cases it can only end with Limited validation${draft}.`;
 }
 
 // Why Start is disabled by the platform: the fix itself, or the variations it

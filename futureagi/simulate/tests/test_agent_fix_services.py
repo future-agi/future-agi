@@ -386,6 +386,34 @@ class TestHeldBackSplit:
             assert "s0" not in {self.PARENTS.get(key, key) for key in held}
 
 
+def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
+    from itertools import product
+
+    from simulate.selectors.agent_fix import verified_cases_min
+
+    def most_held_cases(count):
+        """The most distinct cases any split holds back, over every way the count's
+        cases can keep their variations, at the default floor of twelve."""
+        best = 0
+        for kept in product(range(4), repeat=count):
+            failing, parents = {}, {}
+            for case, variations in enumerate(kept):
+                failing[f"s{case}"] = ["refunded"]
+                for number in range(variations):
+                    failing[f"s{case}-v{number}"] = ["refunded"]
+                    parents[f"s{case}-v{number}"] = f"s{case}"
+            if len(failing) < 12:
+                continue
+            for seed in ("a", "b", "c", "d"):
+                held = split_held_back(seed, failing, parents)
+                best = max(best, len({parents.get(key, key) for key in held}))
+        return best
+
+    assert verified_cases_min() == 6
+    assert most_held_cases(5) < 4
+    assert most_held_cases(6) == 4
+
+
 @pytest.mark.parametrize(
     ("held_back", "parents", "limited"),
     [

@@ -13,6 +13,8 @@ MAX_MINUTES_MAX = 24 * 60
 # Held-back cases a fix needs to count as verified. On a failure that fails every baseline
 # run, 4 pass a large real fix 87% of the time and 2 only 56%.
 HELD_BACK_VERIFIED_MIN = 4
+# A third of the failing cases are held back, once there are enough for a third to tell.
+HELD_BACK_SHARE = 3
 # A run with too few failing cases gets this many variations of each written first.
 VARIATIONS_PER_CASE = 3
 
@@ -318,6 +320,8 @@ class LaunchLimits(BaseModel):
     # The failing cases a fix needs; with fewer, it writes variations of each first.
     cases_min: int
     variations_per_case: int
+    # The fewest failing cases a fix that writes variations can still end verified from.
+    verified_cases_min: int
     scenarios_max: int
 
 

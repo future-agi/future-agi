@@ -538,6 +538,7 @@ export function fixtureLaunchOptions(sourceRunId) {
       scenarios_min: 3,
       cases_min: 12,
       variations_per_case: 3,
+      verified_cases_min: 6,
       scenarios_max: 200,
     },
     blocked: null,

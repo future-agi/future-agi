@@ -896,6 +896,7 @@ class TestUserApi:
             "scenarios_min": 1,
             "cases_min": 1,
             "variations_per_case": 3,
+            "verified_cases_min": 6,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None

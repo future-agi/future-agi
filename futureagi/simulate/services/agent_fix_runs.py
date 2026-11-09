@@ -20,6 +20,7 @@ from simulate.models import (
     Scenarios,
 )
 from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
     VARIATIONS_PER_CASE,
     FixRequest,
@@ -58,8 +59,6 @@ from simulate.temporal.client import (
 logger = structlog.get_logger(__name__)
 
 
-# A third of the failing cases are held back, once there are enough for a third to tell.
-HELD_BACK_SHARE = 3
 HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
 
 

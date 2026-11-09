@@ -194,7 +194,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const { agent, environment, limits } = options;
   const error = launchError({ targets, protectedKeys, surfaces, limits });
   const blockedReason = blockedReasonOf(options, targets.length);
-  const variations = variationsNote(targets.length, limits);
+  const variations = variationsNote(targets.length, limits, agent.kind);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,

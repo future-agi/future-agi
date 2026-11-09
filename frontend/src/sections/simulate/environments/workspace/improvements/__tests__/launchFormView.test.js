@@ -19,7 +19,12 @@ const LIMITS = {
   variations_per_case: 3,
   scenarios_max: 200,
 };
-const FLOOR = { ...LIMITS, scenarios_min: 3, cases_min: 12 };
+const FLOOR = {
+  ...LIMITS,
+  scenarios_min: 3,
+  cases_min: 12,
+  verified_cases_min: 6,
+};
 const SURFACES = [
   { id: "prompt", label: "Instructions" },
   { id: "tools", label: "Tools" },
@@ -46,7 +51,7 @@ describe("variations", () => {
     expect(countsLine(5, 1, FLOOR)).toBe(
       "5 failing, and up to 15 variations of them · 1 must keep passing",
     );
-    expect(variationsNote(5, FLOOR)).toBe(
+    expect(variationsNote(7, FLOOR)).toBe(
       "A fix needs 12 failing cases. It first writes 3 variations of each (about 50 min), then fixes the ones the current version also fails.",
     );
     expect(variationsNote(12, FLOOR)).toBeNull();
@@ -58,6 +63,20 @@ describe("variations", () => {
         limits: FLOOR,
       }),
     ).toBeNull();
+  });
+
+  it("says a fix from too few cases can only end with Limited validation", () => {
+    const tail =
+      "With fewer than 6 failing cases it can only end with Limited validation";
+    expect(variationsNote(5, FLOOR, "archive")).toMatch(
+      new RegExp(`${tail}\\.$`),
+    );
+    expect(variationsNote(5, FLOOR, "github")).toMatch(
+      new RegExp(`${tail} and opens a draft pull request\\.$`),
+    );
+    expect(variationsNote(6, FLOOR, "github")).not.toMatch(
+      /Limited validation/,
+    );
   });
 
   it("blocks Start for the variations only when the pick needs them", () => {
