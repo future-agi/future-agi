@@ -4,7 +4,7 @@
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -72,6 +72,27 @@ def test_scalar_bucket_projection_never_reads_sketches_and_binds_scope():
     assert params["read_bucket_kin_0"] == (metric.id,)
     assert params["read_workspace"] == str(metric.workspace_id)
     assert sql.index("LIMIT 1 BY") < sql.index("WHERE is_deleted = 0")
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_rows_preserve_every_server_computed_uncertainty_field(packed):
+    ci = (10.5, 36.0, 84.0, 24.0, 11, "stratified_wor_fpc", "ok", "", "wald_t")
+    expected = {
+        "group_key": "",
+        "value": 60.0,
+        **dict(zip(reads.UNCERTAINTY_COLUMNS, ci, strict=True)),
+    }
+    columns = [("group_key", "String"), ("value", "Float64")]
+    if packed:
+        columns.append(("ci", "Tuple"))
+        values = ("", 60.0, ci)
+    else:
+        columns.extend((name, "unused") for name in reads.UNCERTAINTY_COLUMNS)
+        values = ("", 60.0, *ci)
+    client = Mock()
+    client.execute.return_value = ([values], columns)
+    assert reads._rows(reads.MetricReadStore(client), "query", {}) == [expected]
+    assert client.execute.call_args.kwargs["settings"]["use_query_cache"] == 0
 
 
 @pytest.mark.django_db
@@ -198,6 +219,12 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
             "valid_count": 3,
         }
 
+    def aggregate_periods(store, metric, version, head, current, previous):
+        return (
+            aggregate(store, metric, version, head, current),
+            aggregate(store, metric, version, head, previous),
+        )
+
     data = {
         "window_start": datetime.fromisoformat("2026-01-10T12:07:43+05:45"),
         "window_end": datetime.fromisoformat("2026-01-10T15:12:43+05:45"),
@@ -205,6 +232,7 @@ def test_previous_period_uses_the_same_pin_and_equal_snapped_duration(saved):
     with (
         patch.object(reads, "metric_read", pin),
         patch.object(reads, "_aggregate", aggregate),
+        patch.object(reads, "_aggregate_periods", aggregate_periods),
     ):
         result = reads.read_kpi(metric, data)
         assert len(pinned) == 1 and len(ranges) == 2

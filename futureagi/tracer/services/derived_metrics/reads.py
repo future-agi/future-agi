@@ -30,7 +30,7 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
     pinned_read,
 )
-from tracer.services.derived_metrics.queries import QUERY_SETTINGS
+from tracer.services.derived_metrics.queries import QUERY_SETTINGS, UNCERTAINTY_COLUMNS
 from tracer.services.derived_metrics.retention import retention_cutoff
 from tracer.services.derived_metrics.service import MetricUnavailableError, shape_result
 from tracer.services.derived_metrics.spec import require_computable
@@ -184,7 +184,13 @@ def _rows(store, sql, params):
         store if isinstance(store, MetricReadStore) else MetricReadStore(store.client)
     )
     rows, columns = reader.execute(sql, params, with_column_types=True)
-    return [dict(zip((c[0] for c in columns), row, strict=True)) for row in rows]
+    result = []
+    for values in rows:
+        row = dict(zip((c[0] for c in columns), values, strict=True))
+        if "ci" in row:
+            row.update(zip(UNCERTAINTY_COLUMNS, row.pop("ci"), strict=True))
+        result.append(row)
+    return result
 
 
 def bucket_select(metric, definition, manifest, window):
@@ -230,12 +236,16 @@ def bucket_select(metric, definition, manifest, window):
     )
 
 
-def _aggregate_select(sql, definition, params, *, grouped=False):
+def _aggregate_select(sql, definition, params, *, grouped=False, per_period=False):
     recipe = field_recipe(definition)
     if definition.kind not in {"unique_count", "percentile"}:
         params.update(recipe.formula.parameters)
         return combine_parts_select(
-            sql, recipe.formula, rollup="cohort" if grouped else "overall"
+            sql,
+            recipe.formula,
+            rollup="cohort" if grouped else "overall",
+            per_period=per_period,
+            packed_uncertainty=True,
         )
     # Sketches are only meaningful for census inputs; never infer an IPW sketch.
     params["read_percentile"] = recipe.source.field_spec.get("percentile", 0.95)
@@ -244,8 +254,10 @@ def _aggregate_select(sql, definition, params, *, grouped=False):
         if definition.kind == "unique_count"
         else "quantileTDigestMerge(%(read_percentile)s)(quantile_state)"
     )
-    group = "group_key" if grouped else "''"
-    return f"""SELECT {group} AS group_key, if(status = 'ok', raw_value, NULL) AS value,
+    group = "period_key" if per_period else ("group_key" if grouped else "''")
+    group_clause = f"GROUP BY {group}" if grouped or per_period else ""
+    scope_partition = "PARTITION BY period_key" if per_period else ""
+    return f"""SELECT group_key, if(status = 'ok', raw_value, NULL) AS value,
         value AS numerator, CAST(NULL, 'Nullable(Float64)') AS denominator,
         status, unit_count, valid_count, missing_count, invalid_probability_count,
         'not_estimable' AS ci_status, 'not_computed' AS ci_reason, '' AS ci_method, '' AS ci_interval,
@@ -259,14 +271,53 @@ def _aggregate_select(sql, definition, params, *, grouped=False):
             multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
                 sampled_count > 0, 'sampled_inputs_not_supported', valid_count = 0, 'missing_inputs',
                 NOT isFinite(raw_value), 'non_finite', 'ok') AS status
-            FROM (SELECT *, minIf(scope_min, nonempty_scope_count > 0) OVER () !=
-                maxIf(scope_max, nonempty_scope_count > 0) OVER () AS mixed_scope FROM ({sql})) AS src
-            {"GROUP BY group_key" if grouped else ""})"""
+            FROM (SELECT *, minIf(scope_min, nonempty_scope_count > 0) OVER ({scope_partition}) !=
+                maxIf(scope_max, nonempty_scope_count > 0) OVER ({scope_partition}) AS mixed_scope FROM ({sql})) AS src
+            {group_clause})"""
 
 
 def _aggregate(store, metric, definition, manifest, window):
     sql, params = bucket_select(metric, definition, manifest, window)
     return _rows(store, _aggregate_select(sql, definition, params), params)[0]
+
+
+def _aggregate_periods(store, metric, definition, manifest, current, previous):
+    """Compute independent periods without replacing stored cohort/scope keys.
+
+    The shared compiler partitions its scope guard and stratum merge by period,
+    applying exactly the same estimator as an independent overall read.
+    """
+    sql, params = bucket_select(
+        metric,
+        definition,
+        manifest,
+        {**current, "window_start": previous["window_start"]},
+    )
+    params["read_current_start"] = current["window_start"]
+    sql = f"""SELECT *,
+        if(bucket_start >= %(read_current_start)s, 'current', 'previous') AS period_key
+        FROM ({sql})"""
+    rows = _rows(
+        store, _aggregate_select(sql, definition, params, per_period=True), params
+    )
+    by_period = {row["group_key"]: {**row, "group_key": ""} for row in rows}
+    # GROUP BY returns no row for an empty period. Match the overall compiler's
+    # explicit no-data result, including its unavailable-CI reason, not zero.
+    empty = {
+        **empty_row(),
+        "ci_status": "not_estimable",
+        "ci_reason": "not_computed"
+        if definition.kind in {"unique_count", "percentile"}
+        else "no_value",
+        "ci_method": "",
+        "ci_interval": "",
+        "std_error": None,
+        "ci_low": None,
+        "ci_high": None,
+        "effective_n": None,
+        "ci_df": None,
+    }
+    return tuple(by_period.get(period, empty) for period in ("current", "previous"))
 
 
 def point(row, definition):
@@ -317,14 +368,15 @@ def read_kpi(metric, data, *, store=None):
     }
     with metric_read(metric, store=store) as (store, manifest, definition):
         require_calculated_window(definition, window)
-        current = point(
-            _aggregate(store, metric, definition, manifest, window), definition
-        )
-        prior = (
-            point(_aggregate(store, metric, definition, manifest, previous), definition)
-            if window_is_calculated(definition, previous)
-            else None
-        )
+        if window_is_calculated(definition, previous):
+            current_row, previous_row = _aggregate_periods(
+                store, metric, definition, manifest, window, previous
+            )
+            prior = point(previous_row, definition)
+        else:
+            current_row = _aggregate(store, metric, definition, manifest, window)
+            prior = None
+        current = point(current_row, definition)
         delta = (
             current["value"] - prior["value"]
             if prior is not None

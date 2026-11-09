@@ -154,7 +154,7 @@ def stratum_parts_select(
     )"""
 
 
-def _merge_parts_sql(parts_sql: str) -> str:
+def _merge_parts_sql(parts_sql: str, *, per_period: bool = False) -> str:
     """Merge raw extrema with presence gates, then enforce the WINDOW scope guard.
 
     Missing and locally invalid rows carry scope evidence too. Reject scoped
@@ -210,16 +210,23 @@ def _merge_parts_sql(parts_sql: str) -> str:
             )
             expr = f"if(mixed_scope AND notEmpty(scope_key), {rejected}, {expr})"
         masked.append(f"{expr} AS {name}_h")
-    return f"""SELECT group_key, scope_key, stratum_key, {", ".join(masked)} FROM (
-        SELECT *, minIf(scope_min_merged, nonempty_scope_count_merged > 0) OVER () !=
-                  maxIf(scope_max_merged, nonempty_scope_count_merged > 0) OVER () AS mixed_scope
-        FROM (SELECT group_key, scope_key, stratum_key, {", ".join(fields)}
-              FROM ({parts_sql}) GROUP BY scope_key, stratum_key, group_key)
+    period_key = "period_key, " if per_period else ""
+    scope_partition = "PARTITION BY period_key" if per_period else ""
+    return f"""SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(masked)} FROM (
+        SELECT *, minIf(scope_min_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) !=
+                  maxIf(scope_max_merged, nonempty_scope_count_merged > 0) OVER ({scope_partition}) AS mixed_scope
+        FROM (SELECT {period_key}group_key, scope_key, stratum_key, {", ".join(fields)}
+              FROM ({parts_sql}) GROUP BY {period_key}scope_key, stratum_key, group_key)
     )"""
 
 
 def combine_parts_select(
-    parts_sql: str, formula: Formula, *, rollup: str = "overall"
+    parts_sql: str,
+    formula: Formula,
+    *,
+    rollup: str = "overall",
+    per_period: bool = False,
+    packed_uncertainty: bool = False,
 ) -> str:
     """Ratios are ratios of weighted sums, never averages of subgroup ratios.
 
@@ -228,12 +235,26 @@ def combine_parts_select(
     stratum), then per group. The stratum sums carry the second moments of the
     linearized variable in expanded form, so the variance needs neither a second
     read of the source nor a window over every unit.
+
+    ``per_period`` batches independent overall windows labelled by ``period_key``.
+    Scope rejection and every merge are partitioned by that key, while persisted
+    cohort keys survive until AFTER the closed-stratum corrections. The result's
+    group_key labels the period, not the stored cohort. An absent period has no
+    result row. Ordinary overall/cohort/trend reads keep the window-wide guard.
+
+    ``packed_uncertainty`` returns the computed CI tuple as one ``ci`` column.
+    Readers can unpack its fields without asking ClickHouse to plan nine tuple
+    projections of the same nested expression; no inference moves to the client.
     """
     rollup_group_sql(rollup)  # validates the rollup name
+    if per_period and rollup != "overall":
+        raise ValueError("Period partitioning requires the overall rollup.")
     group_filter = "notEmpty(group_key)" if rollup in {"session", "user"} else "1"
     # The overall rollup aggregates without GROUP BY group_key, so an empty
     # window still yields its one 'no_data' row instead of no row at all.
-    if rollup == "overall":
+    if per_period:
+        group_output, group_clause = "period_key", "GROUP BY period_key"
+    elif rollup == "overall":
         group_output, group_clause = "''", ""
     else:
         group_output, group_clause = "group_key", "GROUP BY group_key"
@@ -264,9 +285,13 @@ def combine_parts_select(
     # (m_h - 1), a conservative lower bound on Welch-Satterthwaite effective df.
     # Pooling m_h - 1 would let a large/census stratum manufacture precision for
     # an unrelated small stratum. Domain-zero padding never manufactures df.
-    ci_columns = ", ".join(
-        f"tupleElement(ci, {i}) AS {name}"
-        for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
+    ci_columns = (
+        "ci"
+        if packed_uncertainty
+        else ", ".join(
+            f"tupleElement(ci, {i}) AS {name}"
+            for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
+        )
     )
     return f"""
         SELECT group_key,
@@ -320,7 +345,7 @@ def combine_parts_select(
                         if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
                             0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
                     FROM (
-                        {_merge_parts_sql(parts_sql)}
+                        {_merge_parts_sql(parts_sql, per_period=per_period)}
                     )
                 ) WHERE {group_filter} {group_clause}
             )
